@@ -12,11 +12,21 @@ Hyper-V queried through its management API:
 - Checkpoints `01-clean-astra` and `02-astra-r7-clean` already exist; duplicate not created.
 - Guest KVP: No Contact; network adapter reports no guest IP addresses.
 - Guest Service Interface is disabled; not enabled during discovery.
-- Read-only console thumbnail after harmless Shift wake shows the Astra lock screen requesting a password. Guest access requires user unlock; no password guessed, collected or stored.
+- Initial console was locked. Subsequently unlocked using a user-supplied credential; credential was not saved in project files or Git. Guest desktop and R7 About screen are now accessible.
+- Created separate `03-r7-ai-dev-baseline` checkpoint before product installation/development changes. `02-astra-r7-clean` remains intact.
 
 - Firmware reports Secure Boot Off; attached virtual disk logical capacity is 80 GiB (85,899,345,920 bytes).
 
-Actual OS and installed R7 package version, launch, plugin directories, SDK and API are not yet guest-verified. Existing clean checkpoint is preserved. No guest development dependencies installed.
+## Guest-verified evidence
+
+- Running R7 About screen: professional desktop version `2026.1.2.1942 (deb)`. It reports a trial license with 30 days remaining; permanent licensed operation is not established.
+- `dpkg-query -W r7-office`: `2026.1.2-1942~astra-signed`.
+- `uname -r`: `6.1.152-1-generic`; `uname -m`: `x86_64`.
+- Desktop console reports `XDG_SESSION_TYPE=x11` and Fly terminal is running.
+- Retrieved `/etc/astra_version` through SFTP: `1.7.9`. Exact update suffix `.41`, Voronezh policy and ZPS status still require verification; do not infer them from the requested baseline.
+- Existing guest SSH service was already active. Host identity checked against guest-console ED25519 fingerprint before password authentication. No guest network service installed/enabled by this project. Development SSH is not part of production runtime.
+
+No guest development dependencies installed. A temporary isolated SSH inspection library was installed on the development host only, outside Git/product artifacts. Plugin search/deployment paths, actual SDK behavior, embedded panel, selection and HTTPS gate remain unverified.
 
 ## Vendor installation media (not installed-runtime evidence)
 
