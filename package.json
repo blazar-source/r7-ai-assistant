@@ -1,0 +1,8 @@
+{
+  "name": "r7-ai-assistant",
+  "version": "0.9.0-pilot-rc",
+  "private": true,
+  "description": "Standalone embedded assistant for R7 Desktop",
+  "license": "UNLICENSED",
+  "type": "module"
+}
