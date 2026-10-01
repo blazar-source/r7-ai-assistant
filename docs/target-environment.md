@@ -14,7 +14,20 @@ Hyper-V queried through its management API:
 - Guest Service Interface is disabled; not enabled during discovery.
 - Read-only console thumbnail after harmless Shift wake shows the Astra lock screen requesting a password. Guest access requires user unlock; no password guessed, collected or stored.
 
-VM disk size, Secure Boot, actual OS and R7 package version, launch, plugin directories, SDK and API are not yet guest-verified. Existing clean checkpoint is preserved. No guest development dependencies installed.
+- Firmware reports Secure Boot Off; attached virtual disk logical capacity is 80 GiB (85,899,345,920 bytes).
+
+Actual OS and installed R7 package version, launch, plugin directories, SDK and API are not yet guest-verified. Existing clean checkpoint is preserved. No guest development dependencies installed.
+
+## Vendor installation media (not installed-runtime evidence)
+
+Read the control archive of the supplied DEB without installation:
+
+- Package: `r7-office`.
+- Version: `2026.1.2-1942~astra-signed`.
+- Architecture: `amd64`.
+- SHA-256: `f5cf8db84f47fa15c1d2bd43ceac98ea1cf956e9976f7bbf48da7fa047bc4e7d`.
+
+This identifies the supplied installation artifact only. It does not prove which version is running in the guest, certificate/signature validity or API compatibility.
 
 ## Required guest verification
 
