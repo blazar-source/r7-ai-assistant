@@ -27,6 +27,8 @@ Read the control archive of the supplied DEB without installation:
 - Architecture: `amd64`.
 - SHA-256: `f5cf8db84f47fa15c1d2bd43ceac98ea1cf956e9976f7bbf48da7fa047bc4e7d`.
 
+The DEB's `md5sums` inventory lists the binary at `/opt/r7-office/desktopeditors/DesktopEditors` and bundled plugin assets under `/opt/r7-office/desktopeditors/editors/sdkjs-plugins/`. It lists `v1/plugins.js`, `v1/plugins-ui.js`, `v1/plugins.css` and preinstalled plugin manifests. These are package-declared paths, not a verified writable deployment directory or confirmed user plugin search path. No SDK code has been copied into the product.
+
 This identifies the supplied installation artifact only. It does not prove which version is running in the guest, certificate/signature validity or API compatibility.
 
 ## Required guest verification
