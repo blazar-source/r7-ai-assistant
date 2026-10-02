@@ -240,6 +240,12 @@ test('optional mode config is closed and rejects unknown, undefined and extra fi
   }
 });
 
+test('non-enumerable mode cannot conceal an unknown enumerable config key', async () => {
+  const config = { keyPath: 'synthetic-missing', certPath: 'synthetic-missing', listenAddress: '127.0.0.1', port: 0, prefix: '', profile: 'final', corsOrigin: 'null', delayMs: 100, extra: true };
+  Object.defineProperty(config, 'corsMode', { value: 'omit', enumerable: false });
+  await assert.rejects(startMock(config), { message: 'MOCK_CONFIG_INVALID' });
+});
+
 test('actual authored infrastructure passes unchanged source guard', async () => {
   assert.deepEqual(await auditPaths(process.cwd(), ['tests/acceptance/infrastructure/https-mock.mjs', 'tests/acceptance/infrastructure/tls-fixture.mjs']), []);
 });

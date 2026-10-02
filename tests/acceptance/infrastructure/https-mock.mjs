@@ -11,7 +11,7 @@ const profiles = new Set(['final', 'proposal', '401', '403', '429', '5xx', 'time
 const requiredHeaders = ['authorization', 'content-type', 'x-session-id'];
 const standardHeaders = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'origin', 'accept', 'accept-encoding', 'accept-language', 'user-agent', 'referer', 'sec-fetch-site', 'sec-fetch-mode', 'sec-fetch-dest', 'sec-ch-ua', 'sec-ch-ua-mobile', 'sec-ch-ua-platform']);
 function closed(value, keys) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key)) && keys.every(key => Object.hasOwn(value, key));
 }
 const bytes = text => Buffer.byteLength(text, 'utf8');
 function validBody(value) {
