@@ -1,15 +1,26 @@
 # Roadmap
 
-- A: Git/bootstrap, actual VM/Р7/paths/API verification and clean checkpoint preservation.
-- B: compatibility vertical slice, blocking real embedded HTTPS/selection gate.
-- C: strict-bank provider adapter, Qwen 3.8 development validation.
-- D: JSON runtime, schemas, bounded loop, repair and hard security policy.
-- E/F/G: verified DOCX/XLSX/PPTX live tools, capability-based registry.
-- H/I: UX and security hardening.
-- J/K: plugin + DEB, clean install/upgrade/uninstall.
-- L: separate ZPS-enabled compatibility state.
-- M: verified `0.9.0-pilot-rc` deliverables, no publication.
+## Accepted eight product sprints
 
-After each major stage: tests/evidence, atomic commit, clean working tree, short status. Stop for secrets/admin user action/data-loss risk or proved architectural blockers. Do not proceed around an unverified B gate with a speculative implementation.
+Only **Sprint 1 is authorized**. Its documentation reconciliation is IN PROGRESS; fresh native practical editing acceptance is NOT RUN. The [historical Stage B NOT PASS](<stage-b-gate-report.md>) is not retroactively PASS. The [Sprint 1 execution plan](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) and [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) define the current contract.
 
-Later separate scope: managed settings, locked endpoint/model, centralized key provisioning, roles/group policies and corporate deployment integration. Configuration-provider boundary avoids agent runtime rewrite.
+| Sprint | Accepted product scope | Execution status |
+| --- | --- | --- |
+| 1 | Practical B selection: Preview, explicit Apply, same current document/editor check, current nonempty selection reread and exact original-text comparison, public native replacement, measured formatting and native Undo; close remaining small B checks | IN PROGRESS; fresh native acceptance NOT RUN; Apply remains disabled |
+| 2 | Bounded agent runtime + Qwen development validation | NOT AUTHORIZED / NOT RUN |
+| 3 | Word tools | NOT AUTHORIZED / NOT RUN |
+| 4 | Cell tools | NOT AUTHORIZED / NOT RUN |
+| 5 | Slide tools | NOT AUTHORIZED / NOT RUN |
+| 6 | Common UX and security hardening | NOT AUTHORIZED / NOT RUN |
+| 7 | Packaging, Astra install/upgrade/uninstall and separate ZPS compatibility state | NOT AUTHORIZED / NOT RUN |
+| 8 | Verified local `0.9.0-pilot-rc` deliverables | NOT AUTHORIZED / NOT RUN; no publication |
+
+The previous A–M lettering is historical sequencing, not current execution authorization. The [original Stage B plan](<superpowers/plans/2026-10-02-stage-b-implementation.md>) is archived with its measured completed/unchecked steps intact. Passing the current Sprint 1 gates does not itself authorize Sprint 2.
+
+## Stage boundaries and escalation
+
+After each authorized sprint: tests/evidence, independent scoped review, atomic local commits and clean working tree. No merge/push/publication. Host tests and package inspection do not prove native compatibility. Bank TLS/CORS/AUTH/Qwen remain **NOT RUN** until internal bank installation; no real-model calls in Sprint 1.
+
+On runtime FAIL, record the exact public API, scenario and observed failure; search targeted ready solutions in official docs/GitHub/issues/PR/plugins and check architecture/license. If several practical alternatives exist, give brief pros/cons and a recommendation. If none exists, notify the user and request permission **before** narrow blocker research. No broad precautionary research or silent architecture/security relaxation. Stop for secrets/admin user action or data-loss risk; never restore a clean checkpoint over active work.
+
+Later separate scope: managed settings, locked endpoint/model, centralized key provisioning, roles/group policies and corporate deployment integration. The configuration-provider boundary avoids agent runtime rewrite; none is authorized now.

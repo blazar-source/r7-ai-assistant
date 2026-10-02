@@ -4,8 +4,8 @@
 
 ## Статус
 
-Bootstrap. Pilot RC **не выпущен**. Целевая версия: `0.9.0-pilot-rc`.
-Этап B — блокирующий gate: embedded UI, selection и прямой HTTPS должны быть подтверждены на точной Astra/Р7 до реализации следующих этапов. Наличие checkpoint не доказывает совместимость.
+Pilot RC **не выпущен**. Целевая версия: `0.9.0-pilot-rc`. [Исторический Stage B NOT PASS](<docs/stage-b-gate-report.md>) не пересчитан в PASS.
+Принят [план восьми спринтов](<docs/roadmap.md>); разрешён только [Sprint 1](<docs/superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>): practical selection editing с Preview, explicit Apply, same current document/editor check, current-selection reread и exact text comparison. Docs reconciliation IN PROGRESS; fresh native acceptance NOT RUN, Apply остаётся disabled. Host tests не native proof; bank TLS/CORS/AUTH/Qwen NOT RUN, real-model calls в Sprint 1 запрещены.
 
 ## Runtime
 

@@ -1,5 +1,13 @@
 # Compatibility matrix
 
+## Current authority / historical evidence boundary
+
+Only [Sprint 1 practical editing](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) is authorized under the [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) and [eight-sprint roadmap](<roadmap.md>). Documentation reconciliation IN PROGRESS; fresh native practical editing acceptance NOT RUN. Apply remains disabled; no runtime proof or gate promotion is supplied by this docs change. Current acceptance requires Preview/explicit Apply/current-document-editor check/current-selection reread/nonempty exact original text/public native write and measured formatting/native Undo. Manually selecting identical text elsewhere is allowed; locator/revision/ABA/object-identity/atomicity are not active requirements. Asynchronous reread/write is not atomic.
+
+All measured observations, labels and provenance below are retained historical evidence. Old statements about mandatory identity/revision/atomicity describe the previous gate only, not current prerequisites. Historical Stage B NOT PASS is not retroactively PASS. Reuse closed transport evidence with explicit unchanged-component provenance; retest only missing scenarios/relevant integration changes. Bank TLS/CORS/AUTH/Qwen stay NOT RUN until internal installation; no real-model calls in Sprint 1. Later sprints are not authorized. Remaining current checks/escalation/cleanup: [test plan](<test-plan.md>).
+
+## Preserved Stage B measurements
+
 This is a development evidence matrix, not a Pilot RC PASS report. The independently reviewed [terminal Stage B NOT PASS report](<stage-b-gate-report.md>) records the failed/unresolved reporting outcome without authorizing C–M. Current whole-source review's bounded audit finding is corrected in becb6c5 with independent SPEC PASS/QUALITY APPROVED; parent post-fix host tests356/356, audit and two builds pass, unchanged exact8 archive508750. This source/tooling-only fix does not retest or promote any native gate; the acceptance review still concludes Stage B NOT PASS.
 
 Unless explicitly marked f712331, native observations below are historical75b2239/SHA-256262fae65ac7a088ae322c0258167523a20951bf3568f6cf09090fc7402bf116e evidence, not blanket latest-build retests. Caption correction f712331 has independent spec/quality review, behavioral RED/GREEN, parent7focused/full342 tests/audit PASS and repeat-build-stable exact-eight-file artifact SHA-256508750fc43b3885f224858df2d190d18885b660d48c1fad422fc0d1a229923cd. It is now byte-verified in the owned dev root, old artifact privately preserved, SDK unchanged; fresh native Word panel and corrected oversize refusal measured. Fresh Cell/Slide panels were subsequently reopened with byte-verified current root and reached ready with correct editor identity/runtimeVerified:false; no independent runtime JS digest/cache inspection or new Cell/Slide callback/parity gate is inferred.
@@ -69,7 +77,9 @@ The mock is excluded from the unchanged eight-file production archive. No guest,
 - [Manifest](<../src/plugin/config.json>) uses the shipped R7 `variations` shape, fixed product GUID and word/cell/slide inside flags. Its local HTML/icon paths were Task 4's host packaging contract; Task 3 alone supplied no runtime load proof. Subsequent actual current installed all-three inside panels/assets/init are recorded above; dedicated CSP enforcement/lifecycle parity remain partial. Official SDK remains installed and unchanged under ADR 0002; no SDK copy or remote fallback.
 - `readSelection` returns bounded plain text solely as explicitly selected context, `eligible:false`, `target:null`. `applySelection` always fails closed without an SDK call. No text/JSON snapshot is a target certificate, no PasteText/Delete+AddText fallback, bookmark insertion, Save, private editor access or simulated-positive mutation path exists.
 
-### Exact package observations and unresolved mandatory mutation subgate
+### Historical package observations and previous unresolved mutation subgate
+
+The package observations below remain presence/inspection evidence only. The old mandatory locator/revision/domain/atomicity interpretation is superseded, not proved or regraded by the practical contract. Fresh ReplaceTextSmart/PasteText/static public Document API choice and formatting/Undo need native measurement under Sprint 1.
 
 Focused evidence is the actual supplied 2026.1.2-1942~astra-signed Word bundle, inspected via its [newline projection](<C:/Users/Пользователь/AppData/Local/Temp/r7-vendor-engine-4bd6752854d04a58a2ce0d0fcce7e6b5/sdk-all.reading.txt>). These line numbers refer to that projection, not an upstream source map or runtime probe:
 

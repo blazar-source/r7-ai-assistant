@@ -1,6 +1,8 @@
-# Stage B Compatibility Slice Implementation Plan
+# Stage B Compatibility Slice Implementation Plan — HISTORICAL / SUPERSEDED
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **ARCHIVED: do not execute this plan.** The user-approved [Sprint 1 practical selection editing plan](<2026-10-02-sprint-1-practical-selection-editing.md>) and [amended accepted design](<../specs/2026-10-02-compatibility-vertical-slice-design.md>) supersede the old locator/revision/ABA/object-identity/atomic-transaction requirements. Identical text manually selected elsewhere is now allowed. All instructions and checked/unchecked steps below describe the prior contract and historical execution, not active obligations. The [terminal Stage B NOT PASS report](<../../stage-b-gate-report.md>) remains historical NOT PASS; no native result is retroactively promoted. Only Sprint 1 is currently authorized; Apply remains disabled pending fresh native results and integration.
+
+> **Historical instructions for agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement and exercise only the accepted Stage B embedded R7 compatibility slice; produce evidence, not a premature Pilot RC.
 

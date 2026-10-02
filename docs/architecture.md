@@ -6,7 +6,7 @@
 
 ## Decision
 
-Предпочтён штатный visual inside plugin для word/cell/slide. `isVisual: true`, `isInsideMode: true`, `isModal: false` — требования, ещё не подтверждённые runtime. Размещение штатное, без UI-хаков. Node/OOXML/MCP reference не является production implementation.
+Предпочтён штатный visual inside plugin для word/cell/slide. `isVisual: true`, `isInsideMode: true`, `isModal: false` — требования; narrow native all-three inside UI evidence сохранено в [матрице](<compatibility-matrix.md>), не доказательство API parity/mutation. Размещение штатное, без UI-хаков. Node/OOXML/MCP reference не является production implementation.
 
 Альтернативы: внешний bridge/daemon отвергнут требованиями; zero-port embedded integration исследуется только при доказанном невозможном direct HTTPS, без автоматического изменения архитектуры или AI Hub.
 
@@ -26,8 +26,14 @@ Configuration provider возвращает validated effective settings; UI и�
 
 User → bounded trusted command + untrusted selected context → AI text → strict JSON parse/schema → policy → preview if mutation → user approval → static R7 handler → bounded tool result → следующий AI запрос → final.
 
-Перед Apply повторно проверить editor/selection/context; при изменении отказаться, а не применить к другому объекту. Не уничтожать неизвестные объекты, не Save автоматически; проверить native undo по каждой категории.
+Sprint 1: user selection → read → AI proposal → Preview → explicit Apply → check same current document/editor → reread existing nonempty selection → exact original-text comparison → public native replacement. Несовпадение: no write, «Выделение изменилось. Повторите команду». Пользователь может вручную выделить другой идентичный текст в том же document/editor. Immutable locator/revision/ABA/object identity of identical text/atomic transaction не требуются; asynchronous reread/write не атомарны.
+
+Первой поддерживается обычная текстовая selection; practically known unsupported/ambiguous selections отклоняются через public checks. Не обещать universal SmartArt/complex fields/tracked changes/OLE/mixed-rich support и не требовать exhaustive ideal-object inventory. Try ReplaceTextSmart first, then PasteText, then static Document API callCommand только после конкретного failed scenario. Native results, а не presence flags, определяют выбор; измерить font/size/bold/italic/color/paragraph style/surrounding text и native Undo на disposable fixtures. No private API/AGPL copying/model-generated executable code/automatic Save.
+
+One active operation/one callback slot; callback5000ms, analysis/connection150000ms, HTTP5–120s(default30), previewTTL120000ms, Apply observation15000ms. После write dispatch конфликтующие controls выключены, busy/uncertain ownership сохраняется до definite settlement; нет uncertain-write retry или обещания cancellation/rollback.
 
 ## Architectural gate
 
-A/B обязательны перед C–M: точный runtime и пути, SDK/API, inside UI, selection read/replace с сохранением форматирования, direct HTTPS POST с Authorization и X-Session-ID. CORS, preflight, CA и ошибки проверяются в реальном CEF, не только в Node/browser mock. Статус сейчас NOT RUN. Недоступность guest — environment access dependency, а не доказательство архитектурной невозможности.
+Точный target: Astra Linux SE1.7.9.41 advanced(voronezh), x86_64/kernel6.1.152-1-generic/X11-Fly; R7 Office2026.1.2.1942. [Historical Stage B NOT PASS](<stage-b-gate-report.md>) сохраняет прежние измерения; fresh practical Sprint 1 acceptance NOT RUN, docs reconciliation IN PROGRESS, Apply disabled. Active authority: [amended design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) / [Sprint 1 plan](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>); [eight-sprint roadmap](<roadmap.md>), only Sprint 1 authorized.
+
+Direct CEF HTTPS mock POST/OPTIONS, CORS ON/OFF, Authorization/X-Session-ID, timeout/redirect/diagnostics требуют native evidence, не Node/browser mock substitute. Closed prior evidence переиспользуется с явной provenance; retest только missing scenarios/relevant integration changes. Bank TLS/CORS/AUTH/Qwen NOT RUN до internal bank installation; no real-model calls in Sprint 1. Runtime FAIL escalation/cleanup — [test plan](<test-plan.md>). Недоступность guest — environment dependency, не доказательство SDK impossibility.

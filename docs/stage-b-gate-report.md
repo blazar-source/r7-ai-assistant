@@ -1,10 +1,18 @@
-# Stage B — итоговый доказательный отчёт: NOT PASS
+# Stage B — исторический итоговый доказательный отчёт: NOT PASS
 
-## Решение
+> **HISTORICAL / NOT RETROACTIVELY PASS.** Все решения, измерения и прежние mutation obligations ниже относятся к завершённому обследованию Stage B. User-approved [Sprint 1 plan](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) / [amended design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) заменяют locator/revision/ABA/object-ID-of-identical-text/atomic-transaction obligations; старые gaps не являются активными prerequisites. [Original Stage B plan](<superpowers/plans/2026-10-02-stage-b-implementation.md>) архивирован. Старый outcome остаётся NOT PASS, provenance и narrow measured labels сохранены.
+
+## Текущий Sprint 1 — не runtime proof
+
+Documentation reconciliation IN PROGRESS; fresh native practical replacement/formatting/Undo acceptance **NOT RUN**. Apply остаётся disabled. Новый contract: Preview → explicit Apply → same current document/editor check → current nonempty selection reread → exact original-text comparison → public native replacement. User manually selecting identical text elsewhere в том же document/editor разрешён; asynchronous reread/write не atomic. Ordinary selection first, practical public unsupported/ambiguous refusal; native measured font/size/bold/italic/color/paragraph style/surrounding text/Undo обязательны. Try ReplaceTextSmart first, then PasteText, then static Document API callCommand по конкретному failed scenario; no private API/AGPL/generated code/autoSave.
+
+Only Sprint 1 из [eight-sprint roadmap](<roadmap.md>) authorized. Bank TLS/CORS/AUTH/Qwen NOT RUN до internal bank installation; no real-model calls in Sprint 1. Closed prior network evidence переиспользуется с явной provenance; missing/relevant-change cases retest, не blanket PASS. Current acceptance/escalation/native cleanup — [test plan](<test-plan.md>). Этот docs-only Task 1 не меняет продукт и не запускает VM/network/trust actions.
+
+## Историческое решение
 
 **Stage B NOT PASS. Mutation subgate UNRESOLVED; Apply запрещён.** Это итог обследованного compatibility slice, не Pilot RC, не разрешение на C–M и не утверждение, что безопасная mutation в Р7 принципиально невозможна.
 
-Принятая [спецификация:40–44](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md#L40-L44>) разрешает failed/unresolved отчёт с выключенным Apply, но требует положительное доказательство Word mutation/formatting/undo для B PASS. [План](<superpowers/plans/2026-10-02-stage-b-implementation.md>) выполнен в допустимом failclosed режиме; составные native acceptance steps остаются частичными/неподтверждёнными. Подробные статусы и происхождение каждого наблюдения — в [матрице](<compatibility-matrix.md>), оставшиеся проверки — в [test plan](<test-plan.md>).
+Принятая на момент исторического отчёта спецификация разрешала failed/unresolved отчёт с выключенным Apply, но требовала положительное доказательство Word mutation/formatting/undo по прежнему contract для B PASS. [Текущая amended спецификация](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) заменяет требования, не это измеренное решение. [План](<superpowers/plans/2026-10-02-stage-b-implementation.md>) выполнен в допустимом failclosed режиме; составные native acceptance steps остаются частичными/неподтверждёнными. Подробные статусы и происхождение каждого наблюдения — в [матрице](<compatibility-matrix.md>), оставшиеся проверки — в [test plan](<test-plan.md>).
 
 ## Что реализовано и проверено
 
