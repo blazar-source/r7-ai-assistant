@@ -1,6 +1,7 @@
 import { utf8ByteLength } from '../shared/bytes.js';
 
 const statuses = Object.freeze({
+  CHECKING_R7: 'Проверка наличия API Р7…', R7_PRESENCE_READY: 'Проверка наличия API завершена. Документ не изменён.', R7_CHECK_UNAVAILABLE: 'Проверка Р7 недоступна для этого редактора / моста. API не угадываются.',
   READY: 'Готово к запросу', ANALYZING: 'Анализ…', CONNECTING: 'Проверка соединения…', CONNECTION_OK: 'Соединение проверено',
   READING_CONTEXT: 'Чтение выделения…', CONTEXT_READY: 'Контекст прочитан', CONTEXT_CHANGED: 'Контекст изменился. Прочитайте выделение заново.',
   COMPLETE: 'Ответ получен', PREVIEW_READY: 'Предложение готово. Документ не изменён.', PREVIEW_EXPIRED: 'Срок предложения истёк', PREVIEW_CANCELLED: 'Предложение отменено. Документ не изменён.',
@@ -49,11 +50,13 @@ export function mountPanel(root, controller) {
   on(mode, 'change', function () { controller.setMode(mode.value); });
   const include = field(toolbar, 'include-context', 'Передавать только выделенный текст', 'checkbox');
   on(include, 'change', function () { controller.setIncludeContext(include.checked); });
+  const checkR7 = button('Проверить Р7', 'check-r7', function () { controller.checkR7(); });
+  const capabilitySummary = node('p', '', 'r7-capabilities'); capabilitySummary.setAttribute('aria-live', 'polite');
   const refresh = button('Прочитать выделение', 'read-context', function () { controller.refreshContext(); });
   const context = node('p', '', 'context'); context.setAttribute('aria-live', 'polite');
   const selected = node('pre', '', 'selected-text');
   const contextDetails = node('details'); contextDetails.append(node('summary', 'Прочитанный текст'), selected);
-  toolbar.append(modeLabel, mode, refresh, context, contextDetails);
+  toolbar.append(modeLabel, mode, refresh, checkR7, capabilitySummary, context, contextDetails);
   const history = node('section', '', 'history'); history.setAttribute('aria-label', 'История чата');
   const composer = node('form', '', 'composer');
   const promptLabel = node('label', 'Запрос'); promptLabel.htmlFor = 'prompt';
@@ -102,7 +105,9 @@ export function mountPanel(root, controller) {
     status.textContent = statusText(state.status);
     badge.textContent = `Stage B · редактор: ${state.editorType} · runtimeVerified: false`;
     mode.value = state.mode; include.checked = state.includeContext;
-    stop.disabled = !state.active; send.disabled = state.active; test.disabled = state.active; refresh.disabled = state.active;
+    stop.disabled = !state.active; send.disabled = state.active; test.disabled = state.active; refresh.disabled = state.active; checkR7.disabled = state.active;
+    capabilitySummary.textContent = Number.isInteger(state.capabilityCount) && state.capabilityCount >= 0 && state.capabilityCount <= 6 ?
+      `Наличие API: ${state.capabilityCount} / 6. Область, форматирование и отмена не подтверждены. Применение отключено.` : '';
     context.textContent = contextText(state.context);
     selected.textContent = state.context.text;
     if (lastHistory !== state.chat.history) {

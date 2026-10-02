@@ -31,6 +31,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let active = null;
   let preview = null;
   let previewTimer = null;
+  let capabilityCount = null;
   let disposed = false;
   const listeners = new Set();
   function now() {
@@ -43,7 +44,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   function snapshot() {
     return Object.freeze({ status, active: active !== null, mode, includeContext, context, chat,
       settings: stored.settings, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
-      preview, canApply: false, generation, editorType: bridge?.getState().editorType ?? 'unknown',
+      preview, capabilityCount, canApply: false, generation, editorType: bridge?.getState().editorType ?? 'unknown',
       mutationReason: 'MUTATION_PROOF_UNRESOLVED', runtimeVerified: false, lifecycleEventsVerified: false });
   }
   function emit() { const state = snapshot(); for (const listener of listeners) listener(state); }
@@ -54,6 +55,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     if (old) { clear(old.timer); old.abort.abort(); }
     bridge?.invalidate();
     dropPreview();
+    capabilityCount = null;
     if (forgetContext) context = noContext();
     status = nextStatus;
   }
@@ -145,6 +147,34 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     subscribe(listener) { listeners.add(listener); listener(snapshot()); return function () { listeners.delete(listener); }; },
     analyze(user) { return run('analysis', user); },
     testConnection() { return run('connection'); },
+    async checkR7() {
+      if (disposed || active) return false;
+      let owned = null;
+      try {
+        // Local read-only check: no credential validation, UUID or AI request.
+        const deadline = now() + LIMITS.operationTimeoutMs;
+        invalidate('CHECKING_R7');
+        owned = { kind: 'capabilities', generation, deadline, abort: new AbortController(), timer: null };
+        active = owned;
+        owned.timer = timers.schedule(function () { if (active === owned) { invalidate('TIMEOUT', true); emit(); } }, LIMITS.operationTimeoutMs);
+        emit();
+        const platform = bridge?.getState();
+        if (platform?.busy) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
+        if (platform?.editorType !== 'word' || typeof bridge?.probeCapabilities !== 'function') {
+          finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+        }
+        const capabilities = await bridge.probeCapabilities({ signal: owned.abort.signal });
+        if (!valid(owned)) return false;
+        const flags = capabilities?.methodPresence;
+        if (!flags) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
+        // The owned bridge decodes a closed six-boolean schema. Retain only a
+        // count, never callback JSON, identifiers, API handles or method source.
+        const booleans = [flags.api, flags.getDocument, flags.getDocumentId, flags.replaceTextSmart, flags.getRangeBySelect, flags.isTrackRevisions];
+        if (booleans.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
+        const count = booleans.filter(value => value === true).length;
+        return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = count; });
+      } catch (error) { return fail(owned, error); }
+    },
     async refreshContext() {
       if (disposed || active) return false;
       let owned = null;

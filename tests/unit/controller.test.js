@@ -21,6 +21,23 @@ function setup(options = {}) {
   return { controller, calls, bridge, storage, clock, scheduled, advance(ms, fire = true) { time += ms; if (fire) for (const [token, t] of [...scheduled]) if (t.at <= time) { scheduled.delete(token); t.fn(); } } };
 }
 
+test('R7 check with no bridge reports local unsupported without HTTP or credentials', async () => {
+  const f = setup({ dependencies: { bridge: null } }); f.controller.reset();
+  assert.equal(typeof f.controller.checkR7, 'function', 'controller read-only capability action');
+  const before = f.controller.getState();
+  assert.equal(await f.controller.checkR7(), false);
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(f.controller.getState().capabilityCount, null); assert.equal(f.controller.getState().chat, before.chat);
+  assert.equal(f.calls.length, 0); assert.equal(f.scheduled.size, 0);
+});
+test('R7 check timer acquisition failure cannot reach SDK or strand active ownership', async () => {
+  let probes = 0;
+  const f = setup({ bridge: { probeCapabilities() { probes++; throw Error('must not dispatch'); } }, dependencies: { timers: { schedule() { throw Error('SECRET'); }, clear() {} } } });
+  assert.equal(typeof f.controller.checkR7, 'function', 'controller read-only capability action');
+  assert.equal(await f.controller.checkR7(), false); assert.equal(probes, 0);
+  assert.equal(f.controller.getState().status, 'INTERNAL_ERROR'); assert.equal(f.controller.getState().active, false);
+});
+
 test('ASK uses fresh bounded selection as untrusted user context and appends a complete pair', async () => {
   const { controller: c, calls } = setup();
   assert.equal(await c.analyze('вопрос'), true);
