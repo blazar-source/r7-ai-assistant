@@ -18,7 +18,7 @@ Authored source must prohibit eval, new Function, Function calls, executing Java
 - Revalidate target before Apply; preserve unsupported objects and native undo where verified.
 - Configured HTTPS only, TLS verification intact; reject credentials in URLs, non-HTTPS URLs and unapproved network destinations. Redirect behavior and CSP require real CEF testing.
 - DOM text rendered as text, never model-provided HTML. No CDN/runtime downloads or telemetry.
-- Keys masked, replaceable and deletable. Not in source/build/Git/logs/errors. Storage mechanism is undecided until SDK/CEF inspection; do not claim encryption. Prefer ephemeral key unless persisted storage has explicitly understood risks.
+- Keys masked, replaceable and deletable. Not in source/build/Git/logs/errors. Proposed B storage contract: non-secret settings in namespaced user CEF localStorage; key in memory by default, plain localStorage only with explicit opt-in and an unencrypted-storage warning. Do not claim encryption or a key vault. Real restart/reset/storage-failure behavior remains a target gate, not an assumption.
 - Chat in memory only. Logs contain only timestamp/tool/outcome/duration/error class/object count/step; no request/response/document content, headers, key or user URL.
 
 ## Release evidence

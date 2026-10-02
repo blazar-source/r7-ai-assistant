@@ -20,6 +20,8 @@ Bootstrap. Pilot RC **не выпущен**. Целевая версия: `0.9.0
 - [Безопасность](docs/security.md)
 - [Установка](docs/deployment.md)
 - [План проверки](docs/test-plan.md)
+- [Матрица совместимости](docs/compatibility-matrix.md)
+- [Спецификация vertical slice](docs/superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md)
 - [Этапы](docs/roadmap.md)
 - [Лицензирование](docs/licensing.md)
 - [ADR](docs/decisions/0001-embedded-runtime-and-compatibility-gate.md)
