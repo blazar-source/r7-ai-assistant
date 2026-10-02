@@ -1,6 +1,6 @@
 # Target environment
 
-## Requested baseline (user supplied; guest verification pending)
+## Requested baseline (runtime evidence and outstanding checks below)
 
 Astra Linux SE 1.7.9.41; Воронеж; x86_64; kernel 6.1.152-1-generic; X11/Fly; Р7-Офис 2026.1.2.1942. LibreOffice остаётся установленным.
 
@@ -21,6 +21,8 @@ Hyper-V queried through its management API:
 
 - Running R7 About screen: professional desktop version `2026.1.2.1942 (deb)`. It reports a trial license with 30 days remaining; permanent licensed operation is not established.
 - `dpkg-query -W r7-office`: `2026.1.2-1942~astra-signed`.
+- Opened the existing DOCX/XLSX/PPTX smoke fixtures through R7's Recent files view; Word, spreadsheet and presentation editor tabs each loaded and rendered their fixture. No editing or Save command issued. This proves editor launch/rendering only, not Assistant API/formatting/AI acceptance.
+- Actual `/opt/r7-office/desktopeditors/converter/x2t` exists and is executable; `/opt/r7-office/desktopeditors/libcef.so` is readable. No conversion performed and no CEF feature claim inferred from library existence. The Assistant still uses live Plugin API, not an external converter runtime.
 - `uname -r`: `6.1.152-1-generic`; `uname -m`: `x86_64`.
 - Desktop console reports `XDG_SESSION_TYPE=x11` and Fly terminal is running.
 - Retrieved `/etc/astra_version` through SFTP: `1.7.9`; `/etc/astra/build_version`: `1.7.9.41`. Installed `astra-version`: `8.1.49+ci9+v1.7.9.41`.

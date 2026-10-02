@@ -10,6 +10,8 @@ This is a development evidence matrix, not a Pilot RC PASS report.
 | Desktop session | Guest console XDG_SESSION_TYPE=x11; Fly terminal launched | VERIFIED |
 | Installed R7 | Package 2026.1.2-1942~astra-signed; About 2026.1.2.1942 (deb) | VERIFIED |
 | R7 launch | Existing running application observed and About opened | VERIFIED |
+| word/cell/slide launch/rendering | Existing DOCX/XLSX/PPTX smoke fixtures opened through R7 UI; all three editor tabs rendered | VERIFIED LAUNCH ONLY |
+| Vendor converter / CEF library | Actual converter/x2t executable and libcef.so readable; no converter/CEF transport test | VERIFIED EXISTENCE ONLY |
 | R7 permanent license | About reports trial with 30 days remaining | NOT VERIFIED |
 | Clean / dev separation | 02-astra-r7-clean preserved, 03-r7-ai-dev-baseline created | VERIFIED |
 | System/user plugin roots | Actual directories and installed v1 SDK inspected by SFTP | VERIFIED EXISTENCE ONLY |
