@@ -34,6 +34,17 @@ Public model inventory source: https://openrouter.ai/api/v1/models . Availabilit
 
 Status rules: VERIFIED is limited to the evidence named; PACKAGE EVIDENCE ONLY and CATALOG VERIFIED ONLY never imply target runtime PASS. Update after real tests rather than inferring from mocks. ZPS permission failure is not evidence that ZPS is disabled.
 
+## Task 5 host-only HTTPS infrastructure (not target acceptance)
+
+| Capability | Evidence / boundary | Status |
+| --- | --- | --- |
+| HTTPS-only strict mock / request caps / profiles / session matching | [Host test infrastructure](<../tests/acceptance/infrastructure/README.md>); exact path/body/required headers, explicit CORS, bounded transient buffers and metadata | HOST TEST PASS |
+| Node TLS CA / SAN / time / chain | Ephemeral CA/leaf; explicitly supplied test-process CA; untrusted CA and wrong SAN denied; no trust-store changes | HOST TEST PASS ONLY |
+| Actual Astra/CEF certificate / NSS trust / tool availability | Requires parent-authorized endpoint/certificate inputs and target process; absent inputs are an environment dependency, not certificate failure | NOT RUN |
+| Actual install / all-three panels / runtime APIs / HTTPS / settings / safe Word mutation | Controller-owned after host review; Node TLS cannot satisfy any of these gates | NOT RUN |
+
+The mock is excluded from the unchanged eight-file production archive. No guest, trust, firewall, installation, real-model or persistent/public-service action is performed by this host task. Mandatory Word mutation remains unresolved and Apply disabled; Stage B is not PASS.
+
 ## Task 3 authored bridge boundary (host implementation, not target PASS)
 
 - The [bridge](<../src/plugin/bridge.js>) owns one callback slot shared by selection reads and static Word method-presence probes. Completion is callback-only: `executeMethod` returning false may mean queued, not rejection. Cancellation, lifecycle invalidation, timeout or a dispatch exception settle the caller but keep the slot busy/uncertain until the matching callback arrives. Duplicate old closure callbacks cannot release a new owner. Disposal is not SDK reinitialization; recreating an adapter for the same plugin object is denied.

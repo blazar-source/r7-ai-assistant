@@ -1,6 +1,6 @@
 # Test plan
 
-Status of all product tests: NOT RUN. No unit test claim substitutes for R7 runtime acceptance.
+Actual target product acceptance: NOT RUN. Host automated suites are implemented; no unit test claim substitutes for R7 runtime acceptance. Task5's [separate HTTPS mock](<../tests/acceptance/infrastructure/README.md>) documents focused Node TLS tests, explicit parent-run environment inputs and deferred authorized Astra/CEF trust gates. Full `npm test` discovers these tests; mandatory known-host OpenSSL absence fails rather than claiming proof.
 
 ## A/B blocking gate
 
