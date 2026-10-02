@@ -1,6 +1,6 @@
 # Compatibility vertical slice design
 
-Status: Proposed implementation design; runtime gate NOT RUN.
+Status: Accepted by user for Stage B with trusted HTTPS mock requirement; runtime gate NOT RUN. User authorized planning and execution of Stage B only; C–M remain outside current execution scope.
 
 ## Purpose
 
@@ -66,6 +66,12 @@ HTTP body reading for a byte ceiling is transport buffering only, not AI streami
 ## Security
 
 ADR 0002 is binding: no authored eval/Function/string execution, no model-generated callCommand. Static check must reject direct and indirect dynamic execution and non-static callCommand bodies; vendor SDK remains unchanged and outside authored audit scope. No external telemetry, content logs, CDN, local sockets, daemon, WebSocket, Node user runtime or TLS bypass. Network request limited to configured HTTPS endpoint; reject URL credentials, fragments, non-HTTPS and redirects to another origin. If XHR/CEF cannot enforce required redirect constraints, record a gate failure rather than claim enforcement.
+
+## HTTPS mock trust and packaging boundary
+
+HTTPS mock is test infrastructure only. Keep its implementation under tests/acceptance/infrastructure; endpoints, certificates, private keys, CA material and runtime state are local ignored inputs. Never include the mock server, its dependencies/configuration/certificates or its endpoint in the production plugin archive. No localhost service is part of the end-user runtime.
+
+Its TLS certificate must be valid (time, hostname/SAN and chain) and trusted by the actual Astra/CEF client. No TLS verification bypass, certificate-error flags, curl -k or equivalent. A test CA may be used only when installed through a documented authorized trust process in the separate dev state; never contaminate the clean checkpoint or silently change system/user trust. Missing authorized CA provisioning or a suitable trusted HTTPS endpoint is an explicit test-environment dependency, not grounds for HTTP downgrade or a false gate PASS. Mock success also does not prove the bank's internal CA/CORS compatibility.
 
 ## Acceptance and stop conditions
 
