@@ -28,7 +28,12 @@ test('HTTPS provider prefix is preserved and request snapshot is independent', (
   assert.equal(validateSettings({ endpoint: 'https://example.invalid/v1/chat/completions' }).endpoint, 'https://example.invalid/v1/chat/completions');
 });
 
-for (const endpoint of ['http://example.invalid/v1/chat/completions', 'https://u:p@example.invalid/v1/chat/completions', 'https://example.invalid/v1/chat/completions?', 'https://example.invalid/v1/chat/completions#', 'https://example.invalid/v1/chat/completions/', 'https://example.invalid/v1/chat/completions?x=1', 'https://example.invalid/v1/chat/completions#x', ' https://example.invalid/v1/chat/completions', 'https://example.invalid/other', 'https://example.invalid/\nv1/chat/completions', 'https://example.invalid/a/../v1/chat/completions']) {
+test('at-sign in HTTPS provider-prefix path remains valid', () => {
+  const endpoint = 'https://example.invalid/provider@tenant/v1/chat/completions';
+  assert.equal(validateRequestSettings({ ...configured, endpoint }).endpoint, endpoint);
+});
+
+for (const endpoint of ['http://example.invalid/v1/chat/completions', 'https://u:p@example.invalid/v1/chat/completions', 'https://@example.invalid/v1/chat/completions', 'https://:@example.invalid/v1/chat/completions', 'https://example.invalid/v1/chat/completions?', 'https://example.invalid/v1/chat/completions#', 'https://example.invalid/v1/chat/completions/', 'https://example.invalid/v1/chat/completions?x=1', 'https://example.invalid/v1/chat/completions#x', ' https://example.invalid/v1/chat/completions', 'https://example.invalid/other', 'https://example.invalid/\nv1/chat/completions', 'https://example.invalid/a/../v1/chat/completions']) {
   test(`reject invalid endpoint fixture ${JSON.stringify(endpoint)}`, () => rejects({ endpoint }, 'INVALID_ENDPOINT'));
 }
 

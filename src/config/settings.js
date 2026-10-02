@@ -13,7 +13,7 @@ function checkEndpoint(endpoint) {
   if (typeof endpoint !== 'string') invalid(ERROR_CODES.INVALID_ENDPOINT);
   assertByteLimit(endpoint, LIMITS.endpointBytes);
   if (endpoint === '') return;
-  if (!/^https:\/\//i.test(endpoint) || /[\s\\?#]/u.test(endpoint)) invalid(ERROR_CODES.INVALID_ENDPOINT);
+  if (!/^https:\/\//i.test(endpoint) || /[\s\\?#]/u.test(endpoint) || /^https:\/\/[^/]*@/i.test(endpoint)) invalid(ERROR_CODES.INVALID_ENDPOINT);
   let parsed;
   try { parsed = new URL(endpoint); } catch { invalid(ERROR_CODES.INVALID_ENDPOINT); }
   const rawPath = endpoint.replace(/^https:\/\/[^/]+/i, '');
