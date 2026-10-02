@@ -54,6 +54,21 @@ test('HTML/CSS only local authored assets plus exact separate installed SDK with
     const pixels = inflateSync(Buffer.concat(compressed)); assert.equal(pixels.length, size * (size * 4 + 1)); assert.ok(new Set(pixels).size > 4);
   }
 });
+test('packaged CSP permits SDK own-config bootstrap without blanket local-file or HTTP access', async () => {
+  const built = await buildPlugin({ output: 'dist/task4-package-csp' });
+  const entries = inventory(built.archive);
+  assert.deepEqual(entries.map(e => e.name), expected, 'no extra root/runtime assets');
+  const markup = entries.find(e => e.name === 'index.html').data.toString('utf8');
+  const policies = [...markup.matchAll(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"\s*>/gi)];
+  assert.equal(policies.length, 1, 'one enforced packaged CSP');
+  const directives = policies[0][1].split(';').map(part => part.trim().split(/\s+/)).filter(([name]) => name);
+  const connections = directives.filter(([name]) => name === 'connect-src');
+  assert.equal(connections.length, 1);
+  const sources = connections[0].slice(1);
+  assert.ok(sources.includes("'self'"), "SDK GET './config.json' needs document-origin connect permission");
+  assert.deepEqual(sources.slice().sort(), ["'self'", 'https:'], 'only self and HTTPS; no http:, file:, wildcard or other blanket source');
+  assert.deepEqual(directives.find(([name]) => name === 'default-src'), ['default-src', "'none'"]);
+});
 test('build refuses output outside ignored dist tree and never accepts an arbitrary copy inventory', async () => {
   await assert.rejects(buildPlugin({ output: 'src/unsafe' }));
   await assert.rejects(buildPlugin({ output: 'dist/../src/unsafe' }));
