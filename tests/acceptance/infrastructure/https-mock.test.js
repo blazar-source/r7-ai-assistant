@@ -10,6 +10,14 @@ import { parse } from 'acorn';
 
 const session = '12345678-1234-4123-8123-123456789abc';
 const other = '12345678-1234-4123-8123-123456789abd';
+const diagnosticZeros = Object.freeze({
+  originNullRequests: 0, originFileRequests: 0, originOtherRequests: 0, originMissingRequests: 0,
+  rejectedRoute: 0, rejectedOriginMismatch: 0, rejectedMissingOrigin: 0,
+  rejectedPreflightMethodMismatch: 0, rejectedPreflightHeadersMismatch: 0,
+  preflightHeadersExact: 0, preflightHeadersNonExact: 0
+});
+const cumulativeNames = ['requests', 'preflights', 'posts', 'originPresentRequests', 'accepted', 'rejected', 'repeatedSessions', ...Object.keys(diagnosticZeros)];
+const statsKeys = [...cumulativeNames, 'sessions', 'sessionCapacityReached', 'activeSockets', 'pendingTimers'].sort();
 const body = () => ({ model: 'qwen', messages: [{ role: 'system', content: 'Synthetic only' }, { role: 'user', content: 'Synthetic input' }], max_tokens: 1024, temperature: 0.2 });
 const headers = () => ({ Authorization: `Bearer ${SYNTHETIC_KEY}`, 'Content-Type': 'application/json', 'X-Session-ID': session });
 function request(mock, ca, options = {}) {
@@ -106,7 +114,7 @@ test('trusted profile, not message instructions, determines proposal; stats cont
     await request(mock, tls.ca);
     await request(mock, tls.ca, { headers: { ...headers(), 'X-Session-ID': other } });
     await mock.close();
-    assert.deepEqual(mock.stats(), { requests: 3, preflights: 0, posts: 3, originPresentRequests: 0, accepted: 3, rejected: 0, sessions: 2, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
+    assert.deepEqual(mock.stats(), { ...diagnosticZeros, originMissingRequests: 3, requests: 3, preflights: 0, posts: 3, originPresentRequests: 0, accepted: 3, rejected: 0, sessions: 2, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
   });
 });
 for (const [profile, status] of [['401', 401], ['403', 403], ['429', 429], ['5xx', 503], ['redirect', 307], ['oversize', 200]]) {
@@ -202,7 +210,7 @@ for (const corsMode of ['allow', 'omit']) {
         }
       }
       await mock.close();
-      assert.deepEqual(mock.stats(), { requests: 19, preflights: 6, posts: 12, originPresentRequests: 17, accepted: 2, rejected: 16, sessions: 1, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
+      assert.deepEqual(mock.stats(), { ...diagnosticZeros, originNullRequests: 15, originOtherRequests: 2, originMissingRequests: 2, rejectedRoute: 1, rejectedOriginMismatch: 2, rejectedMissingOrigin: 1, rejectedPreflightMethodMismatch: 1, rejectedPreflightHeadersMismatch: 2, preflightHeadersExact: 2, preflightHeadersNonExact: 3, requests: 19, preflights: 6, posts: 12, originPresentRequests: 17, accepted: 2, rejected: 16, sessions: 1, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
     }, { corsMode });
   });
   for (const [profile, status] of [['final', 200], ['proposal', 200], ['401', 401], ['403', 403], ['429', 429], ['5xx', 503], ['redirect', 307], ['oversize', 200], ['timeout', 200]]) {
@@ -218,6 +226,52 @@ for (const corsMode of ['allow', 'omit']) {
     });
   }
 }
+for (const corsMode of ['allow', 'omit']) {
+  test(`${corsMode} diagnostic deltas classify first refusal without retaining request values (host only)`, async () => {
+    // Removing a classification, changing rejection precedence or widening preflight acceptance must fail.
+    await withMock('final', async (mock, tls) => {
+      const cases = [
+        [{ method: 'OPTIONS', headers: preflightHeaders() }, 204, { originNullRequests: 1, preflightHeadersExact: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), Origin: 'file://' } }, 403, { originFileRequests: 1, rejectedOriginMismatch: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), Origin: 'https://foreign.invalid' } }, 403, { originOtherRequests: 1, rejectedOriginMismatch: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), Origin: '' } }, 403, { originOtherRequests: 1, rejectedOriginMismatch: 1 }],
+        [{ method: 'OPTIONS', headers: { 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id' } }, 403, { originMissingRequests: 1, rejectedMissingOrigin: 1, preflightHeadersExact: 1 }],
+        [{ method: 'OPTIONS', headers: {} }, 403, { originMissingRequests: 1, rejectedMissingOrigin: 1, preflightHeadersNonExact: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Method': 'GET' } }, 403, { originNullRequests: 1, rejectedPreflightMethodMismatch: 1, preflightHeadersExact: 1 }],
+        [{ method: 'OPTIONS', headers: { Origin: 'null', 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id' } }, 403, { originNullRequests: 1, rejectedPreflightMethodMismatch: 1, preflightHeadersExact: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Headers': 'authorization, content-type' } }, 403, { originNullRequests: 1, rejectedPreflightHeadersMismatch: 1, preflightHeadersNonExact: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id, x-extra' } }, 403, { originNullRequests: 1, rejectedPreflightHeadersMismatch: 1, preflightHeadersNonExact: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id, x-session-id' } }, 403, { originNullRequests: 1, rejectedPreflightHeadersMismatch: 1, preflightHeadersNonExact: 1 }],
+        [{ method: 'OPTIONS', headers: { Origin: 'null', 'Access-Control-Request-Method': 'POST' } }, 403, { originNullRequests: 1, rejectedPreflightHeadersMismatch: 1, preflightHeadersNonExact: 1 }],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Headers': ' X-Session-ID, Authorization , CONTENT-TYPE ' } }, 204, { originNullRequests: 1, preflightHeadersExact: 1 }],
+        [{ method: 'OPTIONS', path: '/provider/v1/chat/completions?synthetic=1', headers: { Origin: 'file://' } }, 404, { originFileRequests: 1, rejectedRoute: 1 }],
+        [{ method: 'OPTIONS', path: '/%70rovider/v1/chat/completions', headers: preflightHeaders() }, 404, { originNullRequests: 1, rejectedRoute: 1 }],
+        [{ headers: { ...headers(), Origin: 'file://synthetic' } }, 403, { originOtherRequests: 1, rejectedOriginMismatch: 1 }],
+        [{}, 200, { originMissingRequests: 1 }],
+        [{ headers: { ...headers(), Origin: 'null' } }, 200, { originNullRequests: 1 }]
+      ];
+      for (const [options, status, expected] of cases) {
+        const before = mock.stats();
+        const result = await request(mock, tls.ca, options);
+        assert.equal(result.status, status);
+        if (corsMode === 'omit') assertNoCors(result);
+        const after = mock.stats();
+        assert.deepEqual(Object.keys(after).sort(), statsKeys, 'closed technical-only schema');
+        assert.ok(Object.isFrozen(after));
+        for (const name of Object.keys(diagnosticZeros)) assert.equal(after[name] - before[name], expected[name] ?? 0, name);
+        assert.equal(after.requests - before.requests, 1);
+        assert.equal(after.accepted - before.accepted, status === 200 ? 1 : 0, 'OPTIONS never authentication proof');
+        assert.equal(after.rejected - before.rejected, status >= 400 ? 1 : 0);
+        assert.ok(Object.entries(after).every(([name, value]) => name === 'sessionCapacityReached' ? typeof value === 'boolean' : Number.isSafeInteger(value) && value >= 0), 'no raw strings, arrays or digests');
+      }
+    }, { corsMode });
+  });
+}
+
+test('diagnostic file classification does not permit a file origin in trusted configuration', async () => {
+  await assert.rejects(startMock({ keyPath: 'synthetic-missing', certPath: 'synthetic-missing', listenAddress: '127.0.0.1', port: 0, prefix: '', profile: 'final', corsOrigin: 'file://', delayMs: 100 }), { message: 'MOCK_CONFIG_INVALID' });
+});
+
 test('eight-field config defaults to allow even with an inherited mode; running mode is snapshotted', async () => {
   const tls = await tlsFixture();
   let mock;
@@ -256,16 +310,36 @@ test('every cumulative counter uses the private safe-integer ceiling contract', 
   const expected = parse('function increment(value) { return Math.min(value + 1, Number.MAX_SAFE_INTEGER); }', { ecmaVersion: 2022 }).body[0];
   const shape = node => JSON.stringify(node, (key, value) => key === 'start' || key === 'end' ? undefined : value);
   assert.equal(shape(helper), shape(expected), 'exact +1 and safe-integer clamp, including at the ceiling');
-  const cumulative = new Set(['requests', 'preflights', 'posts', 'originPresentRequests', 'accepted', 'rejected', 'repeatedSessions']);
+  const cumulative = new Set(cumulativeNames);
+  let initializer;
+  function findCounts(node) {
+    if (!node?.type) return;
+    if (node.type === 'VariableDeclarator' && node.id.name === 'counts') initializer = node.init;
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(findCounts);
+      else if (value?.type) findCounts(value);
+    }
+  }
+  findCounts(tree);
+  assert.equal(initializer?.type, 'ObjectExpression');
+  assert.deepEqual(initializer.properties.map(node => node.key.name).sort(), [...cumulative, 'sessions', 'sessionCapacityReached'].sort(), 'every stored count is in the closed public contract');
+  for (const node of initializer.properties) {
+    assert.equal(node.value.type, 'Literal');
+    assert.equal(node.value.value, node.key.name === 'sessionCapacityReached' ? false : 0);
+  }
   const covered = new Set();
   function walk(node) {
     if (!node?.type) return;
     const target = node.type === 'AssignmentExpression' ? node.left : node.type === 'UpdateExpression' ? node.argument : null;
-    if (target?.type === 'MemberExpression' && target.object.name === 'counts' && cumulative.has(target.property.name)) {
+    if (target?.type === 'MemberExpression' && target.object.name === 'counts') {
+      assert.equal(target.computed, false, 'no dynamic counter names');
       const name = target.property.name;
+      assert.ok(cumulative.has(name) || name === 'sessions' || name === 'sessionCapacityReached', 'no uncontracted counter writes');
       assert.equal(node.operator, '=', name);
-      assert.equal(shape(node.right), shape(parse(`increment(counts.${name})`, { ecmaVersion: 2022 }).body[0].expression), name);
-      covered.add(name);
+      if (cumulative.has(name)) {
+        assert.equal(shape(node.right), shape(parse(`increment(counts.${name})`, { ecmaVersion: 2022 }).body[0].expression), name);
+        covered.add(name);
+      }
     }
     for (const value of Object.values(node)) {
       if (Array.isArray(value)) { for (const child of value) walk(child); }

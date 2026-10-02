@@ -56,7 +56,11 @@ export async function startMock(config) {
   } catch { throw new Error('MOCK_TLS_INVALID'); }
   const route = `${prefix}/v1/chat/completions`;
   const sockets = new Set(); const timers = new Set(); const sessions = new Set();
-  const counts = { requests: 0, preflights: 0, posts: 0, originPresentRequests: 0, accepted: 0, rejected: 0, sessions: 0, repeatedSessions: 0, sessionCapacityReached: false };
+  const counts = { requests: 0, preflights: 0, posts: 0, originPresentRequests: 0, accepted: 0, rejected: 0, sessions: 0, repeatedSessions: 0, sessionCapacityReached: false,
+    originNullRequests: 0, originFileRequests: 0, originOtherRequests: 0, originMissingRequests: 0,
+    rejectedRoute: 0, rejectedOriginMismatch: 0, rejectedMissingOrigin: 0,
+    rejectedPreflightMethodMismatch: 0, rejectedPreflightHeadersMismatch: 0,
+    preflightHeadersExact: 0, preflightHeadersNonExact: 0 };
   let server;
   try {
     server = https.createServer({ key, cert, minVersion: 'TLSv1.2', maxHeaderSize: 16384, handshakeTimeout: 5000, requestTimeout: 5000, headersTimeout: 5000 }, (req, res) => {
@@ -65,19 +69,30 @@ export async function startMock(config) {
       if (req.method === 'OPTIONS') counts.preflights = increment(counts.preflights);
       if (req.method === 'POST') counts.posts = increment(counts.posts);
       if (req.headers.origin !== undefined) counts.originPresentRequests = increment(counts.originPresentRequests);
+      // Fixed literal classification only; no origin strings enter diagnostic state.
+      if (req.headers.origin === undefined) counts.originMissingRequests = increment(counts.originMissingRequests);
+      else if (req.headers.origin === 'null') counts.originNullRequests = increment(counts.originNullRequests);
+      else if (req.headers.origin === 'file://') counts.originFileRequests = increment(counts.originFileRequests);
+      else counts.originOtherRequests = increment(counts.originOtherRequests);
       const reply = (status, payload = '') => {
         res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Connection: 'close' });
         res.end(payload);
       };
       const reject = status => { counts.rejected = increment(counts.rejected); req.resume(); reply(status, '{"error":"SYNTHETIC_REQUEST_REJECTED"}'); };
-      if (req.url !== route) { reject(404); return; }
-      if (req.headers.origin !== undefined && req.headers.origin !== corsOrigin) { reject(403); return; }
+      if (req.url !== route) { counts.rejectedRoute = increment(counts.rejectedRoute); reject(404); return; }
+      if (req.headers.origin !== undefined && req.headers.origin !== corsOrigin) { counts.rejectedOriginMismatch = increment(counts.rejectedOriginMismatch); reject(403); return; }
       if (corsMode === 'allow' && req.headers.origin === corsOrigin) {
         res.setHeader('Access-Control-Allow-Origin', corsOrigin); res.setHeader('Vary', 'Origin');
       }
       if (req.method === 'OPTIONS') {
         const requested = (req.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(item => item.trim()).sort();
-        if (req.headers.origin !== corsOrigin || req.headers['access-control-request-method'] !== 'POST' || JSON.stringify(requested) !== JSON.stringify(requiredHeaders)) { reject(403); return; }
+        const exactHeaders = JSON.stringify(requested) === JSON.stringify(requiredHeaders);
+        if (exactHeaders) counts.preflightHeadersExact = increment(counts.preflightHeadersExact);
+        else counts.preflightHeadersNonExact = increment(counts.preflightHeadersNonExact);
+        // First failing validator only; unchanged route/origin/method/header precedence.
+        if (req.headers.origin !== corsOrigin) { counts.rejectedMissingOrigin = increment(counts.rejectedMissingOrigin); reject(403); return; }
+        if (req.headers['access-control-request-method'] !== 'POST') { counts.rejectedPreflightMethodMismatch = increment(counts.rejectedPreflightMethodMismatch); reject(403); return; }
+        if (!exactHeaders) { counts.rejectedPreflightHeadersMismatch = increment(counts.rejectedPreflightHeadersMismatch); reject(403); return; }
         if (corsMode === 'allow') {
           res.setHeader('Access-Control-Allow-Methods', 'POST');
           res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Session-ID');
