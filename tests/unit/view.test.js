@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mountPanel } from '../../src/ui/view.js';
+import { mountPanel, statusText } from '../../src/ui/view.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { dom } from '../fixtures/dom.js';
@@ -13,6 +13,9 @@ function fixture(response = { type: 'final', message: '<img src=x onerror=alert(
   assert.ok(tree.id('prompt'), 'mounted composer');
   return { ...tree, controller, panel };
 }
+test('BYTE_LIMIT status caption covers input, selection and response without implying truncation', () => {
+  assert.equal(statusText('BYTE_LIMIT'), 'Превышен лимит UTF-8 для ввода, выделения или ответа; текст не обрезается.');
+});
 test('view supplies semantic labeled editable connection controls and masked key', () => {
   const { all, id, controller } = fixture();
   for (const name of ['endpoint','model','apiKey','httpTimeoutSeconds','maxTokens','temperature','rememberKey']) {
