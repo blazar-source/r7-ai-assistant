@@ -50,12 +50,27 @@ export function auditSource(source, label = 'source.js') {
     }
   }
   const computedAliases = new Set();
+  const aggregationAliases = new Set();
+  function aggregationFunction(node) {
+    if (!node) return false;
+    if (node.type === 'Identifier') return aggregationAliases.has(node.name);
+    if (node.type !== 'MemberExpression') return false;
+    const name = node.computed ? constantProperty(node.property) : node.property.name;
+    return name === 'values' || name === 'entries';
+  }
   function computedValue(node) {
     if (!node) return false;
     if (node.type === 'Identifier') return computedAliases.has(node.name);
     if (node.type === 'MemberExpression') return (node.computed && constantProperty(node.property) === null) || computedValue(node.object);
     if (node.type === 'ChainExpression' || node.type === 'AwaitExpression') return computedValue(node.expression ?? node.argument);
-    if (node.type === 'CallExpression' || node.type === 'NewExpression') return computedValue(node.callee);
+    if (node.type === 'CallExpression' || node.type === 'NewExpression') {
+      const callee = node.callee;
+      const name = callee.type === 'MemberExpression' ? (callee.computed ? constantProperty(callee.property) : callee.property.name) : null;
+      // Bulk descriptors may expose compilation factories without a named sink.
+      // Treat their results as DATA only; aggregation must not erase that taint.
+      return name === 'getOwnPropertyDescriptors' || computedValue(callee) ||
+        (aggregationFunction(callee) && node.arguments.some(computedValue));
+    }
     if (node.type === 'AssignmentExpression') return computedValue(node.right);
     if (node.type === 'ArrayExpression') return node.elements.some(computedValue);
     if (node.type === 'ObjectExpression') return node.properties.some(property => computedValue(property.value ?? property.argument));
@@ -81,19 +96,24 @@ export function auditSource(source, label = 'source.js') {
   // Fixed point catches aliases of aliases and assignments regardless of order.
   let previousSize;
   do {
-    previousSize = computedAliases.size;
+    previousSize = computedAliases.size + aggregationAliases.size;
     walk(tree, node => {
+      const target = node.type === 'VariableDeclarator' ? node.id : node.type === 'AssignmentExpression' ? node.left : null;
+      const value = node.type === 'VariableDeclarator' ? node.init : node.type === 'AssignmentExpression' ? node.right : null;
+      if (target?.type === 'Identifier' && aggregationFunction(value)) aggregationAliases.add(target.name);
       if (node.type === 'VariableDeclarator') markPattern(node.id, computedValue(node.init));
       if (node.type === 'AssignmentExpression') markPattern(node.left, computedValue(node.right));
       if (node.type === 'AssignmentPattern') markPattern(node.left, computedValue(node.right));
       if (node.type === 'ObjectPattern') markPattern(node, false);
     });
-  } while (computedAliases.size !== previousSize);
+  } while (computedAliases.size + aggregationAliases.size !== previousSize);
   function checkSink(name, node, parent) {
     if (executionNames.has(name)) report('DYNAMIC_EXECUTION', node);
     const call = parent?.type === 'CallExpression' && parent.callee === node ? parent : null;
     if (timerNames.has(name) && (!call || !inlineFunction(call.arguments.at(0)))) report('DYNAMIC_TIMER', node);
     if (name === 'callCommand' && (!call || !inlineFunction(call.arguments.at(0)))) report('NON_STATIC_COMMAND', node);
+    // Extracted bulk-reflection aliases are unsupported, even for DATA use.
+    if (name === 'getOwnPropertyDescriptors' && !call) report('DYNAMIC_EXECUTION', node);
     if (name === 'getOwnPropertyDescriptor') {
       const property = call ? constantProperty(call.arguments.at(1) ?? {}) : null;
       if (!call) report('DYNAMIC_EXECUTION', node);

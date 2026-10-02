@@ -28,6 +28,16 @@ non-generator authored functions; extracted aliases and variable/string bodies
 are rejected. Validated JSON-compatible model data can cross through Asc.scope,
 never interpolation into function source.
 
+Bulk `getOwnPropertyDescriptors` results are DATA-only: calling a derived value
+fails closed, including constant-property reads and `values`/`entries` aggregation
+(immediate or through local identifier aliases). Extracting the bulk descriptor
+method itself is unsupported and rejected by name. Direct bulk DATA inspection,
+single `getOwnPropertyDescriptor` DATA validation and `getPrototypeOf` DATA
+validation remain permitted. Aggregation propagates computed/descriptor-result
+taint only for these named operations; unrelated calls do not inherit argument
+taint. This is deliberately conservative, including shadowed names and calls of
+harmless methods on these results, not a complete reflection/aggregation model.
+
 This is a conservative source-control guard, **not a JavaScript sandbox**, general
 alias/flow analysis, or proof of runtime command eligibility. The local check is
 monotone (no untainting), conflates shadowed names, and taints a whole container

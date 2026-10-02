@@ -89,6 +89,36 @@ for (const source of [
   test(`guard allows authored static fixture ${source.slice(0, 32)}`, () => assert.deepEqual(auditSource(source, 'safe.js'), []));
 }
 
+// Regression: removing reflected-result taint must reject these parser-only
+// compilation shapes, without invoking any function or model text.
+for (const [name, source] of [
+  ['exact review reproducer', 'const factory = Object.values(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(async function () {})))[0].value; factory(modelText)();'],
+  ['direct bulk descriptor execution', 'Object.getOwnPropertyDescriptors(proto).safe.value(modelText)();'],
+  ['constant computed bulk property', 'const factory = Object["getOwnProperty" + "Descriptors"](proto).safe.value; factory(modelText)();'],
+  ['aliased descriptor and aggregation results', 'const descriptors = Object.getOwnPropertyDescriptors(proto); const values = Object.values(descriptors); const factory = values[0].value; factory(modelText)();'],
+  ['immediate aggregation execution', 'Object.values(Object.getOwnPropertyDescriptors(proto))[0].value(modelText)();'],
+  ['entries aggregation execution', 'const factory = Object.entries(Object.getOwnPropertyDescriptors(proto))[0][1].value; factory(modelText)();'],
+  ['indirect aggregation execution', 'const collect = Object.values; const factory = collect(Object.getOwnPropertyDescriptors(proto))[0].value; factory(modelText)();'],
+  ['extracted bulk descriptor method', 'const describe = Object.getOwnPropertyDescriptors; const factory = Object.values(describe(proto))[0].value; factory(modelText)();']
+]) {
+  test(`inert guard rejects reflected compilation: ${name}`, () => {
+    const findings = auditSource(source, 'reflected-fixture.js');
+    assert.ok(findings.some(finding => ['DYNAMIC_EXECUTION', 'DYNAMIC_PROPERTY'].includes(finding.code)), `missing classified finding; got ${JSON.stringify(findings)}`);
+    assert.ok(findings.every(finding => finding.label === 'reflected-fixture.js'));
+  });
+}
+
+for (const [name, source] of [
+  ['single descriptor DATA validation', 'const length = Object.getOwnPropertyDescriptor(value, "length"); if (!length || !Object.hasOwn(length, "value") || length.enumerable || typeof length.value !== "number") invalid();'],
+  ['prototype DATA validation', 'if (!raw || ![Object.prototype, null].includes(Object.getPrototypeOf(raw))) invalid();'],
+  ['bulk descriptor DATA presence check', 'const descriptor = Object.getOwnPropertyDescriptors(object)[name]; const present = !!descriptor && typeof descriptor.value === "function";'],
+  ['immediate aggregated DATA validation', 'for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(raw))) { if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value")) invalid(); }'],
+  ['aliased aggregated DATA inspection', 'const descriptors = Object.getOwnPropertyDescriptors(raw); const values = Object.values(descriptors); const descriptor = values[0]; const present = typeof descriptor.value === "boolean";'],
+  ['quoted bulk descriptor name', 'const text = "Object.getOwnPropertyDescriptors(proto)"; JSON.parse(text);']
+]) {
+  test(`guard preserves descriptor DATA: ${name}`, () => assert.deepEqual(auditSource(source, 'descriptor-data.js'), []));
+}
+
 test('parse failures have safe code/location, never raw parser/source message', () => {
   const result = auditSource('const synthetic_private_value = ;', 'bad.js');
   assert.equal(result.length, 1);
