@@ -23,10 +23,14 @@ Hyper-V queried through its management API:
 - `dpkg-query -W r7-office`: `2026.1.2-1942~astra-signed`.
 - `uname -r`: `6.1.152-1-generic`; `uname -m`: `x86_64`.
 - Desktop console reports `XDG_SESSION_TYPE=x11` and Fly terminal is running.
-- Retrieved `/etc/astra_version` through SFTP: `1.7.9`. Exact update suffix `.41`, Voronezh policy and ZPS status still require verification; do not infer them from the requested baseline.
+- Retrieved `/etc/astra_version` through SFTP: `1.7.9`; `/etc/astra/build_version`: `1.7.9.41`. Installed `astra-version`: `8.1.49+ci9+v1.7.9.41`.
+- Read-only `/usr/sbin/astra-modeswitch getname`: `advanced(voronezh)`, exit 0. Its installed manual was checked first; no mode switch performed.
+- ZPS status remains unverified: documented read-only `astra-digsig-control status` and `is-enabled` require superuser rights in this guest and returned a permissions message. Those results do NOT prove ZPS OFF. No sudo/policy change performed.
 - Existing guest SSH service was already active. Host identity checked against guest-console ED25519 fingerprint before password authentication. No guest network service installed/enabled by this project. Development SSH is not part of production runtime.
 
-No guest development dependencies installed. A temporary isolated SSH inspection library was installed on the development host only, outside Git/product artifacts. Plugin search/deployment paths, actual SDK behavior, embedded panel, selection and HTTPS gate remain unverified.
+Actual directories verified by SFTP: system plugins at `/opt/r7-office/desktopeditors/editors/sdkjs-plugins/`, user root at `$HOME/.local/share/r7-office/editors/sdkjs-plugins/` with an existing `v1/` SDK. Installed user bootstrap matches the vendor-package SHA-256 (ADR 0002). Root contents and file existence are not proof of plugin installation/search behavior.
+
+No guest development dependencies installed. A temporary isolated SSH inspection library was installed on the development host only, outside Git/product artifacts. Writable deployment/search behavior, actual Plugin API execution, embedded panel, selection and HTTPS gate remain unverified.
 
 ## Vendor installation media (not installed-runtime evidence)
 

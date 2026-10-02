@@ -4,6 +4,12 @@
 
 User command, settings, remote model response and document data have different authority. Model and document content cannot bypass host policy. Document/comment/embedded content is untrusted even when it contains apparent system instructions. Prompt labels help but are not a security boundary: hard policy controls mutations.
 
+## Trusted R7 platform boundary
+
+Explicit user clarification permits internal dynamic execution of the unmodified official R7 SDK. Its serialization/evaluation of our static callCommand functions is part of the trusted platform, not execution of model code. See [ADR 0002](decisions/0002-trusted-r7-sdk-and-static-command-boundary.md).
+
+Authored source must prohibit eval, new Function, Function calls, executing JavaScript strings and model-generated JS/DocScript. Only static author-written function bodies may be passed to callCommand; schema-validated allowlisted model arguments remain data (Asc.scope or typed executeMethod parameters). Add an automated static audit with an explicit, narrow vendor/runtime exclusion and regression cases for direct/indirect execution.
+
 ## Controls
 
 - ASK: all mutations denied independent of model output.
