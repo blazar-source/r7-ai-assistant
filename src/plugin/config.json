@@ -1,0 +1,21 @@
+{
+  "name": "R7 AI Assistant",
+  "nameLocale": { "ru": "R7 AI Assistant" },
+  "guid": "asc.{7C91D48E-5F12-4B36-8A90-2DFA8467C013}",
+  "variations": [
+    {
+      "description": "R7 AI Assistant",
+      "url": "index.html",
+      "icons": ["resources/icon.png", "resources/icon@2x.png"],
+      "EditorsSupport": ["word", "cell", "slide"],
+      "isViewer": false,
+      "isVisual": true,
+      "isInsideMode": true,
+      "isModal": false,
+      "initDataType": "none",
+      "initData": "",
+      "isUpdateOleOnResize": false,
+      "buttons": []
+    }
+  ]
+}
