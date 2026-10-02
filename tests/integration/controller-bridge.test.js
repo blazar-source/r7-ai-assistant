@@ -16,7 +16,7 @@ function setup(options = {}) {
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   return { controller, bridge, callbacks, get calls() { return calls; }, advance(ms) { time += ms; for (const [key, task] of [...tasks]) if (task.at <= time) { tasks.delete(key); task.fn(); } } };
 }
-const presence = Object.freeze({ api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: true });
+const presence = Object.freeze([true, true, false, true, false, true]);
 function probeFixture(editorType = 'word', hasCommand = true) {
   let time = 100; let uuidCalls = 0; let httpCalls = 0; let reads = 0;
   const tasks = new Map(); const callbacks = []; const dispatchTasks = [];

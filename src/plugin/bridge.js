@@ -17,22 +17,31 @@ function ownFunction(object, name) {
   return !!descriptor && typeof descriptor.value === 'function';
 }
 function decodePresence(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // Inspect length before enumerating anything: even a giant sparse array is
+  // rejected in constant work. Never read callback indices or invoke accessors.
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable ||
+      (length.value !== 1 && length.value !== presenceKeys.length)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  // Exact own-key count plus every expected own data index closes symbols,
+  // hidden/enumerable extras and holes, without processing their contents.
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  const keys = Reflect.ownKeys(descriptors);
-  if (keys.length === 1 && keys[0] === 'error' && descriptors.error.value === 'CAPABILITY_UNAVAILABLE') {
-    throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-  }
-  if (keys.length !== presenceKeys.length || keys.some(key => !presenceKeys.includes(key))) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const result = {};
-  for (const key of presenceKeys) {
+  for (let index = 0; index < size; index++) {
+    const key = String(index);
+    if (!Object.hasOwn(descriptors, key)) throw new SafeError(ERROR_CODES.INVALID_DATA);
     const descriptor = descriptors[key];
-    if (!descriptor || typeof descriptor.value !== 'boolean' || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
-    result[key] = descriptor.value;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    if (size === 1) {
+      if (descriptor.value === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      throw new SafeError(ERROR_CODES.INVALID_DATA);
+    }
+    if (typeof descriptor.value !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
+    result[presenceKeys[index]] = descriptor.value;
   }
-  // Closed six-boolean schema is small before serialization; never stringify an
-  // arbitrary callback object, accessors, hidden data, JSON or live range handles.
+  // Serialize only the normalized bounded object, never the untrusted callback.
   assertByteLimit(JSON.stringify(result), LIMITS.editorResultBytes);
   return Object.freeze(result);
 }

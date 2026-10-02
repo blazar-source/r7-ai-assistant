@@ -6,16 +6,19 @@ export function dispatchCapabilityProbe(plugin, callback) {
       var present = typeof Api !== 'undefined' && Api !== null;
       var getDocument = present && typeof Api.GetDocument === 'function';
       var document = getDocument ? Api.GetDocument() : null;
-      return {
-        api: present,
-        getDocument: getDocument,
-        getDocumentId: present && typeof Api.GetDocumentId === 'function',
-        replaceTextSmart: present && typeof Api.ReplaceTextSmart === 'function',
-        getRangeBySelect: document !== null && document !== undefined && typeof document.GetRangeBySelect === 'function',
-        isTrackRevisions: document !== null && document !== undefined && typeof document.IsTrackRevisions === 'function'
-      };
+      // Native command return validation strips ordinary objects. Closed wire
+      // order: api, getDocument, getDocumentId, replaceTextSmart,
+      // getRangeBySelect, isTrackRevisions; normalize names only in the bridge.
+      return [
+        present,
+        getDocument,
+        present && typeof Api.GetDocumentId === 'function',
+        present && typeof Api.ReplaceTextSmart === 'function',
+        document !== null && document !== undefined && typeof document.GetRangeBySelect === 'function',
+        document !== null && document !== undefined && typeof document.IsTrackRevisions === 'function'
+      ];
     } catch {
-      return { error: 'CAPABILITY_UNAVAILABLE' };
+      return ['CAPABILITY_UNAVAILABLE'];
     }
   }, false, false, callback);
 }

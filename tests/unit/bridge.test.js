@@ -21,7 +21,8 @@ function rig(editorType = 'word', pluginOverrides = {}) {
   }, setNow(value) { now = value; } };
 }
 const code = expected => error => error?.name === 'SafeError' && error.code === expected && error.message === expected && !error.cause;
-const probe = { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true };
+const probe = [true, true, true, true, true, true];
+const namedPresence = { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true };
 
 test('read completion belongs to callback, not executeMethod false/queued status', async () => {
   const r = rig(); let settled = false;
@@ -149,19 +150,81 @@ test('capability callback exposes presence, never promotes host/mock positives t
   await Promise.resolve(); assert.equal(settled, false);
   assert.equal(r.calls.length, 1); assert.equal(r.calls[0].close, false); assert.equal(r.calls[0].recalculate, false);
   r.calls[0].callback(probe); const result = await promise;
-  assert.deepEqual(result.methodPresence, probe); assert.ok(Object.isFrozen(result.methodPresence));
+  assert.deepEqual(result.methodPresence, namedPresence); assert.ok(Object.isFrozen(result.methodPresence));
   assert.equal(result.runtimeVerified, false); assert.equal(result.selectionRead.runtimeVerified, false);
   assert.equal(result.mutation.available, false); assert.equal(result.mutation.reason, 'MUTATION_PROOF_UNRESOLVED');
   assert.ok(Object.isFrozen(result)); assert.ok(Object.isFrozen(result.mutation));
 });
 
-test('capability payload rejects unknown fields/types/accessors and safely reports static command failure', async () => {
+test('capability tuple maps every distinct boolean pattern to frozen named presence without mutating input', async () => {
   const r = rig();
-  const accessor = { ...probe }; Object.defineProperty(accessor, 'api', { enumerable: true, get() { throw new Error('private'); } });
-  for (const [value, expected] of [[{ ...probe, text: 'x'.repeat(65537) }, 'INVALID_DATA'], [{ ...probe, api: 'yes' }, 'INVALID_DATA'], [accessor, 'INVALID_DATA'], [{ error: 'CAPABILITY_UNAVAILABLE' }, 'CAPABILITY_UNAVAILABLE'], [{ error: 'private' }, 'INVALID_DATA']]) {
-    const promise = r.bridge.probeCapabilities(); const rejection = assert.rejects(promise, code(expected)); r.calls.at(-1).callback(value); await rejection;
-    assert.equal(r.bridge.getState().busy, false);
+  for (let bits = 0; bits < 64; bits++) {
+    const api = !!(bits & 1), doc = !!(bits & 2), id = !!(bits & 4), replace = !!(bits & 8), range = !!(bits & 16), revisions = !!(bits & 32);
+    const input = [api, doc, id, replace, range, revisions];
+    if (bits % 2) Object.freeze(input);
+    const before = Object.getOwnPropertyDescriptors(input);
+    const promise = r.bridge.probeCapabilities(); r.calls.at(-1).callback(input);
+    const result = await promise;
+    assert.deepEqual(result.methodPresence, { api, getDocument: doc, getDocumentId: id, replaceTextSmart: replace, getRangeBySelect: range, isTrackRevisions: revisions });
+    assert.ok(Object.isFrozen(result.methodPresence)); assert.ok(Object.isFrozen(result));
+    assert.equal(result.runtimeVerified, false); assert.equal(result.mutation.available, false);
+    assert.deepEqual(Object.getOwnPropertyDescriptors(input), before);
   }
+});
+
+test('capability callback rejects every nonclosed tuple without executing accessors or serialization', async () => {
+  const r = rig(); let reads = 0;
+  const getter = () => { reads++; throw Error('private'); };
+  const extra = (key, enumerable, value = true, input = [...probe]) => Object.defineProperty(input, key, { value, enumerable });
+  const accessor = [...probe]; Object.defineProperty(accessor, '0', { get: getter, enumerable: true });
+  const setter = [...probe]; Object.defineProperty(setter, '1', { set: getter, enumerable: true });
+  const hiddenIndex = [...probe]; Object.defineProperty(hiddenIndex, '2', { enumerable: false });
+  const hole = [...probe]; delete hole[3];
+  const inherited = [...probe]; delete inherited[0]; Object.setPrototypeOf(inherited, Object.assign(Object.create(Array.prototype), { 0: true }));
+  const exotic = [...probe]; Object.setPrototypeOf(exotic, Object.create(Array.prototype, { secret: { get: getter } }));
+  const nullPrototype = [...probe]; Object.setPrototypeOf(nullPrototype, null);
+  // Real Array length cannot be an accessor; an array-shaped object must be
+  // rejected before its throwing length/prototype getters are read.
+  const fake = Object.create(Array.prototype, { length: { get: getter }, 0: { value: true, enumerable: true }, ['__proto__']: { get: getter } });
+  const cases = [namedPresence, { error: 'CAPABILITY_UNAVAILABLE' }, undefined, null, 'true', 6, true, new Uint8Array(6), [], [true],
+    [false, false, false, false, false], [...probe, false], [1, true, true, true, true, true], ['api', 'getDocument', 'getDocumentId', 'replaceTextSmart', 'getRangeBySelect', 'isTrackRevisions'],
+    hole, accessor, setter, hiddenIndex, inherited, exotic, nullPrototype, fake, new Array(4294967295),
+    extra(Symbol('extra'), false), extra('hidden', false), extra('visible', true), extra('toJSON', false, getter),
+    ['private'], ['CAPABILITY_UNAVAILABLE', false], extra('extra', true, true, ['CAPABILITY_UNAVAILABLE']), extra(Symbol('error'), false, true, ['CAPABILITY_UNAVAILABLE'])];
+  const errorAccessor = ['CAPABILITY_UNAVAILABLE']; Object.defineProperty(errorAccessor, '0', { get: getter, enumerable: true }); cases.push(errorAccessor);
+  const errorHidden = ['CAPABILITY_UNAVAILABLE']; Object.defineProperty(errorHidden, '0', { enumerable: false }); cases.push(errorHidden);
+  const errorHole = new Array(1); const errorExotic = ['CAPABILITY_UNAVAILABLE']; Object.setPrototypeOf(errorExotic, Object.create(Array.prototype));
+  const errorNullPrototype = ['CAPABILITY_UNAVAILABLE']; Object.setPrototypeOf(errorNullPrototype, null);
+  const errorSetter = ['CAPABILITY_UNAVAILABLE']; Object.defineProperty(errorSetter, '0', { set: getter, enumerable: true });
+  cases.push(errorHole, errorExotic, errorNullPrototype, errorSetter, extra('hidden', false, true, ['CAPABILITY_UNAVAILABLE']), extra('toJSON', false, getter, ['CAPABILITY_UNAVAILABLE']));
+  for (let index = 0; index < 6; index++) for (const wrong of [undefined, null, 0, 1, 'true', {}, [], () => true]) {
+    const input = [...probe]; input[index] = wrong; cases.push(input);
+  }
+  for (const value of cases) {
+    const before = value && typeof value === 'object' ? Object.getOwnPropertyDescriptors(value) : null;
+    const promise = r.bridge.probeCapabilities(); const rejection = assert.rejects(promise, code('INVALID_DATA'));
+    r.calls.at(-1).callback(value); await rejection;
+    assert.equal(r.bridge.getState().busy, false);
+    if (before) assert.deepEqual(Object.getOwnPropertyDescriptors(value), before);
+  }
+  assert.equal(reads, 0);
+});
+
+test('missing tuple index never consults a polluted descriptor-object prototype', async () => {
+  const r = rig(); const input = [...probe]; delete input[3]; input.extra = true;
+  const promise = r.bridge.probeCapabilities(); const rejection = assert.rejects(promise, code('INVALID_DATA'));
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, '3'); let reads = 0;
+  Object.defineProperty(Object.prototype, '3', { configurable: true, get() { reads++; throw Error('private'); } });
+  try { r.calls[0].callback(input); }
+  finally { if (previous) Object.defineProperty(Object.prototype, '3', previous); else delete Object.prototype[3]; }
+  await rejection; assert.equal(reads, 0);
+});
+
+test('only closed error tuple yields static capability unavailable without input mutation', async () => {
+  const r = rig(); const input = Object.freeze(['CAPABILITY_UNAVAILABLE']); const before = Object.getOwnPropertyDescriptors(input);
+  const promise = r.bridge.probeCapabilities(); const rejection = assert.rejects(promise, code('CAPABILITY_UNAVAILABLE'));
+  r.calls[0].callback(input); await rejection;
+  assert.deepEqual(Object.getOwnPropertyDescriptors(input), before); assert.equal(r.bridge.getState().busy, false);
 });
 
 test('clock failure before dispatch is content-free and leaves no occupied slot', async () => {
