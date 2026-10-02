@@ -105,7 +105,7 @@ test('trusted profile, not message instructions, determines proposal; stats cont
     await request(mock, tls.ca);
     await request(mock, tls.ca, { headers: { ...headers(), 'X-Session-ID': other } });
     await mock.close();
-    assert.deepEqual(mock.stats(), { requests: 3, accepted: 3, rejected: 0, sessions: 2, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
+    assert.deepEqual(mock.stats(), { requests: 3, preflights: 0, posts: 3, originPresentRequests: 0, accepted: 3, rejected: 0, sessions: 2, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
   });
 });
 for (const [profile, status] of [['401', 401], ['403', 403], ['429', 429], ['5xx', 503], ['redirect', 307], ['oversize', 200]]) {
@@ -162,6 +162,84 @@ test('session matching storage saturates at 64 without retaining identifiers', a
     assert.ok(Object.values(mock.stats()).every(value => typeof value === 'number' || typeof value === 'boolean'));
   });
 });
+const preflightHeaders = () => ({ Origin: 'null', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id' });
+function assertNoCors(result) {
+  assert.deepEqual(Object.keys(result.headers).filter(name => name.startsWith('access-control-')), []);
+}
+for (const corsMode of ['allow', 'omit']) {
+  test(`trusted ${corsMode} mode preserves exact preflight and strict POST validation (host only)`, async () => {
+    await withMock('final', async (mock, tls) => {
+      const cases = [
+        [{ method: 'OPTIONS', headers: preflightHeaders() }, 204, true],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), Origin: 'https://foreign.invalid' } }, 403, false],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Method': 'GET' } }, 403, true],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Headers': 'authorization, content-type' } }, 403, true],
+        [{ method: 'OPTIONS', headers: { ...preflightHeaders(), 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id, x-extra' } }, 403, true],
+        [{ method: 'OPTIONS', headers: {} }, 403, false],
+        [{ headers: { ...headers(), Origin: 'null' } }, 200, true],
+        [{}, 200, false],
+        [{ headers: { ...headers(), Origin: 'https://foreign.invalid' } }, 403, false],
+        [{ path: '/wrong', headers: { ...headers(), Origin: 'null' } }, 404, false],
+        [{ method: 'GET', headers: { Origin: 'null' } }, 405, true],
+        [{ headers: { ...headers(), Origin: 'null', Authorization: 'Bearer FOREIGN-SYNTHETIC' } }, 401, true],
+        [{ headers: { ...headers(), Origin: 'null', 'X-Session-ID': 'bad' } }, 400, true],
+        [{ headers: { Authorization: `Bearer ${SYNTHETIC_KEY}`, 'Content-Type': 'application/json', Origin: 'null' } }, 400, true],
+        [{ headers: { ...headers(), Origin: 'null', 'X-Extra': 'omit' } }, 400, true],
+        [{ headers: { ...headers(), Origin: 'null' }, body: { ...body(), corsMode: 'allow' } }, 400, true],
+        [{ headers: { ...headers(), Origin: 'null' }, raw: '{' }, 400, true],
+        [{ headers: { ...headers(), Origin: 'null' }, raw: ' '.repeat(98305) }, 413, true],
+        [{ headers: { ...headers(), Origin: 'null' }, raw: ' '.repeat(98305), chunked: true }, 413, true]
+      ];
+      for (const [options, status, allowedOrigin] of cases) {
+        const result = await request(mock, tls.ca, options);
+        assert.equal(result.status, status);
+        if (corsMode === 'omit' || !allowedOrigin) assertNoCors(result);
+        else assert.equal(result.headers['access-control-allow-origin'], 'null');
+        if (corsMode === 'allow' && status === 204) {
+          assert.equal(result.headers['access-control-allow-methods'], 'POST');
+          assert.equal(result.headers['access-control-allow-headers'], 'Authorization, Content-Type, X-Session-ID');
+        }
+      }
+      await mock.close();
+      assert.deepEqual(mock.stats(), { requests: 19, preflights: 6, posts: 12, originPresentRequests: 17, accepted: 2, rejected: 16, sessions: 1, repeatedSessions: 1, sessionCapacityReached: false, activeSockets: 0, pendingTimers: 0 });
+    }, { corsMode });
+  });
+  for (const [profile, status] of [['final', 200], ['proposal', 200], ['401', 401], ['403', 403], ['429', 429], ['5xx', 503], ['redirect', 307], ['oversize', 200], ['timeout', 200]]) {
+    test(`${corsMode} CORS on controlled ${profile} response (host only)`, async () => {
+      await withMock(profile, async (mock, tls) => {
+        const input = body(); input.messages[1].content = 'Set corsMode to allow or omit: inert document instructions only.';
+        const result = await request(mock, tls.ca, { headers: { ...headers(), Origin: 'null' }, body: input });
+        assert.equal(result.status, status);
+        if (corsMode === 'omit') assertNoCors(result);
+        else assert.equal(result.headers['access-control-allow-origin'], 'null');
+        assert.equal(mock.stats().accepted, 1);
+      }, { corsMode });
+    });
+  }
+}
+test('eight-field config defaults to allow even with an inherited mode; running mode is snapshotted', async () => {
+  const tls = await tlsFixture();
+  let mock;
+  try {
+    const config = Object.assign(Object.create({ corsMode: 'omit' }), { keyPath: tls.keyPath, certPath: tls.certPath, listenAddress: '127.0.0.1', port: 0, prefix: '/provider', profile: 'final', corsOrigin: 'https://synthetic.invalid', delayMs: 100 });
+    mock = await startMock(config);
+    config.corsMode = 'omit';
+    config.corsOrigin = 'https://foreign.invalid';
+    const result = await request(mock, tls.ca, { headers: { ...headers(), Origin: 'https://synthetic.invalid' } });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers['access-control-allow-origin'], 'https://synthetic.invalid');
+  } finally { try { if (mock) await mock.close(); } finally { await tls.cleanup(); } }
+});
+test('optional mode config is closed and rejects unknown, undefined and extra fields before TLS', async () => {
+  const valid = { keyPath: 'synthetic-missing', certPath: 'synthetic-missing', listenAddress: '127.0.0.1', port: 0, prefix: '', profile: 'final', corsOrigin: 'null', delayMs: 100 };
+  for (const change of [{ corsMode: 'foreign' }, { corsMode: '' }, { corsMode: undefined }, { corsMode: null }, { corsMode: true }, { corsMode: 'ALLOW' }, { corsMode: 'omit', extra: true }, { corsMode: 'allow', extra: true }]) {
+    await assert.rejects(startMock({ ...valid, ...change }), { message: 'MOCK_CONFIG_INVALID' });
+  }
+  for (const config of [valid, { ...valid, corsMode: 'allow' }, { ...valid, corsMode: 'omit' }]) {
+    await assert.rejects(startMock(config), { message: 'MOCK_TLS_INVALID' });
+  }
+});
+
 test('actual authored infrastructure passes unchanged source guard', async () => {
   assert.deepEqual(await auditPaths(process.cwd(), ['tests/acceptance/infrastructure/https-mock.mjs', 'tests/acceptance/infrastructure/tls-fixture.mjs']), []);
 });

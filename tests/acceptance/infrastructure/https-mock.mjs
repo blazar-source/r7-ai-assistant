@@ -33,7 +33,9 @@ function validBody(value) {
   return total <= 65536;
 }
 function validConfig(config) {
-  return closed(config, ['keyPath', 'certPath', 'listenAddress', 'port', 'prefix', 'profile', 'corsOrigin', 'delayMs']) &&
+  const keys = ['keyPath', 'certPath', 'listenAddress', 'port', 'prefix', 'profile', 'corsOrigin', 'delayMs'];
+  const hasMode = config !== null && typeof config === 'object' && Object.hasOwn(config, 'corsMode');
+  return closed(config, hasMode ? [...keys, 'corsMode'] : keys) && (!hasMode || config.corsMode === 'allow' || config.corsMode === 'omit') &&
     typeof config.keyPath === 'string' && config.keyPath.length > 0 && typeof config.certPath === 'string' && config.certPath.length > 0 &&
     isIP(config.listenAddress) !== 0 && !['0.0.0.0', '::'].includes(config.listenAddress) && Number.isInteger(config.port) && config.port >= 0 && config.port <= 65535 &&
     typeof config.prefix === 'string' && config.prefix.length <= 256 && /^(?:\/[A-Za-z0-9_-]+)*$/.test(config.prefix) && profiles.has(config.profile) &&
@@ -42,8 +44,9 @@ function validConfig(config) {
 }
 export async function startMock(config) {
   if (!validConfig(config)) throw new Error('MOCK_CONFIG_INVALID');
-  // Snapshot trusted configuration. Never choose a profile from message instructions.
+  // Snapshot trusted configuration. Never choose a profile/mode from requests or messages.
   const { listenAddress, port, prefix, profile, corsOrigin, delayMs } = config;
+  const corsMode = Object.hasOwn(config, 'corsMode') ? config.corsMode : 'allow';
   let key; let cert;
   try {
     key = await readFile(config.keyPath); cert = await readFile(config.certPath);
@@ -52,11 +55,15 @@ export async function startMock(config) {
   } catch { throw new Error('MOCK_TLS_INVALID'); }
   const route = `${prefix}/v1/chat/completions`;
   const sockets = new Set(); const timers = new Set(); const sessions = new Set();
-  const counts = { requests: 0, accepted: 0, rejected: 0, sessions: 0, repeatedSessions: 0, sessionCapacityReached: false };
+  const counts = { requests: 0, preflights: 0, posts: 0, originPresentRequests: 0, accepted: 0, rejected: 0, sessions: 0, repeatedSessions: 0, sessionCapacityReached: false };
   let server;
   try {
     server = https.createServer({ key, cert, minVersion: 'TLSv1.2', maxHeaderSize: 16384, handshakeTimeout: 5000, requestTimeout: 5000, headersTimeout: 5000 }, (req, res) => {
       counts.requests += 1;
+      // Observations before validation, not acceptances; fixed numeric counters only.
+      if (req.method === 'OPTIONS') counts.preflights = Math.min(counts.preflights + 1, Number.MAX_SAFE_INTEGER);
+      if (req.method === 'POST') counts.posts = Math.min(counts.posts + 1, Number.MAX_SAFE_INTEGER);
+      if (req.headers.origin !== undefined) counts.originPresentRequests = Math.min(counts.originPresentRequests + 1, Number.MAX_SAFE_INTEGER);
       const reply = (status, payload = '') => {
         res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Connection: 'close' });
         res.end(payload);
@@ -64,14 +71,16 @@ export async function startMock(config) {
       const reject = status => { counts.rejected += 1; req.resume(); reply(status, '{"error":"SYNTHETIC_REQUEST_REJECTED"}'); };
       if (req.url !== route) { reject(404); return; }
       if (req.headers.origin !== undefined && req.headers.origin !== corsOrigin) { reject(403); return; }
-      if (req.headers.origin === corsOrigin) {
+      if (corsMode === 'allow' && req.headers.origin === corsOrigin) {
         res.setHeader('Access-Control-Allow-Origin', corsOrigin); res.setHeader('Vary', 'Origin');
       }
       if (req.method === 'OPTIONS') {
         const requested = (req.headers['access-control-request-headers'] ?? '').toLowerCase().split(',').map(item => item.trim()).sort();
         if (req.headers.origin !== corsOrigin || req.headers['access-control-request-method'] !== 'POST' || JSON.stringify(requested) !== JSON.stringify(requiredHeaders)) { reject(403); return; }
-        res.setHeader('Access-Control-Allow-Methods', 'POST');
-        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Session-ID');
+        if (corsMode === 'allow') {
+          res.setHeader('Access-Control-Allow-Methods', 'POST');
+          res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Session-ID');
+        }
         reply(204); return;
       }
       if (req.method !== 'POST') { reject(405); return; }
@@ -147,7 +156,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const env = process.env;
     if (!env.R7_MOCK_PORT || !/^\d+$/.test(env.R7_MOCK_PORT) || Number(env.R7_MOCK_PORT) < 1 || !env.R7_MOCK_DELAY_MS || !/^\d+$/.test(env.R7_MOCK_DELAY_MS)) throw new Error();
-    const mock = await startMock({ keyPath: env.R7_MOCK_TLS_KEY, certPath: env.R7_MOCK_TLS_CERT, listenAddress: env.R7_MOCK_LISTEN_ADDRESS, port: Number(env.R7_MOCK_PORT), prefix: env.R7_MOCK_PREFIX, profile: env.R7_MOCK_PROFILE, corsOrigin: env.R7_MOCK_CORS_ORIGIN, delayMs: Number(env.R7_MOCK_DELAY_MS) });
+    const mock = await startMock({ keyPath: env.R7_MOCK_TLS_KEY, certPath: env.R7_MOCK_TLS_CERT, listenAddress: env.R7_MOCK_LISTEN_ADDRESS, port: Number(env.R7_MOCK_PORT), prefix: env.R7_MOCK_PREFIX, profile: env.R7_MOCK_PROFILE, corsOrigin: env.R7_MOCK_CORS_ORIGIN, delayMs: Number(env.R7_MOCK_DELAY_MS), ...(env.R7_MOCK_CORS_MODE === undefined ? {} : { corsMode: env.R7_MOCK_CORS_MODE }) });
     const stop = () => { mock.close().catch(() => { process.exitCode = 1; }); };
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
     process.stdout.write('SYNTHETIC_HTTPS_MOCK_READY\n');
