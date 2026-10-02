@@ -5,6 +5,7 @@ import { mountPanel } from './view.js';
 // Standard SDK init and two existing package-evidenced plugin event channels.
 // Neither event is an exhaustive, runtime-proved document/selection notification.
 export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, controllerFactory = createController, viewFactory = mountPanel } = {}) {
+  let bridge = null;
   let controller = null;
   let view = null;
   let initialized = false;
@@ -15,10 +16,14 @@ export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, contro
   function dispose() {
     if (disposed) return;
     disposed = true;
-    if (typeof plugin.detachEvent === 'function') {
-      plugin.detachEvent('onTargetPositionChanged'); plugin.detachEvent('onDocumentContentReady');
-    }
-    view?.dispose(); controller?.dispose();
+    // SDK/resource failures must not strand later cleanup or reveal raw errors.
+    try { plugin.detachEvent?.('onTargetPositionChanged'); } catch {}
+    try { plugin.detachEvent?.('onDocumentContentReady'); } catch {}
+    try { view?.dispose(); } catch {}
+    try { controller?.dispose(); } catch {}
+    // Also covers controller factory failure or an interrupted controller teardown.
+    // Bridge disposal is idempotent; it does not release the callback-owned lease.
+    try { bridge?.dispose?.(); } catch {}
   }
   plugin.init = function () {
     if (disposed) return;
@@ -32,14 +37,17 @@ export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, contro
     try {
       const editorType = knownEditor();
       initializedEditorType = editorType;
-      const bridge = bridgeFactory(plugin, { editorType });
+      bridge = bridgeFactory(plugin, { editorType });
       controller = controllerFactory({ bridge });
       view = viewFactory(root, controller);
       if (typeof plugin.attachEvent === 'function') {
         plugin.attachEvent('onTargetPositionChanged', function () { changed(); });
         plugin.attachEvent('onDocumentContentReady', function () { changed(); });
       }
-    } catch { root.textContent = 'Панель недоступна. Инициализация Р7 не завершена; повторное создание моста запрещено.'; }
+    } catch {
+      dispose();
+      root.textContent = 'Панель недоступна. Инициализация Р7 не завершена; повторное создание моста запрещено.';
+    }
   };
   return Object.freeze({ dispose });
 }
