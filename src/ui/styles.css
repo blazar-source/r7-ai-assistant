@@ -1,0 +1,31 @@
+:root { color-scheme: light; --surface: #ffffff; --background: #f3f5f8; --text: #172638; --muted: #46576b; --line: #788596; --accent: #174d9c; --focus: #095ccc; --notice: #fff2d6; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { padding: 12px; width: 100%; min-width: 0; }
+header, section, form, details { min-width: 0; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+h1 { font-size: 18px; margin: 0; flex-basis: 100%; }
+h2 { font-size: 14px; margin: 8px 0 4px; }
+p { margin: 8px 0; overflow-wrap: anywhere; }
+section, details { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+label, textarea, .field, #input-budget { flex-basis: 100%; }
+.field { display: grid; gap: 4px; }
+input, select, textarea, button { max-width: 100%; min-width: 0; font: inherit; }
+input:not([type="checkbox"]), select, textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--surface); }
+textarea { resize: vertical; min-height: 96px; }
+input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
+button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--surface); cursor: pointer; overflow-wrap: anywhere; }
+button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #ffffff; }
+button:hover:not(:disabled) { filter: brightness(0.94); }
+button:disabled { color: var(--muted); background: var(--background); cursor: not-allowed; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+summary { cursor: pointer; padding: 4px; }
+pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; max-width: 100%; }
+article + article { border-top: 1px solid var(--line); padding-top: 8px; }
+.muted { color: var(--muted); font-size: 12px; }
+.notice { background: var(--notice); padding: 8px; border-left: 3px solid #896019; }
+#status { padding: 8px; border-left: 3px solid var(--accent); background: var(--surface); }
+[hidden] { display: none !important; }
+@media (max-width: 300px) { main { padding: 8px; } section, details { padding: 8px; } button { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }

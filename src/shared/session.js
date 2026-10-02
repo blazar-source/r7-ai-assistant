@@ -28,23 +28,42 @@ function message(raw, role, maximum) {
 }
 function pairs(history) {
   if (!Array.isArray(history) || history.length % 2 !== 0) invalid();
-  const result = [];
+  const historyPairs = [];
   for (let i = 0; i < history.length; i += 2) {
-    result.push(message(history[i], 'user', LIMITS.userInputBytes));
-    result.push(message(history[i + 1], 'assistant', LIMITS.modelContentBytes));
+    historyPairs.push(message(history[i], 'user', LIMITS.userInputBytes));
+    historyPairs.push(message(history[i + 1], 'assistant', LIMITS.modelContentBytes));
   }
-  return result;
+  return historyPairs;
 }
 // Budgets count UTF-8 message content; the independently capped body includes JSON overhead/escaping.
 function contentBytes(messages) { return messages.reduce((sum, entry) => sum + utf8ByteLength(entry.content), 0); }
 export function snapshotRequestMessages(messages) {
-  if (!Array.isArray(messages) || messages.length < 2 || messages.length % 2 !== 0) invalid();
+  if (!Array.isArray(messages) || messages.length < 2) invalid();
   if (messages.length > LIMITS.sentHistoryMessages) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
   const system = message(messages[0], 'system', LIMITS.sentHistoryBytes);
   const current = message(messages.at(-1), 'user', LIMITS.userInputBytes);
-  const result = [system, ...pairs(messages.slice(1, -1)), current];
+  // An odd inventory has ONE separate, bounded, explicitly untrusted selection
+  // message immediately before current user. Never promote document text to system.
+  const hasContext = messages.length % 2 === 1;
+  const context = hasContext ? [message(messages.at(-2), 'user', LIMITS.selectionBytes)] : [];
+  const result = [system, ...pairs(messages.slice(1, hasContext ? -2 : -1)), ...context, current];
   if (contentBytes(result) > LIMITS.sentHistoryBytes) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
   return Object.freeze(result);
+}
+export function buildContextMessages(system, current, selection, history = []) {
+  const head = message({ role: 'system', content: system }, 'system', LIMITS.sentHistoryBytes);
+  const context = message({ role: 'user', content: selection }, 'user', LIMITS.selectionBytes);
+  const user = message({ role: 'user', content: current }, 'user', LIMITS.userInputBytes);
+  const mandatoryBytes = contentBytes([head, context, user]);
+  if (mandatoryBytes > LIMITS.sentHistoryBytes) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
+  const previous = pairs(history);
+  let start = 0;
+  let bytes = mandatoryBytes + contentBytes(previous);
+  while (previous.length - start + 3 > LIMITS.sentHistoryMessages || bytes > LIMITS.sentHistoryBytes) {
+    bytes -= utf8ByteLength(previous[start].content) + utf8ByteLength(previous[start + 1].content);
+    start += 2;
+  }
+  return Object.freeze([head, ...previous.slice(start), context, user]);
 }
 export function buildMessages(system, current, history = []) {
   const mandatory = [message({ role: 'system', content: system }, 'system', LIMITS.sentHistoryBytes), message({ role: 'user', content: current }, 'user', LIMITS.userInputBytes)];
