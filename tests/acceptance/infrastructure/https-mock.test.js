@@ -268,9 +268,77 @@ for (const corsMode of ['allow', 'omit']) {
   });
 }
 
-test('diagnostic file classification does not permit a file origin in trusted configuration', async () => {
-  await assert.rejects(startMock({ keyPath: 'synthetic-missing', certPath: 'synthetic-missing', listenAddress: '127.0.0.1', port: 0, prefix: '', profile: 'final', corsOrigin: 'file://', delayMs: 100 }), { message: 'MOCK_CONFIG_INVALID' });
+test('trusted origin configuration admits exact file literal but refuses file variants and URL extras', async () => {
+  // Removing literal admission or widening it to generic file URLs must fail.
+  const valid = { keyPath: 'synthetic-missing', certPath: 'synthetic-missing', listenAddress: '127.0.0.1', port: 0, prefix: '', profile: 'final', corsOrigin: 'file://', delayMs: 100 };
+  for (const corsOrigin of ['file://', 'null', 'http://synthetic.invalid:8080', 'https://synthetic.invalid']) {
+    for (const mode of [{}, { corsMode: 'allow' }, { corsMode: 'omit' }]) {
+      await assert.rejects(startMock({ ...valid, corsOrigin, ...mode }), { message: 'MOCK_TLS_INVALID' });
+    }
+  }
+  for (const corsOrigin of ['file:', 'file:/', 'file:///', 'file://synthetic', 'file:///synthetic/path', 'file://*', 'FILE://', ' file://', 'file:// ', 'file://?query', 'file://#fragment', '*', 'https://user:pass@synthetic.invalid', 'https://synthetic.invalid?query', 'https://synthetic.invalid#fragment', 'https://synthetic.invalid/path']) {
+    await assert.rejects(startMock({ ...valid, corsOrigin }), { message: 'MOCK_CONFIG_INVALID' });
+  }
 });
+
+for (const corsMode of ['allow', 'omit']) {
+  test(`trusted literal file origin in ${corsMode} preserves preflight, POST and diagnostic contracts (host only)`, async () => {
+    // Origin echo, broad origin acceptance, relaxed auth/body checks or diagnostic changes must fail.
+    await withMock('final', async (mock, tls) => {
+      const preflight = { ...preflightHeaders(), Origin: 'file://' };
+      const postHeaders = { ...headers(), Origin: 'file://' };
+      const cases = [
+        [{ method: 'OPTIONS', headers: preflight }, 204],
+        [{ headers: postHeaders }, 200],
+        [{ method: 'OPTIONS', headers: { ...preflight, 'Access-Control-Request-Method': 'GET' } }, 403],
+        [{ method: 'OPTIONS', headers: { ...preflight, 'Access-Control-Request-Headers': 'authorization, content-type' } }, 403],
+        [{ method: 'OPTIONS', headers: { ...preflight, 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id, x-extra' } }, 403],
+        [{ method: 'OPTIONS', headers: { ...preflight, 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id, x-session-id' } }, 403],
+        [{ headers: { ...postHeaders, Authorization: 'Bearer FOREIGN-SYNTHETIC' } }, 401],
+        [{ headers: { ...postHeaders, 'X-Session-ID': 'bad' } }, 400],
+        [{ headers: { ...postHeaders, 'Content-Type': 'text/plain' } }, 400],
+        [{ headers: { ...postHeaders, 'X-Extra': 'forbidden' } }, 400],
+        [{ headers: postHeaders, body: { ...body(), corsOrigin: 'null' } }, 400],
+        [{ headers: postHeaders, raw: ' '.repeat(98305), chunked: true }, 413],
+        [{ headers: postHeaders, body: { ...body(), messages: [{ role: 'system', content: '' }, { role: 'user', content: 'x'.repeat(8193) }] } }, 400],
+        [{ method: 'GET', headers: { Origin: 'file://' } }, 405]
+      ];
+      for (const [options, status] of cases) {
+        const result = await request(mock, tls.ca, options);
+        assert.equal(result.status, status);
+        if (corsMode === 'omit') assertNoCors(result);
+        else {
+          assert.equal(result.headers['access-control-allow-origin'], 'file://');
+          assert.equal(result.headers.vary, 'Origin');
+          if (status === 204) {
+            assert.equal(result.headers['access-control-allow-methods'], 'POST');
+            assert.equal(result.headers['access-control-allow-headers'], 'Authorization, Content-Type, X-Session-ID');
+          }
+        }
+      }
+      for (const Origin of ['null', 'http://synthetic.invalid', 'https://synthetic.invalid', 'file:///', 'file://synthetic']) {
+        for (const options of [{ method: 'OPTIONS', headers: { ...preflight, Origin } }, { headers: { ...postHeaders, Origin } }]) {
+          const before = mock.stats();
+          const result = await request(mock, tls.ca, options);
+          assert.equal(result.status, 403);
+          assertNoCors(result);
+          const after = mock.stats();
+          assert.equal(after.rejectedOriginMismatch - before.rejectedOriginMismatch, 1);
+          assert.equal(after.preflightHeadersExact, before.preflightHeadersExact, 'origin refusal precedes preflight header validation');
+          assert.equal(after.preflightHeadersNonExact, before.preflightHeadersNonExact);
+        }
+      }
+      const missingPreflightOrigin = await request(mock, tls.ca, { method: 'OPTIONS', headers: { 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization, content-type, x-session-id' } });
+      assert.equal(missingPreflightOrigin.status, 403);
+      assertNoCors(missingPreflightOrigin);
+      const missingOrigin = await request(mock, tls.ca);
+      assert.equal(missingOrigin.status, 200);
+      assertNoCors(missingOrigin);
+      await mock.close();
+      assert.deepEqual(mock.stats(), { ...diagnosticZeros, requests: 26, preflights: 11, posts: 14, originPresentRequests: 24, accepted: 2, rejected: 23, sessions: 1, repeatedSessions: 1, sessionCapacityReached: false, originFileRequests: 14, originNullRequests: 2, originOtherRequests: 8, originMissingRequests: 2, rejectedOriginMismatch: 10, rejectedMissingOrigin: 1, rejectedPreflightMethodMismatch: 1, rejectedPreflightHeadersMismatch: 3, preflightHeadersExact: 3, preflightHeadersNonExact: 3, activeSockets: 0, pendingTimers: 0 });
+    }, { corsOrigin: 'file://', corsMode });
+  });
+}
 
 test('eight-field config defaults to allow even with an inherited mode; running mode is snapshotted', async () => {
   const tls = await tlsFixture();

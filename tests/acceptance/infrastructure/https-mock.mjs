@@ -40,7 +40,7 @@ function validConfig(config) {
     typeof config.keyPath === 'string' && config.keyPath.length > 0 && typeof config.certPath === 'string' && config.certPath.length > 0 &&
     isIP(config.listenAddress) !== 0 && !['0.0.0.0', '::'].includes(config.listenAddress) && Number.isInteger(config.port) && config.port >= 0 && config.port <= 65535 &&
     typeof config.prefix === 'string' && config.prefix.length <= 256 && /^(?:\/[A-Za-z0-9_-]+)*$/.test(config.prefix) && profiles.has(config.profile) &&
-    typeof config.corsOrigin === 'string' && (config.corsOrigin === 'null' || /^https?:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(config.corsOrigin)) &&
+    typeof config.corsOrigin === 'string' && (config.corsOrigin === 'null' || config.corsOrigin === 'file://' || /^https?:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(config.corsOrigin)) &&
     Number.isInteger(config.delayMs) && config.delayMs >= 1 && config.delayMs <= 120000;
 }
 export async function startMock(config) {
