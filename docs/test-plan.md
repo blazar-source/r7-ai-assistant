@@ -1,6 +1,6 @@
 # Test plan
 
-Actual target product acceptance: NOT RUN. Host automated suites are implemented; no unit test claim substitutes for R7 runtime acceptance. Task5's [separate HTTPS mock](<../tests/acceptance/infrastructure/README.md>) documents focused Node TLS tests, explicit parent-run environment inputs and deferred authorized Astra/CEF trust gates. Full `npm test` discovers these tests; mandatory known-host OpenSSL absence fails rather than claiming proof.
+Stage B target acceptance is **PARTIAL / NOT PASS**, not blanket NOT RUN. The [compatibility matrix](<compatibility-matrix.md>) records actual all-three inside panels, Word readonly selection/callback evidence, controlled HTTPS/CORS/profile/timeout/Stop samples, preview denial, key opt-in/out and reset-defaults full restart. Mandatory safe Word domain/identity/revision/atomic replacement/formatting/undo remains UNRESOLVED; Apply is disabled. Custom-settings/remembered-key process restart, populated-key Reset, native lifecycle invalidation and dedicated CSP/offline controls are not fully evidenced. Controlled trust-absent native no-HTTP refusal is measured; exact certificate-specific attribution remains partial. Host tests are not target proof. The [separate HTTPS mock](<../tests/acceptance/infrastructure/README.md>) and Node/OpenSSL are development-only; full `npm test` discovers them and missing required host OpenSSL fails rather than claiming proof. Real bank CA/CORS/AUTH/Qwen acceptance is NOT RUN until separately authorized Pilot RC work.
 
 ## A/B blocking gate
 
@@ -16,7 +16,15 @@ Unit: strict-bank shape, content-only parse, JSON/fences/repair, closed schemas,
 Integration: bounded multi-step loop, timeout/cancel, stale target, result truncation, injection fixtures, preview cancellation and editor adapter capability failures.
 Primary AI acceptance uses `qwen/qwen3.8-27b:free` strict-bank; additional compatibility uses `qwen/qwen3.8-max-0902`. Bank setting is `qwen`, exact served checkpoint pending. Never substitute targets automatically. No native tools, streaming or structured output API. Keys never committed.
 
-## Real editor acceptance
+## Stage B target checks still required for PASS
+
+- Prove ordinary-body uniform Word domain, stable document/selection locator+revision, same-text/ABA rejection and atomic guard/write; visually verify formatting and undo. Until proven, retain Apply denial and report failed/unresolved gate—not SDK impossibility.
+- Prove bounded custom nonsecret settings and public-dummy remembered-key restart; test Reset with populated dummy key. Logical storage removal is not physical DB/WAL erasure.
+- Measure real selection/document/editor invalidation and explicit installed-CSP/offline controls; retain partial native lifecycle evidence honestly.
+- Attribute chat-session equality with count-only booleans across ASK1/ASK2/Test/ASK3/New chat; aggregate repeatedSessions does not identify the post-Test UUID.
+- A terminal B NOT PASS report is permitted by the accepted specification when the mutation subgate remains unresolved. Do not perform unsafe writes or weaken security to turn incomplete evidence into PASS.
+
+## Later-scope real editor and packaging acceptance (C–M; not authorized by Stage B)
 
 DOCX: select/rewrite paragraph, preserve formatting, tables/formatting/lists, user Save, close/reopen and visual inspection.
 XLSX: read range, update values/formulas/styles, add sheet, Save/reopen; verify values and formulas.
