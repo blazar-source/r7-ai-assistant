@@ -13,6 +13,7 @@ const standardHeaders = new Set(['host', 'connection', 'content-length', 'transf
 function closed(value, keys) {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key)) && keys.every(key => Object.hasOwn(value, key));
 }
+function increment(value) { return Math.min(value + 1, Number.MAX_SAFE_INTEGER); }
 const bytes = text => Buffer.byteLength(text, 'utf8');
 function validBody(value) {
   if (!closed(value, ['model', 'messages', 'max_tokens', 'temperature']) || typeof value.model !== 'string' || !value.model.trim() || bytes(value.model) > 128 || /[\r\n]/.test(value.model) ||
@@ -59,16 +60,16 @@ export async function startMock(config) {
   let server;
   try {
     server = https.createServer({ key, cert, minVersion: 'TLSv1.2', maxHeaderSize: 16384, handshakeTimeout: 5000, requestTimeout: 5000, headersTimeout: 5000 }, (req, res) => {
-      counts.requests += 1;
+      counts.requests = increment(counts.requests);
       // Observations before validation, not acceptances; fixed numeric counters only.
-      if (req.method === 'OPTIONS') counts.preflights = Math.min(counts.preflights + 1, Number.MAX_SAFE_INTEGER);
-      if (req.method === 'POST') counts.posts = Math.min(counts.posts + 1, Number.MAX_SAFE_INTEGER);
-      if (req.headers.origin !== undefined) counts.originPresentRequests = Math.min(counts.originPresentRequests + 1, Number.MAX_SAFE_INTEGER);
+      if (req.method === 'OPTIONS') counts.preflights = increment(counts.preflights);
+      if (req.method === 'POST') counts.posts = increment(counts.posts);
+      if (req.headers.origin !== undefined) counts.originPresentRequests = increment(counts.originPresentRequests);
       const reply = (status, payload = '') => {
         res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Connection: 'close' });
         res.end(payload);
       };
-      const reject = status => { counts.rejected += 1; req.resume(); reply(status, '{"error":"SYNTHETIC_REQUEST_REJECTED"}'); };
+      const reject = status => { counts.rejected = increment(counts.rejected); req.resume(); reply(status, '{"error":"SYNTHETIC_REQUEST_REJECTED"}'); };
       if (req.url !== route) { reject(404); return; }
       if (req.headers.origin !== undefined && req.headers.origin !== corsOrigin) { reject(403); return; }
       if (corsMode === 'allow' && req.headers.origin === corsOrigin) {
@@ -105,9 +106,9 @@ export async function startMock(config) {
         chunks = [];
         if (!validBody(value)) { reject(400); return; }
         value = null; // Do not retain any message content in server/session state.
-        counts.accepted += 1;
+        counts.accepted = increment(counts.accepted);
         const identity = createHash('sha256').update(req.headers['x-session-id'].toLowerCase()).digest('hex');
-        if (sessions.has(identity)) counts.repeatedSessions += 1;
+        if (sessions.has(identity)) counts.repeatedSessions = increment(counts.repeatedSessions);
         else if (sessions.size < 64) { sessions.add(identity); counts.sessions = sessions.size; }
         else counts.sessionCapacityReached = true;
         if (['401', '403', '429', '5xx'].includes(profile)) { reply(profile === '5xx' ? 503 : Number(profile), '{"error":"SYNTHETIC_CONTROLLED_ERROR"}'); return; }

@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { startMock, SYNTHETIC_KEY } from './https-mock.mjs';
 import { tlsFixture } from './tls-fixture.mjs';
 import { auditPaths } from '../../../scripts/static-audit.mjs';
+import { parse } from 'acorn';
 
 const session = '12345678-1234-4123-8123-123456789abc';
 const other = '12345678-1234-4123-8123-123456789abd';
@@ -244,6 +245,35 @@ test('non-enumerable mode cannot conceal an unknown enumerable config key', asyn
   const config = { keyPath: 'synthetic-missing', certPath: 'synthetic-missing', listenAddress: '127.0.0.1', port: 0, prefix: '', profile: 'final', corsOrigin: 'null', delayMs: 100, extra: true };
   Object.defineProperty(config, 'corsMode', { value: 'omit', enumerable: false });
   await assert.rejects(startMock(config), { message: 'MOCK_CONFIG_INVALID' });
+});
+
+test('every cumulative counter uses the private safe-integer ceiling contract', async () => {
+  // AST contract: no setters, state injection, new exports or huge request loops.
+  const source = await readFile(new URL('./https-mock.mjs', import.meta.url), 'utf8');
+  const tree = parse(source, { ecmaVersion: 2022, sourceType: 'module' });
+  const helper = tree.body.find(node => node.type === 'FunctionDeclaration' && node.id.name === 'increment');
+  assert.ok(helper, 'private saturating increment helper exists');
+  const expected = parse('function increment(value) { return Math.min(value + 1, Number.MAX_SAFE_INTEGER); }', { ecmaVersion: 2022 }).body[0];
+  const shape = node => JSON.stringify(node, (key, value) => key === 'start' || key === 'end' ? undefined : value);
+  assert.equal(shape(helper), shape(expected), 'exact +1 and safe-integer clamp, including at the ceiling');
+  const cumulative = new Set(['requests', 'preflights', 'posts', 'originPresentRequests', 'accepted', 'rejected', 'repeatedSessions']);
+  const covered = new Set();
+  function walk(node) {
+    if (!node?.type) return;
+    const target = node.type === 'AssignmentExpression' ? node.left : node.type === 'UpdateExpression' ? node.argument : null;
+    if (target?.type === 'MemberExpression' && target.object.name === 'counts' && cumulative.has(target.property.name)) {
+      const name = target.property.name;
+      assert.equal(node.operator, '=', name);
+      assert.equal(shape(node.right), shape(parse(`increment(counts.${name})`, { ecmaVersion: 2022 }).body[0].expression), name);
+      covered.add(name);
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) { for (const child of value) walk(child); }
+      else if (value?.type) walk(value);
+    }
+  }
+  walk(tree);
+  assert.deepEqual(covered, cumulative);
 });
 
 test('actual authored infrastructure passes unchanged source guard', async () => {
