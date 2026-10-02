@@ -4,5 +4,12 @@
   "private": true,
   "description": "Standalone embedded assistant for R7 Desktop",
   "license": "UNLICENSED",
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "audit": "node scripts/static-audit.mjs"
+  },
+  "devDependencies": {
+    "acorn": "8.15.0"
+  }
 }

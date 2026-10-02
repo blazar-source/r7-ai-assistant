@@ -1,0 +1,28 @@
+// Accepted Stage B resource contract. Bytes are UTF-8, not UTF-16 length.
+export const LIMITS = Object.freeze({
+  endpointBytes: 2048,
+  modelBytes: 128,
+  apiKeyBytes: 4096,
+  userInputBytes: 8192,
+  selectionBytes: 8192,
+  replacementBytes: 8192,
+  modelContentBytes: 65536,
+  jsonBytes: 65536,
+  editorResultBytes: 65536,
+  requestBytes: 98304,
+  httpEnvelopeBytes: 131072,
+  sentHistoryMessages: 32,
+  sentHistoryBytes: 65536,
+  displayedHistoryEntries: 64,
+  displayedHistoryBytes: 131072,
+  callbackTimeoutMs: 5000,
+  operationTimeoutMs: 150000,
+  previewTtlMs: 120000,
+  applyObservationMs: 15000,
+  httpTimeoutMinSeconds: 5,
+  httpTimeoutMaxSeconds: 120,
+  maxTokensMin: 64,
+  maxTokensMax: 8192,
+  temperatureMin: 0,
+  temperatureMax: 2
+});
