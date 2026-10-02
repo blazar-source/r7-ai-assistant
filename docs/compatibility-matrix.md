@@ -2,6 +2,8 @@
 
 This is a development evidence matrix, not a Pilot RC PASS report.
 
+All native observations below currently refer to installed75b2239 artifact SHA-256262fae65ac7a088ae322c0258167523a20951bf3568f6cf09090fc7402bf116e unless explicitly stated otherwise. Host-only caption correction f712331 has independent spec/quality review, behavioral RED/GREEN, parent7focused/full342 tests and audit PASS. Its new exact-eight-file artifact SHA-256508750fc43b3885f224858df2d190d18885b660d48c1fad422fc0d1a229923cd is repeat-build stable but NOT YET DEPLOYED/NATIVELY RECHECKED. Source approval does not promote any native gate.
+
 | Capability | Environment/evidence | Status |
 | --- | --- | --- |
 | Astra exact build | Guest `/etc/astra/build_version`: 1.7.9.41; astra-version package corroborates | VERIFIED |
@@ -27,7 +29,7 @@ This is a development evidence matrix, not a Pilot RC PASS report.
 | Actual CEF missing-CORS response headers | Latest75b2239 artifact, identical trusted fixture/TLS/settings: only response permissions omitted; valid exact-header OPTIONS1, POST0, server rejection0, safe generic failure UI. Both owned mocks gracefully stopped; listener absent | VERIFIED NATIVE CORS REFUSAL |
 | Native controlled HTTP401/403/429/503 | Latest artifact, separate trusted fixtures: each valid preflight + strict accepted POST1 then controlled401/403/429/503. Native UI distinguishes key rejection401, access denied403, rate limit429/no-auto-retry and generic server error for503. Validation rejection0, no additional POST during bounded settled observations; owned mocks stopped, fixtures unchanged | VERIFIED SYNTHETIC SAMPLES ONLY; OTHER5xx/REDIRECT/ABORT GATES NOT INFERRED |
 | Native307 redirect refusal | Latest artifact: valid preflight/strict accepted POST1, controlled same-origin relative307 loop target, generic network refusal; no followed POST during bounded settled observation. Authored redirect:error retained, mock stopped, fixtures unchanged; no other3xx/cross-origin/downgrade or dedicated UI-cause inference | VERIFIED NARROW307 REFUSAL/NO FOLLOW |
-| Native oversized envelope | Latest artifact: valid preflight/accepted POST1, controlled HTTP200 envelope over131072bytes, native BYTE_LIMIT refusal/no oversized output/no additional POST. Owned mock stopped, fixtures unchanged. Shared message incorrectly advises shrinking input/selection for incoming response; traced to common BYTE_LIMIT caption | VERIFIED REFUSAL; MESSAGE PRECISION CORRECTION/REGRESSION/RECHECK PENDING |
+| Native oversized envelope | Latest artifact: valid preflight/accepted POST1, controlled HTTP200 envelope over131072bytes, native BYTE_LIMIT refusal/no oversized output/no additional POST. Owned mock stopped, fixtures unchanged. Measured old caption advises shrinking input/selection for incoming response. Host f712331 now uses fixed multi-origin wording with real statusText regression and independent review; measured native artifact still old | VERIFIED REFUSAL; CAPTION HOST FIXED/NATIVE RECHECK PENDING |
 | Native untrusted certificate refusal | Actual CEF trust-removal negative test not yet performed; independent TLS verifier result is not a substitute | NOT RUN |
 | Native ASK final / chat history / sessions | Latest artifact: four synthetic ASK final responses and one connection test accepted. First two ASK share one UUID by count-only match; connection adds distinct temporary session while two displayed pairs remain; New chat clears history and produces third distinct UUID. Aggregate post-test repeat cannot identify which previous UUID matched | VERIFIED NARROW UI/SESSION OBSERVATIONS; NO RAW ID/PAYLOAD DUMP |
 | Connection status and settings restart/reset | Actual native connection success/refusal and settings-save shown; restart/reset/plaintext opt-in lifecycle still pending | PARTIAL NATIVE EVIDENCE |
@@ -36,7 +38,7 @@ This is a development evidence matrix, not a Pilot RC PASS report.
 | Qwen strict-bank authenticated acceptance | No model request sent; no credits used by catalog lookup | NOT RUN |
 | Bank served checkpoint | Qwen 3.8 family likely 27B; exact served ID/access unconfirmed | NOT VERIFIED |
 | ZPS current state | Documented status commands return superuser-rights requirement | NOT VERIFIED |
-| Plugin archive | Deterministic eight-file ZIP/.plugin exists; native tuple correction 75b2239 rebuilt and installed byte-identically in dev user root, SHA-256262fae65ac7a088ae322c0258167523a20951bf3568f6cf09090fc7402bf116e | VERIFIED DEVELOPMENT ARTIFACT ONLY |
+| Plugin archive | New host f712331 exact-eight-file ZIP STORE/.plugin 73837bytes, SHA-256508750fc43b3885f224858df2d190d18885b660d48c1fad422fc0d1a229923cd; independent ZIP/.plugin byte equality and repeat build verified. Native user root still installed75b2239/262fae artifact | HOST BUILD VERIFIED; NEW DEPLOYMENT/RECHECK PENDING |
 | DEB / clean install / upgrade / uninstall | No production packaging/install lifecycle acceptance yet | NOT RUN |
 | ZPS ON acceptance | No separate ZPS state exercised | NOT RUN |
 
