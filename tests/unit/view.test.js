@@ -6,8 +6,8 @@ import { SettingsStore } from '../../src/config/storage.js';
 import { dom } from '../fixtures/dom.js';
 
 function fixture(response = { type: 'final', message: '<img src=x onerror=alert(1)> **not markdown**' }) {
-  const tree = dom();
-  const controller = createController({ store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } }, bridge: { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: false, target: null }; } }, transport: async () => response });
+  const tree = dom(); const target = Object.freeze({});
+  const controller = createController({ store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } }, bridge: { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, canApply(value) { return value === target; }, async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: true, target }; } }, transport: async () => response });
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   const panel = mountPanel(tree.root, controller);
   assert.ok(tree.id('prompt'), 'mounted composer');
@@ -54,7 +54,7 @@ test('keyboard submit reaches controller and preview cancellation restores compo
   id('prompt').value = 'edit'; id('prompt').dispatch('keydown', { key: 'Enter', ctrlKey: true });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(controller.getState().status, 'PREVIEW_READY'); assert.equal(id('preview').hidden, false);
-  assert.equal(id('replacement').textContent, 'proposal'); assert.equal(id('apply').disabled, true);
+  assert.equal(id('replacement').textContent, 'proposal'); assert.equal(id('apply').disabled, false);
   id('cancel-preview').dispatch('click');
   assert.equal(controller.getState().preview, null); assert.equal(document.activeElement, id('prompt'));
   controller.dispose();

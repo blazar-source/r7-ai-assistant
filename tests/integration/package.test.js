@@ -31,9 +31,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
       commands++; assert.equal(node.arguments[0].type, 'FunctionExpression'); assert.equal(node.arguments[0].async, false); assert.equal(node.arguments[0].generator, false);
+      assert.equal(node.arguments[1].value, false); assert.equal(node.arguments[2].value, false);
+      const publicCalls = [];
+      walk(node.arguments[0].body, call => {
+        if (call.type !== 'CallExpression') return;
+        assert.equal(call.callee.type, 'MemberExpression'); assert.equal(call.callee.computed, false);
+        assert.equal(call.callee.object.type, 'Identifier');
+        if (call.callee.property.name !== 'IsTrackRevisions') assert.equal(call.callee.object.name, 'Api');
+        publicCalls.push(call.callee.property.name);
+      });
+      assert.deepEqual(publicCalls, commands === 1 ? ['GetDocument'] : ['GetDocumentId', 'GetDocument', 'IsTrackRevisions']);
     }
   });
-  assert.equal(commands, 1);
+  assert.equal(commands, 2); // Presence + measured actual-context public probes, both literal read-only.
   for (const forbidden of ['sourceMappingURL', 'sourcesContent', 'node:', 'https-mock', 'esbuild', 'acorn', 'synthetic', 'example.invalid', 'BEGIN PRIVATE KEY', 'window.parent', 'innerHTML']) assert.equal(source.includes(forbidden), false, forbidden);
 });
 test('HTML/CSS only local authored assets plus exact separate installed SDK with documented CSP and visible focus', async () => {

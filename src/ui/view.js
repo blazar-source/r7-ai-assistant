@@ -12,6 +12,10 @@ const statuses = Object.freeze({
   PROTOCOL_ERROR: 'Ответ не соответствует разрешённому JSON формату', HTTP_UNAUTHORIZED: 'Сервер отклонил ключ (401)', HTTP_FORBIDDEN: 'Доступ запрещён (403)', HTTP_RATE_LIMIT: 'Лимит запросов (429); автоматического повтора нет',
   HTTP_SERVER_ERROR: 'Ошибка сервера', HTTP_ERROR: 'HTTP запрос не выполнен', NETWORK_ERROR: 'Сеть / DNS / CORS / TLS: соединение не выполнено. Проверка сертификата не отключается.',
   OFFLINE: 'Нет сети', CANCELLED: 'Операция отменена', TIMEOUT: 'Время ожидания истекло', CAPABILITY_UNAVAILABLE: 'Возможность недоступна. Безопасность изменения документа не доказана.',
+  CHECKING_SELECTION: 'Проверка текущего редактора и выделения…', APPLYING: 'Команда замены отправлена. Её нельзя отменить; ожидается квитанция SDK.',
+  APPLY_ACKNOWLEDGED: 'SDK подтвердил команду. Это не подтверждает изменение текста и форматирования; проверьте документ. Для отмены используйте штатный Undo.',
+  APPLY_UNCERTAIN: 'Исход команды неизвестен; результат не доказан. Проверьте документ. Автоматического повтора и отката нет; незавершённый вызов блокирует изменения.',
+  SELECTION_CHANGED: 'Выделение изменилось. Повторите команду',
   EDITOR_BUSY: 'Редактор занят / исход предыдущего вызова неизвестен. Дождитесь его завершения; новый мост не создаётся.', EDITOR_ERROR: 'Не удалось получить результат редактора'
 });
 export function statusText(code) { return statuses[code] ?? statuses.INTERNAL_ERROR; }
@@ -42,7 +46,7 @@ export function mountPanel(root, controller) {
   const fresh = button('Новый чат', 'new-chat', function () { controller.newChat(); prompt.focus(); });
   header.append(title, badge, fresh);
   const status = node('p', '', 'status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
-  const lifecycleWarning = node('p', 'События документа и выделения не подтверждены в целевой Р7. Перед каждым запросом выделение читается заново; текст не доказывает владение целью.'); lifecycleWarning.className = 'notice';
+  const lifecycleWarning = node('p', 'Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.'); lifecycleWarning.className = 'notice';
   const toolbar = node('section'); toolbar.setAttribute('aria-label', 'Режим и контекст');
   const modeLabel = node('label', 'Режим'); modeLabel.htmlFor = 'mode';
   const mode = node('select', '', 'mode');
@@ -68,7 +72,7 @@ export function mountPanel(root, controller) {
   composer.append(promptLabel, prompt, budget, send, stop);
   const preview = node('section', '', 'preview'); preview.setAttribute('aria-label', 'Предложение замены');
   const replacement = node('pre', '', 'replacement');
-  const reason = node('p', 'Применение отключено: не доказаны стабильная цель, допустимая область и атомарная проверка. Документ не изменён. Срок предложения — 120 секунд.', 'apply-reason');
+  const reason = node('p', 'Только явное Применить: текущее непустое выделение должно точно совпадать с исходным текстом. Перевыделение такого же текста разрешено. Срок предложения — 120 секунд. Штатный Undo выполняется вручную.', 'apply-reason');
   const apply = button('Применить', 'apply', function () { controller.apply(); }); apply.disabled = true; apply.setAttribute('aria-describedby', 'apply-reason');
   const cancel = button('Отменить предложение', 'cancel-preview', function () { controller.cancelPreview(); prompt.focus(); });
   preview.append(node('h2', 'Предложение'), replacement, reason, apply, cancel);
@@ -105,9 +109,14 @@ export function mountPanel(root, controller) {
     status.textContent = statusText(state.status);
     badge.textContent = `Stage B · редактор: ${state.editorType} · runtimeVerified: false`;
     mode.value = state.mode; include.checked = state.includeContext;
-    stop.disabled = !state.active; send.disabled = state.active; test.disabled = state.active; refresh.disabled = state.active; checkR7.disabled = state.active;
+    const locked = state.writeLocked === true;
+    stop.disabled = !state.active || locked;
+    send.disabled = state.active || locked; test.disabled = state.active || locked; refresh.disabled = state.active || locked; checkR7.disabled = state.active || locked;
+    fresh.disabled = locked; reset.disabled = locked; save.disabled = locked; mode.disabled = locked;
+    for (const control of Object.values(controls)) control.disabled = locked;
+    apply.disabled = state.canApply !== true; cancel.disabled = state.active || locked;
     capabilitySummary.textContent = Number.isInteger(state.capabilityCount) && state.capabilityCount >= 0 && state.capabilityCount <= 6 ?
-      `Наличие API: ${state.capabilityCount} / 6. Область, форматирование и отмена не подтверждены. Применение отключено.` : '';
+      `Наличие API: ${state.capabilityCount} / 6. Область, форматирование и отмена этой проверкой не подтверждены; она не разрешает Применить.` : '';
     context.textContent = contextText(state.context);
     selected.textContent = state.context.text;
     if (lastHistory !== state.chat.history) {

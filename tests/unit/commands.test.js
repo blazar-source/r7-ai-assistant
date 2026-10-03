@@ -72,7 +72,7 @@ test('actual probe survives native-compatible return filter end-to-end without g
   const result = await bridge.probeCapabilities();
   assert.deepEqual(result.methodPresence, { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: false });
   assert.equal(result.runtimeVerified, false); assert.equal(result.mutation.available, false);
-  await assert.rejects(bridge.applySelection(), { code: 'CAPABILITY_UNAVAILABLE' });
+  await assert.rejects(bridge.applySelection({ target: null, replacement: 'x' }), { code: 'SELECTION_CHANGED' });
   api.GetDocument = () => { throw Error('private document/name/key/url'); };
   await assert.rejects(bridge.probeCapabilities(), { code: 'CAPABILITY_UNAVAILABLE' });
   assert.equal(bridge.getState().busy, false);

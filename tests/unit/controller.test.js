@@ -13,12 +13,15 @@ function setup(options = {}) {
   const storage = new Map([['unrelated', 'keep']]);
   const store = new SettingsStore({ getItem(k) { return storage.get(k) ?? null; }, setItem(k,v) { storage.set(k,v); }, removeItem(k) { storage.delete(k); }, get length() { return storage.size; }, key(i) { return [...storage.keys()][i]; } });
   const calls = [];
-  const bridge = { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, async readSelection() { return { text: 'выделено', editorType: 'word', eligible: false, target: null, reason: 'MUTATION_PROOF_UNRESOLVED' }; }, async applySelection() { throw Error('must never dispatch'); }, ...options.bridge };
+  const target = Object.freeze({}); const applied = [];
+  const bridge = { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, canApply(value) { return value === target; },
+    async readSelection() { return { text: 'выделено', editorType: 'word', eligible: true, target }; },
+    async applySelection(data) { assert.equal(data.target, target); data.beforeDispatch(); applied.push(data.replacement); return { acknowledged: true, effectVerified: false }; }, ...options.bridge };
   const clock = { now() { return time; } };
   const timers = { schedule(fn,ms) { const token = {}; scheduled.set(token, { fn, at: time + ms }); return token; }, clear(token) { scheduled.delete(token); } };
   const controller = createController({ bridge, store, crypto, clock, timers, transport: async (...args) => { calls.push(args); return options.response ?? { type: 'final', message: 'ответ' }; }, ...options.dependencies });
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
-  return { controller, calls, bridge, storage, clock, scheduled, advance(ms, fire = true) { time += ms; if (fire) for (const [token, t] of [...scheduled]) if (t.at <= time) { scheduled.delete(token); t.fn(); } } };
+  return { controller, calls, applied, bridge, storage, clock, scheduled, advance(ms, fire = true) { time += ms; if (fire) for (const [token, t] of [...scheduled]) if (t.at <= time) { scheduled.delete(token); t.fn(); } } };
 }
 
 test('R7 check with no bridge reports local unsupported without HTTP or credentials', async () => {
@@ -43,25 +46,20 @@ test('ASK uses fresh bounded selection as untrusted user context and appends a c
   assert.equal(await c.analyze('вопрос'), true);
   assert.equal(c.getState().status, 'COMPLETE');
   assert.equal(c.getState().context.kind, 'EXACT');
-  assert.equal(c.getState().context.ownershipVerified, false);
+  assert.equal(c.getState().context.ownershipVerified, true);
   assert.deepEqual(calls[0][1].slice(-2).map(m => m.content), ['выделено', 'вопрос']);
   assert.equal(calls[0][1][0].content.includes('выделено'), false);
   assert.deepEqual(c.getState().chat.history.map(m => m.content), ['вопрос', 'ответ']);
   assert.equal(c.getState().preview, null);
 });
-test('EDIT creates immutable explicit preview; production Apply always denied without dispatch', async () => {
-  const { controller: c } = setup({ response: { type: 'tool', tool: 'r7_replace_selection', arguments: { text: 'замена' } } });
-  c.setMode('EDIT');
-  await c.analyze('исправить');
+test('EDIT creates immutable sanitized preview and explicit Apply delegates only private owned target', async () => {
+  const { controller: c, applied } = setup({ response: { type: 'tool', tool: 'r7_replace_selection', arguments: { text: 'замена' } } });
+  c.setMode('EDIT'); await c.analyze('исправить');
   const preview = c.getState().preview;
-  assert.ok(preview && Object.isFrozen(preview) && Object.isFrozen(preview.settings));
-  assert.equal(preview.replacement, 'замена');
-  assert.equal(preview.target, null);
-  assert.equal(c.getState().canApply, false);
-  assert.equal(await c.apply(), false);
-  assert.equal(c.getState().status, 'CAPABILITY_UNAVAILABLE');
-  c.cancelPreview();
-  assert.equal(c.getState().preview, null);
+  assert.ok(preview && Object.isFrozen(preview)); assert.equal(preview.replacement, 'замена');
+  assert.equal('target' in preview, false); assert.equal('settings' in preview, false); assert.equal(applied.length, 0);
+  assert.equal(c.getState().canApply, true); assert.equal(await c.apply(), true);
+  assert.deepEqual(applied, ['замена']); assert.equal(c.getState().status, 'APPLY_ACKNOWLEDGED'); assert.equal(c.getState().preview, null);
 });
 test('preview expires at exactly 120000 milliseconds', async () => {
   const { controller: c, advance } = setup({ response: { type: 'tool', tool: 'r7_replace_selection', arguments: { text: '' } } });
@@ -75,14 +73,15 @@ test('Apply checks preview deadline even without timer task delivery', async () 
   assert.ok(c.getState().preview); assert.equal(await c.apply(), false); assert.equal(c.getState().preview, null);
   assert.equal(c.getState().status, 'PREVIEW_EXPIRED');
 });
-for (const change of ['stop', 'newChat', 'reset', 'settings', 'editor', 'document', 'selection', 'mode', 'context']) {
+for (const change of ['stop', 'newChat', 'reset', 'settings', 'editor', 'document', 'mode', 'context']) {
   test(`${change} clears an already published uncommitted preview`, async () => {
     const { controller: c } = setup({ response: { type: 'tool', tool: 'r7_replace_selection', arguments: { text: 'proposal' } } });
     c.setMode('EDIT'); await c.analyze('edit'); assert.ok(c.getState().preview);
     if (change === 'settings') c.settingsChanged();
     else if (change === 'mode') c.setMode('ASK');
     else if (change === 'context') c.setIncludeContext(false);
-    else if (['editor','document','selection'].includes(change)) c.contextChanged(change);
+    else if (change === 'selection') c.selectionChanged();
+    else if (['editor','document'].includes(change)) c.contextChanged();
     else c[change]();
     assert.equal(c.getState().preview, null); assert.equal(c.getState().canApply, false);
   });
@@ -116,7 +115,8 @@ for (const change of ['stop', 'newChat', 'reset', 'settings', 'editor', 'documen
     if (change === 'settings') c.settingsChanged();
     else if (change === 'mode') c.setMode('EDIT');
     else if (change === 'context') c.setIncludeContext(true);
-    else if (['editor','document','selection'].includes(change)) c.contextChanged(change);
+    else if (change === 'selection') c.selectionChanged();
+    else if (['editor','document'].includes(change)) c.contextChanged();
     else c[change]();
     const state = c.getState();
     waiting.resolve({ type: 'final', message: 'late' }); await operation;

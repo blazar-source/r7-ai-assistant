@@ -2,13 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 
+function runContext(body) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api'); let identity = false;
+  globalThis.Api = { GetDocumentId() { identity = true; return 'bounded-id'; }, ReplaceTextSmart() {}, GetDocument() { return { GetRangeBySelect() {}, IsTrackRevisions() { return false; } }; } };
+  try { return { value: body(), identity }; }
+  finally { if (previous) Object.defineProperty(globalThis, 'Api', previous); else delete globalThis.Api; }
+}
+function contextCommand(body, _close, _recalculate, callback) { callback(runContext(body).value); }
 function rig(editorType = 'word', pluginOverrides = {}) {
   let now = 0;
   const scheduled = new Map();
   const calls = [];
   const plugin = {
+    info: { editorType },
     executeMethod(name, params, callback) { calls.push({ name, params, callback }); return false; },
-    callCommand(body, close, recalculate, callback) { calls.push({ body, close, recalculate, callback }); },
+    callCommand(body, close, recalculate, callback) {
+      const result = runContext(body);
+      if (result.identity) callback(result.value);
+      else calls.push({ body, close, recalculate, callback });
+    },
     ...pluginOverrides
   };
   const bridge = createR7Bridge(plugin, {
@@ -31,7 +43,9 @@ test('read completion belongs to callback, not executeMethod false/queued status
   assert.equal(r.calls.length, 1); assert.equal(r.calls[0].name, 'GetSelectedText');
   assert.deepEqual(r.calls[0].params, []); assert.ok(Object.isFrozen(r.calls[0].params));
   r.calls[0].callback('выделено');
-  assert.deepEqual(await promise, { text: 'выделено', editorType: 'word', eligible: false, target: null, reason: 'MUTATION_PROOF_UNRESOLVED' });
+  const result = await promise;
+  assert.equal(result.text, 'выделено'); assert.equal(result.editorType, 'word'); assert.equal(result.eligible, true);
+  assert.ok(Object.isFrozen(result.target)); assert.deepEqual(result.target, {});
   assert.equal(r.bridge.getState().busy, false); assert.equal(r.scheduled.size, 0);
 });
 
@@ -58,7 +72,7 @@ test('missing callback hits 5000 deadline and stays uncertain until matching lat
   const rejection = assert.rejects(first, code('TIMEOUT'));
   r.advance(4999); assert.equal(r.bridge.getState().uncertain, false);
   r.advance(1); await rejection;
-  assert.deepEqual(r.bridge.getState(), { editorType: 'word', busy: true, uncertain: true, disposed: false });
+  assert.deepEqual(r.bridge.getState(), { editorType: 'word', busy: true, uncertain: true, disposed: false, writePending: false });
   await assert.rejects(r.bridge.readSelection(), code('EDITOR_BUSY'));
   r.calls[0].callback('late'); assert.equal(r.bridge.getState().busy, false);
   const second = r.bridge.readSelection(); r.calls[1].callback('fresh'); assert.equal((await second).text, 'fresh');
@@ -127,7 +141,7 @@ test('selection is typed UTF-8 bounded, immutable, never truncated or eligibilit
     const promise = r.bridge.readSelection(); const check = expected ? assert.rejects(promise, code(expected)) : promise;
     r.calls.at(-1).callback(value);
     if (expected) await check;
-    else { const result = await check; assert.equal(result.text, value); assert.ok(Object.isFrozen(result)); assert.equal(result.eligible, false); assert.equal(result.target, null); }
+    else { const result = await check; assert.equal(result.text, value); assert.ok(Object.isFrozen(result)); assert.equal(result.eligible, value !== ''); assert.equal(result.target === null, value === ''); }
     assert.equal(r.bridge.getState().busy, false);
   }
 });
@@ -152,7 +166,7 @@ test('capability callback exposes presence, never promotes host/mock positives t
   r.calls[0].callback(probe); const result = await promise;
   assert.deepEqual(result.methodPresence, namedPresence); assert.ok(Object.isFrozen(result.methodPresence));
   assert.equal(result.runtimeVerified, false); assert.equal(result.selectionRead.runtimeVerified, false);
-  assert.equal(result.mutation.available, false); assert.equal(result.mutation.reason, 'MUTATION_PROOF_UNRESOLVED');
+  assert.equal(result.mutation.available, false); assert.equal(result.mutation.reason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
   assert.ok(Object.isFrozen(result)); assert.ok(Object.isFrozen(result.mutation));
 });
 
@@ -229,7 +243,7 @@ test('only closed error tuple yields static capability unavailable without input
 
 test('clock failure before dispatch is content-free and leaves no occupied slot', async () => {
   let calls = 0;
-  const bridge = createR7Bridge({ executeMethod() { calls += 1; } }, {
+  const bridge = createR7Bridge({ info: { editorType: 'word' }, callCommand: contextCommand, executeMethod() { calls += 1; } }, {
     editorType: 'word', clock: { now() { throw new Error('private'); } }
   });
   await assert.rejects(bridge.readSelection(), code('EDITOR_ERROR'));
@@ -238,7 +252,7 @@ test('clock failure before dispatch is content-free and leaves no occupied slot'
 
 test('cleanup exception cannot strand callback completion or leak its contents', async () => {
   let callback;
-  const bridge = createR7Bridge({ executeMethod(_name, _params, cb) { callback = cb; } }, {
+  const bridge = createR7Bridge({ info: { editorType: 'word' }, callCommand: contextCommand, executeMethod(_name, _params, cb) { callback = cb; } }, {
     editorType: 'word', clock: { now: () => 0 },
     timers: { schedule() { return 1; }, clear() { throw new Error('private'); } }
   });
@@ -253,7 +267,7 @@ test('cleanup exception cannot strand callback completion or leak its contents',
 
 test('timer setup failure prevents SDK dispatch and exposes static failure only', async () => {
   let calls = 0;
-  const bridge = createR7Bridge({ executeMethod() { calls += 1; } }, {
+  const bridge = createR7Bridge({ info: { editorType: 'word' }, callCommand: contextCommand, executeMethod() { calls += 1; } }, {
     editorType: 'word', clock: { now: () => 0 },
     timers: { schedule() { throw new Error('private'); }, clear() {} }
   });
@@ -280,10 +294,10 @@ test('probe deadline keeps shared slot uncertain and discarded callback never be
   assert.equal(r.bridge.getState().busy, true); r.calls[2].callback('next'); assert.equal((await next).text, 'next');
 });
 
-test('Apply denies all purported target certificates including same-text relocated/document/rich claims without any SDK work', async () => {
+test('Apply rejects caller-forged serializable target certificates without any SDK work', async () => {
   const r = rig();
   for (const target of [null, { originalText: 'same', locator: 'first' }, { originalText: 'same', locator: 'second' }, { documentId: 'changed', revision: 1 }, { eligible: true, domain: 'plain', json: { content: ['same'] } }, { domain: 'field' }, { domain: 'unknown' }]) {
-    await assert.rejects(r.bridge.applySelection({ target, replacement: 'changed' }), code('CAPABILITY_UNAVAILABLE'));
+    await assert.rejects(r.bridge.applySelection({ target, replacement: 'changed' }), code('SELECTION_CHANGED'));
   }
   assert.equal(r.calls.length, 0); assert.equal(r.bridge.getState().busy, false);
 });

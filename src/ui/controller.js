@@ -15,8 +15,8 @@ function rules(mode, context) {
 }
 function safeCode(error) { return error instanceof SafeError ? error.code : ERROR_CODES.INTERNAL_ERROR; }
 
-// One-shot ownership only. There is NO production write dispatch or enable flag.
-// In particular no simulated target certificate can turn Apply on.
+// One-shot Preview/explicit Apply only. Ownership capabilities stay private;
+// neither model proposals nor public UI snapshots can supply an editor target.
 export function createController({ bridge, store = new SettingsStore(), transport = requestCompletion,
   crypto = globalThis.crypto, clock = { now: () => Date.now() },
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
@@ -30,6 +30,8 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let generation = 0;
   let active = null;
   let preview = null;
+  let previewTarget = null;
+  let previewOwner = null;
   let previewTimer = null;
   let capabilityCount = null;
   let disposed = false;
@@ -40,14 +42,22 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     return value;
   }
   function clear(timer) { if (timer !== null) { try { timers.clear(timer); } catch {} } }
-  function dropPreview() { clear(previewTimer); previewTimer = null; preview = null; }
+  function dropPreview() { clear(previewTimer); previewTimer = null; preview = null; previewTarget = null; previewOwner = null; }
+  function writeLocked() { return active?.dispatched === true || bridge?.getState().writePending === true; }
+  function canApply() {
+    return !disposed && !active && !writeLocked() && mode === 'EDIT' && preview !== null && previewOwner?.generation === generation &&
+      now() < preview.expiresAt && bridge?.canApply?.(previewTarget) === true;
+  }
   function snapshot() {
     return Object.freeze({ status, active: active !== null, mode, includeContext, context, chat,
       settings: stored.settings, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
-      preview, capabilityCount, canApply: false, generation, editorType: bridge?.getState().editorType ?? 'unknown',
-      mutationReason: 'MUTATION_PROOF_UNRESOLVED', runtimeVerified: false, lifecycleEventsVerified: false });
+      preview, capabilityCount, canApply: canApply(), writeLocked: writeLocked(), generation, editorType: bridge?.getState().editorType ?? 'unknown',
+      mutationReason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED', runtimeVerified: false, lifecycleEventsVerified: false });
   }
-  function emit() { const state = snapshot(); for (const listener of listeners) listener(state); }
+  function emit() { if (disposed) return; const state = snapshot(); for (const listener of listeners) listener(state); }
+  // Late real callback settlement may unlock controls, never publish late content,
+  // overwrite the unknown receipt, resurrect Preview or append chat history.
+  const unsubscribeBridge = bridge?.subscribe?.(function () { if (!disposed) emit(); });
   function invalidate(nextStatus = 'READY', forgetContext = false) {
     generation++;
     const old = active;
@@ -57,7 +67,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     dropPreview();
     capabilityCount = null;
     if (forgetContext) context = noContext();
-    status = nextStatus;
+    status = old?.dispatched ? 'APPLY_UNCERTAIN' : nextStatus;
   }
   function valid(owned) {
     if (disposed || active !== owned || generation !== owned.generation) return false;
@@ -67,7 +77,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     return true;
   }
   function begin(kind) {
-    if (disposed || active) return null;
+    if (disposed || active || writeLocked()) return null;
     dropPreview();
     const deadline = now() + LIMITS.operationTimeoutMs; // BEFORE any context/SDK work
     const owned = { kind, generation: ++generation, settings: validateRequestSettings(stored.settings),
@@ -91,7 +101,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   function fail(owned, error) {
     if (owned && active !== owned) return false;
     if (owned) { clear(owned.timer); owned.abort.abort(); active = null; }
-    status = safeCode(error); emit(); return false;
+    status = owned?.dispatched ? 'APPLY_UNCERTAIN' : safeCode(error); emit(); return false;
   }
   async function read(owned) {
     const platform = bridge?.getState();
@@ -103,13 +113,13 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     const result = await bridge.readSelection({ signal: owned.abort.signal });
     if (!valid(owned)) return null;
     assertByteLimit(result.text, LIMITS.selectionBytes);
-    // Text capture is NOT locator/document/selection ownership evidence.
+    // Public context contains text and a bounded indicator only, never ID/token.
     context = Object.freeze({ kind: result.text === '' ? 'EMPTY' : 'EXACT', text: result.text,
-      bytes: utf8ByteLength(result.text), ownershipVerified: false });
-    return context;
+      bytes: utf8ByteLength(result.text), ownershipVerified: result.eligible === true && bridge.canApply?.(result.target) === true });
+    return result;
   }
   async function run(kind, user) {
-    if (disposed || active) return false;
+    if (disposed || active || writeLocked()) return false;
     let owned = null;
     try {
       if (kind === 'analysis') assertByteLimit(user, LIMITS.userInputBytes);
@@ -125,18 +135,18 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       // Revalidate the dependency boundary; no raw object or proposal bypasses schema.
       const parsed = parseModelContent(JSON.stringify(result), owned.mode);
       if (kind === 'connection') return finish(owned, 'CONNECTION_OK');
-      const candidate = parsed.type === 'tool' ? Object.freeze({ replacement: parsed.arguments.text, original: captured?.text ?? '', target: null,
-        settings: owned.settings, uuid: owned.uuid, editorType: owned.editorType, generation: owned.generation, expiresAt: now() + LIMITS.previewTtlMs,
-        ownershipVerified: false, reason: 'MUTATION_PROOF_UNRESOLVED' }) : null;
+      const eligible = owned.mode === 'EDIT' && captured?.text !== '' && captured?.eligible === true && bridge?.canApply?.(captured.target) === true;
+      const candidate = parsed.type === 'tool' && eligible ? Object.freeze({ replacement: parsed.arguments.text, original: captured.text,
+        expiresAt: now() + LIMITS.previewTtlMs }) : null;
       const nextChat = appendChatPair(chat, user, parsed.type === 'final' ? parsed.message : parsed.arguments.text);
       // Prepare bounded immutable values first; recheck deadline/ownership BEFORE
       // publication, not after appending history or exposing a proposal.
-      return finish(owned, parsed.type === 'final' ? 'COMPLETE' : 'PREVIEW_READY', function () {
+      return finish(owned, parsed.type === 'final' ? 'COMPLETE' : candidate ? 'PREVIEW_READY' : 'CAPABILITY_UNAVAILABLE', function () {
         if (candidate) {
           const timer = timers.schedule(function () {
             if (preview === candidate) { dropPreview(); status = 'PREVIEW_EXPIRED'; emit(); }
           }, LIMITS.previewTtlMs);
-          previewTimer = timer; preview = candidate;
+          previewTimer = timer; preview = candidate; previewTarget = captured.target; previewOwner = owned;
         }
         chat = nextChat;
       });
@@ -148,7 +158,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     analyze(user) { return run('analysis', user); },
     testConnection() { return run('connection'); },
     async checkR7() {
-      if (disposed || active) return false;
+      if (disposed || active || writeLocked()) return false;
       let owned = null;
       try {
         // Local read-only check: no credential validation, UUID or AI request.
@@ -176,7 +186,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       } catch (error) { return fail(owned, error); }
     },
     async refreshContext() {
-      if (disposed || active) return false;
+      if (disposed || active || writeLocked()) return false;
       let owned = null;
       try {
         // A read is permitted without connection credentials.
@@ -189,27 +199,53 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         emit(); await read(owned); return finish(owned, 'CONTEXT_READY');
       } catch (error) { return fail(owned, error); }
     },
-    settingsChanged() { if (disposed) return; invalidate('SETTINGS_CHANGED'); emit(); },
+    settingsChanged() { if (disposed || writeLocked()) return; invalidate('SETTINGS_CHANGED'); emit(); },
     saveSettings(raw) {
-      if (disposed) return false;
+      if (disposed || writeLocked()) return false;
       invalidate('SETTINGS_CHANGED');
       try { const settings = validateSettings(raw); stored = store.save(settings); status = 'SETTINGS_SAVED'; emit(); return true; }
       catch (error) { status = safeCode(error); emit(); return false; }
     },
-    setMode(next) { if (!['ASK', 'EDIT'].includes(next) || disposed) return false; if (mode !== next) { invalidate(); mode = next; emit(); } return true; },
-    setIncludeContext(next) { if (typeof next !== 'boolean' || disposed) return false; if (includeContext !== next) { invalidate(); includeContext = next; emit(); } return true; },
+    setMode(next) { if (!['ASK', 'EDIT'].includes(next) || disposed || writeLocked()) return false; if (mode !== next) { invalidate(); mode = next; emit(); } return true; },
+    setIncludeContext(next) { if (typeof next !== 'boolean' || disposed || writeLocked()) return false; if (includeContext !== next) { invalidate(); includeContext = next; emit(); } return true; },
     contextChanged() { if (disposed) return; invalidate('CONTEXT_CHANGED', true); emit(); },
-    stop() { if (disposed) return; invalidate('STOPPED', true); emit(); },
-    newChat() { if (disposed) return; invalidate(); try { chat = createChatSession(crypto); } catch (error) { status = safeCode(error); } emit(); },
-    reset() { if (disposed) return; invalidate(); stored = store.reset(); emit(); },
-    cancelPreview() { if (active || disposed) return false; dropPreview(); status = 'PREVIEW_CANCELLED'; emit(); return true; },
-    async apply() {
-      if (disposed || active) return false;
-      if (preview && now() >= preview.expiresAt) { dropPreview(); status = 'PREVIEW_EXPIRED'; }
-      else status = 'CAPABILITY_UNAVAILABLE';
-      // No bridge.applySelection invocation, no dispatch, no irreversible write state.
-      emit(); return false;
+    selectionChanged() {
+      if (disposed || writeLocked()) return;
+      // Movement cancels analysis/revalidation, NOT an already published Preview.
+      if (active) { invalidate('CONTEXT_CHANGED', true); emit(); }
     },
-    dispose() { if (disposed) return; invalidate('STOPPED', true); disposed = true; bridge?.dispose?.(); listeners.clear(); }
+    stop() { if (disposed || writeLocked()) return; invalidate('STOPPED', true); emit(); },
+    newChat() { if (disposed || writeLocked()) return; invalidate(); try { chat = createChatSession(crypto); } catch (error) { status = safeCode(error); } emit(); },
+    reset() { if (disposed || writeLocked()) return; invalidate(); stored = store.reset(); emit(); },
+    cancelPreview() { if (active || disposed || writeLocked()) return false; dropPreview(); status = 'PREVIEW_CANCELLED'; emit(); return true; },
+    async apply() {
+      if (disposed || active || writeLocked()) return false;
+      if (preview && now() >= preview.expiresAt) { dropPreview(); status = 'PREVIEW_EXPIRED'; emit(); return false; }
+      if (!canApply()) { status = preview ? 'SELECTION_CHANGED' : 'CAPABILITY_UNAVAILABLE'; dropPreview(); emit(); return false; }
+      const candidate = preview;
+      const target = previewTarget;
+      const sourceOwner = previewOwner;
+      dropPreview();
+      const owned = { kind: 'apply', generation: ++generation, settings: sourceOwner.settings, uuid: sourceOwner.uuid,
+        editorType: sourceOwner.editorType, deadline: now() + LIMITS.applyObservationMs, abort: new AbortController(), timer: null, dispatched: false };
+      active = owned; status = 'CHECKING_SELECTION';
+      function readyToDispatch() {
+        if (!valid(owned)) throw new SafeError(ERROR_CODES.CANCELLED);
+        if (now() >= candidate.expiresAt) throw new SafeError(ERROR_CODES.PREVIEW_EXPIRED);
+        // Accepted SDK command cannot be cancelled; lock BEFORE calling SDK.
+        owned.dispatched = true; status = 'APPLYING'; emit();
+      }
+      try {
+        owned.timer = timers.schedule(function () { if (active === owned) { invalidate('TIMEOUT', true); emit(); } }, LIMITS.applyObservationMs);
+        emit();
+        const receipt = await bridge.applySelection({ target, replacement: candidate.replacement, signal: owned.abort.signal,
+          deadline: Math.min(owned.deadline, candidate.expiresAt), beforeDispatch: readyToDispatch });
+        if (!valid(owned)) return false;
+        const acknowledged = receipt?.acknowledged === true && receipt?.effectVerified === false;
+        finish(owned, acknowledged ? 'APPLY_ACKNOWLEDGED' : 'APPLY_UNCERTAIN');
+        return acknowledged;
+      } catch (error) { return fail(owned, error); }
+    },
+    dispose() { if (disposed) return; invalidate('STOPPED', true); disposed = true; unsubscribeBridge?.(); bridge?.dispose?.(); listeners.clear(); }
   });
 }

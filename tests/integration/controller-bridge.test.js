@@ -10,7 +10,8 @@ function setup(options = {}) {
   let time = 0; const tasks = new Map(); const callbacks = []; let calls = 0;
   const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
   const clock = { now() { return time; } };
-  const plugin = { executeMethod(name, args, cb) { assert.equal(name, 'GetSelectedText'); assert.deepEqual(args, []); callbacks.push(cb); return false; } };
+  const plugin = { info: { editorType: 'word' }, callCommand(_body, _close, _recalculate, cb) { cb(['bounded-id', true, true, false]); },
+    executeMethod(name, args, cb) { assert.equal(name, 'GetSelectedText'); assert.deepEqual(args, []); callbacks.push(cb); return false; } };
   const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
   const controller = createController({ bridge, timers, clock, store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } }, transport: async () => { calls++; return { type: 'final', message: 'answer' }; }, ...options });
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
@@ -141,9 +142,8 @@ test('real bridge missing callback times out but cannot queue second request or 
   f.controller.newChat(); await f.controller.refreshContext(); assert.equal(f.callbacks.length, 1);
   assert.equal(f.controller.getState().status, 'EDITOR_BUSY'); f.controller.dispose();
 });
-test('no production mutation dispatch even after EDIT and purported identical-text target', async () => {
-  const f = setup({ transport: async () => ({ type: 'tool', tool: 'r7_replace_selection', arguments: { text: 'proposal' } }) });
-  f.controller.setMode('EDIT'); const operation = f.controller.analyze('edit'); f.callbacks[0]('same text'); await operation;
-  assert.equal(f.controller.getState().preview.target, null); assert.equal(await f.controller.apply(), false); assert.equal(f.callbacks.length, 1);
+test('ASK final response cannot acquire Apply ownership even with a valid native capture', async () => {
+  const f = setup(); const operation = f.controller.analyze('question'); f.callbacks[0]('same text'); await operation;
+  assert.equal(f.controller.getState().preview, null); assert.equal(await f.controller.apply(), false); assert.equal(f.callbacks.length, 1);
   assert.equal(f.controller.getState().runtimeVerified, false); f.controller.dispose();
 });

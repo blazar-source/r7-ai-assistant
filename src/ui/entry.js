@@ -12,7 +12,12 @@ export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, contro
   let disposed = false;
   let initializedEditorType = 'unknown';
   function changed() { if (!disposed) controller?.contextChanged(); }
-  function knownEditor() { const reported = plugin.info?.editorType; return ['word', 'cell', 'slide'].includes(reported) ? reported : 'unknown'; }
+  function knownEditor() {
+    const info = Object.getOwnPropertyDescriptor(plugin, 'info');
+    if (!info || !Object.hasOwn(info, 'value') || !info.value || typeof info.value !== 'object') return 'unknown';
+    const type = Object.getOwnPropertyDescriptor(info.value, 'editorType');
+    return type && Object.hasOwn(type, 'value') && ['word', 'cell', 'slide'].includes(type.value) ? type.value : 'unknown';
+  }
   function dispose() {
     if (disposed) return;
     disposed = true;
@@ -30,7 +35,7 @@ export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, contro
     if (initialized) {
       if (knownEditor() !== initializedEditorType) {
         dispose(); root.textContent = 'Редактор изменился. Перезапустите панель штатным способом; старый мост не используется и не пересоздаётся.';
-      } else changed();
+      } // Same-editor init alone is not a new context; preserve Preview.
       return;
     } // NEVER recreate an SDK bridge/lease
     initialized = true;
@@ -41,7 +46,7 @@ export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, contro
       controller = controllerFactory({ bridge });
       view = viewFactory(root, controller);
       if (typeof plugin.attachEvent === 'function') {
-        plugin.attachEvent('onTargetPositionChanged', function () { changed(); });
+        plugin.attachEvent('onTargetPositionChanged', function () { if (!disposed) controller?.selectionChanged?.(); });
         plugin.attachEvent('onDocumentContentReady', function () { changed(); });
       }
     } catch {

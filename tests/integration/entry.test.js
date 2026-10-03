@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import { bindPanel } from '../../src/ui/entry.js';
 import { dom } from '../fixtures/dom.js';
 
-test('SDK bridge is leased only AFTER init; duplicate init invalidates but never rebinds', () => {
-  const tree = dom(); let creates = 0; let changes = 0; let disposed = 0;
+test('SDK bridge is leased only AFTER init; same-editor init preserves context and movement has its own route', () => {
+  const tree = dom(); let creates = 0; let changes = 0; let movements = 0; let disposed = 0;
   const events = {};
   const plugin = { info: { editorType: 'word' }, attachEvent(name, handler) { events[name] = handler; } };
-  const binding = bindPanel(plugin, tree.root, { bridgeFactory(_, options) { creates++; assert.equal(options.editorType, 'word'); return {}; }, controllerFactory() { return { contextChanged() { changes++; }, dispose() { disposed++; } }; }, viewFactory() { return { dispose() {} }; } });
+  const binding = bindPanel(plugin, tree.root, { bridgeFactory(_, options) { creates++; assert.equal(options.editorType, 'word'); return {}; }, controllerFactory() { return { contextChanged() { changes++; }, selectionChanged() { movements++; }, dispose() { disposed++; } }; }, viewFactory() { return { dispose() {} }; } });
   assert.equal(creates, 0); assert.equal(typeof plugin.init, 'function');
-  plugin.init(); assert.equal(creates, 1); plugin.init(); assert.equal(creates, 1); assert.equal(changes, 1);
-  assert.equal(typeof events.onTargetPositionChanged, 'function'); events.onTargetPositionChanged(); assert.equal(changes, 2);
-  assert.equal(typeof events.onDocumentContentReady, 'function'); events.onDocumentContentReady(); assert.equal(changes, 3);
+  plugin.init(); assert.equal(creates, 1); plugin.init(); assert.equal(creates, 1); assert.equal(changes, 0);
+  assert.equal(typeof events.onTargetPositionChanged, 'function'); events.onTargetPositionChanged(); assert.equal(changes, 0); assert.equal(movements, 1);
+  assert.equal(typeof events.onDocumentContentReady, 'function'); events.onDocumentContentReady(); assert.equal(changes, 1);
   binding.dispose(); assert.equal(disposed, 1);
 });
 test('reinit with a different editor disposes old panel without reusing or recreating its bridge', () => {
@@ -92,6 +92,17 @@ for (const failingStage of ['view', 'onTargetPositionChanged', 'onDocumentConten
     assert.equal(attempts.length, failingStage === 'view' ? 4 : 5);
   });
 }
+
+test('editor init validates own data descriptors without invoking editor info getters', () => {
+  for (const slot of ['info', 'editorType']) {
+    const tree = dom(); let reads = 0; let editor;
+    const plugin = { info: { editorType: 'word' } };
+    if (slot === 'info') Object.defineProperty(plugin, 'info', { get() { reads++; return { editorType: 'word' }; } });
+    else Object.defineProperty(plugin.info, 'editorType', { get() { reads++; return 'word'; } });
+    bindPanel(plugin, tree.root, { bridgeFactory(_p, options) { editor = options.editorType; return { dispose() {} }; }, controllerFactory() { return { dispose() {} }; }, viewFactory() { return { dispose() {} }; } });
+    plugin.init(); assert.equal(reads, 0); assert.equal(editor, 'unknown');
+  }
+});
 
 test('controller factory failure disposes its already acquired bridge even when cleanup throws', () => {
   const tree = dom(); let creates = 0; let bridgeDisposals = 0; let controllerCreates = 0;
