@@ -2,11 +2,11 @@
 
 ## Accepted eight product sprints
 
-Only **Sprint 1 is authorized**. Its documentation reconciliation is IN PROGRESS; fresh native practical editing acceptance is NOT RUN. The [historical Stage B NOT PASS](<stage-b-gate-report.md>) is not retroactively PASS. The [Sprint 1 execution plan](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) and [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) define the current contract.
+Only **Sprint 1 is authorized**. Task 1 is done, Task 2 measured DEV probe gives prerequisite GO with N09 branch PARTIAL, and Task 3 cb291d7 Apply implementation is independently reviewed/completed. [Current evidence and limits](<sprint-1-progress.md>) keep Task 4 integrated native acceptance NOT RUN on this candidate; no deployment is inferred. The [historical Stage B NOT PASS](<stage-b-gate-report.md>) is not retroactively PASS. The [Sprint 1 execution plan](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) and [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) define the current contract.
 
 | Sprint | Accepted product scope | Execution status |
 | --- | --- | --- |
-| 1 | Practical B selection: Preview, explicit Apply, same current document/editor check, current nonempty selection reread and exact original-text comparison, public native replacement, measured formatting and native Undo; close remaining small B checks | IN PROGRESS; fresh native acceptance NOT RUN; Apply remains disabled |
+| 1 | Practical B selection: Preview, explicit Apply, same current document/editor check, current nonempty selection reread and exact original-text comparison, public native replacement, measured formatting and native Undo; close remaining small B checks | Task 1 done / Task 2 prerequisite GO / Task 3 implementation reviewed; Task 4 pending, integrated candidate native NOT RUN |
 | 2 | Bounded agent runtime + Qwen development validation | NOT AUTHORIZED / NOT RUN |
 | 3 | Word tools | NOT AUTHORIZED / NOT RUN |
 | 4 | Cell tools | NOT AUTHORIZED / NOT RUN |

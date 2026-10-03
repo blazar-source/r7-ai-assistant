@@ -2,7 +2,7 @@
 
 ## Current authority / historical evidence boundary
 
-Only [Sprint 1 practical editing](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) is authorized under the [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) and [eight-sprint roadmap](<roadmap.md>). Documentation reconciliation IN PROGRESS; fresh native practical editing acceptance NOT RUN. Apply remains disabled; no runtime proof or gate promotion is supplied by this docs change. Current acceptance requires Preview/explicit Apply/current-document-editor check/current-selection reread/nonempty exact original text/public native write and measured formatting/native Undo. Manually selecting identical text elsewhere is allowed; locator/revision/ABA/object-identity/atomicity are not active requirements. Asynchronous reread/write is not atomic.
+Only [Sprint 1 practical editing](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) is authorized under the [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) and [eight-sprint roadmap](<roadmap.md>). [Current evidence inventory](<sprint-1-progress.md>) records Task 1 done, Task 2 measured DEV probe prerequisite GO (N09 cross-ID branch PARTIAL), Task 3 independently reviewed cb291d7 Apply implementation, and Task 4 integrated native Preview/Apply on this candidate NOT RUN. Installed old production Apply OFF is separate from the reviewed source; no deployment/trust/native integration proof is supplied by this docs change. Current acceptance requires Preview/explicit Apply/current-document-editor check/current-selection reread/nonempty exact original text/public native write and measured formatting/native Undo. Manually selecting identical text elsewhere is allowed; locator/revision/ABA/object-identity/atomicity are not active requirements. Asynchronous reread/write is not atomic.
 
 All measured observations, labels and provenance below are retained historical evidence. Old statements about mandatory identity/revision/atomicity describe the previous gate only, not current prerequisites. Historical Stage B NOT PASS is not retroactively PASS. Reuse closed transport evidence with explicit unchanged-component provenance; retest only missing scenarios/relevant integration changes. Bank TLS/CORS/AUTH/Qwen stay NOT RUN until internal installation; no real-model calls in Sprint 1. Later sprints are not authorized. Remaining current checks/escalation/cleanup: [test plan](<test-plan.md>).
 
@@ -59,7 +59,7 @@ Status rules: VERIFIED is limited to the evidence named; PACKAGE EVIDENCE ONLY a
 
 Native evidence provenance: initial correct/missing-CORS gates and Cell inside-panel check used prior archive SHA-25697ef924bded6cbdff47a9613b2f34f6492ca61ab86f787905f56af62e53371d3. Native Word tuple/selection checks, fresh Cell/Slide inside-panel/read-refusal checks and repeated exact-CORS/absent-CORS native connection tests used latest75b2239 artifact SHA-256262fae65ac7a088ae322c0258167523a20951bf3568f6cf09090fc7402bf116e. Latest A/B gate is now measured independently; full native chat/profile/timeout/redirect/oversize/cancel/session-history suite remains incomplete. Actual served leaf includes IP Address:127.0.0.1; DNS:localhost alone is insufficient for the literal-IP endpoint. Independent explicit-CA chain/purpose/IP verification and live verifying handshake passed; latest-fixture actual peer was freshly checked with CERT_REQUIRED/check_hostname and the literal IPv4 identity, matching expected leaf SHA-256 and TLSv1.3. Subsequent actual trust-removal/fresh-process native negative observes no-HTTP refusal with the same valid peer as detailed above; exact certificate-specific CEF attribution remains partial, not a broad TLS acceptance claim. Sanitized public status is recorded here; raw documents, payloads, headers, identifiers, keys and private fixture material are not committed.
 
-## Task 5 host-only HTTPS infrastructure (not target acceptance)
+## Historical Stage B Task 5 host-only HTTPS infrastructure (not current candidate acceptance)
 
 | Capability | Evidence / boundary | Status |
 | --- | --- | --- |
@@ -70,7 +70,9 @@ Native evidence provenance: initial correct/missing-CORS gates and Cell inside-p
 
 The mock is excluded from the unchanged eight-file production archive. No guest, trust, firewall, installation, real-model or persistent/public-service action is performed by this host task. Mandatory Word mutation remains unresolved and Apply disabled; Stage B is not PASS.
 
-## Task 3 authored bridge boundary (host implementation, not target PASS)
+## Historical Stage B Task 3 authored bridge boundary (preflight source, not current candidate)
+
+The presence-only/always-denied source descriptions below refer to the old Stage B implementation, not cb291d7. Current [commands](<../src/plugin/commands.js#L3-L40>) add a separate actual-context tuple; current [bridge](<../src/plugin/bridge.js#L214-L269>) implements privately branded current-context revalidation and explicit public replacement. Current source/host evidence and scoped DEV cases N03–N11 are in [Sprint 1 progress](<sprint-1-progress.md>); integrated candidate native acceptance remains pending. GetSelectionType is DOCS ONLY, not a gate.
 
 - The [bridge](<../src/plugin/bridge.js>) owns one callback slot shared by selection reads and static Word method-presence probes. Completion is callback-only: `executeMethod` returning false may mean queued, not rejection. Cancellation, lifecycle invalidation, timeout or a dispatch exception settle the caller but keep the slot busy/uncertain until the matching callback arrives. Duplicate old closure callbacks cannot release a new owner. Disposal is not SDK reinitialization; recreating an adapter for the same plugin object is denied.
 - [Commands](<../src/plugin/commands.js>) contain only a synchronous inline author-written `callCommand` presence probe. It calls public `Api.GetDocument` to inspect public method presence, not selection/domain/JSON/ID values. It neither captures live handles nor reads the whole document. All capability records retain `runtimeVerified:false`; positive host doubles cannot enable production Apply. Cell/slide reads remain unavailable independently; unknown editor is disabled.
@@ -79,7 +81,7 @@ The mock is excluded from the unchanged eight-file production archive. No guest,
 
 ### Historical package observations and previous unresolved mutation subgate
 
-The package observations below remain presence/inspection evidence only. The old mandatory locator/revision/domain/atomicity interpretation is superseded, not proved or regraded by the practical contract. Fresh ReplaceTextSmart/PasteText/static public Document API choice and formatting/Undo need native measurement under Sprint 1.
+The package observations below remain presence/inspection evidence only. The old mandatory locator/revision/domain/atomicity interpretation is superseded, not proved or regraded by the practical contract. The Sprint 1 DEV probe now measures ReplaceTextSmart/formatting/Undo within the inventory's bounded scopes; exact integrated candidate native acceptance remains pending.
 
 Focused evidence is the actual supplied 2026.1.2-1942~astra-signed Word bundle, inspected via its [newline projection](<C:/Users/Пользователь/AppData/Local/Temp/r7-vendor-engine-4bd6752854d04a58a2ce0d0fcce7e6b5/sdk-all.reading.txt>). These line numbers refer to that projection, not an upstream source map or runtime probe:
 

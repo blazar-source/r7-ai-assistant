@@ -5,7 +5,7 @@
 ## Статус
 
 Pilot RC **не выпущен**. Целевая версия: `0.9.0-pilot-rc`. [Исторический Stage B NOT PASS](<docs/stage-b-gate-report.md>) не пересчитан в PASS.
-Принят [план восьми спринтов](<docs/roadmap.md>); разрешён только [Sprint 1](<docs/superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>): practical selection editing с Preview, explicit Apply, same current document/editor check, current-selection reread и exact text comparison. Docs reconciliation IN PROGRESS; fresh native acceptance NOT RUN, Apply остаётся disabled. Host tests не native proof; bank TLS/CORS/AUTH/Qwen NOT RUN, real-model calls в Sprint 1 запрещены.
+Принят [план восьми спринтов](<docs/roadmap.md>); разрешён только [Sprint 1](<docs/superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>): practical selection editing с Preview, explicit Apply, same current document/editor check, current-selection reread и exact text comparison. Task 1 done; Task 2 measured DEV probe prerequisite GO (N09 branch PARTIAL); Task 3 Apply implemented in independently reviewed local candidate cb291d7. [Текущие доказательства и ограничения](<docs/sprint-1-progress.md>): integrated native Preview/Apply on this candidate NOT RUN, Task 4 pending; installed old production Apply OFF не является текущим source contract. Host tests не native proof; bank TLS/CORS/AUTH/Qwen NOT RUN, real-model calls в Sprint 1 запрещены.
 
 ## Runtime
 

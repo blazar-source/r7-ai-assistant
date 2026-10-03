@@ -1,6 +1,6 @@
 # Compatibility vertical slice design
 
-Status: Accepted design amended by the user-approved practical selection contract. Only Sprint 1 of the [eight-sprint roadmap](<../../roadmap.md>) is authorized under the [Sprint 1 execution plan](<../plans/2026-10-02-sprint-1-practical-selection-editing.md>). Documentation reconciliation IN PROGRESS; fresh native practical editing acceptance NOT RUN. [Historical Stage B NOT PASS](<../../stage-b-gate-report.md>) remains NOT PASS; Apply remains disabled until positive native results and reviewed integration. The [original plan](<../plans/2026-10-02-stage-b-implementation.md>) is archived, not executable.
+Status: Accepted design amended by the user-approved practical selection contract. Only Sprint 1 of the [eight-sprint roadmap](<../../roadmap.md>) is authorized under the [Sprint 1 execution plan](<../plans/2026-10-02-sprint-1-practical-selection-editing.md>). [Current evidence inventory](<../../sprint-1-progress.md>) records Task 1 done, Task 2 measured DEV probe prerequisite GO (N09 cross-ID branch PARTIAL), and Task 3 independently reviewed cb291d7 source Apply implementation. Task 4 integrated native Preview/Apply on this candidate NOT RUN; installed old production Apply OFF is separate. [Historical Stage B NOT PASS](<../../stage-b-gate-report.md>) remains NOT PASS. The [original plan](<../plans/2026-10-02-stage-b-implementation.md>) is archived, not executable.
 
 ## Purpose
 

@@ -8,7 +8,9 @@
 
 **Tech Stack:** Existing browser JavaScript/CSS, unchanged installed R7 SDK, Node built-in tests/Acorn/esbuild for development only.
 
-**Spec:** ../specs/2026-10-02-compatibility-vertical-slice-design.md, to be amended by Task 1. The user's explicitly accepted replacement contract below supersedes its old locator/revision/atomicity clauses from the moment of authorization; historical evidence is not retroactively promoted.
+**Spec:** [accepted amended design](<../specs/2026-10-02-compatibility-vertical-slice-design.md>). The user's explicitly accepted replacement contract below supersedes old locator/revision/atomicity clauses; historical evidence is not retroactively promoted.
+
+**Current checkpoint:** [portable evidence inventory](<../../sprint-1-progress.md>): Task 1 done; Task 2 prerequisite GO with N09 cross-ID/other-editor branches PARTIAL, not all-cases PASS; Task 3 cb291d7 implementation independently reviewed/completed. Task 4 unchecked: integrated native Preview/Apply on this candidate NOT RUN. Installed old production Apply OFF is separate from implemented source. Parent fresh host412/audit/two exact-eight byte-identical archives do not close native/settings/cleanup/broad-review gates.
 
 ## Global Constraints
 
@@ -39,32 +41,34 @@
 
 **Files:** existing docs roadmap/architecture/security/test-plan/compatibility-matrix/stage-b-gate-report, accepted design, original Stage B plan; README only for stale status. No src/tests/runtime/VM changes.
 
-- [ ] Read current documents before edits. Amend accepted design to the explicit replacement contract above, retaining platform/network/budget/security/lifecycle constraints.
-- [ ] Retire original Stage B implementation plan as historical, with a prominent supersession link; retain actual completed steps and old evidence, not an active contradiction.
-- [ ] Update roadmap to the eight accepted product sprints: practical B selection; bounded agent+Qwen dev; Word tools; Cell tools; Slide tools; common UX/security; packaging/Astra/ZPS; local 0.9.0-pilot-rc.
-- [ ] Keep old NOT PASS observation historical and current Sprint 1 status NOT RUN/IN PROGRESS, never promote evidence without native tests. Remove locator/revision/ABA/atomicity requirements from active checklists and distinguish previously measured limitations.
-- [ ] Record runtime FAIL escalation procedure and native testing/cleanup constraints. Bank gates NOT RUN and later sprints not authorized.
-- [ ] Check documentation links/diff/scope and commit docs-only changes. Self-review, then independent scoped spec+quality review.
+- [x] Read current documents before edits. Amend accepted design to the explicit replacement contract above, retaining platform/network/budget/security/lifecycle constraints.
+- [x] Retire original Stage B implementation plan as historical, with a prominent supersession link; retain actual completed steps and old evidence, not an active contradiction.
+- [x] Update roadmap to the eight accepted product sprints: practical B selection; bounded agent+Qwen dev; Word tools; Cell tools; Slide tools; common UX/security; packaging/Astra/ZPS; local 0.9.0-pilot-rc.
+- [x] Keep old NOT PASS historical and current evidence levels separate; never promote without native tests. Remove locator/revision/ABA/atomicity requirements from active checklists and distinguish measured limitations.
+- [x] Record runtime FAIL escalation procedure and native testing/cleanup constraints. Bank gates NOT RUN and later sprints not authorized.
+- [x] Initial Task 1 documentation links/diff/scope, local docs commit and scoped review completed. This current evidence reconciliation remains uncommitted for fresh independent review and parent local commit.
 
 ## Task 2: Practical disposable native replacement and Undo proof
 
+**Status: prerequisite GO, not whole-checklist PASS.** N03–N08 scoped PASS; N10 relocation/body-format/Undo witness positive with comprehensive fidelity PARTIAL; N09 own-document SDK-frame route positive but cross-ID/other-editor branches PARTIAL; N11 known tracking refusal PASS. Unchecked composite rows retain integrated/branch limits; [inventory](<../../sprint-1-progress.md>) is authoritative for case scope. ReplaceTextSmart is the selected candidate; no fallback is presently required. Old installed production Apply OFF is not reviewed cb291d7 source Apply.
+
 **Owner:** controller operates the one native VM; a fresh implementer may prepare independently authored dev probe/fixtures, but never controls VM/trust concurrently. No broad public primitive inventory.
 
-- [ ] Reuse existing verified dev infrastructure; confirm current access, no unsaved user work and actual SDK/load path. If access credential absent, ask for access securely; no guess/bruteforce or secret dumping.
-- [ ] Prepare small independently authored static public-API test plugin/fixtures outside production package. Try ReplaceTextSmart on ordinary selection. Log only bounded synthetic metadata/counts; inspect format through public reads and native UI. Verify document/editor identity route actually works.
+- [x] Reuse existing verified dev infrastructure; confirm current access, no unsaved user work and actual SDK/load path. If access credential absent, ask for access securely; no guess/bruteforce or secret dumping.
+- [x] Prepare small independently authored static public-API test plugin/fixtures outside production package. Try ReplaceTextSmart on ordinary selection. Log only bounded synthetic metadata/counts; inspect format through public reads and native UI. Verify document/editor identity route actually works.
 - [ ] Check existing/changed/empty selection, other document/editor, known unsupported fixtures. Verify font,size,bold,italic,color,paragraph style, surrounding text, shorter/longer/empty replacement, native one-step Undo restores pre-write state.
 - [ ] On an actual failure use the authorized targeted fallback procedure; next practical API instead of a new research cycle. No private API or model executable code. Record candidate selection and limitations.
-- [ ] Collect exact probe source/artifact identity and actual native evidence; cleanup synthetic unsaved edits safely without saving original fixtures. Product Apply stays disabled until integration is based on positive native results.
+- [ ] Collect exact probe source/artifact identity and actual native evidence; cleanup synthetic unsaved edits safely without saving original fixtures. Old installed production Apply was OFF; positive DEV results now underpin reviewed cb291d7 integration. Exact-candidate native acceptance and remaining cleanup are Task 4, not closed by this prerequisite.
 
 ## Task 3: TDD Apply integration in existing bridge/controller/view
 
 **Files:** src/plugin/commands.js and bridge.js; src/ui/controller.js/view.js/entry.js as needed; shared errors if needed; focused unit/integration/security tests. No agent registry/loop, new transport, rich editor tooling or fake runtime enable flags.
 
-- [ ] Fresh implementer reads Task 2 native result and existing source/tests. Write behavioural failing tests first and record real assertion-level RED.
-- [ ] Capture bounded document/editor context with selection. Add callback-owned public same-document/editor revalidation and selection reread, exact text comparison and practical support checks, then selected proven native replacement. Model text remains data only.
-- [ ] Replace blanket Apply-denial tests with explicit positive/negative contract tests: no preview/ASK, TTL, empty/changed selection, switched document/editor, unsupported domain, user relocated identical text allowed, overflow, callback error/late/duplicate/missing, no unsafe retry.
-- [ ] Integrate applying/uncertain UI state; conflicting controls disabled only at correct boundary; pre-dispatch Stop prevents write. Late callbacks do not resurrect UI/history or steal slots. Clear honest Russian statuses, no unconditional success from transport return.
-- [ ] Run focused tests, full npm test, audit and reproducible builds/diff check; self-review and atomic commits. Independent scoped review before native integrated testing.
+- [x] Fresh implementer reads Task 2 native result and existing source/tests. Write behavioural failing tests first and record real assertion-level RED (50 tests, 45 assertion failures).
+- [x] Capture bounded document/editor context with selection. Add callback-owned public same-document/editor revalidation and selection reread, exact text comparison and practical support checks, then selected proven native replacement. Model text remains data only; per-bridge private brand plus actual public ID/tracking, not serialized identity.
+- [x] Replace blanket Apply-denial tests with explicit positive/negative contract tests: no preview/ASK, TTL, empty/changed selection, switched document/editor, unsupported domain, user relocated identical text allowed, overflow, callback error/late/duplicate/missing, no unsafe retry.
+- [x] Integrate applying/uncertain UI state; conflicting controls disabled only at correct boundary; pre-dispatch Stop prevents write. Late callbacks do not resurrect UI/history or steal slots. Clear honest Russian statuses, no unconditional effect claim from transport return or callback receipt. Movement alone/repeated same-editor init retain unexpired Preview.
+- [x] Focused171/full412/audit/reproducible builds/diff check, local cb291d7 commit and independent scoped review completed (C0/I0/M0, security87). Parent fresh full412/audit/exact-eight complete-byte archive comparison recorded in inventory; native integrated testing remains Task 4.
 
 ## Task 4: Integrated native acceptance, evidence and final Sprint 1 review
 
