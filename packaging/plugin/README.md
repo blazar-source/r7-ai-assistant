@@ -1,9 +1,10 @@
 # Stage B local plugin package
 
-Host implementation only. This archive is **not** a Pilot RC or Stage B PASS.
-Actual inside-panel load in word/cell/slide, CEF/CSP/network/storage acceptance
-and the mandatory safe Word mutation/formatting/undo gate remain NOT RUN / unresolved.
-Production Apply is always disabled and never dispatches an editor write.
+This archive is **not** a Pilot RC or Stage B PASS. Sprint 1 implements guarded
+Word Preview→Apply, with bounded native mutation/formatting/Undo witnesses.
+Composite cross-document/lifecycle/storage/session/TTL acceptance remains open;
+see the [current runtime inventory](<../../docs/sprint-1-progress.md>) for measured
+scopes and limits. Host implementation or packaging alone is not runtime proof.
 
 ## Build and verify (development host only)
 
@@ -82,8 +83,8 @@ Actual CEF origin/CSP behavior is NOT RUN; never loosen TLS or policy to claim P
 
 The bridge is constructed once after standard SDK `init`, using only explicit
 `plugin.info.editorType` word/cell/slide; unknown values are not guessed.
-Duplicate same-editor init invalidates context but does not recreate/bypass a
-lifetime lease. A different reported editor disposes the old panel and requires
+Duplicate same-editor init alone preserves unexpired Preview and does not
+recreate/bypass a lifetime lease. A different reported editor disposes the old panel and requires
 standard platform reload instead of reusing a Word adapter in cell/slide.
 Standard package-evidenced `onTargetPositionChanged` and `onDocumentContentReady`
 channels invalidate operations. Their completeness for selection/document/editor
@@ -98,11 +99,13 @@ One active operation owns an immutable request snapshot and a total deadline
 established before reading context. Late results cannot publish history/status/
 preview after invalidation. A timed-out SDK read stays busy/uncertain until its
 actual callback releases the old slot. No bridge recreation, queued read or retry.
-Previews expire after 120 seconds and always explain why Apply is disabled.
-There is no production mutation dispatch, fake target proof, enable option,
-15-second simulated write observer or claimed write-cancellation/rollback path.
-The irreversible dispatched/uncertain-write lock remains a future capability
-contract to implement and test only alongside a proven guarded mutating bridge.
+Previews have a 120-second TTL. Explicit Word Apply rechecks the bridge-owned
+target, current public document identity, editor/tracking availability and exact
+nonempty selection before dispatch; repeated identity checks and text equality
+are not immutable locators or atomic check/write proof. A 15-second observation
+deadline and dispatched/uncertain ownership lock exist; only a genuine matching
+SDK callback settles the dispatched slot. Stop/dispose cannot undo an accepted
+write. Callback acknowledgment is not verified effect, cancellation or rollback.
 No controller-fake result here is actual editor guard proof or B mutation PASS.
 
 The key input is masked. All connection fields are editable. Plaintext opt-in
