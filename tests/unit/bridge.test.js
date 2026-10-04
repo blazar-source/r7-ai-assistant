@@ -8,7 +8,7 @@ import { htmlPlatform, parseHtml, RAWTEXT_TAGS } from '../fixtures/html-document
 // The confirmation reads the document's DECODED TEXT, so the bridge needs the platform's own parser. Every
 // rig below injects the fixture boundary through the bridge's own `platform` option: the boundary is
 // explicit and injected, never reached for through a global, and the real plugin page passes the page's
-// own `document` and `DOMParser`.
+// own `DOMParser` (the page's `document` is deliberately NOT passed any more).
 const platformBoundary = htmlPlatform();
 
 function runContext(body) {

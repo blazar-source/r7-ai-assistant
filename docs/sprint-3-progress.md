@@ -448,9 +448,15 @@ spanning it settles UNCERTAIN — fail-safe for the cursor form) or inject a sen
 it will NOT match the extracted text and the insert settles UNCERTAIN (a false negative, fail-safe)
 instead of being reported as a verified success"*, the corrected statement is: **an unknown element gets
 the sentinel separator, so it can only split text (a false UNCERTAIN for the cursor form) or inject a
-character no needle can hold (a false UNCERTAIN for the `end` form) — it can never complete a needle, and
-only a known block boundary can supply the `end` form's newline.** §6's claim is marked retracted in
-place.
+character no needle can hold (a false UNCERTAIN for the `end` form) — it can never complete a needle.**
+An independent review then found the follow-on sentence ("only a known block boundary can supply the
+`end` form's newline") to be **literally false**: a raw `"\n"` already present in an export text node, and
+the body/html document-edge separator, can also complete the `end` needle. That is a PRE-EXISTING
+residual, not introduced by the sentinel rule, and it is unreachable while the export is unchanged — with
+identical pre and post exports the count delta is 0 and the insert settles UNCERTAIN, so a true no-op
+paste is never verified as a success. It sits in the same concurrent-writer window the design already
+acknowledges, and closing it would need newline normalisation of the extracted text (a separate change).
+§6's claim is marked retracted in place.
 
 **D-2 — the rawtext set was incomplete (MEDIUM, narrow).** `iframe`, `noembed` and `noframes` are
 RAWTEXT elements of the real parser exactly like `style`: their content is markup-level, not document

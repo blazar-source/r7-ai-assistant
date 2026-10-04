@@ -200,12 +200,17 @@ function decodeText(value, bound) {
 // `delta` with `position:'end'`, no-op paste → `{"ok":true,"data":{"sent":true,"effectVerified":true}}`.
 // With the sentinel an unknown element can only SPLIT text (a payload spanning it does not match:
 // fail-safe for the cursor form) or inject a character no needle holds (fail-safe for the `end` form),
-// and the `end` needle can only be completed by a real class-1 block boundary.
+// and the `end` needle can be completed only by a real class-1 block boundary or by a newline the
+// export's own text already carries (the residual named below).
 //
 // The sentinel is `"\u0000"`. It is safe because the needle is the EXACT dispatched payload and
 // `insertParagraph` refuses a payload that holds the sentinel BEFORE anything is dispatched, so no
-// needle can end with it either: every other needle tail is either a payload character the document
-// must really hold or the authored `"\n"` of the `end` form, which only class 1 supplies. U+0000 is
+// needle can end with it either. Every other needle tail is a payload character the document must
+// really hold, the authored `"\n"` of the `end` form, or a newline the export's own text already
+// carries. That last source is a PRE-EXISTING residual and this rule does not close it: it can only
+// complete the needle when the export CHANGES between the two reads (an identical export yields a
+// delta of 0 and settles uncertain), so it sits inside the same concurrent-writer window the design
+// already acknowledges. U+0000 is
 // also not a character an HTML text node carries (the parser replaces a literal NUL in the source with
 // U+FFFD), so the sentinel in the counted text can only come from this rule.
 //
