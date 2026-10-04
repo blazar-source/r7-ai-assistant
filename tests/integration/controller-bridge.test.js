@@ -147,3 +147,45 @@ test('ASK final response cannot acquire Apply ownership even with a valid native
   assert.equal(f.controller.getState().preview, null); assert.equal(await f.controller.apply(), false); assert.equal(f.callbacks.length, 1);
   assert.equal(f.controller.getState().runtimeVerified, false); f.controller.dispose();
 });
+
+// --- Task 9: the agent loop driven through the real owned bridge --------------------------------
+
+test('the controller drives a real read tool through the owned bridge and renders the actions summary', async () => {
+  let time = 0; const tasks = new Map(); const callbacks = []; const identity = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    // The document identity leg is the bridge's own synchronous callCommand probe; it stays native
+    // until its callback is delivered, exactly like the selection read.
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) { callbacks.push([name, args, callback]); return false; } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'read_selection', arguments: {} }] }), JSON.stringify({ type: 'final', message: 'Прочитано' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('прочитай');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  // The controller's own context capture: one selection read and one identity probe.
+  assert.equal(callbacks.length, 1); assert.equal(callbacks[0][0], 'GetSelectedText');
+  callbacks[0][2]('контекст запроса'); await tick();
+  assert.equal(identity.length, 1);
+  identity[0](['bounded-id', true, true, false]); await tick();
+  // The model's read tool dispatches through the SAME owned slot: the tool's read and its identity
+  // probe are delivered next, and only then does the loop take its second model step.
+  assert.equal(callbacks.length, 2); assert.equal(callbacks[1][0], 'GetSelectedText');
+  callbacks[1][2]('текст выделения'); await tick();
+  assert.equal(identity.length, 2);
+  identity[1](['bounded-id', true, true, false]); await operation;
+  const state = controller.getState();
+  assert.equal(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'FINAL');
+  assert.equal(calls, 2, 'the read tool result feeds a second model step');
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome]), [['read_selection', 'ok']]);
+  assert.equal(tree.id('actions').textContent, 'read_selection: ok');
+  assert.equal(tree.root.textContent.includes('текст выделения'), false, 'the tool result never reaches the DOM');
+  panel.dispose(); controller.dispose();
+});

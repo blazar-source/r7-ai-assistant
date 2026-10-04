@@ -9,7 +9,7 @@ import { mountPanel } from '../../src/ui/view.js';
 import { dom } from './dom.js';
 
 export const checkpoint = () => new Promise(resolve => setImmediate(resolve));
-export function nativeRig({ editor = 'word', replacement = 'replacement', mode = 'EDIT', include = true, automatic = true, returnStatus = false } = {}) {
+export function nativeRig({ editor = 'word', replacement = 'replacement', mode = 'EDIT', include = true, automatic = true, returnStatus = false, script = null } = {}) {
   let time = 0; let serial = 0; const tasks = new Map(); const calls = []; const http = []; const events = {};
   const state = { id: 'PRIVATE-SYNTHETIC-DOCUMENT-ID', tracking: false, text: 'original', receipt: true, auto: automatic, contextOverride: null, throwWrite: false, waitModel: null };
   const clock = { now: () => time };
@@ -45,7 +45,20 @@ export function nativeRig({ editor = 'word', replacement = 'replacement', mode =
     bridgeFactory(p, options) { bridge = createR7Bridge(p, { ...options, timers, clock }); return bridge; },
     controllerFactory({ bridge: b }) { controller = createController({ bridge: b, timers, clock, store: new SettingsStore(null),
       crypto: { randomUUID() { return `00000000-0000-4000-8000-${String(++serial).padStart(12, '0')}`; } },
-      transport: async (...args) => { http.push(args); if (state.waitModel) await state.waitModel; return mode === 'ASK' ? { type: 'final', message: 'answer' } : { type: 'tool', tool: 'r7_replace_selection', arguments: { text: replacement } }; }
+      // The controller injects this transport into the Agent Runtime, which consumes the raw
+      // envelope `{ content: <model text> }` the real strict-bank transport also returns: the ASK
+      // answer or the EDIT replacement proposal is a scripted model envelope, not a parsed object.
+      transport: async (...args) => {
+        http.push(args);
+        if (state.waitModel) await state.waitModel;
+        // An optional scripted envelope sequence lets one run script a later step (for example a
+        // refusal followed by a plain final answer).
+        const scripted = script === null ? null : script(http.length);
+        if (scripted !== null) return { content: JSON.stringify(scripted) };
+        const model = mode === 'ASK' ? { type: 'final', message: 'answer' }
+          : { type: 'tool_calls', calls: [{ tool: 'replace_selection', arguments: { text: replacement } }] };
+        return { content: JSON.stringify(model) };
+      }
     }); return controller; }, viewFactory: mountPanel
   });
   plugin.init(); controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });

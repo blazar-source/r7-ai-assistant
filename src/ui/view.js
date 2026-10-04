@@ -6,6 +6,7 @@ const statuses = Object.freeze({
   READING_CONTEXT: 'Чтение выделения…', CONTEXT_READY: 'Контекст прочитан', CONTEXT_CHANGED: 'Контекст изменился. Прочитайте выделение заново.',
   COMPLETE: 'Ответ получен', PREVIEW_READY: 'Предложение готово. Документ не изменён.', PREVIEW_EXPIRED: 'Срок предложения истёк', PREVIEW_CANCELLED: 'Предложение отменено. Документ не изменён.',
   SETTINGS_CHANGED: 'Настройки изменены; предыдущий запрос и предложение недействительны', SETTINGS_SAVED: 'Настройки применены', STOPPED: 'Запрос остановлен. Поздние ответы не используются.',
+  AGENT_LIMIT: 'Достигнут предел выполнения задачи. Результат неполный; проверьте документ.',
   INVALID_SETTINGS: 'Проверьте настройки соединения', INVALID_ENDPOINT: 'Нужен полный HTTPS URL с окончанием /v1/chat/completions', INVALID_KEY: 'Введите корректный ключ',
   INVALID_DATA: 'Некорректные данные', BYTE_LIMIT: 'Превышен лимит UTF-8 для ввода, выделения или ответа; текст не обрезается.',
   STORAGE_UNAVAILABLE: 'Хранилище недоступно; настройки остаются в памяти', STORAGE_CORRUPT: 'Сохранённые настройки повреждены', INTERNAL_ERROR: 'Не удалось завершить операцию',
@@ -62,6 +63,10 @@ export function mountPanel(root, controller) {
   const contextDetails = node('details'); contextDetails.append(node('summary', 'Прочитанный текст'), selected);
   toolbar.append(modeLabel, mode, refresh, checkR7, capabilitySummary, context, contextDetails);
   const history = node('section', '', 'history'); history.setAttribute('aria-label', 'История чата');
+  // The actions summary is a technical, content-free record: the tool name, the closed outcome and,
+  // for a failed action, its closed code. It is rendered with textContent only, so no raw model JSON,
+  // tool argument or document text can ever reach the DOM.
+  const actions = node('section', '', 'actions'); actions.setAttribute('aria-live', 'polite'); actions.setAttribute('aria-label', 'Журнал действий');
   const composer = node('form', '', 'composer');
   const promptLabel = node('label', 'Запрос'); promptLabel.htmlFor = 'prompt';
   const prompt = node('textarea', '', 'prompt'); prompt.rows = 4; prompt.setAttribute('aria-describedby', 'input-budget');
@@ -102,11 +107,14 @@ export function mountPanel(root, controller) {
   on(composer, 'submit', function (event) { event.preventDefault(); submit(); });
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
-  root.replaceChildren(header, status, lifecycleWarning, toolbar, history, composer, preview, settings);
+  root.replaceChildren(header, status, lifecycleWarning, toolbar, history, composer, preview, actions, settings);
   let lastSettings = null;
   let lastHistory = null;
+  let lastAgentActions = null;
   const unsubscribe = controller.subscribe(function (state) {
-    status.textContent = statusText(state.status);
+    const record = state.agent ?? null;
+    status.textContent = state.status === 'ANALYZING' && record?.status === 'RUNNING' && record.steps > 0 ?
+      `${statusText(state.status)} · шаг ${record.steps}` : statusText(state.status);
     badge.textContent = `Stage B · редактор: ${state.editorType} · runtimeVerified: false`;
     mode.value = state.mode; include.checked = state.includeContext;
     const locked = state.writeLocked === true;
@@ -126,6 +134,14 @@ export function mountPanel(root, controller) {
     }
     preview.hidden = !state.preview;
     replacement.textContent = state.preview?.replacement ?? '';
+    const lines = Array.isArray(record?.actions) ? record.actions : [];
+    if (lastAgentActions !== lines) {
+      lastAgentActions = lines;
+      // One paragraph per action: `tool: outcome`, plus the closed code when the action failed.
+      // textContent only — a fixed, authored line, never a serialized model object.
+      actions.replaceChildren(...lines.map(entry => node('p', entry.code === undefined ? `${entry.tool}: ${entry.outcome}` : `${entry.tool}: ${entry.outcome} (${entry.code})`)));
+    }
+    actions.hidden = lines.length === 0 && record?.status !== 'RUNNING';
     persistence.hidden = !state.keyPersistenceWarning;
     storage.textContent = state.storageError ? statusText(state.storageError) : '';
     if (lastSettings !== state.settings) {

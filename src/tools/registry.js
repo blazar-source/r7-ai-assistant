@@ -8,39 +8,40 @@ const editors = new Set(['word', 'cell', 'slide']);
 const fieldNames = ['name', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute'];
 const capabilityFor = { read: 'document.read', mutate: 'document.write' };
 
-export function defineTool(descriptor) {
-  if (descriptor === null || typeof descriptor !== 'object' || Array.isArray(descriptor)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+export function defineTool(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   // Object.keys() enumerates only own properties, so this allowlist sees no prototype-carried and
   // no non-enumerable key — those must never be able to contribute a field to the tool either.
-  for (const key of Object.keys(descriptor)) if (!fieldNames.includes(key)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  if (typeof descriptor.name !== 'string' || !/^[a-z][a-z0-9_]{2,39}$/.test(descriptor.name)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  if (!kinds.has(descriptor.kind)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  if (!Array.isArray(descriptor.editors) || descriptor.editors.length === 0 || descriptor.editors.some(editor => !editors.has(editor))) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  if (!policies.has(descriptor.policy)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  if (!Array.isArray(descriptor.requires)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  if (typeof descriptor.precondition !== 'function' || typeof descriptor.execute !== 'function') throw new SafeError(ERROR_CODES.INVALID_DATA);
-  validateToolSchema(descriptor.schema);
+  for (const key of Object.keys(raw)) if (!fieldNames.includes(key)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (typeof raw.name !== 'string' || !/^[a-z][a-z0-9_]{2,39}$/.test(raw.name)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!kinds.has(raw.kind)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!Array.isArray(raw.editors) || raw.editors.length === 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  for (const editor of raw.editors) if (!editors.has(editor)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!policies.has(raw.policy)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!Array.isArray(raw.requires)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (typeof raw.precondition !== 'function' || typeof raw.execute !== 'function') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  validateToolSchema(raw.schema);
   // The frozen tool is CONSTRUCTED from the values just validated, never spread from the input:
-  // spreading copies only own enumerable properties, so a descriptor whose fields live on its
+  // spreading copies only own enumerable properties, so a raw entry whose fields live on its
   // prototype (or whose execute is non-enumerable) would otherwise pass every check above and
   // yet produce a catalogue entry with no handler — malformed at load, broken at runtime.
-  const validated = {};
-  for (const key of fieldNames) validated[key] = descriptor[key];
-  validated.editors = Object.freeze([...validated.editors]);
-  validated.requires = Object.freeze([...validated.requires]);
-  return Object.freeze(validated);
+  const closed = {};
+  for (const key of fieldNames) closed[key] = raw[key];
+  closed.editors = Object.freeze([...closed.editors]);
+  closed.requires = Object.freeze([...closed.requires]);
+  return Object.freeze(closed);
 }
 
-export function createRegistry(descriptors) {
-  if (!Array.isArray(descriptors)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  const tools = descriptors.map(defineTool);
+export function createRegistry(list) {
+  if (!Array.isArray(list)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const defined = list.map(defineTool);
   const names = new Set();
-  for (const tool of tools) {
-    if (names.has(tool.name)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-    names.add(tool.name);
+  for (const entry of defined) {
+    if (names.has(entry.name)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    names.add(entry.name);
   }
-  // Dispatch is the descriptor's own static execute function: the catalogue is a closed
-  // allowlist of validated descriptors, the model's name is only a data key, and no
+  // Dispatch is the entry's own static execute function: the catalogue is a closed
+  // allowlist of validated entries, the model's name is only a data key, and no
   // computed function lookup exists (defineTool rejects a non-function execute, so a
   // catalogue entry always carries a static handler). Adding a tool therefore touches
   // only its descriptor — never the runtime and never a name-keyed switch.
@@ -55,14 +56,19 @@ export function createRegistry(descriptors) {
     if (!Array.isArray(capabilities) || capabilities.some(capability => typeof capability !== 'string')) throw new SafeError(ERROR_CODES.INVALID_DATA);
     if (mode !== 'ASK' && mode !== 'EDIT') throw new SafeError(ERROR_CODES.INVALID_DATA);
     const granted = new Set(capabilities);
-    return Object.freeze(tools.filter(tool => tool.editors.includes(editor) &&
-      (mode !== 'ASK' || tool.kind !== 'mutate') &&
-      tool.policy !== 'deny' &&
-      granted.has(capabilityFor[tool.kind])));
+    const offered = [];
+    for (const entry of defined) {
+      if (!entry.editors.includes(editor)) continue;
+      if (mode === 'ASK' && entry.kind === 'mutate') continue;
+      if (entry.policy === 'deny') continue;
+      if (!granted.has(capabilityFor[entry.kind])) continue;
+      offered.push(entry);
+    }
+    return Object.freeze(offered);
   }
   function resolve(list, name) {
     if (typeof name !== 'string') return null;
     return list.find(entry => entry.name === name) ?? null;
   }
-  return Object.freeze({ tools: Object.freeze(tools), catalogue, resolve });
+  return Object.freeze({ tools: Object.freeze(defined), catalogue, resolve });
 }

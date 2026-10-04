@@ -4,7 +4,9 @@ import { nativeRig, checkpoint } from '../fixtures/native-sdk.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 
 // Break caught: blanket denial or any native mutation before explicit Apply.
-for (const replacement of ['short', 'long '.repeat(200), '', 'line1\nline2\t<script>data</script>']) test(`explicit Apply writes exact bounded data once (${replacement.length} chars), receipt is not effect proof`, async () => {
+// The blank case uses a one-character replacement: the confirm tool's schema requires a non-empty
+// `text`, so an empty proposal is a known protocol error and can never publish a Preview at all.
+for (const replacement of ['short', 'long '.repeat(200), 'x', 'line1\nline2\t<script>data</script>']) test(`explicit Apply writes exact bounded data once (${replacement.length} chars), receipt is not effect proof`, async () => {
   const f = nativeRig({ replacement }); await f.preview();
   assert.equal(f.writes().length, 0); assert.equal(f.controller.getState().canApply, true); assert.equal(f.id('apply').disabled, false);
   const history = f.controller.getState().chat;
@@ -75,8 +77,14 @@ for (const options of [{ mode: 'ASK' }, { include: false }]) test(`no writable P
 test('empty original cannot create a writable Preview; UTF8 overflow never reaches native write', async () => {
   const f = nativeRig(); f.state.text = ''; await f.controller.analyze('request');
   assert.equal(f.controller.getState().canApply, false); assert.equal(await f.controller.apply(), false); assert.equal(f.writes().length, 0); f.close();
-  const g = nativeRig({ replacement: 'я'.repeat(4096) + 'x' }); assert.equal(await g.controller.analyze('request'), false);
-  assert.equal(g.controller.getState().status, 'BYTE_LIMIT'); assert.equal(g.controller.getState().preview, null); g.close();
+  const g = nativeRig({ replacement: 'я'.repeat(4096) + 'x', script: (() => { let step = 0; return () => (++step === 1 ? null : { type: 'final', message: 'стоп' }); })() });
+  assert.equal(await g.controller.analyze('request'), true);
+  // The oversized argument is refused BEFORE the executor: the proposal never becomes a tool call
+  // (the run's own argument budget rejects it), so nothing is dispatched and no Preview exists.
+  assert.deepEqual(g.controller.getState().agent.actions, []);
+  assert.equal(g.controller.getState().agent.toolCalls, 0);
+  assert.equal(g.controller.getState().status, 'COMPLETE');
+  assert.equal(g.controller.getState().preview, null); assert.equal(g.writes().length, 0); g.close();
 });
 test('TTL is authoritative before and during revalidation with no timer delivery', async () => {
   const f = nativeRig(); await f.preview(); f.advance(120000, false);

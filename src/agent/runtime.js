@@ -202,7 +202,7 @@ export async function runAgent(options) {
         actions.push(Object.freeze(outcome === 'ok'
           ? { tool: entry.descriptor.name, outcome, bytes }
           : { tool: entry.descriptor.name, outcome, code: actionCode(result), bytes }));
-        onEvent(Object.freeze({ step: steps, tool: entry.descriptor.name, outcome }));
+        onEvent(Object.freeze({ step: steps, steps, tool: entry.descriptor.name, outcome }));
         if (outcome === 'uncertain') return finish('UNCERTAIN');
         results.push({ tool: entry.descriptor.name, result });
       }
