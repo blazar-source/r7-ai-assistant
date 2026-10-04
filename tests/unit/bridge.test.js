@@ -346,3 +346,190 @@ test('Apply rejects caller-forged serializable target certificates without any S
   }
   assert.equal(r.calls.length, 0); assert.equal(r.bridge.getState().busy, false);
 });
+
+// --- Sprint 3: an insert acknowledgement that carries NO value -----------------------------------
+// Proven natively on R7-Office 2026.3.1 (Windows): `PasteText` APPLIES the insert and then calls its
+// callback with `undefined`. A callback value that carries nothing is neither evidence of success nor
+// evidence of failure, so it is never an automatic success and never an ordinary known error. The
+// ticket stays OWNED (still a pending mutation, still write-locked) and exactly ONE bounded read of
+// the confirmed public read primitive decides; the effect counts as verified only when that read
+// reproduces the dispatched payload byte-for-byte.
+const VERIFIED = { ok: true, data: { sent: true, effectVerified: true } };
+const tick = () => new Promise(resolve => setImmediate(resolve));
+async function dispatchInsert(r, request = { text: 'Абзац' }) {
+  const pending = r.bridge.insertParagraph(request);
+  await tick();
+  const insert = r.calls.find(call => call.name === 'PasteText');
+  assert.ok(insert, 'the insert was dispatched');
+  return { pending, insert };
+}
+const reads = r => r.calls.filter(call => call.name === 'GetSelectedText');
+const inserts = r => r.calls.filter(call => call.name === 'PasteText');
+
+test('a void insert acknowledgement is confirmed by exactly one bounded read of the payload', async () => {
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  assert.deepEqual(insert.params, ['Абзац'], 'the dispatched payload is the one the read must reproduce');
+  assert.equal(r.bridge.getState().writePending, true);
+  insert.callback(undefined); // the live 2026.3.1 callback value: no value at all
+  assert.equal(reads(r).length, 1, 'the void acknowledgement starts exactly one confirmation read');
+  assert.deepEqual(reads(r)[0].params, []);
+  assert.ok(Object.isFrozen(reads(r)[0].params));
+  assert.equal(r.bridge.getState().writePending, true, 'the write lock spans the whole confirmation window');
+  reads(r)[0].callback('Абзац');
+  assert.deepEqual(await pending, VERIFIED);
+  assert.equal(r.bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
+  assert.equal(inserts(r).length, 1, 'the mutation is never retried');
+  assert.equal(reads(r).length, 1, 'one dispatch, one confirmation read');
+});
+
+test('a boolean acknowledgement keeps the existing unverified envelope and reads nothing', async () => {
+  // Requirement 8: the boolean path is unchanged and stays "sent, effect unverified" — its meaning on
+  // the target Astra 2026.1.2.1942 build must be re-checked natively, so no marker is invented here.
+  for (const value of [true, false]) {
+    const r = rig();
+    const { pending, insert } = await dispatchInsert(r);
+    insert.callback(value);
+    assert.deepEqual(await pending, { ok: true, data: { sent: value } });
+    assert.deepEqual(reads(r), [], 'a boolean acknowledgement needs no confirmation read');
+    assert.equal(r.bridge.getState().writePending, false);
+  }
+});
+
+test('a void acknowledgement the read cannot reproduce is the uncertain class, never a known error', async () => {
+  // A different string and the empty string are both "not confirmed": the uncertain class, one
+  // dispatch, one read, no retry, and the write lock is not released over an unknown outcome.
+  for (const returned of ['Другой текст', '']) {
+    const r = rig();
+    const { pending, insert } = await dispatchInsert(r);
+    insert.callback(undefined);
+    reads(r)[0].callback(returned);
+    const result = await pending;
+    assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, JSON.stringify(returned));
+    assert.notEqual(result.code, 'INVALID_DATA', 'a void acknowledgement is never a plain known error');
+    assert.equal(inserts(r).length, 1, 'the mutation is never retried');
+    assert.equal(reads(r).length, 1, 'exactly one confirmation read');
+    assert.equal(r.bridge.getState().writePending, true, 'an unconfirmed mutation stays pending');
+    assert.equal(r.bridge.getState().uncertain, true);
+    assert.deepEqual(await r.bridge.insertParagraph({ text: 'Второй' }), { ok: false, code: 'EDITOR_BUSY' },
+      'no second mutation is dispatched over an unknown outcome');
+    assert.equal(inserts(r).length, 1);
+  }
+});
+
+test('a confirmation read that never answers, errs or cannot be dispatched keeps the mutation pending', async () => {
+  // (a) the read never settles: the callback deadline is the only settlement, and it is uncertain.
+  const stalled = rig();
+  const stalledInsert = await dispatchInsert(stalled);
+  stalledInsert.insert.callback(undefined);
+  const late = reads(stalled)[0];
+  stalled.advance(5000);
+  assert.deepEqual(await stalledInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(stalled.bridge.getState().writePending, true, 'an unanswered confirmation stays pending');
+  assert.equal(stalled.bridge.getState().uncertain, true);
+  late.callback('Абзац'); // a late callback only frees the owner; it never becomes a success
+  assert.equal(stalled.bridge.getState().writePending, false);
+
+  // (b) the read callback carries a value the decode refuses: no usable observation exists.
+  const malformed = rig();
+  const malformedInsert = await dispatchInsert(malformed);
+  malformedInsert.insert.callback(undefined);
+  reads(malformed)[0].callback(null);
+  assert.deepEqual(await malformedInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(malformed.bridge.getState().writePending, true, 'an unusable confirmation read is not a release');
+
+  // (c) the confirmation read cannot even be dispatched: the SDK throws synchronously.
+  const calls = [];
+  const thrown = rig('word', { executeMethod(name, params, callback) {
+    calls.push({ name, params, callback });
+    if (name === 'GetSelectedText') throw new Error('private native detail');
+    return false;
+  } });
+  const thrownPending = thrown.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  calls.find(call => call.name === 'PasteText').callback(undefined);
+  const thrownResult = await thrownPending;
+  assert.equal(thrownResult.ok, false);
+  assert.equal(thrownResult.code, 'APPLY_UNCERTAIN');
+  assert.equal(JSON.stringify(thrownResult).includes('private native detail'), false);
+  assert.equal(thrown.bridge.getState().writePending, true, 'a confirmation read that never ran is not a release');
+});
+
+test('a malformed non-boolean acknowledgement takes the same confirmation path and is never a success by itself', async () => {
+  // A string, an object and `null` are all unusable acknowledgements: the SAME void path, never
+  // INVALID_DATA, and no success unless the independent read proves the effect.
+  for (const value of ['true', { acknowledged: true }, null]) {
+    const label = JSON.stringify(value) ?? String(value);
+    const refused = rig();
+    const refusal = await dispatchInsert(refused);
+    refusal.insert.callback(value);
+    assert.equal(reads(refused).length, 1, `${label}: the malformed value starts the confirmation read`);
+    reads(refused)[0].callback('Абзацx');
+    assert.deepEqual(await refusal.pending, { ok: false, code: 'APPLY_UNCERTAIN' }, label);
+    // The success below is the READ's proof, never the malformed native value's: the envelope says so.
+    const confirmed = rig();
+    const confirmation = await dispatchInsert(confirmed);
+    confirmation.insert.callback(value);
+    reads(confirmed)[0].callback('Абзац');
+    assert.deepEqual(await confirmation.pending, VERIFIED, label);
+  }
+});
+
+test('the confirmation read is bounded by the dispatched payload itself, never an unbounded window', async () => {
+  // 'Абзац' is 10 UTF-8 bytes. A read one byte longer is refused by the decode bound and therefore
+  // cannot be confirmed, while the exact payload is accepted: together the two legs pin the budget to
+  // the payload's own byte length rather than to the 8 KiB selection window.
+  const over = rig();
+  const overInsert = await dispatchInsert(over);
+  overInsert.insert.callback(undefined);
+  reads(over)[0].callback('Абзацx'); // 11 bytes
+  assert.deepEqual(await overInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+
+  const exact = rig();
+  const exactInsert = await dispatchInsert(exact);
+  exactInsert.insert.callback(undefined);
+  reads(exact)[0].callback('Абзац'); // exactly 10 bytes
+  assert.deepEqual(await exactInsert.pending, VERIFIED);
+
+  // `end` dispatches text + "\n", and the budget is that DISPATCHED payload's own size: one byte
+  // short is not the payload, while the 11-byte payload itself fits the budget.
+  const short = rig();
+  const shortInsert = await dispatchInsert(short, { text: 'Абзац', position: 'end' });
+  assert.deepEqual(shortInsert.insert.params, ['Абзац\n'], 'the newline is part of the dispatched payload');
+  shortInsert.insert.callback(undefined);
+  reads(short)[0].callback('Абзац');
+  assert.deepEqual(await shortInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+
+  const ended = rig();
+  const endedInsert = await dispatchInsert(ended, { text: 'Абзац', position: 'end' });
+  endedInsert.insert.callback(undefined);
+  reads(ended)[0].callback('Абзац\n'); // 11 bytes: only inside the budget if it is the payload's own
+  assert.deepEqual(await endedInsert.pending, VERIFIED);
+});
+
+test('a duplicate acknowledgement for the same dispatch cannot preempt the confirmation read', async () => {
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  insert.callback(undefined);
+  insert.callback(true); // a second acknowledgement is not a settlement of the first one
+  assert.equal(r.bridge.getState().writePending, true);
+  assert.equal(reads(r).length, 1);
+  reads(r)[0].callback('Абзац');
+  assert.deepEqual(await pending, VERIFIED);
+  assert.equal(inserts(r).length, 1);
+});
+
+test('a void acknowledgement that arrives past the deadline is the uncertain class, never a known timeout', async () => {
+  // The callback arrived but the ticket's own timer had not run yet: the payload WAS dispatched, so the
+  // only honest class is the uncertain one — reporting a plain TIMEOUT would be the same false-failure
+  // shape this fix exists to remove. No confirmation read is attempted on an expired ticket.
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  r.setNow(5000);
+  insert.callback(undefined);
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
+  assert.equal(reads(r).length, 0, 'an expired ticket does not dispatch a confirmation read');
+  assert.equal(inserts(r).length, 1, 'and it certainly does not retry the mutation');
+});

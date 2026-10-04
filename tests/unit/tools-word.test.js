@@ -604,3 +604,68 @@ test('the write path still dispatches the caller replacement unchanged', async (
   write.callback(true);
   assert.equal((await written).acknowledged, true);
 });
+
+// --- Sprint 3: the void `PasteText` acknowledgement proven on the live 2026.3.1 editor -------------
+// The native callback carries no value, so the bridge holds its ticket and asks ONE bounded read
+// through the confirmed public read primitive (`GetSelectedText`). A read that reproduces the
+// dispatched payload byte-for-byte is the only evidence that turns the insert into a success, and the
+// handler republishes that proof instead of dropping it.
+
+test('the real bridge confirms a void acknowledgement and the handler republishes the proven effect', async () => {
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const pending = tool.execute({ text: 'Абзац', position: 'end' }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'exactly one insert is dispatched');
+  const insert = r.calls[1];
+  assert.equal(insert.name, 'PasteText');
+  assert.deepEqual(insert.params, ['Абзац\n']);
+  assert.equal(r.bridge.getState().writePending, true);
+  insert.callback(undefined);
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'one confirmation read follows the dispatched insert');
+  const read = r.calls[2];
+  assert.equal(read.name, 'GetSelectedText');
+  assert.deepEqual(read.params, [], 'the confirmation read is the plain public selection read');
+  assert.equal(r.bridge.getState().writePending, true, 'the confirmation window keeps the write lock');
+  read.callback('Абзац\n');
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { acknowledged: true, bytes: 11, effectVerified: true },
+    'the newline is part of the confirmed payload, and the proof crosses to the run');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1, 'the mutation is never retried');
+});
+
+test('the handler publishes the effect the bridge proved and never invents one', async () => {
+  const verified = await createWordTools(fakeBridge({ insertParagraph: async () => ({ ok: true, data: { sent: true, effectVerified: true } }) }))
+    .find(entry => entry.name === 'insert_paragraph').execute({ text: 'Абзац' }, { editor: 'word' });
+  assert.equal(verified.ok, true);
+  assert.deepEqual(verified.data, { acknowledged: true, bytes: 10, effectVerified: true });
+  // A boolean acknowledgement keeps the existing unverified shape exactly: no marker is invented for
+  // an effect nobody proved (that path must be re-checked on the target build).
+  const unverified = await createWordTools(fakeBridge()).find(entry => entry.name === 'insert_paragraph')
+    .execute({ text: 'Абзац' }, { editor: 'word' });
+  assert.deepEqual(unverified.data, { acknowledged: true, bytes: 10 });
+  // The marker alone is never a success: the literal `sent === true` is still required.
+  const forged = await createWordTools(fakeBridge({ insertParagraph: async () => ({ ok: true, data: { sent: false, effectVerified: true } }) }))
+    .find(entry => entry.name === 'insert_paragraph').execute({ text: 'Абзац' }, { editor: 'word' });
+  assert.equal(forged.ok, false);
+  assert.equal(forged.code, 'TOOL_ERROR');
+});
+
+test('a void acknowledgement the read cannot confirm is TOOL_UNCERTAIN and never a plain failure', async () => {
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2);
+  r.calls[1].callback(undefined);
+  r.calls[2].callback('');
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'TOOL_UNCERTAIN', 'the runtime-stopping uncertain class, not a known error');
+  assert.equal(result.message, 'отказ');
+  assert.equal(JSON.stringify(result).includes('APPLY_UNCERTAIN'), false);
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1,
+    'an insert whose effect is unproven is never retried automatically');
+});

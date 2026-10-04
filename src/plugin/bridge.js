@@ -1,5 +1,5 @@
 import { LIMITS } from '../shared/limits.js';
-import { assertByteLimit } from '../shared/bytes.js';
+import { assertByteLimit, utf8ByteLength } from '../shared/bytes.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 import { dispatchCapabilityProbe, dispatchContextProbe } from './commands.js';
 
@@ -71,11 +71,16 @@ function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
   return assertByteLimit(value, bound);
 }
-// A native insert acknowledgement. Anything that is not a boolean is a malformed native result and
-// never a success claim: the effect of an insert is not verified by the callback's own return value.
+// A native insert acknowledgement. `true`/`false` are the only values that carry information: they
+// settle the ticket as an acknowledged-but-effect-UNVERIFIED outcome. Every other value — `undefined`,
+// which is what the live R7-Office 2026.3.1 `PasteText` calls back with AFTER it has applied the
+// insert, plus `null`, a string or an object — says nothing at all about the effect. Such a value is
+// therefore neither an automatic success (the callback acknowledged nothing) nor an ordinary known
+// error (the paste may well have applied), so `null` here means "the acknowledgement is unusable" and
+// hands the still-owned ticket to the confirmation leg. The function is CONTRACT-DRIVEN, not fitted to
+// one build: a build whose `PasteText` returns a value goes through exactly the same door.
 function insertAcknowledgement(value) {
-  if (typeof value !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
-  return Object.freeze({ acknowledged: value, effectVerified: false });
+  return typeof value === 'boolean' ? Object.freeze({ acknowledged: value, effectVerified: false }) : null;
 }
 // One classified failure per dispatched kind. A write-class ticket whose callback never settled may
 // already have applied, so it is the uncertain class; everything else keeps its own code, and a raw
@@ -203,26 +208,85 @@ export function createR7Bridge(plugin, {
         settle(errorFor(kind, (kind === 'write' || kind === 'insert') && owned.dispatched ? null : new SafeError(ERROR_CODES.CANCELLED)));
       }
       owned.cancel = cancel;
+      // The confirmation leg of an unusable insert acknowledgement: ONE bounded read of the confirmed
+      // public read primitive (`GetSelectedText`, the same primitive every read leg of this bridge
+      // uses). The ticket KEEPS the slot, so the mutation stays pending (design §8.4) and no second
+      // mutation can be dispatched while the effect is unknown. The read is dispatched once, never
+      // retried, and never through a second channel.
+      function confirmInsert() {
+        owned.confirming = true;
+        try {
+          const payload = params[0]; // the exact string that was dispatched to the editor
+          owned.confirmPayload = payload;
+          // The read's budget is THIS payload's own byte length, capped by the editor-result ceiling
+          // that bounds every native read: the confirmation is bounded by construction, never
+          // unbounded, and never a wider window than the payload it is checking.
+          owned.confirmBytes = Math.min(utf8ByteLength(payload), LIMITS.editorResultBytes);
+          plugin.executeMethod('GetSelectedText', Object.freeze([]), confirmCallback);
+        } catch {
+          // A confirmation read that never even ran proves nothing about the effect and never unlocks
+          // the mutation: exactly like a dispatched write whose callback never arrived.
+          owned.uncertain = true;
+          settle(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
+        }
+        notify();
+      }
+      // STRICT confirmation: the effect counts as verified only when the read reproduces the dispatched
+      // payload BYTE-FOR-BYTE. A different string, an empty string, a malformed or byte-oversized value
+      // and a read error are all "not confirmed" — the uncertain class, never a success claim and never
+      // an ordinary known error. "Not confirmed" is not a release either: nothing observed here proves
+      // the paste did not apply, so the ticket keeps the slot (and the write lock) exactly like an
+      // unanswered write, and only a later callback for this same ticket can release it.
+      function confirmCallback(value) {
+        if (slot !== owned) return;
+        if (owned.settled) { slot = null; notify(); return; }
+        let confirmed = false;
+        try {
+          if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
+          if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
+          confirmed = decodeText(value, owned.confirmBytes) === owned.confirmPayload;
+        } catch { confirmed = false; }
+        if (!confirmed) {
+          owned.uncertain = true;
+          settle(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
+          notify();
+          return;
+        }
+        slot = null;
+        settle(null, Object.freeze({ acknowledged: null, effectVerified: true }));
+        notify();
+      }
       function callback(value) {
         if (slot !== owned) return; // old/duplicate callback cannot release a new owner
-        slot = null; // actual settlement releases SDK slot, even after caller expiry
-        if (owned.settled) { notify(); return; } // release only, never late content/UI
+        if (owned.settled) { slot = null; notify(); return; } // release only, never late content/UI
+        // A second acknowledgement for this same dispatch cannot preempt the confirmation read the
+        // first one started: this ticket's outcome is decided by that read alone.
+        if (owned.confirming) return;
         try {
           if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
           if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
           let result;
-          if (kind === 'read') result = decodeText(value, LIMITS.selectionBytes);
+          if (kind === 'insert') {
+            const acknowledgement = insertAcknowledgement(value);
+            if (acknowledgement === null) { confirmInsert(); return; }
+            result = acknowledgement;
+          } else if (kind === 'read') result = decodeText(value, LIMITS.selectionBytes);
           else if (kind === 'context') result = decodeContext(value);
           else if (kind === 'contextread') result = decodeText(value, readBound);
-          else if (kind === 'insert') result = insertAcknowledgement(value);
           else if (kind === 'probe') result = capabilities(decodePresence(value));
           else {
             if (typeof value !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
             result = Object.freeze({ acknowledged: value, effectVerified: false });
           }
+          slot = null; // actual settlement releases SDK slot, even after caller expiry
           settle(null, result);
         } catch (error) {
-          settle(errorFor(kind, error));
+          slot = null;
+          // A callback that actually ARRIVED for an already-dispatched insert can still leave the effect
+          // unproven (its deadline expired just before the callback was delivered, so the ticket's own
+          // timer had not run yet). That is the uncertain class — never a plain known error about a
+          // document the editor has already touched, and never a success.
+          settle(kind === 'insert' && owned.dispatched ? new SafeError(ERROR_CODES.APPLY_UNCERTAIN) : errorFor(kind, error));
         }
         notify();
       }
@@ -338,6 +402,10 @@ export function createR7Bridge(plugin, {
     // dispatch channel is verified with ownFunction before the irreversible call; whether the
     // installed R7 build implements `PasteText` is PENDING NATIVE VERIFICATION — an editor that does
     // not implement it never calls back, so the ticket settles APPLY_UNCERTAIN rather than success.
+    // An acknowledgement that carries NO value is the one measured case on the live 2026.3.1 build
+    // (the paste applies and the callback receives `undefined`): the ticket then asks ONE bounded read
+    // of the confirmed public selection primitive, and reports success only when that read reproduces
+    // the dispatched payload byte-for-byte. No mutation is ever retried by this bridge.
     // The caller's `signal` is honoured the same way: an abort before dispatch prevents it, an abort
     // after dispatch keeps the write-class uncertain-until-callback behaviour.
     async insertParagraph(raw) {
@@ -353,7 +421,13 @@ export function createR7Bridge(plugin, {
         if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
         if (disposed) throw new SafeError(ERROR_CODES.CANCELLED);
         const acknowledgement = await start('insert', signal, {}, Object.freeze([position === 'end' ? `${text}\n` : text]));
-        return Object.freeze({ ok: true, data: Object.freeze({ sent: acknowledgement.acknowledged }) });
+        // A boolean acknowledgement keeps today's envelope EXACTLY — the payload was sent and the
+        // effect is NOT verified by the callback's own value. The only other way this ticket can
+        // settle is the confirmation read above, which reports `effectVerified` because a bounded read
+        // really did reproduce the dispatched payload; no other path reaches this line with a success.
+        return Object.freeze({ ok: true, data: Object.freeze(acknowledgement.effectVerified === true
+          ? { sent: true, effectVerified: true }
+          : { sent: acknowledgement.acknowledged }) });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

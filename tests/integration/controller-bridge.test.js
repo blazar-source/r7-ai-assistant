@@ -326,3 +326,111 @@ test('an acknowledged insert reaches COMPLETE/FINAL with the action ok and no wr
   assert.equal(state.writeLocked, false, 'a settled insert releases the write lock');
   panel.dispose(); controller.dispose();
 });
+
+// --- Sprint 3: the VOID native acknowledgement, end to end through the real bridge ----------------
+// Proven on the live R7-Office 2026.3.1: `PasteText` APPLIES the insert and then calls back with
+// `undefined`. Before this fix that void value was decoded as a malformed native acknowledgement, so
+// the run reported a FAILED insert (INVALID_DATA) while the paragraph really was in the document. The
+// bridge now keeps the mutation pending, asks ONE bounded read of the confirmed public read primitive,
+// and reports the effect as verified only when that read reproduces the dispatched payload.
+
+test('a void insert acknowledgement confirmed by one bounded read reaches COMPLETE with the effect verified', async () => {
+  let time = 0; const tasks = new Map(); const selections = []; const identity = []; const inserts = []; const steps = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
+    JSON.stringify({ type: 'final', message: 'Готово' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async (_settings, messages) => { steps.push(messages); calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  controller.setMode('EDIT');
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('добавь абзац');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  selections[0].callback('контекст запроса'); await tick();
+  identity[0](['bounded-id', true, true, false]); await tick();
+  identity[1](['bounded-id', true, true, false]); await tick();
+  assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
+  assert.deepEqual(inserts[0].args, ['Новый абзац']);
+  inserts[0].callback(undefined); // the live 2026.3.1 callback value: no value at all
+  // (a) the void acknowledgement is NOT a failure: exactly one bounded confirmation read follows it.
+  assert.equal(selections.length, 2, 'the void acknowledgement starts one confirmation read');
+  assert.deepEqual(selections[1].args, [], 'the same public selection read every other read leg uses');
+  assert.equal(bridge.getState().writePending, true, 'the mutation stays pending across the confirmation');
+  selections[1].callback('Новый абзац'); await tick();
+  await operation;
+  const state = controller.getState();
+  // (b) a read that reproduces the dispatched payload is the proof, and the run proceeds to COMPLETE.
+  assert.equal(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'FINAL');
+  assert.equal(calls, 2, 'the verified insert result feeds a second model step');
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome]),
+    [['insert_paragraph', 'ok']], 'the applied insert is an ordinary success, never a reported failure');
+  // (c) the proof itself crosses to the model instead of being dropped by the handler.
+  const toolResult = steps.at(-1).find(message => typeof message.content === 'string' && message.content.includes('tool_results'));
+  assert.ok(toolResult, 'the second model step carries the tool result');
+  assert.equal(toolResult.content.includes('"effectVerified":true'), true,
+    'the tool result tells the model what was actually proven');
+  // (d) exactly one mutation and exactly one confirmation read: no retry, and nothing left pending.
+  assert.equal(inserts.length, 1);
+  assert.equal(selections.length, 2);
+  assert.equal(bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
+  assert.equal(state.writeLocked, false);
+  panel.dispose(); controller.dispose();
+});
+
+test('a void acknowledgement the bounded read cannot confirm stops the run as uncertain and never retries', async () => {
+  let time = 0; const tasks = new Map(); const selections = []; const identity = []; const inserts = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
+    JSON.stringify({ type: 'final', message: 'Готово' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  controller.setMode('EDIT');
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('добавь абзац');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  selections[0].callback('контекст запроса'); await tick();
+  identity[0](['bounded-id', true, true, false]); await tick();
+  identity[1](['bounded-id', true, true, false]); await tick();
+  assert.equal(inserts.length, 1);
+  inserts[0].callback(undefined); await tick();
+  assert.equal(selections.length, 2, 'the confirmation read is the only further native work');
+  selections[1].callback(''); await tick();
+  await operation;
+  const state = controller.getState();
+  assert.equal(state.status, 'APPLY_UNCERTAIN', 'an unconfirmed effect is the authored uncertain outcome');
+  assert.equal(state.agent.status, 'UNCERTAIN');
+  assert.equal(calls, 1, 'the run stops on the uncertain action; no second model step is requested');
+  assert.equal(inserts.length, 1, 'exactly one mutation is dispatched, ever');
+  assert.equal(selections.length, 2, 'exactly one confirmation read');
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['insert_paragraph', 'uncertain', 'TOOL_UNCERTAIN']]);
+  assert.equal(bridge.getState().writePending, true, 'an unconfirmed mutation is never released as settled');
+  assert.equal(state.writeLocked, true);
+  assert.equal(await controller.analyze('второй'), false, 'a write-locked panel refuses a new run');
+  assert.equal(inserts.length, 1);
+  panel.dispose(); controller.dispose();
+});

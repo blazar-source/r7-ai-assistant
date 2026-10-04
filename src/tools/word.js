@@ -190,16 +190,22 @@ export function createWordTools(bridge) {
         if (!result || typeof result !== 'object') return known();
         if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
         // The native acknowledgement is the only insert evidence there is: the bridge envelope carries
-        // {ok:true, data:{sent:<boolean>}} and the native return value is never effect proof. Only a
+        // {ok:true, data:{sent:<boolean>}} for a boolean acknowledgement and
+        // {ok:true, data:{sent:true, effectVerified:true}} when the bridge's own bounded confirmation
+        // read reproduced the dispatched payload. The native return value is never effect proof. Only a
         // literal own `true` is reported as an acknowledged insert; an explicit false, an absent flag
         // and a non-boolean are known errors, so the model is never told that an insert the editor did
         // not acknowledge succeeded.
         const data = result.data;
         const acknowledged = data !== null && typeof data === 'object' && Object.hasOwn(data, 'sent') ? data.sent : undefined;
         if (acknowledged !== true) return known(ERROR_CODES.TOOL_ERROR);
+        // The verified marker is republished, never dropped and never invented: it is present only
+        // because the bridge's bounded read proved the effect, and it reaches the run so the model is
+        // told what was actually established instead of a bare "sent".
+        const verified = data.effectVerified === true;
         // `bytes` is the dispatched payload's own size, the same value the bound above measured (so an
         // `end` insert reports the newline too, exactly like the bytes that crossed to the editor).
-        return ok({ acknowledged: true, bytes: utf8ByteLength(dispatched) });
+        return ok({ acknowledged: true, bytes: utf8ByteLength(dispatched), ...(verified ? { effectVerified: true } : {}) });
       }
     }),
     defineTool({
