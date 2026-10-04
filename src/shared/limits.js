@@ -10,6 +10,15 @@ export const LIMITS = Object.freeze({
   modelContentBytes: 65536,
   jsonBytes: 65536,
   editorResultBytes: 65536,
+  // The whole-document HTML export the insert confirmation counts occurrences in (`GetFileHTML`).
+  // It is deliberately larger than `editorResultBytes`, because it bounds a DOCUMENT read rather than
+  // a scoped one: the 64 KiB window that bounds a selection or paragraph read would refuse the export
+  // of any non-trivial document and leave every insert uncertain. 256 KiB covers a text document of
+  // roughly 260 000 characters plus its markup, and it keeps the confirmation to ONE linear scan over
+  // a fixed maximum. A larger result is NOT truncated to a prefix — counting inside a prefix could
+  // miss an occurrence or count a partial one — so it makes the read unusable and the insert settles
+  // APPLY_UNCERTAIN (fail-closed), never a false success.
+  documentHtmlBytes: 262144,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,

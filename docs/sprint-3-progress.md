@@ -2,9 +2,10 @@
 
 Short record of Sprint 3's first item: the native defect proven in
 [the Sprint 2 stage-b smoke findings](<../.superpowers/sdd/2026-10-04-sprint-2-agent-runtime/native-smoke-findings.md>),
-and of the independent review round that followed it: the ordered exact-equality ladder it introduced
-was still fail-open, because a post-dispatch read equal to the payload does not prove the paste applied
-it. The ladder now requires a pre-dispatch baseline for every leg (see §3/§4 below).
+and of the two independent review rounds that followed it. The first repair added a pre-dispatch
+baseline to an ordered ladder of caret-scope exact-equality reads; the second review showed that rule
+was **still fail-open** (a concurrent non-paste change landing on the payload satisfied it), so the
+confirmation is now a **document delta** measured on the document's own HTML export.
 
 ## The defect
 
@@ -20,92 +21,93 @@ reported as a plain known error).
 
 1. **`undefined` is never an automatic success** — the callback value is not evidence.
 2. **`undefined` is never an ordinary known error** — the paste may have applied.
-3. **Preferred path: a PRE-DISPATCH BASELINE plus an ordered confirmation LADDER of independent
-   bounded reads.** The ticket stays owned (the mutation is still a pending mutation, design §8.4, so
-   the write lock is held for the whole dispatch-plus-confirmation window). Before the irreversible
-   paste, the bridge dispatches **one baseline read per leg** — the SAME public observation that leg
-   will later judge — and only then dispatches `PasteText`, exactly once. The effect is verified only
-   when a leg's post-dispatch observation reproduces the dispatched payload through that leg's own
-   exact rule **AND differs from that leg's baseline**:
-   - **Leg 1 — `GetSelectedText`**: byte-equality against the dispatched payload.
-   - **Leg 2 — `GetCurrentSentence`**: equality against the dispatched payload with exactly **one**
-     trailing `"\n"` removed (the `position:'end'` payload is `text + "\n"`, and a sentence read cannot
-     contain a paragraph break). Nothing else is normalized — no other whitespace is trimmed, no case
-     is folded, no prefix/suffix or fuzzy matching is accepted.
-   - **Baseline and confirmation share one budget rule**: the dispatched payload's own UTF-8 byte
-     length, capped by `LIMITS.editorResultBytes`. Neither read can widen the window beyond the bytes
-     it is checking for, and the same `assertByteLimit` refusal applies to both.
-   - every other observation — a different string, `""`, a value that merely EQUALS the baseline, a
-     malformed or byte-oversized value, a read error, an observation delivered past the ticket
-     deadline, a leg whose dispatch threw — is **not confirmed** and hands the ticket to the next leg.
-     No leg ever re-dispatches the mutation.
-   - **A baseline read that throws, errors, times out, is malformed or is oversized makes ITS leg
-     incapable of confirming** — never a confirmation by default. Such a leg is not even asked for a
-     post-dispatch read, and the ladder moves to the next capable leg.
-   - the last capable leg not confirming → `APPLY_UNCERTAIN`, the slot **not** released, which the tool
-     republishes as `TOOL_UNCERTAIN` and the runtime stops the run for.
-   - a confirming leg → `{ok:true, data:{sent:true, effectVerified:true}}`.
-4. **Why the baseline is required (the fail-open leg an independent review reproduced).** Equality
-   between a post-dispatch read and the payload proves only that **the caret scope equals the payload**,
-   not that `PasteText` put it there. On a build whose `PasteText` calls back `undefined` and mutates
-   nothing — its semantics on the target Astra/R7 2026.1.2.1942 remain **unmeasured** — a scope that
-   ALREADY held the payload satisfied the old rule and produced
-   `{sent:true, effectVerified:true}` for an insert that never happened. That is the mirror image of
-   the false failure this repair exists to remove. The reviewer's reproduction is now a test: a fake
-   `PasteText` that mutates nothing, over a caret sentence already equal to the payload, must settle
-   the uncertain class.
-   - **A no-op `PasteText` now fails every leg**, which is exactly the point.
-   - The baseline phase is **gated**: the paste is dispatched only after every baseline leg has
-     answered or failed, so a baseline observation is pre-paste **by construction** and never by an
-     assumption about the editor's callback ordering — the same reason `PasteText` itself is not
-     trusted. Consequence: the ticket's single `callbackTimeoutMs` window now also covers the baseline
-     reads, and a baseline that never answers settles the ticket **before** anything is dispatched.
-     That settlement is a **KNOWN** outcome, not a false uncertainty, and it **releases the slot** —
-     see §4a.
-5. **Why a ladder, and why it stops at two legs.** The first fix used `GetSelectedText` alone; measured
-   natively on R7-Office 2026.3.1 it answers `""` (immediately and after +400 ms) because the paste does
-   **not** leave the inserted text selected, so every insert settled uncertain and the run always
-   stopped. `GetCurrentSentence` answers with exactly the inserted sentence (or `""` when the payload
-   ends with a sentence terminator). Leg 1 is kept first because it is the primitive that can confirm on
-   another build. A third leg over the whole-document `GetFileHTML` is **deliberately absent**: an
-   `includes(payload)` containment test over the entire exported document is also satisfied by a payload
-   that was already in the document, so it would report `effectVerified:true` for an effect that never
-   happened — a false success is worse than the false failure this repair removes. The baseline now
-   makes such a leg POSSIBLE to build honestly (a containment count before and after), but a count is
-   not the exact-equality rule this ladder is built on, and the leg stays outside this repair.
-6. **No automatic retry.** Exactly one `PasteText` dispatch; the bridge never re-dispatches a mutation.
-7. **R1 survives.** A handler that returns OR throws the uncertain envelope still yields
-   `TOOL_UNCERTAIN` and stops the run; the earlier tests are unchanged in strength.
-8. **Boolean acknowledgements are untouched**: `true`/`false` still yield
-   `{ok:true, data:{sent:<boolean>}}`, read nothing **after** the mutation, and mean **sent, effect
-   unverified**. Their baselines are still read before the mutation, because at that moment the
-   acknowledgement value is not yet known.
-9. **Every other non-boolean value** (`null`, a string, an object, a number) takes the SAME void path —
-   the ladder, or the uncertain class. A malformed value is never itself a success claim: when it
-   becomes one, the envelope says `effectVerified` because a leg proved it.
+3. **The confirmation is a DOCUMENT DELTA, measured on the document's own HTML export.** The ticket
+   stays owned (the mutation is still a pending mutation, design §8.4, so the write lock is held for
+   the whole dispatch-plus-confirmation window). The bridge:
+   - reads the document HTML **once BEFORE the paste** with
+     `plugin.executeMethod('GetFileHTML', {}, callback)` — the same public method channel every other
+     read uses — and counts the occurrences of the dispatched payload in it. That count is the
+     **baseline**, and it is pre-paste **by construction**: the paste is dispatched only from that
+     read's own callback, so no assumption about native callback ordering is involved;
+   - dispatches `PasteText` **exactly once**, with exactly the payload this path carried before;
+   - reads the document HTML **once AFTER the paste** and counts again;
+   - reports `{ok:true, data:{sent:true, effectVerified:true}}` **only** when the post count is exactly
+     `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste added the payload.
+4. **The counting form is ONE documented string: the minimally HTML-escaped dispatched payload.**
+   The document HTML escapes at least `&`, `<`, `>` and `"`, and the payload may contain Cyrillic,
+   quotes, angle brackets or ampersands, so the rule is stated exactly: `&` → `&amp;`, `<` → `&lt;`,
+   `>` → `&gt;`, `"` → `&quot;`, with `&` replaced **first** so an escape introduced by a later step is
+   never escaped a second time. The SAME form is counted before and after, so the delta compares like
+   with like; a document that renders the payload RAW is **not** a match (the raw form is a different
+   string, and accepting either form would make the count depend on which one the editor emits). The
+   count is non-overlapping, and an empty counting form is refused before any read.
+5. **Every other outcome is "not confirmed".** No new occurrence, two or more new occurrences, a
+   payload that is simply absent, a missing/malformed/non-string answer, a read that threw, a post read
+   above the byte ceiling, an observation delivered past the ticket deadline — all of them settle
+   `APPLY_UNCERTAIN`: the **uncertain** class, the slot **held**, **no retry** of the read and no retry
+   of the mutation, which the tool republishes as `TOOL_UNCERTAIN` and the runtime stops the run for.
+6. **The pre-dispatch read is a GATE (fail-closed).** A baseline that throws, errors, is malformed, is
+   above the ceiling, or **never answers** leaves the ticket with no obtainable evidence, so the paste
+   is **not dispatched at all**: the ticket settles its own **known** class (`TIMEOUT` on the deadline,
+   `CANCELLED` on an abort or `dispose`, otherwise the closed class of the failure the read produced)
+   and **RELEASES the slot**. Reporting `APPLY_UNCERTAIN` there would be a false uncertainty about a
+   mutation that never happened, and holding the slot would wedge the bridge behind a settled ticket.
+   Consequence, stated plainly: **an editor that does not implement `GetFileHTML` gets no insert** — a
+   refusal, never a success and never a write nobody can check.
+7. **Why a document delta and not a caret-scope equality (the second review's D-A finding).** A
+   post-dispatch observation that reproduces the payload proves only that the caret scope **EQUALS**
+   the payload, and "equals the payload and differs from its own pre-dispatch baseline" is **still not
+   attribution**: a concurrent NON-paste change — the user typing, autocorrect, a native that moves the
+   caret — that lands exactly on the payload satisfies both conditions while nothing was inserted, and
+   the bridge reported `{sent:true, effectVerified:true}` for an insert that never happened. Only a
+   change to the **DOCUMENT** is attributable to a paste that is the sole writer of that document in
+   this window, and "exactly one new occurrence" is the narrowest honest form of that evidence. The
+   reviewer's reproduction is now a test: a fake `PasteText` that mutates nothing while the caret scope
+   moves onto the payload must settle the uncertain class.
+8. **The caret-scope legs are GONE.** `GetSelectedText` and `GetCurrentSentence` no longer participate
+   in the insert confirmation — they can no longer produce `effectVerified:true`, and a read that
+   cannot settle success has no business costing a native round trip inside the write window. They
+   remain the primitives of the ordinary context capture (`readSelection`), which is unchanged.
+   Tests assert that the insert path dispatches neither of them, on the bridge, handler and
+   controller levels.
+9. **No automatic retry.** Exactly one `PasteText` dispatch and at most **two** `GetFileHTML` reads per
+   logical insert (one baseline + at most one confirmation); a boolean acknowledgement dispatches one
+   read and no confirmation read at all.
+10. **R1 survives.** A handler that returns OR throws the uncertain envelope still yields
+    `TOOL_UNCERTAIN` and stops the run; the earlier tests are unchanged in strength.
+11. **Boolean acknowledgements are untouched in shape**: `true`/`false` still yield
+    `{ok:true, data:{sent:<boolean>}}`, read nothing **after** the mutation, and mean **sent, effect
+    unverified**. The gate read still runs before the mutation, because the acknowledgement value is
+    not known until then.
+12. **Every other non-boolean value** (`null`, a string, an object, a number) takes the SAME
+    document-delta path. A malformed value is never itself a success claim: when the envelope becomes
+    one, it says `effectVerified` because the document itself gained exactly one new occurrence.
 
-`GetSelectedText` and `GetCurrentSentence` are the public read primitives measured on the live build; a
-build whose `PasteText` does return a value goes through exactly the same door (the code is
-contract-driven, not fitted to one build).
+## 4a. One logical insert dispatches the paste exactly once (first independent-review repair)
 
-## 4a. One logical insert dispatches the paste exactly once (independent-review repair)
-
-An independent review reproduced a **second `PasteText` for one logical insert**: a leg's baseline
+An independent review reproduced a **second `PasteText` for one logical insert**: a read's
 `plugin.executeMethod` delivered its callback **synchronously and then threw**. The `catch` re-entered
-the SAME leg, its baseline was dispatched twice, both answers each advanced the ladder, and the
-mutation was dispatched twice — a violation of design §8.4 ("no mutation while one is unsettled") and
-of the owner's "no automatic retry of the mutation". Measured host-side: 2 `GetCurrentSentence`
-baselines → 2 `PasteText` dispatches → `{sent:true,effectVerified:true}`.
+the same step, its baseline was dispatched twice, both answers each advanced toward the mutation, and
+the mutation was dispatched twice — a violation of design §8.4 ("no mutation while one is unsettled")
+and of the owner's "no automatic retry of the mutation". Measured host-side: 2 baseline reads →
+2 `PasteText` dispatches → `{sent:true,effectVerified:true}`.
 
-The repair is **structural**, never an assumption about native callback ordering:
+The repair is **structural**, never an assumption about native callback ordering, and it is unchanged
+by the move to one document read:
 
-- `owned.legDispatched[index]` is set before a leg's baseline is dispatched and checked on entry, so a
-  baseline is dispatched **once per leg** even when the callback already ran and the dispatch then threw.
+- `owned.htmlBaselineDispatched` is set before the baseline read goes out and checked on entry, so the
+  baseline is dispatched **once per ticket** even when the callback already ran and the dispatch then
+  threw. (It carries the property the old `owned.legDispatched` marks carried, now that there is one
+  baseline read instead of one per leg.)
+- A local `answered` flag makes the baseline observation **judged once**, so a duplicate callback
+  cannot open the gate a second time.
 - `dispatchPaste` checks `owned.dispatched` on entry and sets it before the irreversible call, so the
-  paste is dispatched **once per ticket**: `dispatchPaste` is idempotent and no ladder leg, duplicate
-  callback or re-entrant `catch` can reach the mutation twice.
-- The RED reproduction (one baseline per leg, one `PasteText`) is a test, and it failed before the
-  change with `GetCurrentSentence: 2` and `PasteText: 2`.
+  paste is dispatched **once per ticket**: `dispatchPaste` is idempotent and no callback, duplicate
+  answer or re-entrant `catch` can reach the mutation twice.
+- `owned.htmlConfirmDispatched` does the same for the post-paste read, and `confirmInsert`'s
+  `answered` flag judges its observation once.
+- The RED reproductions (one baseline per ticket, one `PasteText`; a duplicate baseline answer
+  dispatching nothing) are tests.
 
 ## 4b. An insert that dispatched NOTHING is a KNOWN outcome and releases the slot
 
@@ -115,38 +117,37 @@ held forever: `getState()` reported `busy:true` with `writePending:false`, and `
 free it because the ticket was already settled, so `slot?.cancel()` early-returned. The panel reported
 an unlocked state while the bridge refused every later operation.
 
-The rule now follows the `owned.dispatched` distinction the write/insert classes already used:
+The rule follows the `owned.dispatched` distinction the write/insert classes already used:
 
-- **Nothing dispatched** (a pre-dispatch baseline that never answered, or an abort that lands before
-  the paste): the ticket settles its own **known** class (`TIMEOUT` on the deadline, `CANCELLED` on an
-  abort or `dispose`) and **releases the slot**, so a later operation proceeds. `pendingMutation` stays
-  false and the panel's write lock is not held.
+- **Nothing dispatched** (a pre-dispatch baseline that never answered, was unreadable, or an abort that
+  lands before the paste): the ticket settles its own **known** class (`TIMEOUT` on the deadline,
+  `CANCELLED` on an abort or `dispose`, the closed read class otherwise) and **releases the slot**, so
+  a later operation proceeds. `pendingMutation` stays false and the panel's write lock is not held.
 - **Paste dispatched** (the control leg): behaviour is unchanged — `APPLY_UNCERTAIN`, the slot held, no
   retry, released only by the mutation's own matching native callback.
-- The same release now applies to any undispatched ticket (a read/probe whose dispatch was never
-  reached); a dispatched read/probe keeps the existing uncertain-until-callback behaviour.
+- The same release applies to any undispatched ticket (a read/probe whose dispatch was never reached);
+  a dispatched read/probe keeps the existing uncertain-until-callback behaviour.
 
 ## 4c. The target build's dispatch API (`executeCommand` vs `callCommand`)
 
-Measured on the exact target (Astra Linux + R7-Office 2026.1.2.1942): the plugin facade exposes
-`executeCommand` and `executeMethod` but **not** `callCommand`; on Windows R7-Office 2026.3.1 both
-exist. `adapter.commandDispatch` resolved only `callCommand`, so on the target the runtime was never
-verified, the panel fell back to the legacy flow, and every run ended in the authored
-`CAPABILITY_UNAVAILABLE` caption without dispatching a write.
+Measured on the target (Astra Linux + R7-Office 2026.1.2.1942): the plugin facade exposes
+`executeCommand`, `executeMethod` **and** `callCommand` (an earlier "callCommand absent" reading came
+from a truncated key listing and was corrected by direct instrumentation); on Windows R7-Office
+2026.3.1 both exist as well.
 
-The rule now in force, stated exactly:
+The rule in force, stated exactly:
 
 - `executeMethod` is the **METHOD** channel (`{type:'method', methodName, data}`). It is what the
-  insert's irreversible `PasteText` dispatch needs, on **both** builds, and its use is unchanged.
+  insert's irreversible `PasteText` dispatch and the document-HTML reads need, on **both** builds, and
+  its use is unchanged.
 - `callCommand` and `executeCommand` are the **COMMAND** channel, and they are **not interchangeable in
   general**. `callCommand` wraps an author-written function body into the command message; the installed
   2026.1.2 vendor SDK composes exactly that one out of `executeCommand`. The bridge therefore prefers
-  `callCommand` whenever the facade exposes it — the measured-working Windows path, which now keeps
+  `callCommand` whenever the facade exposes it — the measured-working Windows path, which keeps
   receiving the same inline static body and the same `false, false` arguments — and falls back to
   `executeCommand` only when `callCommand` is absent.
-- On the fallback the composed command source is built from the SAME authored body
-  (`String(body)` of a static function literal, the statement form the vendor wrapper produces) and a
-  static audit still passes.
+- On the fallback the composed command source is built from the SAME authored body (`String(body)` of a
+  static function literal, the statement form the vendor wrapper produces) and the static audit passes.
 - `adapter.commandDispatch` is true when **either** command entry point is an own function;
   `adapter.commandMethod` records which one carried the work. A build exposing **neither** still refuses
   honestly with `CAPABILITY_UNAVAILABLE` before any native dispatch (the read path and the insert's own
@@ -154,55 +155,56 @@ The rule now in force, stated exactly:
 
 **Unverified, and stated as such:** the `executeCommand` fallback's framing is inferred from the
 installed 2026.1.2 vendor SDK (where `callCommand` is exactly `executeCommand('command', composedSource,
-callback)`); it was **not** run natively. If a target native rejects it, the command leg never answers,
-the presence probe settles `TIMEOUT` and the insert refuses — the same honest refusal as before, never
-a false success and never a wrong write.
+callback)`); if a target native rejects it, the command leg never answers, the presence probe settles
+`TIMEOUT` and the insert refuses — the same honest refusal as before, never a false success and never a
+wrong write.
 
-## Accepted consequences of the baseline (conservative direction, never a false success)
-- **A genuinely applied insert whose baseline already equalled the payload now settles
-  `APPLY_UNCERTAIN` instead of verified.** This is intended. An observation that did not CHANGE cannot
-  be distinguished from a paste that did nothing, and the whole point of this repair is that "the scope
-  shows the payload" is not evidence that the paste put it there. The cost is a false UNCERTAIN (the
-  run stops and the user re-checks) in exchange for the impossibility of a false VERIFIED. Losing a
-  real success is recoverable; publishing an insert that never happened is not.
-- **A leg's baseline is bounded by the payload's own byte length**, so a baseline observation LONGER
-  than the payload is refused as oversized and leaves that leg incapable (the mutation is still
-  dispatched). A payload inside a longer pre-existing sentence therefore cannot be confirmed by that
-  leg. This is the budget rule the confirmation reads use, applied symmetrically, and it is pinned by
-  tests; weakening it in one direction only (a wider baseline window) would let a leg compare a
-  truncated baseline against a full payload.
-- **The baseline phase gates the mutation.** The paste is dispatched only after every baseline leg has
-  answered or failed, so an editor that never answers a baseline read gets no insert at all: the ticket
-  settles the known `TIMEOUT` class with nothing dispatched, and (since §4b) releases the slot instead of
-  wedging the bridge. That is deliberate. Awaiting the read is what makes the baseline genuinely
-  pre-paste rather than relying on an unmeasured ordering guarantee between a queued read and the paste;
-  a guessed ordering could cost the confirmation exactly where it is needed (the target build) and would
-  reintroduce the false-failure shape this repair removes. The cost is bounded: every baseline that
-  throws, errors, is malformed or is oversized still lets the mutation through exactly once.
+## Accepted consequences of the document delta (conservative direction, never a false success)
+
+- **The pre-dispatch read gates the write.** An editor whose `GetFileHTML` is missing, errors, or never
+  answers gets **no insert at all**: the ticket settles a known refusal and releases the slot. That is
+  deliberate — an insert nobody can check is not worth dispatching — and it is the one behaviour change
+  of this repair that can remove a working insert, so it is stated as such.
+- **A byte ceiling bounds the read.** `LIMITS.documentHtmlBytes` (256 KiB, in `src/shared/limits.js`
+  alongside the other ceilings) is larger than `editorResultBytes` because it bounds a WHOLE-DOCUMENT
+  export rather than a scoped read; the 64 KiB scoped window would refuse the export of any non-trivial
+  document. A result above the ceiling is **not** truncated and counted in a prefix: the read is
+  unusable, which (before the paste) refuses the insert and (after it) settles `APPLY_UNCERTAIN`.
+- **The counted needle is the DISPATCHED payload, newline included.** For `position:'end'` the payload is
+  `text + "\n"`, and one trailing newline is NOT normalized away any more: the old sentence leg removed
+  it because a sentence read cannot contain a paragraph break, but a document export is a different
+  observation, and counting a prefix of the dispatched payload is exactly the kind of approximation this
+  repair removes. An export that renders the paragraph break as markup rather than a literal newline
+  therefore leaves an `end` insert **uncertain** (fail-closed).
+- **A genuinely applied insert whose export does not show exactly one new occurrence settles
+  `APPLY_UNCERTAIN` instead of verified.** This is intended: the cost of a false UNCERTAIN (the run
+  stops and the user re-checks) is recoverable; publishing an insert that never happened is not.
+- **A concurrent edit of a DIFFERENT region is invisible to the count** — that is the point — but a
+  concurrent edit that adds the SAME payload once is indistinguishable from this paste. No client-side
+  rule can attribute a write from the outside; the delta is the narrowest honest evidence available
+  through the public read, and it is strictly stronger than the caret-scope equality it replaces.
 
 ## Open — target-build check (NOT claimed here)
 
-- The **target Astra / R7 2026.1.2.1942 build was not exercised**. What a boolean `PasteText`
-  acknowledgement means there, whether `GetSelectedText`/`GetCurrentSentence` answer at all, and what
-  they answer BEFORE a paste, is **unverified**. A build where no leg both reproduces the payload and
-  differs from its own baseline degrades to `APPLY_UNCERTAIN` (the run stops fail-safe); it can never
+- The **target Astra / R7 2026.1.2.1942 build was not exercised** for this repair. What a boolean
+  `PasteText` acknowledgement means there, whether `GetFileHTML` answers at all, what its HTML export
+  looks like (in particular how `&`, `<`, `>` and `"` are escaped, and how a paragraph break from an
+  `end` payload is rendered), and how large a real document's export is against the 256 KiB ceiling are
+  all **unmeasured**. A build where the export cannot be read refuses the insert (known class, slot
+  released); a build where the delta is not exactly one settles `APPLY_UNCERTAIN`. Neither can ever
   produce a success claim.
-- The **`GetCurrentSentence` miss for a payload ending with a sentence terminator** is a measured limit
-  of the ladder: that payload ends with legs 1 and 2 unconfirmed, so it still settles
-  `APPLY_UNCERTAIN`. Closing it honestly needs a document-delta read, which is not part of this repair.
-- The **baseline's own live behaviour is unmeasured**. On the measured 2026.3.1 build the caret-scope
-  read after a paste returns the inserted sentence, but nothing here measured what the same read
-  returns BEFORE the paste, and the baseline's byte budget can refuse a long pre-existing sentence.
-  Either case only ever removes a confirmation; it never creates one.
-- The ladder and its baselines were **not** measured natively. This document claims host-side tests
-  only: the focused bridge/dispatch-API/handler/integration suites, the full `node --test` suite
-  (649/649 on the final tree, up from 633: six D-B/D-C tests in `tests/unit/bridge.test.js` and ten
-  dispatch-API tests in `tests/unit/bridge-dispatch-api.test.js`), the static audit and the bundle
-  build, all run on the final tree.
+- The **escaping rule is the documented minimum** (`&`, `<`, `>`, `"`). If a live export escapes more
+  (for example `'` as `&#39;`, or non-ASCII as numeric entities, or a Cyrillic character as an entity),
+  the counting form will not match what the document contains and the insert settles `APPLY_UNCERTAIN`
+  — fail-closed. The fix in that case is to widen the DOCUMENTED escape set and its tests, never to
+  fall back to a containment test.
+- The document delta and the ceiling were **not** measured natively. This document claims host-side
+  tests only: the focused bridge/dispatch-API/handler/integration suites, the full `node --test` suite
+  (**651/651** on the final tree, up from 649), the static audit and the bundle build, all run on the
+  final tree.
 - The **`executeCommand` fallback framing is unverified natively** (§4c). It is inferred from the
   installed 2026.1.2 vendor SDK, where `callCommand` is exactly `executeCommand('command', composed,
   callback)`. A native that rejects the composed source leaves the command leg unanswered: the presence
   probe settles `TIMEOUT` and the insert refuses — the same honest refusal as before, never a false
   success and never a wrong write. The Windows path (`callCommand` present) is unchanged and keeps
   receiving the same inline static body and the same `false, false` arguments.
-

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createWordTools } from '../../src/tools/word.js';
 import { createRegistry } from '../../src/tools/registry.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
-import { AGENT_CEILINGS } from '../../src/shared/limits.js';
+import { AGENT_CEILINGS, LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 function fakeBridge(overrides = {}) {
@@ -258,17 +258,14 @@ function nativeRig({ scopeText = 'текст', dispatchChannel = true } = {}) {
   // the SDK callback itself stays held until the test releases it.
   return { bridge, plugin, calls, scopeText,
     releaseIdentity() { calls[0].callback(['bounded-id', true, true, false]); },
-    // The insert path reads one PRE-DISPATCH baseline per confirmation leg before it dispatches the
-    // mutation, so a test that wants the paste itself must release those two reads first. This helper
-    // asserts the order it releases them in — the baseline phase owns the ticket before the mutation.
-    releaseBaselines(selection = '', sentence = '') {
-      const legs = () => calls.filter(call => call.name === 'GetSelectedText' || call.name === 'GetCurrentSentence');
-      assert.equal(legs().length, 1, 'the selection baseline is the first leg read');
-      assert.equal(legs()[0].name, 'GetSelectedText');
-      legs()[0].callback(selection);
-      assert.equal(legs().length, 2, 'the sentence baseline follows before the mutation');
-      assert.equal(legs()[1].name, 'GetCurrentSentence');
-      legs()[1].callback(sentence);
+    // The insert path reads the document's OWN HTML export once BEFORE the paste — the pre-dispatch
+    // baseline that gates the mutation — so a test that wants the paste itself must answer that read
+    // first. This helper asserts that the gate is the read the ticket reaches first; the mutation
+    // follows only once the read answered a usable count.
+    releaseBaseline(html = '<p>стар</p>') {
+      const reads = calls.filter(call => call.name === 'GetFileHTML');
+      assert.equal(reads.length, 1, 'the document baseline is the first read the insert dispatches');
+      reads[0].callback(html);
     } };
 }
 
@@ -359,12 +356,13 @@ test('bridge readContext and insertParagraph dispatch when the facade carries on
   assert.equal(Object.hasOwn(insertRig.plugin, 'PasteText'), false, 'no same-named facade property');
   const insert = insertRig.bridge.insertParagraph({ text: 'Абзац' });
   insertRig.releaseIdentity();
-  assert.equal(await untilDispatches(insertRig.calls, 2), 2, 'the selection baseline is dispatched by name');
-  assert.equal(insertRig.calls[1].name, 'GetSelectedText');
-  insertRig.releaseBaselines();
-  assert.equal(await untilDispatches(insertRig.calls, 4), 4, 'the insert itself is dispatched by name');
-  assert.equal(insertRig.calls[3].name, 'PasteText');
-  insertRig.calls[3].callback(true);
+  assert.equal(await untilDispatches(insertRig.calls, 2), 2, 'the document baseline is dispatched by name');
+  assert.equal(insertRig.calls[1].name, 'GetFileHTML');
+  assert.deepEqual(insertRig.calls[1].params, {}, 'the plain public document read every native read uses');
+  insertRig.releaseBaseline();
+  assert.equal(await untilDispatches(insertRig.calls, 3), 3, 'the insert itself is dispatched by name');
+  assert.equal(insertRig.calls[2].name, 'PasteText');
+  insertRig.calls[2].callback(true);
   assert.deepEqual(await insert, { ok: true, data: { sent: true } });
 });
 
@@ -406,12 +404,12 @@ test('bridge insertParagraph dispatches the public insert once and reports a cla
   assert.equal(r.bridge.getState().busy, true);
   assert.equal(r.bridge.getState().writePending, false, 'nothing is confirmed written before dispatch');
   r.releaseIdentity();
-  assert.equal(await untilDispatches(r.calls, 2), 2, 'the selection baseline is dispatched before the mutation');
-  assert.equal(r.calls[1].name, 'GetSelectedText', 'the pre-dispatch baseline of the first leg');
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched before the mutation');
+  assert.equal(r.calls[1].name, 'GetFileHTML', 'the pre-dispatch baseline of the document delta');
   assert.equal(r.bridge.getState().writePending, false, 'a baseline read is not a dispatched mutation');
-  r.releaseBaselines();
-  assert.equal(await untilDispatches(r.calls, 4), 4, 'exactly one insert is dispatched, after its baselines');
-  const insert = r.calls[3];
+  r.releaseBaseline();
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'exactly one insert is dispatched, after its baseline');
+  const insert = r.calls[2];
   assert.equal(insert.name, 'PasteText');
   assert.deepEqual(insert.params, ['Абзац\n'], 'the end position is expressed as an authored newline');
   assert.ok(Object.isFrozen(insert.params));
@@ -430,16 +428,16 @@ test('the handler and the real bridge agree on one ceiling for the dispatched in
   const largest = 'a'.repeat(AGENT_CEILINGS.argumentsBytes - 1);
   const pending = tool.execute({ text: largest, position: 'end' }, { editor: 'word' });
   r.releaseIdentity();
-  assert.equal(await untilDispatches(r.calls, 2), 2, 'the selection baseline is dispatched first');
-  assert.equal(r.calls[1].name, 'GetSelectedText');
-  r.releaseBaselines();
-  assert.equal(await untilDispatches(r.calls, 4), 4, 'the accepted insert is dispatched');
-  assert.equal(r.calls[3].name, 'PasteText');
-  const dispatched = r.calls[3].params[0];
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched first');
+  assert.equal(r.calls[1].name, 'GetFileHTML');
+  r.releaseBaseline();
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'the accepted insert is dispatched');
+  assert.equal(r.calls[2].name, 'PasteText');
+  const dispatched = r.calls[2].params[0];
   assert.equal(utf8ByteLength(dispatched), AGENT_CEILINGS.argumentsBytes,
     'the dispatched payload fills the advertised ceiling exactly, never past it');
   assert.equal(dispatched.endsWith('\n'), true, 'the newline the handler counted is the one the bridge appends');
-  r.calls[3].callback(true);
+  r.calls[2].callback(true);
   assert.equal((await pending).ok, true);
 });
 
@@ -482,15 +480,15 @@ test('an abort after the read was dispatched invalidates the caller and leaves t
 });
 
 test('an abort during the baseline phase cancels before any paste, and one after the dispatch is uncertain', async () => {
-  // (a) The baseline phase is still BEFORE the irreversible boundary: an abort while those reads are
-  // outstanding prevents the mutation entirely, so the honest class is the cancellation, not the
-  // "may have applied" one.
+  // (a) The baseline read is still BEFORE the irreversible boundary: an abort while it is outstanding
+  // prevents the mutation entirely, so the honest class is the cancellation, not the "may have applied"
+  // one.
   const early = nativeRig();
   const earlyController = new AbortController();
   const earlyPending = early.bridge.insertParagraph({ text: 'Абзац', signal: earlyController.signal });
   early.releaseIdentity();
-  assert.equal(await untilDispatches(early.calls, 2), 2, 'the selection baseline is the only dispatch so far');
-  assert.equal(early.calls[1].name, 'GetSelectedText');
+  assert.equal(await untilDispatches(early.calls, 2), 2, 'the document baseline is the only dispatch so far');
+  assert.equal(early.calls[1].name, 'GetFileHTML');
   earlyController.abort();
   assert.deepEqual(await earlyPending, { ok: false, code: 'CANCELLED' });
   assert.equal(early.calls.filter(call => call.name === 'PasteText').length, 0,
@@ -502,17 +500,17 @@ test('an abort during the baseline phase cancels before any paste, and one after
   const controller = new AbortController();
   const pending = r.bridge.insertParagraph({ text: 'Абзац', signal: controller.signal });
   r.releaseIdentity();
-  assert.equal(await untilDispatches(r.calls, 2), 2, 'the selection baseline is the next dispatch');
-  r.releaseBaselines();
-  assert.equal(await untilDispatches(r.calls, 4), 4, 'the insert is dispatched before the abort');
-  assert.equal(r.calls[3].name, 'PasteText');
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is the next dispatch');
+  r.releaseBaseline();
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'the insert is dispatched before the abort');
+  assert.equal(r.calls[2].name, 'PasteText');
   controller.abort();
   assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' });
   // A dispatched write whose acknowledgement never arrived may have applied: it keeps the slot and
   // the uncertain flag until its own callback, never a success claim.
   assert.equal(r.bridge.getState().busy, true);
   assert.equal(r.bridge.getState().uncertain, true);
-  r.calls[3].callback(true);
+  r.calls[2].callback(true);
   assert.equal(r.bridge.getState().busy, false);
 });
 
@@ -541,18 +539,15 @@ test('an insert whose native dispatch threw is the uncertain class and keeps its
   const pending = bridge.insertParagraph({ text: 'Абзац' });
   await untilDispatches(calls, 1);
   calls[0].callback(['bounded-id', true, true, false]);
-  assert.equal(await untilDispatches(calls, 2), 2, 'the selection baseline is dispatched first');
-  assert.equal(calls[1].name, 'GetSelectedText');
-  calls[1].callback('');
-  assert.equal(await untilDispatches(calls, 3), 3);
-  assert.equal(calls[2].name, 'GetCurrentSentence');
-  calls[2].callback(''); // the second baseline releases the mutation, which throws at dispatch
+  assert.equal(await untilDispatches(calls, 2), 2, 'the document baseline is dispatched first');
+  assert.equal(calls[1].name, 'GetFileHTML');
+  calls[1].callback('<p>стар</p>'); // the gate opens: the mutation is dispatched and throws
   const result = await pending;
   assert.equal(result.ok, false, 'a dispatch that threw is never reported as a successful insert');
   assert.equal(result.code, 'APPLY_UNCERTAIN');
   assert.equal(JSON.stringify(result).includes('private native failure'), false);
   assert.deepEqual(calls.map(call => call.name),
-    ['presence', 'GetSelectedText', 'GetCurrentSentence', 'PasteText'], 'the throwing insert really was dispatched');
+    ['presence', 'GetFileHTML', 'PasteText'], 'the throwing insert really was dispatched');
   // A synchronous throw from the SDK is not proof that the command was not delivered: the ticket
   // stays owned (and flagged uncertain) until its matching callback releases it — the same
   // conservatism the existing write path uses.
@@ -560,22 +555,21 @@ test('an insert whose native dispatch threw is the uncertain class and keeps its
   assert.equal(bridge.getState().uncertain, true);
   const busyRefusal = await bridge.insertParagraph({ text: 'Второй' });
   assert.deepEqual(busyRefusal, { ok: false, code: 'EDITOR_BUSY' }, 'the owned slot refuses a second action');
-  assert.equal(calls.length, 4, 'the refusal dispatches nothing');
-  calls[3].callback(true);
+  assert.equal(calls.length, 3, 'the refusal dispatches nothing');
+  calls[2].callback(true);
   assert.equal(bridge.getState().busy, false, 'the matching callback releases the owned slot');
   // The released slot really is usable again, and a native false acknowledgement is never turned
   // into a success claim, which is the observable the next action depends on.
   const followUp = bridge.insertParagraph({ text: 'Третий' });
-  assert.equal(await untilDispatches(calls, 5), 5, 'a later action starts on the released slot');
-  calls[4].callback(['bounded-id', true, true, false]);
-  assert.equal(await untilDispatches(calls, 6), 6, 'the follow-up baselines its own legs');
-  calls[5].callback('');
-  assert.equal(await untilDispatches(calls, 7), 7);
-  calls[6].callback('');
-  assert.equal(await untilDispatches(calls, 8), 8);
-  assert.equal(calls[7].name, 'PasteText');
-  assert.deepEqual(calls[7].params, ['Третий']);
-  calls[7].callback(false);
+  assert.equal(await untilDispatches(calls, 4), 4, 'a later action starts on the released slot');
+  calls[3].callback(['bounded-id', true, true, false]);
+  assert.equal(await untilDispatches(calls, 5), 5, 'the follow-up reads its own document baseline');
+  assert.equal(calls[4].name, 'GetFileHTML');
+  calls[4].callback('<p>стар</p>');
+  assert.equal(await untilDispatches(calls, 6), 6);
+  assert.equal(calls[5].name, 'PasteText');
+  assert.deepEqual(calls[5].params, ['Третий']);
+  calls[5].callback(false);
   assert.deepEqual(await followUp, { ok: true, data: { sent: false } });
   assert.equal(bridge.getState().busy, false);
 });
@@ -658,39 +652,42 @@ test('the write path still dispatches the caller replacement unchanged', async (
 });
 
 // --- Sprint 3: the void `PasteText` acknowledgement proven on the live 2026.3.1 editor -------------
-// The native callback carries no value, so the bridge holds its ticket and asks an ordered confirmation
-// LADDER of bounded public reads: `GetSelectedText` first (the measured build answers ""), then
-// `GetCurrentSentence` (the measured build answers the inserted sentence). Every leg also reads its own
-// observation BEFORE the mutation, and confirms only when the post-dispatch observation reproduces the
-// dispatched payload through that leg's own exact rule AND differs from that baseline; the handler
-// republishes that proof instead of dropping it.
+// The native callback carries no value, so the bridge holds its ticket and asks the DOCUMENT itself: it
+// counts the dispatched payload in the document's own `GetFileHTML` export ONCE BEFORE the paste (the
+// pre-dispatch baseline, by construction) and ONCE AFTER it, and reports the effect verified only when
+// the post count is exactly `baselineCount + 1`. The handler republishes that proof instead of dropping
+// it, and republishes nothing when it is absent. The caret-scope reads the old rule used are gone.
 
-test('the real bridge confirms a void acknowledgement and the handler republishes the proven effect', async () => {
+test('the real bridge confirms a void acknowledgement by a document delta and the handler republishes it', async () => {
   const r = nativeRig();
   const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
   const pending = tool.execute({ text: 'Абзац', position: 'end' }, { editor: 'word' });
   r.releaseIdentity();
-  assert.equal(await untilDispatches(r.calls, 2), 2, 'the selection baseline is dispatched first');
-  assert.equal(r.calls[1].name, 'GetSelectedText');
-  r.releaseBaselines(); // both baselines answer the empty caret scope the measured build reports
-  assert.equal(await untilDispatches(r.calls, 4), 4, 'exactly one insert is dispatched, after its baselines');
-  const insert = r.calls[3];
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched first');
+  assert.equal(r.calls[1].name, 'GetFileHTML');
+  r.releaseBaseline('<p>стар</p>'); // the pre-dispatch count of the payload is 0
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'exactly one insert is dispatched, after its baseline');
+  const insert = r.calls[2];
   assert.equal(insert.name, 'PasteText');
   assert.deepEqual(insert.params, ['Абзац\n']);
   assert.equal(r.bridge.getState().writePending, true);
   insert.callback(undefined);
-  assert.equal(await untilDispatches(r.calls, 5), 5, 'one confirmation read follows the dispatched insert');
-  const read = r.calls[4];
-  assert.equal(read.name, 'GetSelectedText');
-  assert.deepEqual(read.params, [], 'the confirmation read is the plain public selection read');
+  assert.equal(await untilDispatches(r.calls, 4), 4, 'one confirmation read follows the dispatched insert');
+  const read = r.calls[3];
+  assert.equal(read.name, 'GetFileHTML');
+  assert.deepEqual(read.params, {}, 'the confirmation read is the plain public document read');
+  assert.ok(Object.isFrozen(read.params));
   assert.equal(r.bridge.getState().writePending, true, 'the confirmation window keeps the write lock');
-  read.callback('Абзац\n');
+  read.callback('<p>стар</p><p>Абзац\n</p>'); // exactly one NEW occurrence of the dispatched payload
   const result = await pending;
   assert.equal(result.ok, true);
   assert.deepEqual(result.data, { acknowledged: true, bytes: 11, effectVerified: true },
-    'the newline is part of the confirmed payload, and the proof crosses to the run');
+    'the newline is part of the counted payload, and the proof crosses to the run');
   assert.equal(r.bridge.getState().writePending, false);
   assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1, 'the mutation is never retried');
+  assert.equal(r.calls.filter(call => call.name === 'GetFileHTML').length, 2, 'one baseline, one confirmation read');
+  assert.equal(r.calls.some(call => call.name === 'GetSelectedText' || call.name === 'GetCurrentSentence'), false,
+    'the retired caret-scope reads are never dispatched');
 });
 
 test('the handler publishes the effect the bridge proved and never invents one', async () => {
@@ -710,54 +707,19 @@ test('the handler publishes the effect the bridge proved and never invents one',
   assert.equal(forged.code, 'TOOL_ERROR');
 });
 
-test('the handler republishes a proof the sentence leg established when the selection leg answered empty', async () => {
-  // The measured live shape: `GetSelectedText` answers "", `GetCurrentSentence` answers the inserted
-  // sentence. The sentence baseline here is a DIFFERENT, in-budget sentence ('друг'), so the leg can
-  // confirm; the selection baseline is the same "" the post-dispatch read returns, so that leg is
-  // refused by the baseline rule as well as by the mismatch.
+test('a void acknowledgement the document does not confirm is TOOL_UNCERTAIN and never a plain failure', async () => {
   const r = nativeRig();
   const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
   const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
   r.releaseIdentity();
-  assert.equal(await untilDispatches(r.calls, 2), 2, 'the selection baseline is dispatched first');
-  r.releaseBaselines('', 'друг');
-  assert.equal(await untilDispatches(r.calls, 4), 4, 'the insert follows its baselines');
-  assert.equal(r.calls[3].name, 'PasteText');
-  r.calls[3].callback(undefined);
-  assert.equal(await untilDispatches(r.calls, 5), 5, 'the selection leg follows the void acknowledgement');
-  assert.equal(r.calls[4].name, 'GetSelectedText');
-  r.calls[4].callback(''); // the measured live answer, equal to its own baseline
-  assert.equal(await untilDispatches(r.calls, 6), 6, 'the refused selection leg dispatches the sentence leg');
-  assert.equal(r.calls[5].name, 'GetCurrentSentence');
-  assert.deepEqual(r.calls[5].params, []);
-  r.calls[5].callback('Абзац'); // the payload, where the baseline held a different sentence
-  const result = await pending;
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.data, { acknowledged: true, bytes: 10, effectVerified: true },
-    'the sentence leg proved the effect and the handler republished that proof');
-  assert.equal(r.bridge.getState().writePending, false);
-  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1, 'the mutation is never retried');
-  assert.equal(r.calls.filter(call => call.name === 'GetSelectedText').length, 2,
-    'one baseline and one ladder read for the selection leg');
-  assert.equal(r.calls.filter(call => call.name === 'GetCurrentSentence').length, 2,
-    'one baseline and one ladder read for the sentence leg');
-});
-
-test('a void acknowledgement no ladder leg can confirm is TOOL_UNCERTAIN and never a plain failure', async () => {
-  const r = nativeRig();
-  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
-  const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
-  r.releaseIdentity();
-  assert.equal(await untilDispatches(r.calls, 2), 2, 'the selection baseline is dispatched first');
-  r.releaseBaselines('', 'друг');
-  assert.equal(await untilDispatches(r.calls, 4), 4, 'the insert follows its baselines');
-  assert.equal(r.calls[3].name, 'PasteText');
-  r.calls[3].callback(undefined);
-  assert.equal(await untilDispatches(r.calls, 5), 5);
-  r.calls[4].callback(''); // the measured selection answer: leg 1 cannot confirm
-  assert.equal(await untilDispatches(r.calls, 6), 6, 'leg 2 is attempted exactly once');
-  assert.equal(r.calls[5].name, 'GetCurrentSentence');
-  r.calls[5].callback(''); // the measured sentence answer for a payload ending with a terminator
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched first');
+  r.releaseBaseline('<p>стар</p>');
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'the insert follows its baseline');
+  assert.equal(r.calls[2].name, 'PasteText');
+  r.calls[2].callback(undefined);
+  assert.equal(await untilDispatches(r.calls, 4), 4, 'the confirmation read follows the void acknowledgement');
+  assert.equal(r.calls[3].name, 'GetFileHTML');
+  r.calls[3].callback('<p>стар</p>'); // the document did not change: no delta, no confirmation
   const result = await pending;
   assert.equal(result.ok, false);
   assert.equal(result.code, 'TOOL_UNCERTAIN', 'the runtime-stopping uncertain class, not a known error');
@@ -766,4 +728,68 @@ test('a void acknowledgement no ladder leg can confirm is TOOL_UNCERTAIN and nev
   assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1,
     'an insert whose effect is unproven is never retried automatically');
   assert.equal(r.bridge.getState().writePending, true, 'an unconfirmed mutation is never released as settled');
+  assert.equal(r.calls.some(call => call.name === 'GetSelectedText' || call.name === 'GetCurrentSentence'), false,
+    'the retired caret-scope reads are never dispatched');
+});
+
+test('a document baseline above the ceiling is the closed BYTE_LIMIT class and dispatches no write', async () => {
+  // The ceiling is an engineering limit, not a native failure: an export above it is refused (never
+  // truncated and counted in a prefix) and the handler republishes that closed class unchanged.
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched first');
+  assert.equal(r.calls[1].name, 'GetFileHTML');
+  r.calls[1].callback('x'.repeat(LIMITS.documentHtmlBytes + 1));
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'BYTE_LIMIT', 'the closed byte-limit class, never the uncertain one');
+  assert.equal(result.message, 'отказ');
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 0, 'no write is dispatched');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released');
+});
+
+test('a proof through an escaped payload crosses to the run unchanged', async () => {
+  // The payload contains every character the document HTML escapes, so the counting form is the
+  // escaped one: the tool republishes the proof only because the DOCUMENT gained that escaped form once.
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const payload = 'Он сказал "да" <и> & всё';
+  const pending = tool.execute({ text: payload }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched first');
+  r.releaseBaseline('<p>стар</p>');
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'the insert follows its baseline');
+  assert.equal(r.calls[2].name, 'PasteText');
+  assert.deepEqual(r.calls[2].params, [payload], 'the payload crosses verbatim, unescaped');
+  r.calls[2].callback(undefined);
+  assert.equal(await untilDispatches(r.calls, 4), 4, 'the confirmation read follows the void acknowledgement');
+  const escaped = payload.split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;');
+  r.calls[3].callback(`<p>стар</p><p>${escaped}</p>`);
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.data.effectVerified, true, 'the escaped-form delta is the proof the handler republishes');
+  assert.equal(result.data.acknowledged, true);
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1);
+});
+
+test('a document baseline that cannot be read refuses the insert and dispatches no write at all', async () => {
+  // The pre-dispatch read is the gate: without a usable baseline count there is no evidence to obtain,
+  // so the mutation is never dispatched, the ticket settles its own KNOWN class and the slot is freed.
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the document baseline is dispatched first');
+  assert.equal(r.calls[1].name, 'GetFileHTML');
+  r.calls[1].callback(null); // a malformed native answer leaves the baseline unusable
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'INVALID_DATA', 'a closed known class, never the uncertain one');
+  assert.equal(result.message, 'отказ');
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 0,
+    'a write is never dispatched without a usable baseline');
+  assert.equal(r.bridge.getState().busy, false, 'the undispatched ticket releases the slot, not a wedge');
+  assert.equal(r.bridge.getState().uncertain, false, 'nothing reached the editor');
 });

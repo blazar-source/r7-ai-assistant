@@ -200,16 +200,18 @@ test('the controller drives a real read tool through the owned bridge and render
 // and keeps the write lock. Without the `word.js` mapping this test sees COMPLETE/FINAL, a second
 // model step and a second tool call — so it cannot pass on the reverted code.
 test('an insert whose native PasteText callback never arrives stops the run as uncertain and keeps the write lock', async () => {
-  let time = 0; const tasks = new Map(); const selections = []; const sentences = []; const identity = []; const inserts = []; let calls = 0;
+  let time = 0; const tasks = new Map(); const selections = []; const html = []; const identity = []; const inserts = []; let calls = 0;
   const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
   const clock = { now() { return time; } };
   const plugin = { info: { editorType: 'word' },
     // The document identity leg is the bridge's own synchronous callCommand probe: it stays native
-    // until its callback is delivered, exactly like the selection read and the insert below.
+    // until its callback is delivered, exactly like the baseline read and the insert below.
     callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
     executeMethod(name, args, callback) {
+      // `GetSelectedText` belongs to the CONTROLLER's own context capture; the insert path must never
+      // reach for it again (the retired caret-scope rule is gone).
       if (name === 'GetSelectedText') { selections.push(callback); return false; }
-      if (name === 'GetCurrentSentence') { sentences.push(callback); return false; }
+      if (name === 'GetFileHTML') { html.push(callback); return false; }
       // The dispatched mutation: the callback is RECORDED and deliberately never delivered, so the
       // ticket settles APPLY_UNCERTAIN rather than a success claim.
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
@@ -232,18 +234,17 @@ test('an insert whose native PasteText callback never arrives stops the run as u
   selections[0]('контекст запроса'); await tick();
   assert.equal(identity.length, 1);
   identity[0](['bounded-id', true, true, false]); await tick();
-  // (2) the model's mutation dispatch: the tool's own identity probe, then the PRE-DISPATCH baseline
-  // of each leg, and only then the insert itself. The native insert acknowledgement is NEVER delivered.
+  // (2) the model's mutation dispatch: the tool's own identity probe, then the PRE-DISPATCH document
+  // baseline (the gate), and only then the insert itself. The native acknowledgement is NEVER delivered.
   assert.equal(inserts.length, 0);
   assert.equal(identity.length, 2, 'the insert runs under its own document identity proof');
   identity[1](['bounded-id', true, true, false]); await tick();
-  assert.equal(inserts.length, 0, 'the mutation waits for its baselines');
-  assert.equal(selections.length, 2, 'the selection baseline is the next native dispatch');
-  selections[1](''); await tick();
-  assert.equal(sentences.length, 1, 'the sentence baseline follows, still before the mutation');
-  sentences[0](''); await tick();
+  assert.equal(inserts.length, 0, 'the mutation waits for its baseline');
+  assert.equal(html.length, 1, 'the document baseline is the next native dispatch');
+  html[0]('<p>стар</p>'); await tick();
   assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
   assert.deepEqual(inserts[0].args, ['Новый абзац'], 'the validated payload crosses unchanged');
+  assert.equal(selections.length, 1, 'the insert path dispatches no caret-scope read at all');
   assert.equal(bridge.getState().writePending, true, 'the dispatched mutation is pending');
   // The bridge's own callback deadline is the only thing that can settle a dispatched insert whose
   // native acknowledgement never arrives. The fake clock is advanced past that deadline but stays far
@@ -280,16 +281,16 @@ test('an insert whose native PasteText callback never arrives stops the run as u
 // the new uncertain classifier must not have turned every insert into a run-stopping uncertain
 // outcome. Once the delivered callback settles the ticket, no write lock may remain held.
 test('an acknowledged insert reaches COMPLETE/FINAL with the action ok and no write lock left held', async () => {
-  let time = 0; const tasks = new Map(); const selections = []; const sentences = []; const identity = []; const inserts = []; let calls = 0;
+  let time = 0; const tasks = new Map(); const selections = []; const html = []; const identity = []; const inserts = []; let calls = 0;
   const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
   const clock = { now() { return time; } };
   const plugin = { info: { editorType: 'word' },
     // The document identity leg is the bridge's own synchronous callCommand probe: it stays native
-    // until its callback is delivered, exactly like the selection read and the insert below.
+    // until its callback is delivered, exactly like the baseline read and the insert below.
     callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
     executeMethod(name, args, callback) {
-      if (name === 'GetSelectedText') { selections.push(callback); return false; }
-      if (name === 'GetCurrentSentence') { sentences.push(callback); return false; }
+      if (name === 'GetSelectedText') { selections.push(callback); return false; } // the controller's capture only
+      if (name === 'GetFileHTML') { html.push(callback); return false; }
       // The dispatched mutation: unlike the uncertain leg above, this callback IS delivered below.
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
@@ -311,18 +312,17 @@ test('an acknowledged insert reaches COMPLETE/FINAL with the action ok and no wr
   selections[0]('контекст запроса'); await tick();
   assert.equal(identity.length, 1);
   identity[0](['bounded-id', true, true, false]); await tick();
-  // (2) the model's mutation dispatch under its own identity proof, then the baselines, then the
-  // acknowledgement. The baselines run before the mutation because its acknowledgement is unknown.
+  // (2) the model's mutation dispatch under its own identity proof, then the baseline gate, then the
+  // acknowledgement. The baseline runs before the mutation because its acknowledgement is unknown then.
   assert.equal(inserts.length, 0);
   assert.equal(identity.length, 2, 'the insert runs under its own document identity proof');
   identity[1](['bounded-id', true, true, false]); await tick();
-  assert.equal(inserts.length, 0, 'the mutation waits for its baselines');
-  assert.equal(selections.length, 2, 'the selection baseline is dispatched first');
-  selections[1](''); await tick();
-  assert.equal(sentences.length, 1, 'the sentence baseline follows');
-  sentences[0](''); await tick();
+  assert.equal(inserts.length, 0, 'the mutation waits for its baseline');
+  assert.equal(html.length, 1, 'the document baseline is dispatched first');
+  html[0]('<p>стар</p>'); await tick();
   assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
   assert.deepEqual(inserts[0].args, ['Новый абзац'], 'the validated payload crosses unchanged');
+  assert.equal(html.length, 1, 'a boolean acknowledgement needs no confirmation read');
   inserts[0].callback(true); await tick();
   await operation;
   const state = controller.getState();
@@ -339,25 +339,22 @@ test('an acknowledged insert reaches COMPLETE/FINAL with the action ok and no wr
   assert.equal(state.writeLocked, false, 'a settled insert releases the write lock');
   panel.dispose(); controller.dispose();
 });
-
 // --- Sprint 3: the VOID native acknowledgement, end to end through the real bridge ----------------
 // Proven on the live R7-Office 2026.3.1: `PasteText` APPLIES the insert and then calls back with
-// `undefined`. Before this fix that void value was decoded as a malformed native acknowledgement, so
-// the run reported a FAILED insert (INVALID_DATA) while the paragraph really was in the document. The
-// bridge now keeps the mutation pending and asks an ordered confirmation LADDER of bounded public
-// reads (`GetSelectedText`, then `GetCurrentSentence`), reporting the effect as verified only when a
-// leg reproduces the dispatched payload through its own exact rule AND that observation differs from
-// the same observation read BEFORE the mutation.
+// `undefined`. The bridge keeps the mutation pending and asks the DOCUMENT itself: it counts the
+// dispatched payload in the document's own `GetFileHTML` export ONCE BEFORE the paste and ONCE AFTER
+// it, and reports the effect verified only when exactly one NEW occurrence arrived. The controller
+// then carries that proof — or the uncertain outcome — all the way to the panel.
 
-test('a void insert acknowledgement confirmed by one bounded read reaches COMPLETE with the effect verified', async () => {
-  let time = 0; const tasks = new Map(); const selections = []; const sentences = []; const identity = []; const inserts = []; const steps = []; let calls = 0;
+test('a void insert acknowledgement confirmed by a document delta reaches COMPLETE with the effect verified', async () => {
+  let time = 0; const tasks = new Map(); const selections = []; const html = []; const identity = []; const inserts = []; const steps = []; let calls = 0;
   const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
   const clock = { now() { return time; } };
   const plugin = { info: { editorType: 'word' },
     callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
     executeMethod(name, args, callback) {
-      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
-      if (name === 'GetCurrentSentence') { sentences.push({ args, callback }); return false; }
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; } // the controller's capture
+      if (name === 'GetFileHTML') { html.push({ args, callback }); return false; }
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
@@ -376,24 +373,21 @@ test('a void insert acknowledgement confirmed by one bounded read reaches COMPLE
   selections[0].callback('контекст запроса'); await tick();
   identity[0](['bounded-id', true, true, false]); await tick();
   identity[1](['bounded-id', true, true, false]); await tick();
-  // The pre-dispatch baseline: one read per leg, before the mutation exists.
-  assert.equal(inserts.length, 0, 'the mutation waits for its baselines');
-  assert.equal(selections.length, 2, 'the selection baseline is the next native dispatch');
-  selections[1].callback('друг'); await tick();
-  assert.equal(sentences.length, 1, 'the sentence baseline follows, still before the mutation');
-  sentences[0].callback('друг'); await tick();
+  // The pre-dispatch baseline: the document's own export, read before the mutation exists.
+  assert.equal(inserts.length, 0, 'the mutation waits for its baseline');
+  assert.equal(html.length, 1, 'the document baseline is the next native dispatch');
+  assert.deepEqual(html[0].args, {}, 'the plain public document read every native read uses');
+  html[0].callback('<p>стар</p>'); await tick();
   assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
   assert.deepEqual(inserts[0].args, ['Новый абзац']);
-  inserts[0].callback(undefined); // the live 2026.3.1 callback value: no value at all
-  // (a) the void acknowledgement is NOT a failure: exactly one bounded confirmation read follows it,
-  // and it separates the payload from the baseline that was read before the paste.
-  assert.equal(selections.length, 3, 'the void acknowledgement starts one confirmation read');
-  assert.deepEqual(selections[2].args, [], 'the same public selection read every other read leg uses');
+  inserts[0].callback(undefined); await tick(); // the live 2026.3.1 callback value: no value at all
+  // (a) the void acknowledgement is NOT a failure: exactly one bounded document read follows it.
+  assert.equal(html.length, 2, 'the void acknowledgement starts one confirmation read');
   assert.equal(bridge.getState().writePending, true, 'the mutation stays pending across the confirmation');
-  selections[2].callback('Новый абзац'); await tick();
+  html[1].callback('<p>стар</p><p>Новый абзац</p>'); await tick(); // exactly one NEW occurrence
   await operation;
   const state = controller.getState();
-  // (b) a read that reproduces the dispatched payload is the proof, and the run proceeds to COMPLETE.
+  // (b) a document that gained the payload exactly once is the proof, and the run proceeds to COMPLETE.
   assert.equal(state.status, 'COMPLETE');
   assert.equal(state.agent.status, 'FINAL');
   assert.equal(calls, 2, 'the verified insert result feeds a second model step');
@@ -404,88 +398,24 @@ test('a void insert acknowledgement confirmed by one bounded read reaches COMPLE
   assert.ok(toolResult, 'the second model step carries the tool result');
   assert.equal(toolResult.content.includes('"effectVerified":true'), true,
     'the tool result tells the model what was actually proven');
-  // (d) exactly one mutation and exactly one LADDER read: no retry, and nothing left pending. The
-  // sentence baseline was dispatched (and is visible) but no sentence ladder read was needed.
+  // (d) exactly one mutation, exactly two document reads, no caret-scope read, nothing left pending.
   assert.equal(inserts.length, 1);
-  assert.equal(selections.length, 3);
-  assert.equal(sentences.length, 1, 'the ladder stopped at its first confirming leg');
+  assert.equal(html.length, 2, 'one baseline and one confirmation read, never a third');
+  assert.equal(selections.length, 1, 'the insert path never dispatches a caret-scope read');
   assert.equal(bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
   assert.equal(state.writeLocked, false);
   panel.dispose(); controller.dispose();
 });
 
-test('a void acknowledgement the selection leg cannot confirm reaches COMPLETE when the sentence leg proves it', async () => {
-  // The measured live shape: `GetSelectedText` answers "" (the paste leaves nothing selected) while
-  // `GetCurrentSentence` answers with exactly the inserted sentence. The run must reach COMPLETE with
-  // the effect verified, on the second rung, with one call per leg and one mutation.
-  let time = 0; const tasks = new Map(); const selections = []; const sentences = []; const identity = []; const inserts = []; const steps = []; let calls = 0;
+test('a void acknowledgement the document does not confirm stops the run as uncertain and never retries', async () => {
+  let time = 0; const tasks = new Map(); const selections = []; const html = []; const identity = []; const inserts = []; let calls = 0;
   const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
   const clock = { now() { return time; } };
   const plugin = { info: { editorType: 'word' },
     callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
     executeMethod(name, args, callback) {
-      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
-      if (name === 'GetCurrentSentence') { sentences.push({ args, callback }); return false; }
-      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
-      throw new Error(`unexpected native method ${name}`);
-    } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
-  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
-    JSON.stringify({ type: 'final', message: 'Готово' })];
-  const tree = dom();
-  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
-    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
-    transport: async (_settings, messages) => { steps.push(messages); calls += 1; return { content: queue.shift() }; } });
-  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
-  controller.setMode('EDIT');
-  const panel = mountPanel(tree.root, controller);
-  const operation = controller.analyze('добавь абзац');
-  const tick = () => new Promise(resolve => setImmediate(resolve));
-  selections[0].callback('контекст запроса'); await tick();
-  identity[0](['bounded-id', true, true, false]); await tick();
-  identity[1](['bounded-id', true, true, false]); await tick();
-  // The pre-dispatch baseline: one read per leg, before the mutation exists. The sentence baseline is
-  // a different, in-budget sentence, so the sentence leg can confirm the payload that arrives there.
-  assert.equal(inserts.length, 0, 'the mutation waits for its baselines');
-  assert.equal(selections.length, 2, 'the selection baseline is dispatched before the mutation');
-  selections[1].callback(''); await tick();
-  assert.equal(sentences.length, 1, 'the sentence baseline follows, still before the mutation');
-  sentences[0].callback('друг'); await tick();
-  assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
-  inserts[0].callback(undefined); await tick();
-  assert.equal(selections.length, 3, 'the selection leg is the first rung of the ladder');
-  selections[2].callback(''); await tick();
-  assert.equal(sentences.length, 2, 'the refused selection leg dispatches the sentence leg');
-  assert.deepEqual(sentences[1].args, []);
-  assert.equal(bridge.getState().writePending, true, 'the ladder keeps the mutation pending');
-  sentences[1].callback('Новый абзац'); await tick();
-  await operation;
-  const state = controller.getState();
-  assert.equal(state.status, 'COMPLETE', 'the sentence leg proof is enough to finish the run');
-  assert.equal(state.agent.status, 'FINAL');
-  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome]),
-    [['insert_paragraph', 'ok']], 'the applied insert is an ordinary success, never a reported failure');
-  const toolResult = steps.at(-1).find(message => typeof message.content === 'string' && message.content.includes('tool_results'));
-  assert.ok(toolResult, 'the second model step carries the tool result');
-  assert.equal(toolResult.content.includes('"effectVerified":true'), true,
-    'the sentence leg proof crosses to the model');
-  assert.equal(inserts.length, 1, 'the mutation is never retried');
-  assert.equal(selections.length, 3, 'exactly one ladder selection read, plus its baseline');
-  assert.equal(sentences.length, 2, 'exactly one ladder sentence read, plus its baseline');
-  assert.equal(bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
-  assert.equal(state.writeLocked, false);
-  panel.dispose(); controller.dispose();
-});
-
-test('a void acknowledgement no ladder leg can confirm stops the run as uncertain and never retries', async () => {
-  let time = 0; const tasks = new Map(); const selections = []; const sentences = []; const identity = []; const inserts = []; let calls = 0;
-  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
-  const clock = { now() { return time; } };
-  const plugin = { info: { editorType: 'word' },
-    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
-    executeMethod(name, args, callback) {
-      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
-      if (name === 'GetCurrentSentence') { sentences.push({ args, callback }); return false; }
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; } // the controller's capture
+      if (name === 'GetFileHTML') { html.push({ args, callback }); return false; }
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
@@ -504,30 +434,117 @@ test('a void acknowledgement no ladder leg can confirm stops the run as uncertai
   selections[0].callback('контекст запроса'); await tick();
   identity[0](['bounded-id', true, true, false]); await tick();
   identity[1](['bounded-id', true, true, false]); await tick();
-  assert.equal(inserts.length, 0, 'the mutation waits for its baselines');
-  assert.equal(selections.length, 2, 'the selection baseline is dispatched before the mutation');
-  selections[1].callback(''); await tick();
-  assert.equal(sentences.length, 1, 'the sentence baseline follows');
-  sentences[0].callback('друг'); await tick();
+  assert.equal(inserts.length, 0, 'the mutation waits for its baseline');
+  assert.equal(html.length, 1, 'the document baseline is dispatched before the mutation');
+  html[0].callback('<p>стар</p>'); await tick();
   assert.equal(inserts.length, 1);
   inserts[0].callback(undefined); await tick();
-  assert.equal(selections.length, 3, 'the selection leg is the first rung of the ladder');
-  selections[2].callback(''); await tick();
-  assert.equal(sentences.length, 2, 'the refused selection leg dispatches the sentence leg');
-  sentences[1].callback(''); await tick();
+  assert.equal(html.length, 2, 'the confirmation read follows the void acknowledgement');
+  html[1].callback('<p>стар</p>'); await tick(); // the document did not change: no delta, no confirmation
   await operation;
   const state = controller.getState();
   assert.equal(state.status, 'APPLY_UNCERTAIN', 'an unconfirmed effect is the authored uncertain outcome');
   assert.equal(state.agent.status, 'UNCERTAIN');
   assert.equal(calls, 1, 'the run stops on the uncertain action; no second model step is requested');
   assert.equal(inserts.length, 1, 'exactly one mutation is dispatched, ever');
-  assert.equal(selections.length, 3, 'exactly one ladder selection read, plus its baseline');
-  assert.equal(sentences.length, 2, 'exactly one ladder sentence read, plus its baseline: no leg is retried');
+  assert.equal(html.length, 2, 'exactly one confirmation read, plus its baseline: the read is never retried');
+  assert.equal(selections.length, 1, 'the insert path never dispatches a caret-scope read');
   assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome, action.code]),
     [['insert_paragraph', 'uncertain', 'TOOL_UNCERTAIN']]);
   assert.equal(bridge.getState().writePending, true, 'an unconfirmed mutation is never released as settled');
   assert.equal(state.writeLocked, true);
   assert.equal(await controller.analyze('второй'), false, 'a write-locked panel refuses a new run');
   assert.equal(inserts.length, 1);
+  panel.dispose(); controller.dispose();
+});
+
+test('a document that gained TWO occurrences stops the run as uncertain instead of claiming a verified insert', async () => {
+  // The delta is exact in both directions: two new occurrences are not the one this paste explains, so
+  // the run must stop fail-safe exactly like the zero-delta case — never a VERIFIED action line.
+  let time = 0; const tasks = new Map(); const selections = []; const html = []; const identity = []; const inserts = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; } // the controller's capture
+      if (name === 'GetFileHTML') { html.push({ args, callback }); return false; }
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
+    JSON.stringify({ type: 'final', message: 'Готово' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  controller.setMode('EDIT');
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('добавь абзац');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  selections[0].callback('контекст запроса'); await tick();
+  identity[0](['bounded-id', true, true, false]); await tick();
+  identity[1](['bounded-id', true, true, false]); await tick();
+  html[0].callback('<p>стар</p>'); await tick();
+  inserts[0].callback(undefined); await tick();
+  html[1].callback('<p>стар</p><p>Новый абзац</p><p>Новый абзац</p>'); await tick();
+  await operation;
+  const state = controller.getState();
+  assert.equal(state.status, 'APPLY_UNCERTAIN');
+  assert.equal(calls, 1, 'no second model step is requested for an unconfirmed insert');
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['insert_paragraph', 'uncertain', 'TOOL_UNCERTAIN']]);
+  assert.equal(inserts.length, 1, 'the mutation is never retried');
+  assert.equal(html.length, 2, 'the read is never retried');
+  assert.equal(bridge.getState().writePending, true);
+  panel.dispose(); controller.dispose();
+});
+
+test('a document baseline that never answers is a known refusal end to end, with no write and no write lock', async () => {
+  // The pre-dispatch read is the gate, and a gate that never answers must not wedge the panel: the run
+  // gets a KNOWN error (never the uncertain outcome, because nothing reached the editor) and the write
+  // lock is left free.
+  let time = 0; const tasks = new Map(); const selections = []; const html = []; const identity = []; const inserts = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; } // the controller's capture
+      if (name === 'GetFileHTML') { html.push({ args, callback }); return false; } // never answered
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
+    JSON.stringify({ type: 'final', message: 'Готово' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  controller.setMode('EDIT');
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('добавь абзац');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  selections[0].callback('контекст запроса'); await tick();
+  identity[0](['bounded-id', true, true, false]); await tick();
+  identity[1](['bounded-id', true, true, false]); await tick();
+  assert.equal(inserts.length, 0, 'no write is dispatched while the baseline is unanswered');
+  assert.equal(html.length, 1, 'the baseline read owns the ticket');
+  assert.equal(bridge.getState().writePending, false, 'nothing reached the editor');
+  // The bridge's own callback deadline is the only settlement: a KNOWN timeout, with the slot released.
+  time += 5100;
+  for (const [key, task] of [...tasks]) if (task.at <= time) { tasks.delete(key); task.fn(); }
+  await operation;
+  const state = controller.getState();
+  assert.equal(inserts.length, 0, 'the mutation is never dispatched without a baseline');
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['insert_paragraph', 'error', 'TIMEOUT']], 'a known refusal, never a run-stopping uncertainty');
+  assert.equal(bridge.getState().busy, false, 'the undispatched ticket releases its slot');
+  assert.equal(bridge.getState().writePending, false);
+  assert.equal(state.writeLocked, false, 'the panel is not left write-locked behind a refused insert');
   panel.dispose(); controller.dispose();
 });

@@ -176,14 +176,14 @@ test('the presence body observes presence only: no identity call, no selection r
 // command channel never reaches a write at all.
 function productRig(command) {
   let time = 0; const tasks = new Map();
-  const selections = []; const sentences = []; const inserts = []; const commands = [];
+  const selections = []; const html = []; const inserts = []; const commands = [];
   const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
   const clock = { now() { return time; } };
   const api = commandApi();
   const plugin = { info: { editorType: 'word' },
     executeMethod(name, args, callback) {
       if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
-      if (name === 'GetCurrentSentence') { sentences.push({ args, callback }); return false; }
+      if (name === 'GetFileHTML') { html.push({ args, callback }); return false; }
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     },
@@ -201,7 +201,7 @@ function productRig(command) {
         return false;
       } : undefined };
   const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
-  return { bridge, commands, selections, sentences, inserts };
+  return { bridge, commands, selections, html, inserts };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -212,15 +212,35 @@ for (const command of ['executeCommand', 'callCommand', 'both']) {
     await tick();
     assert.deepEqual(r.commands, [command === 'executeCommand' ? 'command:context' : 'context'],
       'the document identity leg ran on the command channel the build has');
-    assert.equal(r.selections.length, 1, 'and the selection baseline followed');
-    r.selections[0].callback('');
-    r.sentences[0].callback('');
+    assert.equal(r.html.length, 1, 'and the document baseline followed, on the method channel');
+    assert.deepEqual(r.html[0].args, {}, 'the same public document read both builds resolve');
+    assert.equal(r.inserts.length, 0, 'no write is dispatched before the baseline answered');
+    r.html[0].callback('<p>стар</p>');
     assert.equal(r.inserts.length, 1, 'the irreversible paste is dispatched exactly once, through executeMethod');
     assert.deepEqual(r.inserts[0].args, ['Абзац']);
     r.inserts[0].callback(true);
     assert.deepEqual(await pending, { ok: true, data: { sent: true } });
+    assert.equal(r.selections.length, 0, 'the insert path never reads the caret scope');
   });
 }
+
+test('the callCommand build confirms a void acknowledgement by a document delta, unchanged by the fallback', async () => {
+  // The Windows control: on the measured-working shape (`callCommand` present, `executeCommand` also
+  // present) the command channel is untouched AND the new document-delta rule runs end to end.
+  const r = productRig('both');
+  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.deepEqual(r.commands, ['context'], 'the wrapper still carries the identity leg');
+  assert.equal(r.html.length, 1);
+  r.html[0].callback('<p>стар</p>');
+  assert.equal(r.inserts.length, 1);
+  r.inserts[0].callback(undefined);
+  assert.equal(r.html.length, 2, 'the void acknowledgement starts one confirmation read');
+  r.html[1].callback('<p>стар</p><p>Абзац</p>');
+  assert.deepEqual(await pending, { ok: true, data: { sent: true, effectVerified: true } });
+  assert.equal(r.html.length, 2, 'exactly one baseline and one confirmation read');
+  assert.equal(r.inserts.length, 1, 'the mutation is never retried');
+});
 
 test('a build with no command channel refuses the insert before any write', async () => {
   const r = productRig('neither');

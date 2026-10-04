@@ -1,5 +1,5 @@
 import { LIMITS } from '../shared/limits.js';
-import { assertByteLimit, utf8ByteLength } from '../shared/bytes.js';
+import { assertByteLimit } from '../shared/bytes.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 
 // Identity leases persist through disposal: replacing a JS adapter is not proof
@@ -144,13 +144,47 @@ function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
   return assertByteLimit(value, bound);
 }
+// The ONE documented counting form of the insert confirmation: the MINIMALLY HTML-escaped dispatched
+// payload. The document HTML escapes at least `&`, `<`, `>` and `"`, and the payload is arbitrary text
+// (Cyrillic, quotes, angle brackets, ampersands), so a single form is defined and the SAME form is
+// counted before and after the paste — the delta then compares like with like. `&` is replaced FIRST,
+// so an escape introduced by a later step is never escaped a second time. A document that renders the
+// payload RAW is deliberately NOT a match: the raw form is a different string, and accepting either
+// form would make the count depend on which of the two the editor happens to emit.
+const HTML_ESCAPES = Object.freeze([['&', '&amp;'], ['<', '&lt;'], ['>', '&gt;'], ['"', '&quot;']]);
+function escapedPayload(text) {
+  let escaped = text;
+  for (const [raw, html] of HTML_ESCAPES) escaped = escaped.split(raw).join(html);
+  return escaped;
+}
+// The non-overlapping occurrence count of the counting form in the document HTML. The caller refuses
+// an EMPTY needle before any read is dispatched (an empty needle would count characters, never a
+// payload), so an occurrence here is always a whole counting form.
+function countOccurrences(html, needle) {
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const at = html.indexOf(needle, from);
+    if (at < 0) return count;
+    count += 1;
+    from = at + needle.length;
+  }
+}
+// A document HTML read is bounded by its OWN ceiling, never by the scoped editor-result window, and a
+// result above it is refused rather than truncated: counting occurrences inside a prefix of the export
+// could miss an occurrence or count a partial one, so an export that cannot be read WHOLE makes the
+// read unusable (fail-closed). A non-string answer is refused by the same call.
+function decodeDocumentHtml(value) {
+  return assertByteLimit(value, LIMITS.documentHtmlBytes);
+}
 // A native insert acknowledgement. `true`/`false` are the only values that carry information: they
 // settle the ticket as an acknowledged-but-effect-UNVERIFIED outcome. Every other value — `undefined`,
 // which is what the live R7-Office 2026.3.1 `PasteText` calls back with AFTER it has applied the
 // insert, plus `null`, a string or an object — says nothing at all about the effect. Such a value is
 // therefore neither an automatic success (the callback acknowledged nothing) nor an ordinary known
 // error (the paste may well have applied), so `null` here means "the acknowledgement is unusable" and
-// hands the still-owned ticket to the confirmation leg. The function is CONTRACT-DRIVEN, not fitted to
+// hands the still-owned ticket to the document-delta confirmation read. The function is
+// CONTRACT-DRIVEN, not fitted to
 // one build: a build whose `PasteText` returns a value goes through exactly the same door.
 function insertAcknowledgement(value) {
   return typeof value === 'boolean' ? Object.freeze({ acknowledged: value, effectVerified: false }) : null;
@@ -299,125 +333,115 @@ export function createR7Bridge(plugin, {
         settle(errorFor(kind, pending && (kind === 'write' || kind === 'insert') ? null : new SafeError(ERROR_CODES.CANCELLED)));
       }
       owned.cancel = cancel;
-      // The confirmation LADDER of an unusable insert acknowledgement, and the PRE-DISPATCH BASELINE
-      // every leg of it needs. The acknowledgement carries no value, so the still-OWNED ticket asks an
-      // ordered series of public reads, ONE dispatch per leg, on the same slot: the mutation stays
-      // pending (design §8.4) and no second mutation can be dispatched while the effect is unknown. No
-      // leg ever re-dispatches the mutation.
+      // THE DOCUMENT-DELTA CONFIRMATION of an unusable insert acknowledgement, and the PRE-DISPATCH
+      // BASELINE it needs. The acknowledgement carries no value, so the still-OWNED ticket asks the
+      // DOCUMENT itself: it reads the document's own HTML export ONCE BEFORE the paste (`GetFileHTML`,
+      // the same public method channel every other read uses), counts the occurrences of the dispatched
+      // payload in it and stores that as the baseline; after the paste settles it reads the export ONCE
+      // more and counts again. The effect is verified ONLY when the post count is exactly
+      // `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste added the
+      // payload.
       //
-      // A post-dispatch observation that reproduces the payload proves only that the caret scope
-      // EQUALS the payload. On a build whose `PasteText` calls back `undefined` and silently does
-      // nothing — its semantics on the target Astra/R7 2026.1.2.1942 are UNMEASURED — a scope that
-      // already held the payload would satisfy that equality while no insert happened, and the bridge
-      // would report a VERIFIED effect that never occurred. So every leg ALSO reads its own observation
-      // BEFORE the paste, and confirms only when the post-dispatch observation reproduces the payload
-      // through that leg's OWN exact rule AND differs from that baseline. Equality with the baseline is
-      // "nothing observable changed": not confirmed, and never a success.
+      // Why a document delta and not a caret-scope equality. A post-dispatch observation that
+      // reproduces the payload proves only that the caret scope EQUALS the payload, and "equals the
+      // payload and differs from its own pre-dispatch baseline" is STILL not attribution: a concurrent
+      // NON-paste change — the user typing, autocorrect, a native that moves the caret — that lands
+      // exactly on the payload satisfies both conditions while nothing was inserted. Only a change to
+      // the DOCUMENT is attributable to a paste that is the sole writer of that document in this
+      // window, and "exactly one new occurrence" is the narrowest honest form of that evidence. The
+      // caret-scope reads (`GetSelectedText`, `GetCurrentSentence`) are therefore GONE from this path:
+      // they can no longer produce `effectVerified:true`, and a read that cannot settle success has no
+      // business costing a native round trip inside the write window.
       //
-      // The baseline phase is GATED: the paste is dispatched only after every baseline leg has answered
-      // or failed, so a baseline observation is pre-paste BY CONSTRUCTION and never by an assumption
-      // about the editor's callback ordering — the same reason `PasteText` itself is not trusted here.
-      // A baseline that throws, errors, is malformed or is byte-oversized leaves ITS leg incapable of
-      // confirming (that leg is then not even asked for a post-dispatch read); the mutation is still
-      // dispatched exactly once, with exactly the payload this path carried before the baseline existed.
+      // The pre-dispatch read is a GATE, by construction: the paste is dispatched only after the
+      // baseline read has ANSWERED with a usable count. A baseline read that throws, errors, is
+      // malformed, is above `LIMITS.documentHtmlBytes`, or never answers leaves the ticket with no
+      // obtainable evidence at all, and it settles its own KNOWN class with NOTHING dispatched and the
+      // slot RELEASED — never the uncertain class (a mutation that never happened) and never a wedge.
+      // That is the fail-closed direction: no baseline means no evidence means no write.
       //
-      // Every other observation — a different string, the empty string, a malformed or byte-oversized
-      // value, a read error, an observation delivered past the ticket deadline, a dispatch that threw —
-      // is "not confirmed" and hands the ticket to the NEXT leg. Only when the LAST capable leg is not
-      // confirmed does the ladder settle the uncertain class, and even then the slot is NOT released:
-      // nothing observed here proves the paste did not apply.
-      //
-      // Leg 1 `GetSelectedText` byte-equality is kept FIRST because it is the primitive that can
-      // confirm on a build whose paste leaves the inserted text selected. It is measured to answer `""`
-      // on R7-Office 2026.3.1 (immediately and after +400 ms) — with an empty baseline it cannot
-      // confirm there — but a read that does reproduce the payload still proves the effect, so the leg
-      // stays a real first step. Leg 2 `GetCurrentSentence` is the primitive the live build actually
-      // answers with the inserted sentence; its ONE normalization is documented at its comparison below.
-      //
-      // A whole-document `GetFileHTML` containment leg is deliberately ABSENT. `includes(payload)`
-      // over the entire exported document is satisfied by a payload that was ALREADY in the document,
-      // so on a build where the paste silently did nothing it would report `effectVerified:true` for an
-      // effect that never happened. The baseline makes such a leg POSSIBLE to build honestly (a
-      // containment count before and after), but a count is not the exact-equality rule this ladder is
-      // built on, and adding it stays outside this repair; the ladder stops at the caret-scoped
-      // exact-equality legs the live build was measured to answer.
+      // The post-paste read carries no such gate: the mutation IS dispatched by then, so an unanswered,
+      // errored, malformed or oversized post read is "not confirmed" — `APPLY_UNCERTAIN`, the slot
+      // HELD, no retry — and never a false success. Any count other than exactly one new occurrence is
+      // "not confirmed" too: zero (or a payload that is simply absent) means this paste added nothing,
+      // and two or more means the document changed in a way this single paste does not explain. The
+      // slot is not released on "not confirmed": nothing observed here proves the paste did not apply.
       function beginInsert() {
         const payload = params[0]; // the exact string that will be dispatched to the editor
         try {
-          // Both legs — baseline and confirmation alike — are bounded by THIS payload's own byte
-          // length, capped by the editor-result ceiling that bounds every native read: neither the
-          // baseline nor the confirmation can widen the read window beyond the bytes it checks for.
-          const budget = Math.min(utf8ByteLength(payload), LIMITS.editorResultBytes);
-          // Leg 2's expected observation. `position:'end'` dispatched `text + "\n"` and a sentence read
-          // cannot contain a paragraph break, so exactly ONE trailing newline is removed — no other
-          // whitespace is trimmed, no case is folded, and no prefix/suffix matching is accepted.
-          const sentence = payload.endsWith('\n') ? payload.slice(0, -1) : payload;
-          owned.confirmLegs = [
-            Object.freeze({ method: 'GetSelectedText', budget, expected: payload }),
-            Object.freeze({ method: 'GetCurrentSentence', budget, expected: sentence })
-          ];
-        } catch {
-          // A leg set that cannot even be described proves nothing about the effect; the paste is still
-          // dispatched exactly once and no leg can confirm.
-          owned.confirmLegs = [];
-        }
-        owned.baselines = owned.confirmLegs.map(() => null);
-        owned.baselineUsable = owned.confirmLegs.map(() => false);
-        // The per-leg dispatch marks that make a baseline once per leg even when a native answers
-        // synchronously and then throws out of the same call (see `readBaseline`).
-        owned.legDispatched = owned.confirmLegs.map(() => false);
-        owned.confirmLeg = -1;
-        readBaseline(0);
+          // The ONE counting form, computed ONCE and used for BOTH reads, so the delta compares the
+          // same needle before and after. An EMPTY needle is a counting form that cannot describe a
+          // payload at all (it would count characters), so it makes the baseline unusable.
+          owned.htmlNeedle = escapedPayload(payload);
+          if (owned.htmlNeedle === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+        } catch { owned.htmlNeedle = null; }
+        owned.htmlBaseline = null;
+        // The once-per-ticket dispatch marks: a read is dispatched at most once even when a native
+        // delivers its callback SYNCHRONOUSLY and THEN throws out of the same call (see below).
+        owned.htmlBaselineDispatched = false;
+        owned.htmlConfirmDispatched = false;
+        readHtmlBaseline();
         notify();
       }
-      // ONE baseline dispatch per leg, before the mutation. A baseline never mutates anything, and an
-      // unusable answer (a throw, a malformed value, a byte-oversized one, or an answer delivered past
-      // the ticket deadline) only makes ITS leg incapable of confirming.
+      // THE pre-dispatch baseline read. It never mutates anything: it reads the document's own HTML
+      // export and counts the counting form in it. The once-per-ticket boundary is STRUCTURAL, not an
+      // assumption about native callback ordering — a native that delivers this callback synchronously
+      // and then throws out of the same call must not re-enter this function and dispatch a SECOND
+      // baseline (which a ladder used to turn into a second `PasteText` for one logical insert).
       //
-      // The once-per-leg and once-per-ticket boundaries are STRUCTURAL, not an assumption about native
-      // callback ordering. A measured-plausible native — one that delivers a leg's callback
-      // SYNCHRONOUSLY and THEN throws out of the same call — used to re-enter THIS leg from the catch,
-      // dispatch the baseline twice, and (because both answers each advanced the ladder) dispatch
-      // `PasteText` TWICE for one logical insert. `legDispatched` makes a baseline once per leg and
-      // `owned.dispatched` makes the paste once per ticket, so no native ordering can reach the
-      // mutation twice: `dispatchPaste` is idempotent.
-      function readBaseline(index) {
+      // The read is the GATE of the whole insert: the paste is dispatched from THIS callback, after the
+      // count was obtained. Anything else — the needle could not be built, the read threw, errored, was
+      // malformed or non-string, was above `LIMITS.documentHtmlBytes`, or the ticket deadline expired
+      // before the answer — means no baseline exists, so no confirmation is possible at all, and the
+      // ticket settles its own KNOWN class with NOTHING dispatched and the slot RELEASED. Reporting
+      // `APPLY_UNCERTAIN` here would be a false uncertainty about a mutation that never happened, and
+      // holding the slot would wedge the bridge behind a settled ticket.
+      function readHtmlBaseline() {
         if (slot !== owned || owned.settled || disposed) return; // a settled ticket never dispatches the mutation
-        if (index >= owned.confirmLegs.length) { dispatchPaste(); return; }
-        if (owned.legDispatched[index] === true) return; // this leg's single baseline already went out
-        owned.legDispatched[index] = true;
-        const leg = owned.confirmLegs[index];
+        if (owned.htmlBaselineDispatched) return; // this ticket's single baseline already went out
+        owned.htmlBaselineDispatched = true;
+        if (owned.htmlNeedle === null) { refuseInsert(new SafeError(ERROR_CODES.INVALID_DATA)); return; }
         let answered = false;
         function baselineCallback(value) {
           if (slot !== owned) return;
           if (owned.settled) { slot = null; notify(); return; }
-          if (answered) return; // one baseline observation per leg, never re-judged
+          if (answered) return; // one baseline observation per ticket, never re-judged
           answered = true;
+          let failure = null;
           try {
             if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
             if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
-            const observed = decodeText(value, leg.budget);
-            owned.baselines[index] = observed;
-            owned.baselineUsable[index] = true;
-          } catch { owned.baselineUsable[index] = false; }
-          readBaseline(index + 1);
+            owned.htmlBaseline = countOccurrences(decodeDocumentHtml(value), owned.htmlNeedle);
+          } catch (error) { failure = error instanceof SafeError ? error : new SafeError(ERROR_CODES.EDITOR_ERROR); }
+          if (failure === null) { dispatchPaste(); return; }
+          refuseInsert(failure);
         }
         try {
-          plugin.executeMethod(leg.method, Object.freeze([]), baselineCallback);
-        } catch {
-          // A baseline that cannot even be dispatched observed nothing: its leg cannot confirm, and the
-          // mutation is neither blocked nor retried. If it already ANSWERED before throwing, the
-          // callback above has advanced the ladder and this re-entry is refused by the once-per-leg
-          // mark, so no native detail escapes and nothing is dispatched a second time.
-          owned.baselineUsable[index] = false;
-          readBaseline(index + 1);
+          plugin.executeMethod('GetFileHTML', Object.freeze({}), baselineCallback);
+        } catch (error) {
+          // A baseline read that cannot even be dispatched is the same closed gate. If it already
+          // ANSWERED before throwing, the callback above has taken the ticket (the paste is dispatched
+          // or the refusal is settled) and this re-entry observes it and does nothing more.
+          if (answered) return;
+          refuseInsert(error instanceof SafeError ? error : new SafeError(ERROR_CODES.EDITOR_ERROR));
         }
       }
-      // The irreversible mutation, dispatched exactly once, with exactly the payload this path carried
-      // before the baseline existed. A synchronous throw from the dispatch is the same closed class the
-      // pre-baseline branch produced: a dispatch that may have reached the SDK is never a release.
-      // The `owned.dispatched` check is the structural once-per-ticket boundary: after it, only the
-      // mutation's own callback can settle the ticket, and no ladder leg can reach this function again.
+      // The pre-dispatch gate refusing: NOTHING reached the editor, so the honest outcome is the
+      // ticket's own KNOWN class (the closed class of the failure the baseline read produced) and the
+      // slot is released, exactly like a baseline read that never answered.
+      function refuseInsert(error) {
+        if (slot !== owned || owned.settled) return;
+        owned.uncertain = false;
+        slot = null;
+        settle(error);
+        notify();
+      }
+      // The irreversible mutation, dispatched exactly ONCE, from the baseline callback that obtained
+      // the count, with exactly the payload this path carried before the baseline existed. A
+      // synchronous throw from the dispatch is the closed uncertain class: a dispatch that may have
+      // reached the SDK is never a release. The `owned.dispatched` check is the structural
+      // once-per-ticket boundary: after it, only the mutation's own callback (and the reads it starts)
+      // can settle the ticket, and nothing can reach this function again.
       function dispatchPaste() {
         if (owned.dispatched || owned.settled || disposed) return;
         // An abort that landed during the baseline phase prevents the mutation entirely: nothing was
@@ -434,36 +458,28 @@ export function createR7Bridge(plugin, {
           }
         }
       }
-      // The acknowledgement was unusable: ask the ladder, starting at its first CAPABLE leg (a leg
-      // whose pre-dispatch baseline is unusable can never confirm and is never asked at all).
+      // The acknowledgement was unusable: ask the DOCUMENT for its one post-paste read. The baseline is
+      // usable by construction here — `dispatchPaste` is reached only from the baseline callback that
+      // accepted its count — so there is exactly one reason this function can settle the ticket: the
+      // post count.
       function confirmInsert() {
         owned.confirming = true;
-        owned.confirmLeg = -1;
-        confirmNextLeg();
-      }
-      // ONE dispatch per leg, on the ticket's own slot. The callback is bound to THIS leg so a
-      // duplicate or late callback from a leg the ladder has already left can never be judged by the
-      // next leg's rule (that is the only way a stale read could fabricate a confirmation).
-      function dispatchConfirmLeg() {
-        const index = owned.confirmLeg;
-        const leg = owned.confirmLegs[index];
-        function legCallback(value) {
-          if (slot !== owned) return;
+        if (owned.htmlConfirmDispatched) return; // one post-paste read per ticket, never a retry
+        owned.htmlConfirmDispatched = true;
+        let answered = false;
+        function confirmCallback(value) {
+          if (slot !== owned) return; // a stale read cannot settle a new owner
           if (owned.settled) { slot = null; notify(); return; }
-          if (index !== owned.confirmLeg) return; // a superseded leg observation is not this leg's
+          if (answered) return; // one post-paste observation per ticket, never re-judged
+          answered = true;
           let confirmed = false;
           try {
             if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
             if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
-            // Without a usable PRE-DISPATCH baseline, reproducing the payload is exactly the
-            // observation the fail-open defect relied on, so this leg can never confirm.
-            if (owned.baselineUsable[index] === true) {
-              const observed = decodeText(value, leg.budget);
-              // BOTH conditions: the observation reproduces the payload through this leg's own rule AND
-              // it differs from the baseline. Equality with the baseline is "nothing observable
-              // changed" — the mirror image of a false success — and never a confirmation.
-              confirmed = observed === leg.expected && observed !== owned.baselines[index];
-            }
+            // EXACTLY one NEW occurrence, and nothing else: zero (or a payload that is absent) means
+            // this paste added nothing, two or more means the document changed in a way this single
+            // paste does not explain, and an unreadable export proves nothing either way.
+            confirmed = countOccurrences(decodeDocumentHtml(value), owned.htmlNeedle) === owned.htmlBaseline + 1;
           } catch { confirmed = false; }
           if (confirmed) {
             slot = null;
@@ -471,24 +487,22 @@ export function createR7Bridge(plugin, {
             notify();
             return;
           }
-          confirmNextLeg();
+          confirmFailed();
         }
         try {
-          plugin.executeMethod(leg.method, Object.freeze([]), legCallback);
+          plugin.executeMethod('GetFileHTML', Object.freeze({}), confirmCallback);
         } catch {
-          // A leg that cannot even be dispatched observed nothing: not confirmed, next leg. No private
-          // native detail escapes and the mutation is never re-dispatched.
-          confirmNextLeg();
+          // A post-paste read that cannot even be dispatched observed nothing: not confirmed, and never
+          // a retry of either the read or the mutation. If the callback above already decided the
+          // ticket, this re-entry observes it and does nothing more.
+          if (answered) return;
+          confirmFailed();
         }
       }
-      function confirmNextLeg() {
+      // Not confirmed: the uncertain class, with the slot still HELD. The mutation WAS dispatched, so
+      // nothing observed here proves it did not apply, and no retry is ever issued.
+      function confirmFailed() {
         if (slot !== owned || owned.settled) return;
-        owned.confirmLeg += 1;
-        // A leg whose baseline is unusable cannot confirm, so it is not asked for a post-dispatch read
-        // at all: the ladder moves straight to the next leg that can still decide.
-        while (owned.confirmLeg < owned.confirmLegs.length && owned.baselineUsable[owned.confirmLeg] !== true) owned.confirmLeg += 1;
-        if (owned.confirmLeg < owned.confirmLegs.length) { dispatchConfirmLeg(); notify(); return; }
-        // The whole ladder failed to confirm: the uncertain class, with the slot still held.
         owned.uncertain = true;
         settle(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
         notify();
@@ -496,8 +510,8 @@ export function createR7Bridge(plugin, {
       function callback(value) {
         if (slot !== owned) return; // old/duplicate callback cannot release a new owner
         if (owned.settled) { slot = null; notify(); return; } // release only, never late content/UI
-        // A second acknowledgement for this same dispatch cannot preempt the confirmation ladder the
-        // first one started: this ticket's outcome is decided by that ladder alone.
+        // A second acknowledgement for this same dispatch cannot preempt the document-delta
+        // confirmation the first one started: this ticket's outcome is decided by that read alone.
         if (owned.confirming) return;
         try {
           if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
@@ -665,14 +679,16 @@ export function createR7Bridge(plugin, {
     // installed R7 build implements `PasteText` is PENDING NATIVE VERIFICATION — an editor that does
     // not implement it never calls back, so the ticket settles APPLY_UNCERTAIN rather than success.
     // An acknowledgement that carries NO value is the one measured case on the live 2026.3.1 build
-    // (the paste applies and the callback receives `undefined`): the ticket reads one PRE-DISPATCH
-    // baseline per confirmation leg, dispatches the paste exactly once, and then reports success only
-    // when a leg's post-dispatch observation reproduces the dispatched payload through that leg's own
-    // exact rule AND differs from that leg's baseline. A payload that was already in the caret scope is
-    // therefore never a success, and a `PasteText` that silently mutates nothing fails every leg. No
-    // mutation is ever retried by this bridge.
-    // The caller's `signal` is honoured the same way: an abort before the paste is dispatched prevents
-    // it (including during the baseline phase), an abort after dispatch keeps the write-class
+    // (the paste applies and the callback receives `undefined`): the ticket reads the document's own
+    // HTML export ONCE BEFORE the paste and counts the dispatched payload in it, dispatches the paste
+    // exactly once, and then reads that export ONCE more and reports success only when the post count
+    // is exactly `baselineCount + 1`. A paste that silently mutates nothing cannot move a document
+    // count, and neither can a concurrent change to the caret scope, so `effectVerified` now means
+    // what it says: the DOCUMENT gained this payload once. No mutation is ever retried by this bridge.
+    // The pre-dispatch read is itself a gate: without a usable baseline count there is nothing to
+    // compare against, so the insert refuses with its own known class before any dispatch and releases
+    // the slot. The caller's `signal` is honoured the same way: an abort before the paste is dispatched
+    // prevents it (including during the baseline phase), an abort after dispatch keeps the write-class
     // uncertain-until-callback behaviour.
     async insertParagraph(raw) {
       const text = raw?.text, position = raw?.position ?? 'cursor', signal = raw?.signal;
@@ -693,8 +709,8 @@ export function createR7Bridge(plugin, {
         const acknowledgement = await start('insert', signal, {}, Object.freeze([position === 'end' ? `${text}\n` : text]));
         // A boolean acknowledgement keeps today's envelope EXACTLY — the payload was sent and the
         // effect is NOT verified by the callback's own value. The only other way this ticket can
-        // settle is the confirmation ladder above, which reports `effectVerified` because a bounded
-        // read really did reproduce the dispatched payload at a scope that did not already hold it; no
+        // settle is the document-delta confirmation above, which reports `effectVerified` because the
+        // document's own export really gained exactly one occurrence of the dispatched payload; no
         // other path reaches this line with a success.
         return Object.freeze({ ok: true, data: Object.freeze(acknowledgement.effectVerified === true
           ? { sent: true, effectVerified: true }
