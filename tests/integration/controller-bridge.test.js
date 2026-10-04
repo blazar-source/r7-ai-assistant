@@ -5,12 +5,12 @@ import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { mountPanel } from '../../src/ui/view.js';
 import { dom } from '../fixtures/dom.js';
-import { htmlDocument } from '../fixtures/html-document.js';
+import { htmlPlatform } from '../fixtures/html-document.js';
 
 // The insert confirmation reads the document's DECODED TEXT, so every bridge here is given the platform
-// boundary the plugin page supplies; the fixture stands in for the browser's inert container parse.
-const documentBoundary = htmlDocument();
-function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, document: documentBoundary }); }
+// boundary the plugin page supplies; the fixture stands in for the browser's own DOMParser.
+const platformBoundary = htmlPlatform();
+function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, platform: platformBoundary }); }
 
 function setup(options = {}) {
   let time = 0; const tasks = new Map(); const callbacks = []; let calls = 0;

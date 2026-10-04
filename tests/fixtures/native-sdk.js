@@ -7,7 +7,7 @@ import { SettingsStore } from '../../src/config/storage.js';
 import { bindPanel } from '../../src/ui/entry.js';
 import { mountPanel } from '../../src/ui/view.js';
 import { dom } from './dom.js';
-import { htmlDocument } from './html-document.js';
+import { htmlPlatform } from './html-document.js';
 
 export const checkpoint = () => new Promise(resolve => setImmediate(resolve));
 export function nativeRig({ editor = 'word', replacement = 'replacement', mode = 'EDIT', include = true, automatic = true, returnStatus = false, script = null } = {}) {
@@ -43,9 +43,9 @@ export function nativeRig({ editor = 'word', replacement = 'replacement', mode =
   };
   const tree = dom(); let bridge; let controller;
   const binding = bindPanel(plugin, tree.root, {
-    // The insert confirmation parses the document export with the platform DOM; this host rig supplies the
-    // fixture boundary the plugin page supplies as `document`.
-    platformDocument: htmlDocument(),
+    // The insert confirmation parses the document export with the platform's own parser; this host rig
+    // supplies the fixture boundary the plugin page supplies as `platform`.
+    platform: htmlPlatform(),
     bridgeFactory(p, options) { bridge = createR7Bridge(p, { ...options, timers, clock }); return bridge; },
     controllerFactory({ bridge: b }) { controller = createController({ bridge: b, timers, clock, store: new SettingsStore(null),
       crypto: { randomUUID() { return `00000000-0000-4000-8000-${String(++serial).padStart(12, '0')}`; } },

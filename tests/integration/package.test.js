@@ -55,11 +55,14 @@ test('generated authored browser bundle passes audit with literal synchronous st
   assert.equal(commands, 2, 'the adapter dispatches exactly the two authored command legs');
   assert.deepEqual(legs.sort(), ['capability', 'context'],
     'both reviewed static bodies are carried INLINE by the adapter, each evaluable on its own');
-  // `innerHTML` is no longer forbidden: the insert confirmation parses the document's export with the
-  // platform's own INERT container (`createElement('div')` + `innerHTML`) so that it counts in DECODED
-  // TEXT rather than in markup — assigning it on a detached element parses data and executes nothing. The
-  // pin stays for everything that would mean a dev/runtime or a remote/embedded-artifact escape.
-  for (const forbidden of ['sourceMappingURL', 'sourcesContent', 'node:', 'https-mock', 'esbuild', 'acorn', 'synthetic', 'example.invalid', 'BEGIN PRIVATE KEY', 'window.parent']) assert.equal(source.includes(forbidden), false, forbidden);
+  // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
+  // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that
+  // container parse). A parsed document has NO browsing context, so it is the only sanctioned DOM entry
+  // point in authored source; every string-into-markup sink — the same one that was dropped, its
+  // whole-element and neighbour-insertion forms, the fragment parser, and the document writer — is
+  // forbidden, together with everything that would mean a dev/runtime or a remote/embedded-artifact
+  // escape.
+  for (const forbidden of ['sourceMappingURL', 'sourcesContent', 'node:', 'https-mock', 'esbuild', 'acorn', 'synthetic', 'example.invalid', 'BEGIN PRIVATE KEY', 'window.parent', 'innerHTML', 'outerHTML', 'insertAdjacentHTML', 'createContextualFragment', 'document.write(']) assert.equal(source.includes(forbidden), false, forbidden);
 });
 test('HTML/CSS only local authored assets plus exact separate installed SDK with documented CSP and visible focus', async () => {
   const built = await buildPlugin({ output: 'dist/task4-package-assets' }); const entries = inventory(built.archive);

@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
-import { htmlDocument } from '../fixtures/html-document.js';
+import { htmlPlatform } from '../fixtures/html-document.js';
 
-// The confirmation reads the document's DECODED TEXT, so the bridge needs the platform's inert container
-// parse. Every rig below injects the fixture DOM through the bridge's own `document` option: the
-// boundary is explicit and injected, never reached for through a global, and the real plugin page
-// passes `globalThis.document` (which the bridge itself does).
-const documentBoundary = htmlDocument();
+// The confirmation reads the document's DECODED TEXT, so the bridge needs the platform's own parser. Every
+// rig below injects the fixture boundary through the bridge's own `platform` option: the boundary is
+// explicit and injected, never reached for through a global, and the real plugin page passes the page's
+// own `document` and `DOMParser`.
+const platformBoundary = htmlPlatform();
 
 function runContext(body) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api'); let identity = false;
@@ -382,16 +382,28 @@ test('Apply rejects caller-forged serializable target certificates without any S
 // AFTER it — and confirms ONLY when the post count is exactly `baselineCount + 1`.
 //
 // THE COUNTING FORM. The confirmation counts in the document's DECODED TEXT, not in the markup: the
-// export is parsed with the platform's own inert container (`createElement('div')` + `innerHTML`) and
-// the text nodes are collected with ONE `"\n"` after every block-level element, so a paragraph break is
-// a real separator and markup/attributes never enter the stream. The needle is the EXACT dispatched
+// export is parsed with `DOMParser` (`parseFromString(html, 'text/html')`), supplied through the same
+// injected platform object as the DOM reference — a parsed document has NO browsing context, so no
+// subresource is loaded and no handler can run — and the text nodes are collected with ONE `"\n"` after
+// EVERY element boundary EXCEPT the explicitly listed INLINE names, so a paragraph break is a real
+// separator and markup/attributes never enter the stream. The needle is the EXACT dispatched
 // payload — `text` for `position:'cursor'`, `text + "\n"` for `position:'end'` — with no escaping at
 // all: once markup is parsed away there is nothing left to escape, and a payload holding `&`, `<`, `>`
 // or `"` matches by its real characters. (An independent review found the old markup counting
 // fail-open: payload `amp` over a baseline holding `&amp;` counted TWO occurrences of "amp" — the
 // literal `amp` in the text plus the one inside the decoded entity — so an unrelated `&` added by the
-// user moved the count by one and a no-op paste was reported VERIFIED.) The fixture DOM at
-// `../fixtures/html-document.js` stands in for the platform here and names the same block set.
+// user moved the count by one and a no-op paste was reported VERIFIED.) The fixture at
+// `../fixtures/html-document.js` stands in for that platform boundary here and names its own inline set.
+//
+// THE FAIL-SAFE DIRECTION OF THE SEPARATOR RULE. The separator is inserted after every element boundary
+// EXCEPT the named inline set (`INLINE_TAGS` in the bridge): the failure direction is the safe one. An
+// unknown element — or an element that is genuinely inline but unnamed — gets an EXTRA separator, so a
+// payload spanning it does NOT match and the insert settles UNCERTAIN (a false negative) instead of a
+// false VERIFIED. The unlisted-block white list this replaced did the opposite: an export that rendered
+// blocks with an element outside `BLOCK_TAGS` concatenated its neighbours and a no-op paste was reported
+// VERIFIED (the reviewer's `<center>` reproduction, pinned below). Text inside RAWTEXT elements
+// (`style`, `script`, `title`, `textarea`, `noscript`) is never document text at all: their subtrees are
+// skipped whole, so their content cannot move a count (pinned below).
 //
 // THE CEILING. The HTML read is bounded by `LIMITS.documentHtmlBytes` (256 KiB) and a result above it
 // is refused rather than truncated: counting inside a prefix could miss an occurrence or count a
@@ -421,8 +433,8 @@ const confirmRead = r => {
   return at < 0 ? null : (r.calls.slice(at + 1).find(call => call.name === 'GetFileHTML') ?? null);
 };
 // The boundary between the bridge and the parsed document: a real (tiny) parser injected through the
-// bridge's `document` option, exactly as the plugin page injects the platform's own.
-function documentBoundaryRig(plugin, options) { return createR7Bridge(plugin, { ...options, document: documentBoundary }); }
+// bridge's `platform` option, exactly as the plugin page injects the platform's own.
+function documentBoundaryRig(plugin, options) { return createR7Bridge(plugin, { ...options, platform: platformBoundary }); }
 // A fake timer set for the rigs below. Without an injected timer a rig that never settles a ticket — the
 // whole point of the uncertain cases — arms the bridge's REAL 5 s deadline as a `setTimeout`, which keeps
 // the test process alive until it fires. The deadline is not what these tests assert, so it is held here
@@ -680,6 +692,98 @@ test('D1: block boundaries are real boundaries — a payload spanning two paragr
     'a payload that only exists across a block boundary is not in the document text');
   assert.equal(r.named('PasteText').length, 1);
   assert.equal(r.named('GetFileHTML').length, 2);
+});
+
+test('D-A: a no-op paste is never verified because an UNLISTED block element concatenated its neighbours', async () => {
+  // The reviewer's reproduction, through the real bridge: the pre-dispatch export is `<p>стар</p>`, the
+  // fake paste inserts NOTHING, and the unrelated change turns the post export into
+  // `<p>стар</p><center>01</center><center>23</center>`. `center` is not in the retired `BLOCK_TAGS`
+  // white list, so the old extraction concatenated `01` and `23` into `0123` and the no-op insert was
+  // reported `{"ok":true,"data":{"sent":true,"effectVerified":true}}`. The separator is now inserted
+  // after every boundary except the named inline set, so the extracted text is `стар\n01\n23\n`, the
+  // payload `0123` is not in it, and the insert settles UNCERTAIN — the false negative this change
+  // deliberately accepts instead of a false success.
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><center>01</center><center>23</center>' });
+  const result = await r.bridge.insertParagraph({ text: '0123' });
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' },
+    'an unlisted element is a boundary, so its neighbours cannot concatenate into the payload');
+  assert.equal(r.named('PasteText').length, 1, 'the mutation is dispatched exactly once');
+  assert.equal(r.named('GetFileHTML').length, 2, 'exactly one baseline and one confirmation read');
+  assert.equal(r.bridge.getState().writePending, true, 'the unknown outcome keeps the slot and the write lock');
+  // The same element on the BASELINE side: it is a boundary before the paste too, so the payload really
+  // added later once still verifies — the fail-safe direction costs nothing when the payload IS text.
+  const applied = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><center>0123</center>' });
+  assert.deepEqual(await applied.bridge.insertParagraph({ text: '0123' }), VERIFIED,
+    'a payload that really arrived as its own element text still verifies');
+});
+
+test('D-B: text inside a RAWTEXT element is never counted as document text', async () => {
+  // `style`, `script`, `title`, `textarea` and `noscript` hold RAWTEXT: it is markup-level content, not
+  // document text, so their subtrees are skipped whole. Without the skip the reviewer's no-op was
+  // verified: post `<p>стар</p><style>delta</style>` with payload `delta` counted the stylesheet text as
+  // a document delta.
+  for (const [label, pre, post, payload] of [
+    ['style', '<p>стар</p>', '<p>стар</p><style>delta</style>', 'delta'],
+    ['script', '<p>стар</p>', '<p>стар</p><script>delta</script>', 'delta'],
+    ['title', '<p>стар</p>', '<p>стар</p><title>delta</title>', 'delta'],
+    ['textarea', '<p>стар</p>', '<p>стар</p><textarea>delta</textarea>', 'delta'],
+    ['noscript', '<p>стар</p>', '<p>стар</p><noscript>delta</noscript>', 'delta']
+  ]) {
+    const r = markupRig({ pre, post });
+    assert.deepEqual(await r.bridge.insertParagraph({ text: payload }), { ok: false, code: 'APPLY_UNCERTAIN' },
+      `${label}: rawtext is never document text`);
+    assert.equal(r.named('PasteText').length, 1, `${label}: the mutation is never retried`);
+    assert.equal(r.named('GetFileHTML').length, 2, `${label}: exactly two reads`);
+  }
+  // The skip is not a blanket suppression of the element BOUNDARY either: an ordinary payload added
+  // next to a rawtext block still verifies, so the skip cannot hide a real insert.
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><style>delta</style><p>Абзац</p>' });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'Абзац' }), VERIFIED,
+    'a real insert next to a rawtext block is still confirmed');
+});
+
+test('the `end` needle is discriminating: an end payload is never a `trimEnd()`ed delta', async () => {
+  // The exporter's `<span>` is inline, so it adds NO boundary of its own and the payload it carries is
+  // separated only by the boundary of the block AROUND it. That is exactly what makes the trailing
+  // newline of the `end` form (`text + "\n"`) either present in the counted text or absent, and the two
+  // halves below pin both cases over the SAME baseline. The baseline export is `<p>стар</p>` (text
+  // `стар\n\n`), which holds neither needle.
+  //
+  // (a) The payload ends its block: `<p>стар</p><span>Абзац</span>` extracts to `стар\nАбзац\n`, the
+  // block's own trailing boundary IS the dispatched newline, and the `end` insert VERIFIES. This is the
+  // measured shape of the reviewer's export, and it verifies for `end` as well as for `cursor` — the
+  // newline is real, not invented.
+  const ends = documentRig({ html: '<p>стар</p>' });
+  const endsInsert = await dispatchInsert(ends, { text: 'Абзац', position: 'end' });
+  assert.deepEqual(endsInsert.insert.params, ['Абзац\n'], 'the end form dispatches the payload with its newline');
+  endsInsert.insert.callback(undefined);
+  confirmRead(ends).callback('<p>стар</p><span>Абзац</span>');
+  assert.deepEqual(await endsInsert.pending, VERIFIED,
+    'a block-closing payload really does carry the dispatched newline');
+  assert.equal(ends.named('GetFileHTML').length, 2);
+  // (b) The DISCRIMINATOR, the same inline-element shape with the payload NOT ending its block:
+  // `<p>стар</p><p><span>Абзац</span>хвост</p>` extracts to `стар\nАбзацхвост\n`. The `cursor` needle
+  // `Абзац` occurs once more than in the baseline → VERIFIED; the `end` needle `Абзац\n` does not occur
+  // at all (`Абзац` is followed by `хвост`, not by a boundary newline) → no delta, UNCERTAIN. A
+  // `trimEnd()` of the dispatched payload would count `Абзац`, find that same new occurrence, and report
+  // this insert VERIFIED — so this pair is what pins the needle to the EXACT dispatched payload.
+  const cursor = documentRig({ html: '<p>стар</p>' });
+  const cursorInsert = await dispatchInsert(cursor, { text: 'Абзац', position: 'cursor' });
+  cursorInsert.insert.callback(undefined);
+  confirmRead(cursor).callback('<p>стар</p><p><span>Абзац</span>хвост</p>');
+  assert.deepEqual(await cursorInsert.pending, VERIFIED,
+    'the cursor payload is in the export text, so the delta is exactly one');
+  assert.equal(cursor.named('GetFileHTML').length, 2);
+  const end = documentRig({ html: '<p>стар</p>' });
+  const endInsert = await dispatchInsert(end, { text: 'Абзац', position: 'end' });
+  endInsert.insert.callback(undefined);
+  assert.deepEqual(confirmRead(end).params, {}, 'the same public document read the baseline used');
+  confirmRead(end).callback('<p>стар</p><p><span>Абзац</span>хвост</p>');
+  assert.deepEqual(await endInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' },
+    'the dispatched newline is not in the counted text, so the end form is never a trimmed cursor form');
+  assert.equal(end.named('PasteText').length, 1, 'the mutation is dispatched exactly once');
+  assert.equal(end.named('GetFileHTML').length, 2, 'exactly one baseline and one confirmation read');
+  assert.equal(end.bridge.getState().writePending, true, 'an unconfirmed end insert stays pending');
 });
 
 test('D1: the dispatched payload is the needle — an end insert matches a real paragraph break', async () => {

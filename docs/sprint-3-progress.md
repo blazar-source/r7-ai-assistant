@@ -34,14 +34,19 @@ reported as a plain known error).
    - reports `{ok:true, data:{sent:true, effectVerified:true}}` **only** when the post count is exactly
      `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste added the payload.
 4. **The counting form is the dispatched payload counted in the document's DECODED TEXT.** The export
-   is parsed with the platform's own inert container (`createElement('div')` + `innerHTML`) and the text
-   nodes are collected with a single `"\n"` after every block-level element, so **markup and attribute
-   values never enter the count** and a paragraph break is a real separator. The needle is the **exact
-   dispatched payload** — `text` for `position:'cursor'`, `text + "\n"` for `position:'end'` — and no
-   escaping is applied anywhere: once the markup is parsed away, a payload holding `&`, `<`, `>`, `"` or
-   Cyrillic matches by its real characters, and the raw and entity spellings of the same character are
-   the same evidence. The count is non-overlapping, and an empty needle is refused before any read.
-   (The earlier **minimally HTML-escaped** counting form is **retired** — see §5: it was fail-open.)
+   is parsed with `DOMParser` (`new DOMParser().parseFromString(html, 'text/html')`, the reference handed
+   to the bridge through the same injected `platform` object as the DOM one) and the text nodes are
+   collected with a single `"\n"` after **every element boundary except the named inline set**
+   (`INLINE_TAGS`), so **markup and attribute values never enter the count**, a paragraph break is a real
+   separator, and text inside the RAWTEXT elements (`style`, `script`, `title`, `textarea`, `noscript`) is
+   never counted at all. The needle is the **exact dispatched payload** — `text` for
+   `position:'cursor'`, `text + "\n"` for `position:'end'` — and no escaping is applied anywhere: once
+   the markup is parsed away, a payload holding `&`, `<`, `>`, `"` or Cyrillic matches by its real
+   characters, and the raw and entity spellings of the same character are the same evidence. The count
+   is non-overlapping, and an empty needle is refused before any read. (The earlier **minimally
+   HTML-escaped** counting form is **retired** — see §5: it was fail-open. §6 replaces the block
+   white list this rule first used with the inline blacklist described there; the failure direction is
+   the safe one.)
 5. **Every other outcome is "not confirmed".** No new occurrence, two or more new occurrences, a
    payload that is simply absent, a missing/malformed/non-string answer, a read that threw, a post read
    above the byte ceiling, an observation delivered past the ticket deadline — all of them settle
@@ -195,15 +200,15 @@ wrong write.
   released); a build where the delta is not exactly one settles `APPLY_UNCERTAIN`. Neither can ever
   produce a success claim.
 - The **decoded-text rule removes the escaping question** (§5). What is still unmeasured is the element
-  vocabulary a live export uses: this rule separates the blocks named in `BLOCK_TAGS` and treats every
-  other element as inline. If a live export renders a document paragraph with an element outside that
-  set, two blocks concatenate in the extracted text and a payload spanning them could match — the same
-  class of uncertainty the `end` form has. Widening the set is an authored, tested change; the
-  separator rule itself stays.
+  vocabulary a live export uses. **§6 inverted this question's failure direction:** the separator now goes
+  after every element boundary except the named inline set, so an unknown element SPLITS text rather than
+  joining it — a payload spanning it settles UNCERTAIN instead of matching, and the white-list question
+  ("is every real block named?") is replaced by the safe one ("is every real INLINE element named?"),
+  whose cost is a false UNCERTAIN, never a false success.
 - The document delta and the ceiling were **not** measured natively. This document claims host-side
   tests only: the focused bridge/dispatch-API/handler/integration suites, the full `node --test` suite
-  (**651/651** on the final tree, up from 649), the static audit and the bundle build, all run on the
-  final tree.
+  (**651/651** on that tree, up from 649; **661/661** after §6), the static audit and the bundle build,
+  all run on the final tree.
 - The **`executeCommand` fallback framing is unverified natively** (§4c). It is inferred from the
   installed 2026.1.2 vendor SDK, where `callCommand` is exactly `executeCommand('command', composed,
   callback)`. A native that rejects the composed source leaves the command leg unanswered: the presence
@@ -266,22 +271,25 @@ contributed occurrences that are not in the document's text.
 
 **The reproduction (no file writes).** Payload `amp`; baseline export `<p>a &amp; b</p>`; the fake
 `PasteText` inserts nothing while an unrelated change adds one more escaped ampersand → post export
-`<p>a &amp; b</p><p>c &amp; d</p>`. The source holds **three** `amp` substrings — one in `a`+`amp`+` b`,
-one inside `&amp;`, one in `c`+`amp`+` d` — so the rule `post === baseline + 1` fired and the insert was
-reported `{"ok":true,"data":{"sent":true,"effectVerified":true}}` **although nothing was pasted**. The
+`<p>a &amp; b</p><p>c &amp; d</p>`. The source holds **one** `amp` substring in the baseline (inside
+`&amp;`) and **two** after the unrelated change — an exact delta of **one** — so the rule
+`post === baseline + 1` fired and the insert was reported
+`{"ok":true,"data":{"sent":true,"effectVerified":true}}` **although nothing was pasted**. The
 non-adversarial trigger is ordinary: a user typing one `&` while a payload that collides with markup or
 entity vocabulary (`amp`, `lt`, `gt`, `quot`, `style`, `span`, `p`, a bare Latin letter) is in flight.
 
-**Repair.** The export is parsed with the platform's own inert container and the text nodes are collected
-with explicit block separators (`BLOCK_TAGS`, one `"\n"` after each block-level element; inline elements
-add nothing, and a bare `<` that the platform reads as text is text). The needle is the **exact
+**Repair (as landed then; superseded by §6).** The export is parsed with the platform's own container and
+the text nodes are collected with explicit separators (a `BLOCK_TAGS` white list, one `"\n"` after each
+named block-level element; inline elements add nothing, and a bare `<` that the platform reads as text is
+text). The needle is the **exact
 dispatched payload** and nothing else; the rule stays `post === baseline + 1`; a missing needle, a
 different count, an unusable or oversized read, or a hung read still settle the **uncertain** class with
 the slot held and no retry; the pre-dispatch read is still a fail-closed **gate** (unusable ⇒ no paste,
 known class, slot released), and `LIMITS.documentHtmlBytes` still bounds the read and is still never
-truncated. The DOM is an **explicit option** of `createR7Bridge` (`document`), supplied by
-`src/ui/entry.js` from `platformDocument` at the one place that already holds the page document, so the
-authored source touches no global and the static audit stays green.
+truncated. The platform DOM was made an **explicit option** of `createR7Bridge`, supplied by
+`src/ui/entry.js` at the one place that already holds the page's own objects, so the
+authored source touches no global. §6 replaces that option's shape (a `platform` object carrying both the
+document and the `DOMParser`) and the separator rule itself.
 
 **The escaping machinery is GONE** — `HTML_ESCAPES` / `escapedPayload` and the whole `&`-first escaping
 rule are deleted. With the count over decoded text there is nothing left to escape, and a payload
@@ -306,12 +314,87 @@ have come from the read's own `+1` delta — not from the duplicate. Verified **
 guard line deleted the test fails ("the duplicate neither settles nor releases the ticket"), and with it
 restored it passes.
 
-**One pin was weakened, deliberately:** `tests/integration/package.test.js` no longer lists `innerHTML`
-among the bundle's forbidden strings, because the confirmation now parses the export with it. Assigning
-`innerHTML` on a detached element parses data and executes nothing, and this is the sanctioned DOM path
-in this task; every other forbidden string (dev/runtime markers, remote URLs, `window.parent`) stays.
+**The `innerHTML` pin was dropped here, deliberately, for exactly that container parse; §6 restores it**
+together with the other markup sinks, because the parse no longer needs any of them. Every other forbidden
+string (dev/runtime markers, remote URLs, `window.parent`) stayed.
 
 **Unverified natively:** the decoded-text rule has **not** been re-run on the live editor. What is proven
 host-side is the counting rule, the gate, the ceiling and the guard; what only a native run can show is
-the real `GetFileHTML` element vocabulary (whether every document block is named in `BLOCK_TAGS`) and
-whether the extracted text of a real export matches this model.
+the real `GetFileHTML` element vocabulary (whether the export renders a document paragraph with an element
+outside the inline set — and therefore whether the separator rule splits it) and whether the extracted
+text of a real export matches this model. §6 keeps that same open question and answers the white-list form
+of it by construction.
+
+## 6. The separator rule is inverted to an inline blacklist, rawtext is skipped, and the parse moves to `DOMParser`
+
+A fourth independent review found **three fail-opens** in the decoded-text rule of §5 and one weakened
+pin, all host-side reproducible through the real bridge.
+
+**D-A — an unlisted block element concatenated its neighbours (medium, fail-open, demonstrated).** The
+separator was inserted after elements in the hard-coded `BLOCK_TAGS` white list, so an export that
+rendered blocks with an element **outside** that list concatenated their text. The reviewer drove the real
+bridge with pre `<p>стар</p>`, post `<p>стар</p><center>01</center><center>23</center>` and
+`insertParagraph({ text: '0123' })` over a **no-op paste** and got
+`{"ok":true,"data":{"sent":true,"effectVerified":true}}` — the two `<center>` blocks concatenated into
+`0123` across the boundary.
+
+**Repair.** The principle is **inverted**: the separator is inserted after **every element boundary
+except an explicitly listed inline set** (`INLINE_TAGS` in `src/plugin/bridge.js`: `a, abbr, b, bdi, bdo,
+br, cite, code, data, dfn, em, i, kbd, mark, q, rp, rt, ruby, s, samp, small, span, strong, sub, sup,
+time, u, var, wbr`). The failure direction is now the **safe** one and is accepted and documented: an
+**unknown element — or an unlisted element that is genuinely inline — now gets an EXTRA separator**, so a
+payload spanning it will NOT match the extracted text and the insert settles **UNCERTAIN (a false
+negative, fail-safe)** instead of being reported as a verified success over a paste that never happened.
+That is the deliberate trade: a false UNCERTAIN stops the run for the user to re-check, a false VERIFIED
+publishes an insert that never happened.
+
+**D-B — rawtext was counted as document text (low-medium, fail-open, demonstrated).** `style`, `script`,
+`title`, `textarea` and `noscript` content is markup-level content, not document text, but it entered the
+count: post `<p>стар</p><style>delta</style>` with payload `delta` verified a no-op paste. There is now a
+named `RAWTEXT_TAGS` skip set and those subtrees are **skipped whole** (no text and no separator of their
+own), with a regression test per element.
+
+**D-E — the parse is `DOMParser` again, and the dropped bundle pin is restored (low).** The parse used
+`createElement('div')` + `innerHTML`, and `tests/integration/package.test.js` had dropped `innerHTML` from
+its forbidden-strings list to allow it. A detached container is not fully inert — subresource loads and
+`load`/`error` handlers remain possible, with only the page CSP in the way. The parse is now
+`new DOMParser().parseFromString(html, 'text/html')` walking `documentElement`: a parsed document has **no
+browsing context**, so no subresource is loaded and no handler can run. The `DOMParser` reference is read
+off the **same injected platform object** the DOM reference already used — the option is now
+`platform: { document, DOMParser }`, supplied by `src/ui/entry.js` and injected by tests (the fixture
+stands in for both) — and the pin is restored with the same string plus `outerHTML`,
+`insertAdjacentHTML`, `createContextualFragment` and `document.write(`, which now guard the whole
+string-into-markup sink family.
+
+**The rationale for that injection was WRONG in §5 and is corrected here:** `scripts/static-audit.mjs`
+does **not** require it. A member read such as `globalThis.document` passes the audit; only a bare
+`globalThis` **VALUE** (aliasing it, or destructuring it) is reported as `DYNAMIC_EXECUTION`. The
+injection is kept for the **explicit boundary and testability**, not because the audit forces it.
+
+**D-C — record accuracy.** The `amp` reproduction's counts in the bridge comment and in §5 were wrong
+(they read the source's `amp` substrings as including the literal text `a`). Measured: baseline **1**,
+post **2**, delta **1**, which is why the old rule fired. Both records now say so.
+
+**The weakened pin.** The `end`-needle case had lost discriminating power: `trimEnd()`ing the dispatched
+payload would have gone unnoticed. The new test pins the pair over one baseline — the payload rendered
+inside an inline element with trailing text (`<p><span>Абзац</span>хвост</p>`) makes
+`position:'cursor'` VERIFY while `position:'end'` settles UNCERTAIN, because the dispatched newline is not
+in the counted text. Measured while writing it: the reviewer's shorter export
+`<p>стар</p><span>Абзац</span>` verifies for BOTH positions, because there the span's payload is closed by
+the paragraph's own boundary newline; the discriminating shape needs the payload not to end its block.
+Both are now pinned, so the measurement is recorded rather than assumed.
+
+**Tests.** RED first, through the real bridge, on the tree of §5: the `<center>` no-op verified, the
+`<style>` no-op verified, and the `end`/span case verified. All three are green after the change, and no
+other test was weakened or deleted — the `html-document.js` fixture now exposes `INLINE_TAGS` (renamed
+from `BLOCK_TAGS`), `RAWTEXT_TAGS`, `htmlPlatform()` and its own `DOMParser` instead of the
+`createElement`/`innerHTML` container, so the fixture still names the rule's sets independently of the
+implementation and a fallback to the retired container parse cannot pass. Final tree: `node --test`
+**661/661**, the focused bridge/dispatch-API/word/integration suites green, `Authored-code audit PASS`
+(exit 0) and the bundle build exit 0.
+
+**Unverified natively:** as in §5, none of this ran on a live editor. What only a native run can show is
+the real `GetFileHTML` element vocabulary — in particular whether an export renders a document block with
+an element outside `INLINE_TAGS` (which would now split text that belongs together, a false UNCERTAIN) —
+and whether a real document's extracted text matches this model. The programmatic injection is a real
+page's own `DOMParser`; the fixture is not a browser.

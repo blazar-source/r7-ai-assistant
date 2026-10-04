@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
-import { htmlDocument } from '../fixtures/html-document.js';
+import { htmlPlatform } from '../fixtures/html-document.js';
 
 // The insert confirmation counts in the document's DECODED TEXT, so every bridge in this file is handed
 // the platform boundary the plugin page supplies (the fixture stands in for the browser's inert
 // container parse). Nothing here depends on a browser global.
-const documentBoundary = htmlDocument();
-function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, document: documentBoundary }); }
+const platformBoundary = htmlPlatform();
+function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, platform: platformBoundary }); }
 
 // --- the target build's dispatch API: `executeCommand` vs `callCommand` ---------------------------
 // Measured on the exact target (Astra Linux + R7-Office 2026.1.2.1942): the plugin object exposes

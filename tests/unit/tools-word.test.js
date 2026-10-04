@@ -6,11 +6,11 @@ import { createRegistry } from '../../src/tools/registry.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { AGENT_CEILINGS, LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
-import { htmlDocument } from '../fixtures/html-document.js';
+import { htmlPlatform } from '../fixtures/html-document.js';
 
 // The insert confirmation counts in the document's DECODED TEXT: the platform boundary the plugin page
-// supplies is injected here (the fixture stands in for the browser's inert container parse).
-function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, document: htmlDocument() }); }
+// supplies is injected here (the fixture stands in for the browser's own DOMParser).
+function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, platform: htmlPlatform() }); }
 
 function fakeBridge(overrides = {}) {
   const seen = [];

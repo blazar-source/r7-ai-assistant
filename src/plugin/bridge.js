@@ -184,44 +184,60 @@ function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
   return assertByteLimit(value, bound);
 }
-// The block-level element names the text extraction treats as BOUNDARIES: one "\n" is appended after
-// each of them, so a paragraph break is a real separator in the counted text and a payload that happens
-// to span two blocks cannot match spuriously. `br` is a line break rather than a block, and it is a
-// separator for the same reason — the line really ends there. Inline elements (`span`, `b`, `a`, …) and
-// the root itself add nothing: a block boundary is the only thing the document model guarantees.
-// Anything NOT named here is simply not a boundary, which can only affect whether the `position:'end'`
-// newline form matches, never whether markup counts.
-const BLOCK_TAGS = Object.freeze(new Set(['address', 'article', 'aside', 'blockquote', 'body', 'br', 'dd', 'div',
-  'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr',
-  'html', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'ul']));
-// The document's DECODED TEXT, built with explicit block separators. The export is parsed by the
-// platform's own inert container (`createElement('div')` + `innerHTML`), which decodes entities and
-// never executes the markup, and the text nodes are then collected in tree order with a single "\n"
-// after every block-level element. Plain `textContent` would be WRONG here: it concatenates blocks with
-// no separator, so a payload that happens to span a paragraph boundary would match spuriously, and no
-// entity spelling (`&amp;`, `&lt;`, …) can reach the count at all — markup and attribute values never
-// enter the text stream. That is the whole point: the count is over the document's TEXT, never its
-// markup, so a tag name, an attribute value or an unrelated entity cannot move it.
-function collectText(element, out = [], block = BLOCK_TAGS) {
+// The element names the text extraction treats as INLINE, i.e. the only boundaries that add NO separator.
+// The principle is a BLACKLIST on purpose, and the failure direction is the safe one: the separator is
+// inserted after EVERY element boundary except a name listed here, so an element the list does not know —
+// a new block name, a vendor-specific block, or a genuinely inline element nobody named — gets an EXTRA
+// "\n". A payload that spans such a boundary then does NOT match the extracted text and the insert settles
+// UNCERTAIN (a false negative, fail-safe) instead of being reported as a verified success over a paste
+// that never happened. The retired form of this rule was a `BLOCK_TAGS` white list, and an export that
+// rendered blocks with an element outside it concatenated its neighbours: an independent review drove a
+// no-op paste to `{"ok":true,"data":{"sent":true,"effectVerified":true}}` with two `<center>` elements.
+// `br` is a line break rather than a block, and it is inline for the same reason: the break belongs to
+// the line it sits in. A block element (`p`, `div`, `li`, `table` cells, …) is simply not listed, which
+// is also the default for anything unknown.
+const INLINE_TAGS = Object.freeze(new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em',
+  'i', 'kbd', 'mark', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var',
+  'wbr']));
+// Elements whose content is RAWTEXT: it is markup-level content of the export, never document text, so
+// their whole subtree is skipped. Without the skip a `<style>` (or `script`, `title`, `textarea`,
+// `noscript`) body was counted as document text: an independent review verified a no-op paste over the
+// post export `<p>стар</p><style>delta</style>` with payload `delta`.
+const RAWTEXT_TAGS = Object.freeze(new Set(['noscript', 'script', 'style', 'textarea', 'title']));
+// The document's DECODED TEXT, built with explicit element separators. The export is parsed by the
+// platform's own `DOMParser` — an explicit, INJECTED reference, never reached for through a global from
+// inside the bridge — and the text nodes are then collected in tree order with a single "\n" after every
+// element boundary that is NOT named inline, so the count runs over the document's text and never over
+// its markup. Plain `textContent` would be WRONG here: it concatenates blocks with no separator, so a
+// payload that happens to span a paragraph boundary would match spuriously, and no entity spelling
+// (`&amp;`, `&lt;`, …) can reach the count at all — markup and attribute values never enter the text
+// stream. The separator goes out AFTER the recursion, so an inline child never cuts its parent's text in
+// two and a block boundary is the only thing that separates, wherever the boundary sits in the tree.
+function collectText(element, out = []) {
+  const name = String(element.nodeName ?? '').toLowerCase();
+  if (RAWTEXT_TAGS.has(name)) return out;
   for (const child of Array.from(element.childNodes ?? [])) {
-    if (child.nodeType === 1) collectText(child, out, block);
+    if (child.nodeType === 1) collectText(child, out);
     else if (child.nodeType === 3) out.push(child.nodeValue ?? '');
-    if (child.nodeType === 1 && block.has(String(child.nodeName).toLowerCase())) out.push('\n');
   }
+  if (!INLINE_TAGS.has(name)) out.push('\n');
   return out;
 }
-function documentText(root, html) {
-  // The one DOM API this path needs. `createElement` is read once and checked before use, so the
-  // capability check is explicit rather than a TypeError from an unavailable platform API, and the
-  // returned string is what a caller counts in. No dynamic code generation is involved: assigning
-  // `innerHTML` to an INERT element parses data, it does not execute it.
-  let element;
+function documentText(platform, html) {
+  // The one platform capability this path needs is a `DOMParser`. It is read from the INJECTED platform
+  // object (the same explicit boundary the plugin page already supplies) and checked before use, so the
+  // capability check is explicit rather than a TypeError from an unavailable platform API. A parsed
+  // document has NO browsing context: `parseFromString` loads no subresource and runs no handler, so the
+  // export is parsed rather than rendered. No dynamic code generation is involved anywhere.
+  let parser;
   try {
-    if (typeof root?.createElement === 'function') element = root.createElement('div');
-  } catch { element = null; }
-  if (!element || element.nodeType !== 1 || typeof element.childNodes === 'undefined') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-  element.innerHTML = html;
-  return collectText(element).join('');
+    if (typeof platform?.DOMParser === 'function') parser = new platform.DOMParser();
+  } catch { parser = null; }
+  if (!parser || typeof parser.parseFromString !== 'function') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  const parsed = parser.parseFromString(html, 'text/html');
+  const root = parsed?.documentElement;
+  if (!root || typeof root.childNodes === 'undefined') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  return collectText(root).join('');
 }
 // The non-overlapping occurrence count of the counting form in the document TEXT. The caller refuses
 // an EMPTY needle before any read is dispatched (an empty needle would count characters, never a
@@ -307,12 +323,16 @@ function applyData(raw) {
 // on context/generation changes and dispose on teardown; neither retracts work.
 export function createR7Bridge(plugin, {
   editorType,
-  // The platform DOM the confirmation parses the document export with. It is an EXPLICIT option, never a
-  // lookup reached for through a global from inside the bridge: the boundary is declared where the bridge
-  // is created (the plugin page passes the platform's `document`, a test injects its own) and the authored
-  // source touches no global at all. Absent or unusable, the text cannot be built, which makes the read
-  // unusable — the fail-closed direction: no usable baseline means no evidence means no write.
-  document = null,
+  // The platform object the confirmation parses the document export with: `{ document, DOMParser }`. It
+  // is an EXPLICIT option, never a lookup reached for through a global from inside the bridge: the
+  // boundary is declared where the bridge is created (the plugin page passes the page's own `document`
+  // and `DOMParser`, a test injects its own) and the authored source touches no global at all. NOTE the
+  // rationale: this injection is NOT required by `scripts/static-audit.mjs` — a member read such as
+  // `globalThis.document` passes the audit; only a bare `globalThis` VALUE (aliasing or destructuring)
+  // is reported. It is kept for the explicit boundary and for testability. Absent or unusable, the text
+  // cannot be built, which makes the read unusable — the fail-closed direction: no usable baseline means
+  // no evidence means no write.
+  platform = null,
   clock = { now: () => Date.now() },
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
 } = {}) {
@@ -418,12 +438,13 @@ export function createR7Bridge(plugin, {
       //
       // Why the TEXT and not the markup. Counting in the export's HTML source is fail-open: markup and
       // entity vocabulary contribute occurrences that are not in the document's text. An independent
-      // review demonstrated it with payload `amp` over an export `<p>a &amp; b</p>`: the source holds
-      // TWO `amp` substrings (`a`+`amp`+`&amp;`+` b`), so one unrelated escaped ampersand added by the
-      // user moved the count by one and a paste that inserted NOTHING was reported
+      // review demonstrated it with payload `amp` over an export `<p>a &amp; b</p>`: that SOURCE holds ONE
+      // `amp` substring (inside the entity), so an unrelated escaped ampersand the user added — the post
+      // export `<p>a &amp; b</p><p>c &amp; d</p>` holds TWO — moved the count by exactly one and a paste
+      // that inserted NOTHING was reported
       // `{"ok":true,"data":{"sent":true,"effectVerified":true}}`. In the decoded text those two
-      // occurrences do not exist at all, and a payload holding `&`, `<`, `>` or `"` matches by its real
-      // characters — the escaping rule this replaced is gone.
+      // occurrences do not exist at all (it reads `a & b`, then `a & bc & d`), and a payload holding `&`,
+      // `<`, `>` or `"` matches by its real characters — the escaping rule this replaced is gone.
       //
       // Why a document delta and not a caret-scope equality. A post-dispatch observation that
       // reproduces the payload proves only that the caret scope EQUALS the payload, and "equals the
@@ -501,7 +522,7 @@ export function createR7Bridge(plugin, {
           try {
             if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
             if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
-            owned.htmlBaseline = countOccurrences(documentText(document, decodeDocumentText(value)), owned.needle);
+            owned.htmlBaseline = countOccurrences(documentText(platform, decodeDocumentText(value)), owned.needle);
           } catch (error) { failure = error instanceof SafeError ? error : new SafeError(ERROR_CODES.EDITOR_ERROR); }
           if (failure === null) { dispatchPaste(); return; }
           refuseInsert(failure);
@@ -569,7 +590,7 @@ export function createR7Bridge(plugin, {
             // EXACTLY one NEW occurrence, and nothing else: zero (or a payload that is absent) means
             // this paste added nothing, two or more means the document changed in a way this single
             // paste does not explain, and an unreadable export proves nothing either way.
-            confirmed = countOccurrences(documentText(document, decodeDocumentText(value)), owned.needle) === owned.htmlBaseline + 1;
+            confirmed = countOccurrences(documentText(platform, decodeDocumentText(value)), owned.needle) === owned.htmlBaseline + 1;
           } catch { confirmed = false; }
           if (confirmed) {
             slot = null;

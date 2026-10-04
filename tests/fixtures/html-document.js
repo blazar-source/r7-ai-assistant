@@ -1,9 +1,10 @@
 // A tiny text-extraction DOM for the bridge's document-delta confirmation, injected ONLY through the
-// bridge's `document` option. This is NOT a browser and NOT a general HTML parser: it is the platform
+// bridge's `platform` option. This is NOT a browser and NOT a general HTML parser: it is the platform
 // boundary the tests stand in for, so that the counting rule can be exercised without a browser. It
-// implements exactly what the confirmation uses — `createElement('div')`, the `innerHTML` setter, and a
-// child/text tree — and it deliberately does NOT implement `textContent` (a flat `textContent` would
-// concatenate blocks with no separator, which is the very defect the block separators close).
+// implements exactly what the confirmation uses — `new DOMParser().parseFromString(html, 'text/html')`
+// and its `documentElement` child/text tree — and it deliberately does NOT implement `textContent` (a
+// flat `textContent` would concatenate every node with no separator, which is the very defect the
+// element separators close).
 //
 // The parser is small and explicit: elements, attributes, self-closing and void tags, comments and the
 // common named entities plus numeric references. Unknown named entities are left verbatim, like the
@@ -11,20 +12,25 @@
 // stream, which is what makes "markup never counts" testable.
 const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const NAMED_ENTITIES = new Map([['amp', '&'], ['lt', '<'], ['gt', '>'], ['quot', '"'], ['apos', "'"], ['nbsp', '\u00a0']]);
-// The block set the bridge's separator rule names, written independently here so the fixture and the
-// implementation cannot drift apart silently. `br` is a line break rather than a block, and it is a
-// separator for the same reason: the line really ends there.
-export const BLOCK_TAGS = Object.freeze(new Set(['address', 'article', 'aside', 'blockquote', 'body', 'br', 'dd', 'div',
-  'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr',
-  'html', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'ul']));
+// The inline set the bridge's separator rule names, written independently here so the fixture and the
+// implementation cannot drift apart silently. The rule is a BLACKLIST: a separator goes after every
+// element boundary EXCEPT a name in this set, so an unknown element is a boundary (the fail-safe
+// direction). `br` is a line break rather than a block, and it is inline for the same reason: the break
+// belongs to the line it sits in.
+export const INLINE_TAGS = Object.freeze(new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn',
+  'em', 'i', 'kbd', 'mark', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u',
+  'var', 'wbr']));
+// The rawtext element names whose subtrees hold no document text at all, named independently of the
+// implementation for the same reason.
+export const RAWTEXT_TAGS = Object.freeze(new Set(['noscript', 'script', 'style', 'textarea', 'title']));
 
 export class HtmlElement {
   constructor(tag) { this.nodeType = 1; this.tagName = String(tag).toUpperCase(); this.attributes = {}; this.children = []; this.text = null; }
   get nodeName() { return this.tagName; }
   get childNodes() { return this.children; }
   getAttribute(name) { const key = String(name).toLowerCase(); return Object.hasOwn(this.attributes, key) ? this.attributes[key] : null; }
-  set innerHTML(html) { this.children = parseHtml(html, this); this.text = null; }
-  get innerHTML() { throw new Error('the counted path never reads innerHTML'); }
+  // No `innerHTML` accessor, setter or otherwise: the fixture is the `DOMParser` boundary and nothing
+  // else, so a bridge that tried to fall back to the retired detached-container parse fails here.
 }
 class TextNode { constructor(data) { this.nodeType = 3; this.nodeName = '#text'; this.nodeValue = data; this.data = data; } }
 
@@ -126,8 +132,22 @@ export function parseHtml(html, owner = null) {
   return root.children;
 }
 
-// `createElement('div')` + an assigned `innerHTML` yields a parsed child tree, exactly like the
-// platform's inert container parse the bridge's text extraction walks.
+// `new DOMParser().parseFromString(html, 'text/html')` yields a parsed document whose `documentElement`
+// owns the parsed child tree, exactly like the platform parse the bridge's text extraction walks. The
+// fixture implements no browsing context: like the real thing, nothing here loads a subresource or runs
+// an event handler.
+export class HtmlDOMParser {
+  parseFromString(html) { return new HtmlDocument(html); }
+}
+class HtmlDocument {
+  constructor(html) {
+    this.documentElement = new HtmlElement('html');
+    this.documentElement.children = parseHtml(html, this.documentElement);
+  }
+}
+// The injected platform boundary as the bridge takes it: the page's own `document` and the `DOMParser`
+// constructor, both explicit arguments.
+export function htmlPlatform() { return Object.freeze({ document: htmlDocument(), DOMParser: HtmlDOMParser }); }
 export function htmlDocument() {
   return { createElement(tag) { return new HtmlElement(tag); } };
 }
