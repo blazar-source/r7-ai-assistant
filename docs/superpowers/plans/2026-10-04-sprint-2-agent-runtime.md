@@ -432,7 +432,9 @@ function checkValue(rule, value, limitBytes) {
   if (rule.enum !== undefined && !rule.enum.includes(value)) throw new SafeError(ERROR_CODES.TOOL_ERROR);
   if (rule.type === 'string') {
     const bytes = utf8ByteLength(value);
-    if (bytes > (rule.maxBytes ?? limitBytes)) throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    // The per-call ceiling is hard: a property's own maxBytes may tighten it, never raise it.
+    const ceiling = rule.maxBytes === undefined ? limitBytes : Math.min(rule.maxBytes, limitBytes);
+    if (bytes > ceiling) throw new SafeError(ERROR_CODES.TOOL_ERROR);
     if (rule.minBytes !== undefined && bytes < rule.minBytes) throw new SafeError(ERROR_CODES.TOOL_ERROR);
   }
   if (rule.type === 'integer') {
