@@ -42,9 +42,62 @@
 4. **Медиа:** `PutImageDataToSelection` / вставка изображения.
 5. **Комментарии:** `AddComment` (неприоритетно).
 
-Выход фазы 0: матрица + список семейств, где primitive отсутствует, с точным FAIL и предложенной альтернативой (по правилу владельца). Только после этого фиксируется окончательный состав инструментов.
+Выход фазы 0: матрица + список семейств, где primitive отсутствует, с точным FAIL и предложенной альтернативой (по правилу владельца). Только после этого фиксируется окончательный состав инструментов. **Фаза 0 ВЫПОЛНЕНА — результаты в §9, окончательный состав в §10.**
+
+## 9. Фаза 0 — результаты измерений (выполнено)
+
+Измерено на обеих средах: Windows R7 2026.3.1 (быстрый стенд) и **целевая Astra/R7 2026.1.2.1942 (приоритет)**. Пробники — авторские статические тела `callCommand` в `.local/native-smoke/` (`expr-phase0-api*.js`), документ — одноразовый.
+
+| # | Primitive / семейство | Windows 2026.3.1 | Целевая Astra 2026.1.2.1942 | Public API path | Форма результата | Надёжность результата | Инструмент / причина отказа |
+|---|---|---|---|---|---|---|---|
+| 1 | Bounded чтение документа | ✅ | ✅ | `Api.GetDocument().ToMarkdown()` / `.ToHtml()` | строка | ✅ однозначно (длина/содержимое) | `read_document_text` (chunked по байтам) |
+| 2 | Чтение структуры | ✅ | ✅ | `doc.GetAllParagraphs()`, `GetAllHeadingParagraphs()`, `GetAllTables()`, `GetSections()`, `GetAllStyles()`, `GetStatistics()`, `GetPageCount()` | массивы/объект/числа | ✅ однозначно (`{PageCount, WordsCount, ParagraphCount, …}`) | `read_structure` |
+| 3 | Контекст каретки | ✅ | ✅ | `executeMethod('GetSelectedText'/'GetCurrentWord'/'GetCurrentSentence')`, `doc.GetRangeBySelect()` | строка/объект | ✅ | `read_paragraph` |
+| 4 | Поиск | ✅ (`array:1`) | ✅ (`array:1`) | `doc.Search(text, matchCase)` | массив диапазонов | ✅ однозначно (длина массива) | `find_text` / `search_text` |
+| 5 | Создание абзаца/run + вставка | ✅ (4→5) | ✅ (4→5) | `Api.CreateParagraph()`, `p.AddText()`, `doc.InsertContent([p])` | объекты; `InsertContent` → **`true` всегда**, даже для `[]`/`[null]`/`'nonsense'` | ⚠️ boolean **не сигнал** → нужен readback (`GetAllParagraphs().length`) | `insert_blocks` |
+| 6 | Вставка нескольких блоков | ✅ | ✅ | тот же `InsertContent([...])` массивом | — | ⚠️ readback | `insert_blocks` |
+| 7 | Таблица: создание + заполнение | ✅ (0→1, текст в ячейке) | ✅ (0→1) | `Api.CreateTable(rows, cols)`, `table.GetCell(r,c).GetContent().GetElement(0).AddText(...)`, `InsertContent` | объекты | ✅ readback (`GetAllTables()`, markdown `<table>`) | `insert_table` |
+| 8 | Форматирование | ✅ | ✅ | `run.SetBold/SetItalic/SetFontSize/SetColor/SetFontFamily/SetUnderline/SetStrikeout/SetHighlight`, `p.SetJc`, `Api.CreateTextPr` | сеттеры → `undefined` | ⚠️ readback (markdown показывает `***`/атрибуты) | `format_range`, `set_heading` |
+| 9 | Гиперссылка | ✅ объект | ✅ вставлена: `p.AddElement(link)` → `true`, markdown содержит текст **и** URL | `Api.CreateHyperlink(url, text)` + `AddElement` + `InsertContent` | объект/boolean | ✅ readback (markdown) | `add_hyperlink` |
+| 10 | Картинка | ✅ объект создан | ✅ **вставлена**: `p.AddDrawing(image)` → объект, `GetAllImages()` 0→**1**, `GetAllDrawingObjects()` 1, markdown `![` | `Api.CreateImage(dataUri, w, h)` + `p.AddDrawing` + `InsertContent` | объект | ✅ readback (`GetAllImages()`/drawings/markdown) | `insert_image` |
+| 11 | Список / нумерация | ⚠️ создана, применения нет | ⚠️ `doc.CreateNumbering('bullet')` и `Api.CreateNumbering` создаются, но `SetNumbering(num)`/`(num,0)` до и после вставки, `Push` — **`GetAllNumberedParagraphs()` = 0**, в markdown у пункта нет маркера | `doc.CreateNumbering`, `p.SetNumbering`, `doc.Push` | `undefined` | ❌ эффект не подтверждён | `create_list` — **условно**: нужен targeted поиск рабочей формы; иначе честный отказ |
+| 12 | Поиск/замена (Api) | ✅ эффект есть, возврат `undefined` | ✅ эффект есть (markdown показывает замену), возврат `undefined` | `doc.SearchAndReplace({searchString, replaceString, matchCase})` | `undefined` | ⚠️ **readback обязателен** | `replace_text` (policy `confirm`) |
+| 13 | Поиск/замена (`executeMethod`) | ❌ | ❌ | `executeMethod('SearchAndReplace', …)` | колбэк **не пришёл за 12 с** | ❌ | не использовать; точный FAIL зафиксирован |
+| 14 | `doc.Push` | — | ⚠️ `false` для абзаца, `true` для элемента списка | `doc.Push(element)` | boolean | ❌ непоследователен | не использовать как сигнал |
+| 15 | Комментарии | — | присутствуют (`doc.AddComment`, `GetAllComments`) | — | — | — | `insert_comment` — пробник отложен по решению владельца |
+
+**Открытые пункты, которые фаза 0 не закрыла:**
+- **Список (№11)**: единственное семейство без подтверждённого эффекта. Требуется targeted поиск (официальная документация builder-API / issues / плагины) одной рабочей формы; если формы нет — `create_list` не реализуется, и это фиксируется честно.
+- **Аномалия Windows (№5/№11)**: на Windows пробники P0-C/P0-D вернули колбэк с `undefined`, тогда как на целевой те же тела вернули данные. Нужна одна точечная проверка при реализации затронутых инструментов (возможен падающий read на этой сборке). Целевая среда — источник истины.
+- `GetRowCount`/`GetColumnCount` у таблицы — `undefined` (размерность таблицы читается иначе; для подтверждения достаточно `GetAllTables()` + markdown).
+
+## 10. Окончательный состав Word Tool Registry (по результатам фазы 0)
+
+**Сохраняются без изменений:** `read_selection`, `insert_paragraph`, `replace_selection`.
+
+| Порядок | Инструмент | Kind / policy | Основание (измерено) | Контракт результата |
+|---|---|---|---|---|
+| 1 | `read_document_text` | read / `auto` | §9 №1 | bounded/chunked; возвращает текст и признаки усечения |
+| 2 | `read_paragraph` | read / `auto` | §9 №3 | текст каретки/сентенции |
+| 3 | `find_text` | read / `auto` | §9 №4 | массив вхождений с ограничением |
+| 4 | `read_structure` | read / `auto` | §9 №2 | заголовки/таблицы/секции/статистика; **заменяет отозванный `read_context`** |
+| 5 | `insert_blocks` | mutate / `auto` | §9 №5,6 | создание массива блоков; подтверждение — readback (счётчики + markdown) |
+| 6 | `insert_table` | mutate / `auto` | §9 №7 | `CreateTable` + заполнение; подтверждение — `GetAllTables()` + markdown |
+| 7 | `set_heading` | mutate / `auto` | §9 №8 (`GetStyle`/`GetAllStyles` доступны) | подтверждение — readback стилей/структуры |
+| 8 | `format_range` | mutate / `auto` | §9 №8 | bold/italic/font/size/color/alignment; подтверждение — readback |
+| 9 | `add_hyperlink` | mutate / `auto` | §9 №9 | подтверждение — readback (markdown содержит текст и URL) |
+| 10 | `replace_text` | mutate / `confirm` | §9 №12 | `doc.SearchAndReplace` + **обязательный** bounded readback |
+| 11 | `insert_image` | mutate / `auto` | §9 №10 | `AddDrawing`; подтверждение — `GetAllImages()` |
+| — | `create_list` | mutate / `auto` | §9 №11 — **эффект не подтверждён** | реализуется только после найденной рабочей формы; иначе отказ с точным FAIL |
+| — | `insert_comment` | mutate / `auto` | пробник отложен | после основных инструментов, если нужен пилоту |
+
+**Правило контракта результата (уточнено владельцем):** per-tool, а не универсально. Если публичный API даёт однозначный измеренно надёжный результат — используем его; если возврат ничего достоверного не сообщает (как `InsertContent` → всегда `true`, `SearchAndReplace` → `undefined`, `PasteText` → пустой колбэк) — bounded readback/delta; если надёжно подтвердить нельзя — `TOOL_UNCERTAIN`; automatic retry отсутствует всегда.
+
+**Критерий выхода Sprint 3 не меняется:** пилотный запрос «структурированный документ ~10 страниц: главы, несколько таблиц, списки, выводы, оформление» выполняется через Registry **без изменения Agent Runtime** (на целевой среде).
 
 ## 5. Предлагаемый порядок реализации
+
+> Этот раздел — первоначальное предложение. **Фактический состав и порядок — в §10**, скорректированные по измерениям фазы 0 (§9): гиперссылка и картинка подтверждены, `create_list` условен, `replace_text` требует readback, `read_context` заменяется измеренным `read_structure`.
 
 ### Фаза 1 — Чтение и навигация (все `read`, policy `auto`)
 1. `read_document_text` — bounded/chunked чтение текста документа (`GetFileHTML` + разбор; параметры: `offset`/`maxBytes`/`scope`), **не** отправляет весь документ модели автоматически.
