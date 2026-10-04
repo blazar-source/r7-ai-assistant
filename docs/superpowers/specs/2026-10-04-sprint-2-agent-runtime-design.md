@@ -9,6 +9,11 @@ replacement), §3 (no demo-shaped engine), §12 (hard safety ceilings separated 
 guardrails), §14 (minimal toolset, pilot-sized engine), §15 (Word/Excel/PowerPoint calibration
 workloads + minimal native R7 smoke), §16 (resolved decisions).
 
+Revision 3: §12.1 ceilings are explicitly **per payload / per result / per request / per active
+context window**, never a lifetime task total; the previous 128 KiB cumulative cap is removed and
+replaced by §12.3 — simple bounded context management (evict oldest tool results first, one marker,
+data re-readable through tools; no memory subsystem), with matching host tests in §15.1.
+
 ## 1. Purpose
 
 R7 AI Assistant is a universal AI agent inside R7. The employee writes an ordinary task in the chat
@@ -269,22 +274,48 @@ Two different things, deliberately separated.
 
 ### 12.1 Hard safety ceilings (enforced before allocation; not lowered to fit a demo)
 
-| Ceiling | Value |
-| --- | --- |
-| model response content | 65536 B |
-| JSON envelope / parsed action batch | 65536 B |
-| arguments per action | 8192 B |
-| one tool result returned to the model | 16 KiB |
-| total tool results + context in one task | 128 KiB |
-| context read | 8 KiB selection, 16 KiB paragraph/section |
-| `maxActionsPerStep` (batch size) | 8 |
-| `protocolRepair` | 1 |
-| HTTP response envelope | 131072 B (transport, §11) |
-| request body | 98304 B (unchanged strict-bank) |
+| Ceiling | Value | Scope |
+| --- | --- | --- |
+| model response content | 65536 B | one response |
+| JSON envelope / parsed action batch | 65536 B | one response |
+| arguments per action | 8192 B | one action |
+| one tool result returned to the model | 16 KiB | one result |
+| context read | 8 KiB selection, 16 KiB paragraph/section | one read |
+| active model context window (system + catalogue + retained history + tool results) | 64 KiB content | one request |
+| `maxActionsPerStep` (batch size) | 8 | one batch |
+| `protocolRepair` | 1 | per task |
+| HTTP response envelope | 131072 B (transport, §11) | one response |
+| request body | 98304 B (unchanged strict-bank) | one request |
 
 These exist to stop runaway behaviour, unbounded memory/network use and malformed input — not to cap
-legitimate work. They are safety limits, and "make the acceptance scenario fit" is never a reason to
-lower them.
+legitimate work. **Every ceiling here is per payload, per result, per request or per active context
+window — none of them is a lifetime limit for a user task.** A long compound task may legitimately read
+and process far more than any single number above, across many steps; what stays bounded is each
+payload and the size of the conversation actually sent to the model at that moment (§12.3). "Make the
+acceptance scenario fit" is never a reason to lower a ceiling.
+
+### 12.3 Active context window (simple bounded context management)
+
+The conversation grows with every step; only the window sent to the model is bounded:
+
+1. Before each request the runtime enforces `activeContextBytes` (64 KiB of content, plus the
+   unchanged request-body ceiling). If adding the newest tool results would exceed it, the runtime
+   evicts **oldest first**: completed tool-result messages, then the oldest complete
+   assistant/tool-result pairs, never the system rules + tool catalogue, never the current user
+   request.
+2. Eviction is removal, not summarization: the runtime inserts one short literal marker ("earlier tool
+   results were dropped from context; re-read what you still need") so the model knows it can re-read
+   through the read tools. No extra model call, no memory subsystem, no retrieval framework.
+3. Data that leaves the window is re-obtainable on demand from the document through read tools — the
+   document is the store of record, not the conversation.
+4. The same rule applies to chat history between requests (the existing `sentHistoryMessages` /
+   `sentHistoryBytes` behaviour extended to tool results).
+
+This is deliberately the whole mechanism: evict oldest, mark, allow re-read. Anything beyond that
+(rolling summaries, embeddings, a memory layer) is out of scope for Sprint 2 and for this design.
+
+All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `applyObservationMs`
+(15000 ms) stay and apply to `confirm` tools only.
 
 ### 12.2 Runtime task guardrails (configurable; calibrated on the pilot workloads)
 
@@ -359,7 +390,11 @@ and the loop continues; precondition failure is a known error; uncertain stops t
 further dispatch; hard ceilings enforced on every path (response, batch, arguments, one result, totals);
 configured `maxSteps`/`maxToolCalls`/deadline guardrails enforced and independently raisable in tests;
 repair once then fail; malformed JSON and prose rejected; Stop cancels network and prevents future
-actions; late callback releases only; no-eval/static-dispatch audit extended to the new modules.
+actions; late callback releases only; no-eval/static-dispatch audit extended to the new modules;
+active-context-window enforcement (oldest tool results evicted first, system rules/catalogue and the
+current user request never evicted, marker inserted once, a task whose cumulative bytes far exceed the
+window still completes because eviction — not a lifetime cap — bounds it, and evicted data stays
+re-readable).
 
 ### 15.2 Pilot workload calibration (dev transport, real Qwen; measures the guardrails)
 
@@ -419,6 +454,9 @@ Resolved by the user:
    measurements. §12.1 ceilings are not calibrated down.
 4. The §2 doc alignment is applied as the **first** Sprint 2 commit after this spec is approved, and
    before any runtime implementation.
+5. Byte ceilings are per payload / per result / per request / per active context window — never a
+   lifetime task total. Long tasks are bounded by §12.3 eviction (oldest tool results first, marker,
+   re-readable), not by a cumulative cap.
 
 Remaining calibration (measurement work, not design blockers): final `maxSteps`/`maxToolCalls`/deadline
 per editor and workload class; whether `maxActionsPerStep` above 8 helps on long tasks; context-read
