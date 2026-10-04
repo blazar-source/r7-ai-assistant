@@ -87,25 +87,36 @@ test('late callback checks clock even before timer delivery', async () => {
 
 test('an in-flight insert is a pending mutation the UI write lock can see', async () => {
   const r = rig();
-  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
-  // The identity leg settles synchronously in this rig, so the insert dispatch is reached at the next
-  // event-loop checkpoint: a fact about the bridge, not a guessed tick count.
-  await new Promise(resolve => setImmediate(resolve));
-  const insert = r.calls.find(call => call.name === 'PasteText');
-  assert.ok(insert, 'the insert was dispatched');
+  // The identity leg settles synchronously in this rig, so the ticket reaches its baseline phase at
+  // the next event-loop checkpoint: a fact about the bridge, not a guessed tick count. The baselines
+  // are answered by the helper, which also pins that the mutation waits for them.
+  const first = await dispatchInsert(r, { text: 'Абзац' });
   assert.equal(r.bridge.getState().writePending, true, 'a dispatched insert is a pending mutation');
   // The panel lock reads exactly this state (controller.writeLocked()), so a second mutation must be
   // refused for as long as it holds.
   assert.deepEqual(await r.bridge.insertParagraph({ text: 'Второй' }), { ok: false, code: 'EDITOR_BUSY' });
-  insert.callback(true);
-  assert.deepEqual(await pending, { ok: true, data: { sent: true } });
+  first.insert.callback(true);
+  assert.deepEqual(await first.pending, { ok: true, data: { sent: true } });
   assert.equal(r.bridge.getState().writePending, false, 'the lock is released when the insert settles');
-  const next = r.bridge.insertParagraph({ text: 'Третий' });
-  await new Promise(resolve => setImmediate(resolve));
-  const nextInsert = r.calls.find(call => call.name === 'PasteText' && call !== insert);
-  assert.ok(nextInsert, 'the released slot accepts the next mutation');
-  nextInsert.callback(true);
-  assert.deepEqual(await next, { ok: true, data: { sent: true } });
+  const next = await dispatchInsert(r, { text: 'Третий' });
+  next.insert.callback(true);
+  assert.deepEqual(await next.pending, { ok: true, data: { sent: true } }, 'the released slot accepts the next mutation');
+
+  // Before the paste, the ticket is already owned (a second mutation is refused) but no mutation has
+  // been dispatched, so `writePending` — the "a mutation may have reached the editor" flag the write
+  // lock reads — is still false while the baseline reads run.
+  const preRig = rig();
+  const pre = preRig.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.equal(preRig.bridge.getState().busy, true, 'the baseline phase owns the slot');
+  assert.equal(preRig.bridge.getState().writePending, false, 'a baseline read is not a dispatched mutation');
+  assert.deepEqual(await preRig.bridge.insertParagraph({ text: 'Второй' }), { ok: false, code: 'EDITOR_BUSY' });
+  baselineReads(preRig)[0].callback('');
+  baselineReads(preRig)[1].callback('');
+  assert.equal(inserts(preRig).length, 1);
+  assert.equal(preRig.bridge.getState().writePending, true, 'the dispatched paste is the pending mutation');
+  inserts(preRig)[0].callback(true);
+  assert.deepEqual(await pre, { ok: true, data: { sent: true } });
 
   // A read is not a mutation: it never sets the write lock even while it owns the slot.
   const readRig = rig();
@@ -118,15 +129,13 @@ test('an in-flight insert is a pending mutation the UI write lock can see', asyn
   // A dispatched insert whose acknowledgement never arrives stays pending until its own callback:
   // the timeout is uncertain-until-callback, never a release of the lock.
   const heldRig = rig();
-  const held = heldRig.bridge.insertParagraph({ text: 'Абзац' });
-  await new Promise(resolve => setImmediate(resolve));
-  const heldInsert = heldRig.calls.find(call => call.name === 'PasteText');
+  const held = (await dispatchInsert(heldRig, { text: 'Абзац' })).pending;
   assert.equal(heldRig.bridge.getState().writePending, true);
   heldRig.advance(5000);
   assert.deepEqual(await held, { ok: false, code: 'APPLY_UNCERTAIN' });
   assert.equal(heldRig.bridge.getState().writePending, true, 'uncertain-until-callback stays pending');
   assert.equal(heldRig.bridge.getState().uncertain, true);
-  heldInsert.callback(true);
+  inserts(heldRig)[0].callback(true);
   assert.equal(heldRig.bridge.getState().writePending, false, 'the late callback releases the lock');
 });
 
@@ -353,7 +362,8 @@ test('Apply rejects caller-forged serializable target certificates without any S
 // evidence of failure, so it is never an automatic success and never an ordinary known error. The
 // ticket stays OWNED (still a pending mutation, still write-locked) and an ordered CONFIRMATION
 // LADDER of independent public reads decides; the effect counts as verified only when one leg
-// reproduces the dispatched payload through that leg's own exact rule.
+// reproduces the dispatched payload through that leg's own exact rule AND that observation differs
+// from the same observation read BEFORE the paste.
 //
 // The ladder exists because the first read primitive cannot confirm on the measured build:
 // `GetSelectedText` answers `""` immediately and after +400 ms — the paste does NOT leave the
@@ -364,20 +374,54 @@ test('Apply rejects caller-forged serializable target certificates without any S
 // whole-document `GetFileHTML` is deliberately ABSENT: `includes(payload)` in a whole-document export
 // is satisfied by a payload that was already in the document, so it would claim a verified effect
 // that never happened — a false success is worse than the false failure this fix removes.
+//
+// EVERY leg also reads its own observation BEFORE the mutation. A post-dispatch read that reproduces
+// the payload proves only that the caret scope EQUALS the payload; a `PasteText` that calls back
+// `undefined` and does nothing over a scope that already held the payload would satisfy it without an
+// insert happening. So the ticket first dispatches one baseline read per leg (gated: the paste is
+// dispatched only after they answered or failed), and a leg confirms only when its post-dispatch
+// observation reproduces the payload AND differs from that baseline.
 const VERIFIED = { ok: true, data: { sent: true, effectVerified: true } };
 const tick = () => new Promise(resolve => setImmediate(resolve));
-async function dispatchInsert(r, request = { text: 'Абзац' }) {
+const isLeg = call => call.name === 'GetSelectedText' || call.name === 'GetCurrentSentence';
+const inserts = r => r.calls.filter(call => call.name === 'PasteText');
+const lastPasteAt = r => { const last = inserts(r).at(-1); return last ? r.calls.indexOf(last) : -1; };
+// The leg reads immediately PRECEDING the last mutation are its baselines (the baseline phase is
+// contiguous and ends by dispatching the paste); the leg reads after the mutation are the ladder's.
+// Before the mutation exists at all, only the baselines are present.
+const baselineReads = r => {
+  const at = lastPasteAt(r);
+  const before = at < 0 ? r.calls : r.calls.slice(0, at);
+  let from = before.length;
+  while (from > 0 && isLeg(before[from - 1])) from -= 1;
+  return before.slice(from);
+};
+const postReads = r => { const at = lastPasteAt(r); return at < 0 ? [] : r.calls.slice(at + 1).filter(isLeg); };
+const reads = r => postReads(r).filter(call => call.name === 'GetSelectedText');
+const sentences = r => postReads(r).filter(call => call.name === 'GetCurrentSentence');
+const confirmationOrder = r => postReads(r).map(call => call.name);
+// Reach the dispatched mutation: the ticket is owned from the start, but each leg's baseline read must
+// be answered before the paste exists at all. The ordering assertions here are part of the contract,
+// so a build that dispatches the mutation before its baselines fails here rather than being hidden.
+// Everything this insert dispatches is read from `from`, so a rig that already ran an earlier insert
+// on the same bridge still reports THIS one's baselines and mutation.
+async function dispatchInsert(r, request = { text: 'Абзац' }, baseline = { selection: '', sentence: '' }) {
+  const from = r.calls.length;
   const pending = r.bridge.insertParagraph(request);
   await tick();
-  const insert = r.calls.find(call => call.name === 'PasteText');
-  assert.ok(insert, 'the insert was dispatched');
-  return { pending, insert };
+  const legs = () => r.calls.slice(from).filter(isLeg);
+  const pastes = () => r.calls.slice(from).filter(call => call.name === 'PasteText');
+  assert.deepEqual(legs().map(call => call.name), ['GetSelectedText'],
+    'the selection baseline is dispatched before the mutation');
+  assert.equal(pastes().length, 0, 'no mutation is dispatched before its baselines answer');
+  legs()[0].callback(baseline.selection);
+  assert.deepEqual(legs().map(call => call.name), ['GetSelectedText', 'GetCurrentSentence'],
+    'the sentence baseline follows, still before the mutation');
+  assert.equal(pastes().length, 0, 'the mutation waits for every baseline');
+  legs()[1].callback(baseline.sentence);
+  assert.equal(pastes().length, 1, 'the insert is dispatched exactly once, after its baselines');
+  return { pending, insert: pastes()[0] };
 }
-const reads = r => r.calls.filter(call => call.name === 'GetSelectedText');
-const inserts = r => r.calls.filter(call => call.name === 'PasteText');
-const sentences = r => r.calls.filter(call => call.name === 'GetCurrentSentence');
-const confirmationOrder = r => r.calls
-  .filter(call => call.name === 'GetSelectedText' || call.name === 'GetCurrentSentence').map(call => call.name);
 // Drive ladder legs 1 and 2 for the cases where leg 1 is refused: deliver the void acknowledgement,
 // answer the selection leg, then answer the sentence leg the refusal must hand the ticket to. Every
 // assertion inside the helper is part of the ladder contract, so a single-leg implementation fails
@@ -417,6 +461,8 @@ test('a boolean acknowledgement keeps the existing unverified envelope and reads
   for (const value of [true, false]) {
     const r = rig();
     const { pending, insert } = await dispatchInsert(r);
+    assert.deepEqual(baselineReads(r).map(call => call.name), ['GetSelectedText', 'GetCurrentSentence'],
+      'the baselines are dispatched before the mutation because its acknowledgement is unknown until then');
     insert.callback(value);
     assert.deepEqual(await pending, { ok: true, data: { sent: value } });
     assert.deepEqual(reads(r), [], 'a boolean acknowledgement needs no confirmation read');
@@ -470,7 +516,8 @@ test('a ladder leg that never answers, errs or cannot be dispatched keeps the mu
   assert.deepEqual(await malformedInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
   assert.equal(malformed.bridge.getState().writePending, true, 'an unusable confirmation read is not a release');
 
-  // (c) no leg can even be dispatched: the SDK throws synchronously for every confirmation name.
+  // (c) no leg can even be dispatched: the SDK throws synchronously for every confirmation name, so
+  // no baseline is usable and neither leg can confirm — the paste is still dispatched exactly once.
   const calls = [];
   const thrown = rig('word', { executeMethod(name, params, callback) {
     calls.push({ name, params, callback });
@@ -484,9 +531,11 @@ test('a ladder leg that never answers, errs or cannot be dispatched keeps the mu
   assert.equal(thrownResult.ok, false);
   assert.equal(thrownResult.code, 'APPLY_UNCERTAIN');
   assert.equal(JSON.stringify(thrownResult).includes('private native detail'), false);
-  assert.equal(calls.filter(call => call.name === 'GetSelectedText').length, 1, 'the first leg is attempted exactly once');
+  assert.equal(calls.filter(call => call.name === 'GetSelectedText').length, 1,
+    'the selection baseline is attempted exactly once');
   assert.equal(calls.filter(call => call.name === 'GetCurrentSentence').length, 1,
-    'a leg that cannot be dispatched is not the end of the ladder: the next leg is attempted exactly once');
+    'the sentence baseline is attempted exactly once');
+  assert.equal(calls.filter(call => call.name === 'PasteText').length, 1, 'the mutation is never retried');
   assert.equal(thrown.bridge.getState().writePending, true, 'a confirmation read that never ran is not a release');
 });
 
@@ -705,4 +754,172 @@ test('an observation delivered past the ticket deadline is not confirmed and the
   assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' });
   assert.equal(inserts(r).length, 1, 'the mutation is never retried');
   assert.equal(r.bridge.getState().writePending, true, 'an expired ladder leaves the mutation pending');
+});
+
+// --- the PRE-DISPATCH BASELINE: "the scope shows the payload" is not "the scope changed to it" -----
+// An independent review reproduced a fail-open leg in a unit rig: a fake `PasteText` that calls back
+// `undefined` and mutates NOTHING, over a caret scope that ALREADY held the payload, satisfied the
+// post-dispatch exact-equality rule and settled `{sent:true, effectVerified:true}` for an insert that
+// never happened. That is the mirror image of the false failure this repair exists to remove, so the
+// rule is tightened: a leg confirms only when its post-dispatch observation reproduces the payload
+// through that leg's own rule AND differs from the SAME observation read BEFORE the paste.
+//
+// The reproduction comes first. This fixture is a real (tiny) document model, and `PasteText` is
+// either the reviewer's no-op or genuinely applies the payload, so nothing here asserts a fixture's
+// own timing: every callback is delivered synchronously and the dispatch ORDER is a fact of the rig.
+function documentRig({ selection = '', sentence = '', applies = false } = {}) {
+  const state = { selection, sentence };
+  const calls = [];
+  const plugin = {
+    info: { editorType: 'word' },
+    executeMethod(name, params, callback) {
+      calls.push({ name, params, callback });
+      if (name === 'GetSelectedText') callback(state.selection);
+      else if (name === 'GetCurrentSentence') callback(state.sentence);
+      else if (name === 'PasteText') {
+        // A no-op paste leaves BOTH observations exactly as they were; an applying paste moves the
+        // caret scope to the dispatched payload (the measured live shape: nothing stays selected).
+        if (applies) {
+          state.selection = '';
+          state.sentence = params[0].endsWith('\n') ? params[0].slice(0, -1) : params[0];
+        }
+        callback(undefined); // the measured live acknowledgement value
+      } else throw new Error(`unexpected native method ${name}`);
+      return false;
+    },
+    callCommand(body, _close, _recalculate, callback) {
+      const result = runContext(body);
+      if (result.identity) callback(result.value);
+      else calls.push({ name: 'presence', callback });
+      return false;
+    }
+  };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const order = () => calls.filter(call => ['GetSelectedText', 'GetCurrentSentence', 'PasteText'].includes(call.name)).map(call => call.name);
+  return { bridge, calls, state, order };
+}
+
+test('the reviewer reproduction: a no-op PasteText over a caret sentence that already equals the payload is never verified', async () => {
+  const r = documentRig({ selection: '', sentence: 'Абзац', applies: false });
+  const result = await r.bridge.insertParagraph({ text: 'Абзац' });
+  assert.equal(result.ok, false, 'an insert that never applied is never reported as a success');
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(r.bridge.getState().writePending, true, 'the unknown outcome keeps the slot and the write lock');
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1, 'the mutation is dispatched exactly once');
+  assert.deepEqual(r.state, { selection: '', sentence: 'Абзац' }, 'the fake paste really changed nothing');
+});
+
+test('a genuinely applied insert is verified when its baseline differed from the payload', async () => {
+  // 'стар'/'друг' are inside the payload's own 10-byte budget and differ from it: a baseline that is
+  // itself LONGER than the payload would be refused by that leg's bound (pinned below), which is the
+  // budget rule the confirmation legs already use, applied to the baseline as well.
+  const r = documentRig({ selection: 'стар', sentence: 'друг', applies: true });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'Абзац' }), VERIFIED,
+    'the sentence leg saw the payload arrive where a different sentence had been');
+});
+
+test('a genuinely applied insert whose baseline already equalled the payload settles uncertain, never success', async () => {
+  // The accepted conservative cost: an observation that did not CHANGE cannot be told apart from a
+  // paste that did nothing, so the ticket settles the uncertain class even though this paste applied.
+  const r = documentRig({ selection: '', sentence: 'Абзац', applies: true });
+  const result = await r.bridge.insertParagraph({ text: 'Абзац' });
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, 'never a false success');
+  assert.equal(r.bridge.getState().writePending, true, 'the conservative class keeps the write lock');
+});
+
+test('every leg baseline is dispatched before the irreversible paste, whose payload is unchanged', async () => {
+  const r = documentRig({ selection: '', sentence: 'друг', applies: true });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'Абзац' }), VERIFIED);
+  const order = r.order();
+  const at = order.indexOf('PasteText');
+  assert.equal(at, 2, `both leg baselines precede the mutation (order: ${order.join(',')})`);
+  assert.deepEqual(order.slice(0, at), ['GetSelectedText', 'GetCurrentSentence'], 'one baseline per leg, in ladder order');
+  assert.deepEqual(order.slice(at + 1), ['GetSelectedText', 'GetCurrentSentence'], 'the ladder then asks one post-dispatch read per leg');
+  assert.deepEqual(r.calls.find(call => call.name === 'PasteText').params, ['Абзац'],
+    'the baseline changes neither the payload nor the number of paste dispatches');
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1);
+});
+
+// A manual-callback rig whose per-method answers are programmable: the FIRST call of a method name is
+// its pre-dispatch BASELINE and can be answered (or made to throw) by the fixture, while later calls
+// are the ladder's post-dispatch reads and stay held for the test to drive.
+function baselineScaffold(baselines = {}) {
+  const calls = [];
+  const seen = new Map();
+  const plugin = {
+    info: { editorType: 'word' },
+    executeMethod(name, params, callback) {
+      calls.push({ name, params, callback });
+      const nth = (seen.get(name) ?? 0) + 1;
+      seen.set(name, nth);
+      const answer = baselines[name];
+      if (nth === 1 && typeof answer === 'function') answer(callback);
+      return false;
+    },
+    callCommand(body, _close, _recalculate, callback) {
+      const result = runContext(body);
+      if (result.identity) callback(result.value);
+      else calls.push({ name: 'presence', callback });
+      return false;
+    }
+  };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  return { bridge, calls,
+    named: name => calls.filter(call => call.name === name),
+    paste: () => calls.find(call => call.name === 'PasteText') };
+}
+
+test('a leg whose baseline read threw, was malformed or was oversized can never confirm and is not asked again', async () => {
+  for (const [label, selectionBaseline] of [
+    ['threw', () => { throw new Error('private native detail'); }],
+    ['malformed', callback => callback(null)],
+    ['oversized', callback => callback('Абзацx')] // 11 bytes against the payload's own 10-byte budget
+  ]) {
+    const r = baselineScaffold({ GetSelectedText: selectionBaseline, GetCurrentSentence: callback => callback('друг') });
+    const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+    await tick();
+    assert.equal(r.named('GetSelectedText').length, 1, `${label}: the selection baseline is attempted once`);
+    assert.equal(r.named('GetCurrentSentence').length, 1, `${label}: the sentence baseline still follows`);
+    assert.ok(r.paste(), `${label}: an unusable baseline never blocks the mutation`);
+    r.paste().callback(undefined);
+    assert.equal(r.named('GetSelectedText').length, 1,
+      `${label}: a leg with no usable baseline cannot confirm and is not even asked for a post read`);
+    assert.equal(r.named('GetCurrentSentence').length, 2, `${label}: the capable sentence leg is asked for its post-dispatch observation`);
+    r.named('GetCurrentSentence')[1].callback('Абзац');
+    const result = await pending;
+    assert.deepEqual(result, VERIFIED, `${label}: the capable leg still proves the effect`);
+    assert.equal(JSON.stringify(result).includes('private native detail'), false, `${label}: no native detail escapes`);
+  }
+});
+
+test('an oversized baseline leaves its own leg incapable while the other leg still decides', async () => {
+  // The sentence leg's baseline is longer than the payload's own budget, so that leg can never confirm
+  // (and is not asked again); the selection leg's baseline is inside the budget, and its post-dispatch
+  // read — equal to the payload, different from the baseline — decides.
+  const r = baselineScaffold({ GetSelectedText: callback => callback(''), GetCurrentSentence: callback => callback('Абзацx') });
+  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.equal(r.named('GetSelectedText').length, 1);
+  assert.equal(r.named('GetCurrentSentence').length, 1, 'the oversized baseline is dispatched and refused');
+  r.paste().callback(undefined);
+  assert.equal(r.named('GetCurrentSentence').length, 1, 'the oversized-baseline leg is never asked for a post read');
+  assert.equal(r.named('GetSelectedText').length, 2, 'the capable selection leg is asked');
+  r.named('GetSelectedText')[1].callback('Абзац');
+  assert.deepEqual(await pending, VERIFIED);
+});
+
+test('a ladder whose every baseline is unusable asks nothing and settles the uncertain class', async () => {
+  const fail = () => { throw new Error('private native detail'); };
+  const r = baselineScaffold({ GetSelectedText: fail, GetCurrentSentence: fail });
+  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.ok(r.paste(), 'the mutation is still dispatched');
+  r.paste().callback(undefined);
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
+  assert.equal(JSON.stringify(result).includes('private native detail'), false);
+  assert.equal(r.named('GetSelectedText').length, 1, 'no leg without a baseline is asked for a post read');
+  assert.equal(r.named('GetCurrentSentence').length, 1, 'the same for the sentence leg');
+  assert.equal(r.bridge.getState().writePending, true, 'the unknown outcome keeps the slot and the write lock');
 });
