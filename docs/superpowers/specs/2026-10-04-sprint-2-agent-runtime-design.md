@@ -4,6 +4,11 @@ Status: proposed design for user review. Sprint 2 is authorized by direct user i
 Sprint 1 / Stage B scope is historical and is **not** the product contract. No implementation starts
 before this spec is approved. Only Sprint 2 is authorized; later sprints need separate authorization.
 
+Revision 2: sized for pilot workload, not for the Sprint 2 demo — §1 (pilot tasks, role of selection
+replacement), §3 (no demo-shaped engine), §12 (hard safety ceilings separated from configurable task
+guardrails), §14 (minimal toolset, pilot-sized engine), §15 (Word/Excel/PowerPoint calibration
+workloads + minimal native R7 smoke), §16 (resolved decisions).
+
 ## 1. Purpose
 
 R7 AI Assistant is a universal AI agent inside R7. The employee writes an ordinary task in the chat
@@ -15,6 +20,24 @@ Node and no external agent runtime on the employee's machine.
 
 Sprint 2 builds the engine, not the catalogue: a generic bounded runtime plus an extensible tool
 registry, proven end-to-end with a few representative tools and real development Qwen calls.
+
+The engine is designed for the **pilot workload**, not for the Sprint 2 demo. Pilot tasks are compound
+and long: «добавь новую главу», «допиши раздел выводами», «создай документ — исследование на тему
+работы Р7 примерно на 10 страниц», «сделай расчёт», «построй P&L модель», «заполни формулы на три
+года», «создай презентацию на 10–15 слайдов», «переделай структуру презентации». One phrase delegates
+creating, extending, recomputing or reworking a substantial part of a document, and the agent must
+carry that out autonomously over many model steps and tens of tool calls.
+
+> **Sprint 2 implementation uses a small representative toolset, but Agent Runtime is designed for
+> long, compound pilot workloads across Word/Cell/Slide. Current step/tool/time limits are calibratable
+> guardrails, not product-task limits.**
+
+### 1.1 Role of selection replacement
+
+`selection → AI result → Preview → Apply/Cancel → replace_selection` remains an important registered
+scenario ("перепиши", "сократи", "исправь", "переведи выделенный фрагмент") and one tool policy
+(`confirm`). It is one scenario among many and it does **not** define the shape of the runtime or the
+product architecture.
 
 ## 2. What this spec replaces (doc alignment)
 
@@ -49,6 +72,9 @@ no-Node runtime, the no-auto-Save rule or the no-retry-for-uncertain rule is rel
   recovery research. Error semantics stay the simple three-case model in §8.
 - No full Word/Cell/Slide catalogue (Sprint 3+), but the registry must accept new tools without
   changing the runtime.
+- **No designing the engine around the Sprint 2 demo** — a one- or two-action task, a short
+  replacement, a small document or a short session. Sprint 2 ships few tools; the runtime ships
+  sized for the pilot workloads in §1 and §15.2.
 - No native OpenAI tools / tool_choice / tool_calls / streaming / response_format / structured output.
 - No external service, daemon, MCP, socket, Node.js or model-generated code in the runtime.
 - No automatic whole-document upload, no automatic Save, no content logging.
@@ -56,7 +82,7 @@ no-Node runtime, the no-auto-Save rule or the no-retry-for-uncertain rule is rel
 ## 4. Components
 
 ```
-src/agent/     runtime.js   bounded loop, batch dispatch, budgets, repair, cancellation
+src/agent/     runtime.js   bounded loop, batch dispatch, limits/guardrails, repair, cancellation
                protocol.js  closed envelope parse/validate for model responses
                prompt.js    system rules + tool catalogue rendering (trusted text)
 src/tools/     registry.js  descriptor validation + name→handler literal table
@@ -67,7 +93,7 @@ src/ai/        transport.js unchanged strict-bank single POST
 src/plugin/    bridge.js    per-tool SDK handlers behind one owned callback slot
 src/ui/        controller.js run lifecycle, actions log, Stop
                view.js      chat, live step status, actions summary (never raw JSON)
-src/shared/    limits.js    agent budgets (§12); errors.js, bytes.js, session.js unchanged
+src/shared/    limits.js    hard ceilings + configurable guardrails (§12); errors.js, bytes.js, session.js unchanged
 ```
 
 Boundary rules: `agent` never touches the SDK (it calls registry handlers through one interface);
@@ -116,7 +142,7 @@ Unknown keywords are rejected. Validation is authored code (no dependency, no sc
 
 | Policy | Meaning | Sprint 2 tools |
 | --- | --- | --- |
-| `auto` | After schema + capability + precondition validation the runtime executes the handler immediately; the bounded result goes back to the model | `read_context`, `read_selection`, `insert_text`, `insert_paragraph` |
+| `auto` | After schema + capability + precondition validation the runtime executes the handler immediately; the bounded result goes back to the model | `read_context`, `read_selection`, `insert_paragraph` |
 | `confirm` | The runtime does **not** execute; it publishes a proposal through the existing Preview → explicit Apply UX | `replace_selection` |
 | `deny` | Filtered out of the catalogue (never offered, never executable) | every `mutate` tool in ASK; tools whose `requires` are unmet; unsupported editors |
 
@@ -237,24 +263,47 @@ while reading. **No** native `tools`, `tool_choice`, `tool_calls`, streaming, `r
 structured-output API. The whole tool protocol lives inside ordinary text `message.content`, so the
 loop is several ordinary completion requests, each holding the conversation plus bounded tool results.
 
-## 12. Budgets (initial engineering defaults, calibratable)
+## 12. Limits: hard safety ceilings vs runtime task guardrails
 
-| Budget | Initial value | Note |
+Two different things, deliberately separated.
+
+### 12.1 Hard safety ceilings (enforced before allocation; not lowered to fit a demo)
+
+| Ceiling | Value |
+| --- | --- |
+| model response content | 65536 B |
+| JSON envelope / parsed action batch | 65536 B |
+| arguments per action | 8192 B |
+| one tool result returned to the model | 16 KiB |
+| total tool results + context in one task | 128 KiB |
+| context read | 8 KiB selection, 16 KiB paragraph/section |
+| `maxActionsPerStep` (batch size) | 8 |
+| `protocolRepair` | 1 |
+| HTTP response envelope | 131072 B (transport, §11) |
+| request body | 98304 B (unchanged strict-bank) |
+
+These exist to stop runaway behaviour, unbounded memory/network use and malformed input — not to cap
+legitimate work. They are safety limits, and "make the acceptance scenario fit" is never a reason to
+lower them.
+
+### 12.2 Runtime task guardrails (configurable; calibrated on the pilot workloads)
+
+| Guardrail | Initial engineering default | Meaning |
 | --- | --- | --- |
 | `maxSteps` | 12 | model round-trips per user task |
-| `maxToolCalls` | 32 | executed actions per task |
-| `maxActionsPerStep` | 8 | batch size in one model response |
-| `protocolRepair` | 1 | controlled repair per task |
-| operation deadline | 150000 ms | existing `operationTimeoutMs` |
-| HTTP timeout | settings, 5–120 s | unchanged |
-| tool result / tool-results total | 16 KiB / 128 KiB | bounded before returning to the model |
-| context read | 8 KiB selection, 16 KiB paragraph/section | per read |
-| catalogue size | bounded by editor + capabilities | rendered into the system prompt |
+| `maxToolCalls` | 32 | executed actions per user task |
+| operation deadline | 150000 ms | wall-clock guardrail for one user task |
+| HTTP timeout | settings, 5–120 s | unchanged, per request |
 
-These are engineering defaults, expected to be calibrated on real Qwen/R7 scenarios (for example a
-10-page document task). They live in one table (§4 `limits.js`), so changing them never requires a
-runtime change. `previewTtlMs` (120000 ms) and `applyObservationMs` (15000 ms) stay but apply to
-`confirm` tools only.
+A legitimate pilot task — a ten-page structured document, a P&L model, a 10–15 slide deck — may need
+several minutes, many model steps and dozens of tool calls. The numbers above are **development
+defaults**, not a product limit: the pilot guardrails are set from the measurements in §15.2, and the
+architecture must accept far larger values without a runtime change. When a guardrail is reached, the
+run stops with a clear "задача превысила текущий лимит" outcome, completed changes stay (native Undo
+is the user's rollback), and nothing is silently truncated.
+
+All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `applyObservationMs`
+(15000 ms) stay and apply to `confirm` tools only.
 
 ## 13. Security invariants (ADR 0002 binding)
 
@@ -270,48 +319,107 @@ runtime change. `previewTtlMs` (120000 ms) and `applyObservationMs` (15000 ms) s
   technical events (`step`, `tool`, `outcome`, `duration`, `result bytes`).
 - No new network destination, no daemon/socket, no auto-Save, no CDN/runtime download.
 
-## 14. Sprint 2 deliverable set
+## 14. Sprint 2 deliverable set (minimal tools, pilot-sized engine)
 
-Representative tools proving the architecture (not the full catalogue):
+The Sprint 2 toolset is deliberately minimal; the engine is not.
 
 | Tool | Kind | Policy | Proves |
 | --- | --- | --- | --- |
 | `read_selection` | read | auto | bounded read tool + result feed |
 | `read_context` (paragraph/section/structure) | read | auto | agent-driven context, no whole-document upload |
-| `insert_paragraph` / `insert_text` | mutate | auto | automatic mutation without per-step confirmation |
-| `replace_selection` | mutate | confirm | per-tool policy: existing Preview/Apply preserved |
+| `insert_paragraph` | mutate | auto | high-level automatic mutation without per-step confirmation |
+| `replace_selection` | mutate | confirm | per-tool policy: the existing Preview/Apply scenario |
 
-Plus: generic registry, batch execution, read→result→next step, known-error replanning, uncertain
-stop, `final`, budgets, malformed JSON + repair, Stop, catalogue filtering, and real development Qwen
-calls. Word insert/format/table/list/hyperlink, Cell and Slide tools are Sprint 3+ additions to the
-same registry.
+`insert_text` is deliberately **not** added in Sprint 2: it has no distinct real semantics yet, and a
+second near-duplicate tool would prove nothing about extensibility. It arrives when a distinct
+semantics exists (for example inline insertion inside an existing paragraph).
+
+Engine properties that must hold at the end of Sprint 2, because Sprint 3+ builds on them: generic
+registry; batch execution; read→result→next model step; automatic mutations; a `confirm` mutation;
+known-error replanning; uncertain stop; `final`; hard ceilings + configurable guardrails; malformed
+JSON with one controlled repair; Stop; catalogue filtering; real development Qwen calls; and the
+minimal native R7 smoke (§15.3).
+
+Sprint 3+ only **adds** Word/Cell/Slide tools to the same registry — protocol, loop, batch, registry,
+policies, limits and error semantics must not be rewritten. Tools stay high-level and user-level:
+`insert_section`/`insert_blocks` where the public API allows it cleanly, `insert_table` with
+rows/columns/data, `create_list`, `format_range`, `set_heading`, `add_hyperlink` for Word;
+`set_range_values`, `set_range_formulas`, `format_range` (never `set_cell` × N) for Cell; `add_slide`,
+`set_slide_content`, `add_shape`, `format_shape` for Slide. Never one giant `do_everything`, and never
+hundreds of micro-calls per user task.
 
 ## 15. Verification plan
 
-**Host tests (`node:test`, no R7, no network):**
-registry descriptor validation; closed-schema validator (every keyword, multibyte byte bounds,
-unknown fields); catalogue filtering by editor/capability/mode; policy `deny` rejection by name;
-batch sequential execution order and per-action results; `confirm`-must-be-alone rule; known error
-returned and loop continues; precondition failure is a known error; uncertain stops the run and
-prevents further dispatch; `maxSteps`/`maxToolCalls`/`maxActionsPerStep` enforcement; repair once then
-fail; malformed JSON and prose rejected; Stop cancels network and prevents future actions; late
-callback releases only; no-eval/static-dispatch audit with new modules; byte bounds on every path.
+### 15.1 Host tests (`node:test`, no R7, no network)
 
-**Real development Qwen validation (dev transport only):** an ignored host-side dev harness runs the
-authored `src/agent` + `src/tools` modules against OpenRouter with the user's configured endpoint/key
-and a recording stub bridge (no R7, no document). Scenarios: multi-step document task; multi-tool
-batch ("добавь раздел, заголовок жирным, таблица 3×4"); selection-based italic; malformed-JSON repair;
-known-error replanning; `confirm` policy on `replace_selection`. Evidence is count-only (steps, tool
-names, outcomes, durations, sizes) — no request/response content, keys, headers or identifiers. This
-validates the engine and the model's JSON discipline; it is **not** native R7 acceptance and does not
-prove bank Qwen, bank TLS/CORS/AUTH or any editor mutation.
+Registry descriptor validation; closed-schema validator (every keyword, multibyte byte bounds,
+unknown fields); catalogue filtering by editor/capability/mode; policy `deny` rejection by name; batch
+sequential execution order and per-action results; `confirm`-must-be-alone rule; known error returned
+and the loop continues; precondition failure is a known error; uncertain stops the run and prevents
+further dispatch; hard ceilings enforced on every path (response, batch, arguments, one result, totals);
+configured `maxSteps`/`maxToolCalls`/deadline guardrails enforced and independently raisable in tests;
+repair once then fail; malformed JSON and prose rejected; Stop cancels network and prevents future
+actions; late callback releases only; no-eval/static-dispatch audit extended to the new modules.
 
-**Not in Sprint 2:** native R7 acceptance of the new tools, full catalogue, DEB/packaging, bank
-installation.
+### 15.2 Pilot workload calibration (dev transport, real Qwen; measures the guardrails)
 
-## 16. Open items for the reviewer
+Three representative workloads are run through the real runtime before Pilot RC. They exist to
+calibrate §12.2, not to prove the tools:
 
-1. Exact envelope naming (`tool_calls` + `final`) and whether a single-call shorthand is worth it.
-2. Whether `insert_paragraph` and `insert_text` are both needed in Sprint 2 or one suffices.
-3. Final initial values of §12 once the 10-page scenario is measured.
-4. Whether §2 doc alignment is applied together with this spec or as the first Sprint 2 commit.
+| Workload | Task | What is measured |
+| --- | --- | --- |
+| Word | create a structured ~10-page document from scratch (title/headings, chapters, several tables, formatting, conclusions), then revise part of it | model steps, tool calls, batch sizes, latency per step, total runtime, context/result bytes, JSON discipline failures, guardrails reached |
+| Excel | create a meaningful P&L model (several sheets, assumptions, values, formulas over three years, totals, percentages, formatting, check of the calculations) | same |
+| PowerPoint | create a 10–15 slide deck (structure, headings, body text, tables/simple shapes, formatting), then change several slides | same |
+
+These run with the dev transport (OpenRouter + Qwen) and a recording stub bridge first; the same
+scenarios then back the native smoke in §15.3 for the parts the real R7 supports. The measured values
+decide the pilot guardrails — real work is never reshaped to fit the initial numbers. The three
+workloads are the primary evidence for "the engine is not sized for a demo"; a workload that cannot
+fit must be reported as a calibration finding, not silently truncated.
+
+Supporting dev-transport scenarios (cheap, deterministic): multi-step document task; multi-tool batch
+(«добавь раздел, заголовок жирным, таблица 3×4»); selection-based italic; malformed-JSON repair;
+known-error replanning; `confirm` policy on `replace_selection`.
+
+### 15.3 Minimal native R7 end-to-end smoke
+
+One small smoke on the real R7 proves the new runtime is actually wired into the live plugin and is
+not only working against a stub bridge:
+
+```
+user request → development Qwen → new Agent Runtime → Tool Registry
+→ read tool → one simple auto-mutation → real R7 → bounded result
+→ next model step → final
+```
+
+Scope: a request that needs at least two model steps, one read tool and one real `insert_paragraph`
+mutation in Word, plus a `final`. Full native catalogue acceptance is **not** required in Sprint 2 and
+is not claimed here.
+
+### 15.4 Evidence discipline and what this does not prove
+
+Evidence is count-only (steps, tool names, outcomes, durations, sizes) — no request/response content,
+keys, headers or identifiers. §15.1–§15.2 prove the engine and the model's JSON discipline; §15.3
+proves the live wiring for one representative path. None of them proves bank Qwen, bank TLS/CORS/AUTH,
+or editor mutation beyond the single smoked tool.
+
+**Not in Sprint 2:** full native acceptance of the catalogue, Word/Cell/Slide catalogue, DEB/packaging,
+bank installation.
+
+## 16. Resolved decisions and remaining calibration
+
+Resolved by the user:
+
+1. Envelope is `{"type":"tool_calls","calls":[…]}` plus `{"type":"final",…}`, with no single-call
+   shorthand.
+2. Sprint 2 ships one representative auto-mutation tool: `insert_paragraph` (`insert_text` deferred
+   until it has distinct real semantics).
+3. The §12.2 values are initial engineering defaults; the pilot guardrails come from the §15.2
+   measurements. §12.1 ceilings are not calibrated down.
+4. The §2 doc alignment is applied as the **first** Sprint 2 commit after this spec is approved, and
+   before any runtime implementation.
+
+Remaining calibration (measurement work, not design blockers): final `maxSteps`/`maxToolCalls`/deadline
+per editor and workload class; whether `maxActionsPerStep` above 8 helps on long tasks; context-read
+sizes for large documents.
