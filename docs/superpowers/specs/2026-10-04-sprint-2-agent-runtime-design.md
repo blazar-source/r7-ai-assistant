@@ -140,14 +140,15 @@ Registry rules:
 ### 5.1 Closed schema subset
 
 `type` (`object|string|integer|boolean|array`), `properties`, `required`, `additionalProperties:false`,
-`items`, `enum`, `minimum`, `maximum`, `maxItems`, `maxBytes` (UTF-8, checked before allocation).
+`items`, `enum`, `minimum`, `maximum`, `maxItems`, `maxBytes`, `minBytes` (both UTF-8 byte bounds,
+checked before allocation).
 Unknown keywords are rejected. Validation is authored code (no dependency, no schema library).
 
 ## 6. Per-tool execution policy
 
 | Policy | Meaning | Sprint 2 tools |
 | --- | --- | --- |
-| `auto` | After schema + capability + precondition validation the runtime executes the handler immediately; the bounded result goes back to the model | `read_context`, `read_selection`, `insert_paragraph` |
+| `auto` | After schema + capability + precondition validation the runtime executes the handler immediately; the bounded result goes back to the model | `read_selection`, `insert_paragraph` (`read_context` is **WITHHELD** — see §14) |
 | `confirm` | The runtime does **not** execute; it publishes a proposal through the existing Preview → explicit Apply UX | `replace_selection` |
 | `deny` | Filtered out of the catalogue (never offered, never executable) | every `mutate` tool in ASK; tools whose `requires` are unmet; unsupported editors |
 
@@ -253,7 +254,7 @@ whole document:
 | Tool | Returns |
 | --- | --- |
 | `read_selection` | current selection text/format summary (bounded) |
-| `read_context` | `scope: paragraph \| section \| structure \| table \| slide`, addressed by a bounded 0-based `index` validated against the structure read (out of range is a known tool error, never a guess) |
+| `read_context` | `scope: paragraph \| section \| structure \| table \| slide`, addressed by a bounded 0-based `index` validated against the structure read (out of range is a known tool error, never a guess). **WITHHELD in Sprint 2** (`policy: 'deny'`): the installed build's SDK source copy has no `GetDocumentStructure`, so no public document read is confirmed and the tool is not offered. The descriptor stays in the repository one value away from re-enabling, and the row records the design's intent, not a delivered capability |
 | (Sprint 3+) | `read_range`, `read_slide_objects`, … |
 
 Each read is bounded (§12), returns plain data, and marks content as untrusted. Long tasks read the
@@ -362,10 +363,17 @@ All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `
 
 The Sprint 2 toolset is deliberately minimal; the engine is not.
 
+**Reduced for Sprint 2:** `read_context` is marked **WITHHELD** below and is not offered — its
+descriptor carries `policy: 'deny'`, so it is filtered out of the EDIT and ASK catalogues and refuses a
+model-emitted call as a known tool error. The reason is that **no public document read is confirmed**:
+the installed build's SDK source copy contains no `GetDocumentStructure`, and the schema rule is that a
+descriptor never advertises what the code cannot serve. The delivered representative toolset is the
+three remaining rows.
+
 | Tool | Kind | Policy | Proves |
 | --- | --- | --- | --- |
 | `read_selection` | read | auto | bounded read tool + result feed |
-| `read_context` (paragraph/section/structure) | read | auto | agent-driven context, no whole-document upload |
+| `read_context` (paragraph/section/structure) | read | auto | agent-driven context, no whole-document upload — **WITHHELD / not offered in Sprint 2** (see the note above) |
 | `insert_paragraph` | mutate | auto | high-level automatic mutation without per-step confirmation |
 | `replace_selection` | mutate | confirm | per-tool policy: the existing Preview/Apply scenario |
 
