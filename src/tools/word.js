@@ -210,6 +210,16 @@ export function createWordTools(bridge) {
         const start = characterStart(document.text, Math.min(offset, document.text.length));
         const end = characterEnd(document.text, Math.min(document.text.length, offset + maxChars, LIMITS.readDocumentOffsetMax));
         const text = document.text.slice(start, end);
+        // `truncated` and `nextOffset` are ONE fact: a successor exists exactly when the chunk did not
+        // reach the end of the document, and a chunk that ends exactly at the end — or an offset at or
+        // past it — has none. Everything is counted in the string's own code units, the same unit
+        // `offset`/`maxChars`/`totalChars` use, so a resumed read is contiguous and cannot skip.
+        // A chunk that consumed NOTHING has no successor to publish: publishing `nextOffset === offset`
+        // would invite a call that returns the same empty chunk forever. A chunk the ADDRESS BOUND
+        // stopped publishes that bound as its resume point — an address the schema accepts, whose read
+        // is the empty tail — because the bound and the end of the text are the same place from here.
+        const nextOffset = end > offset && end < totalChars ? end
+          : end === LIMITS.readDocumentOffsetMax && end < totalChars ? LIMITS.readDocumentOffsetMax : null;
         // The ENFORCED bound is the ACTUAL serialized tool-result entry, not the raw text and not
         // `LIMITS.editorResultBytes`: the runtime bounds `JSON.stringify({tool, ...result})` by
         // `AGENT_CEILINGS.toolResultBytes` — 16384 bytes, not 65536 — and an entry above it is refused
@@ -223,18 +233,24 @@ export function createWordTools(bridge) {
         // an entry above the ceiling can ever produce from here. Together with the `totalChars` fence
         // above, this is the fail-closed floor: nothing the handler cannot serialize or cannot address
         // leaves it as a result at all.
-        const bytes = documentEntryBytes(text, offset, totalChars, null);
+        // The measurement carries the values that are ABOUT TO BE PUBLISHED, which is why `nextOffset`
+        // is computed first: the truncated shape serializes `"truncated":true` plus a numeric resume
+        // point, while the assumed nil shape serializes the shorter `"truncated":false` plus
+        // `"nextOffset":null` — 1 byte LESS on the six-digit offsets (`true` against `null`, both over
+        // `false`), and a wider gap at smaller offsets. A measurement taken against the nil resume point
+        // therefore UNDERCOUNTED the published entry, and a chunk whose assumed entry was exactly
+        // `AGENT_CEILINGS.toolResultBytes` (16384) passed the `> ceiling` check while the entry actually
+        // published made `stringifyToolResults` (protocol.js:91) throw; `runtime.js:27-36` replaced the
+        // whole result with its literal refusal, the model received NO text, and the run's action log
+        // still recorded `ok` — a fail-open signal for exactly the chunk sizes the ceiling is meant to
+        // allow. There is ONE measurement here, of the one entry, in the one shape that is published:
+        // the alternative — keeping the nil-resume-point figure and widening the guard by a byte or
+        // three — would be a second, competing measurement that has to be re-derived every time a field
+        // width changes and is exactly the drift this handler was caught by. The exact form is sound
+        // because the value measured is the value returned below, byte for byte, in the protocol's own
+        // key order.
+        const bytes = documentEntryBytes(text, offset, totalChars, nextOffset);
         if (bytes === null || bytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
-        // `truncated` and `nextOffset` are ONE fact: a successor exists exactly when the chunk did not
-        // reach the end of the document, and a chunk that ends exactly at the end — or an offset at or
-        // past it — has none. Everything is counted in the string's own code units, the same unit
-        // `offset`/`maxChars`/`totalChars` use, so a resumed read is contiguous and cannot skip.
-        // A chunk that consumed NOTHING has no successor to publish: publishing `nextOffset === offset`
-        // would invite a call that returns the same empty chunk forever. A chunk the ADDRESS BOUND
-        // stopped publishes that bound as its resume point — an address the schema accepts, whose read
-        // is the empty tail — because the bound and the end of the text are the same place from here.
-        const nextOffset = end > offset && end < totalChars ? end
-          : end === LIMITS.readDocumentOffsetMax && end < totalChars ? LIMITS.readDocumentOffsetMax : null;
         return ok({ text, offset, totalChars, truncated: nextOffset !== null, nextOffset });
       }
     }),

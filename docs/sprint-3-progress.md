@@ -639,3 +639,53 @@ case now covers both the defensive refusal and the in-ceiling service for each e
 weakened or deleted. `src/agent/*` was not touched: the fix lives in the tool, the limits module and the
 tests, and the bridge leg is unchanged (one `GetFileHTML` on the owned slot, still read-only).
 
+## 8b. Re-review of tool 1: D1 was still open by one byte
+
+The `§8` fix measured the result entry with the values that had been **assumed** rather than the values
+that were about to be **published**: `documentEntryBytes(text, offset, totalChars, null)` — i.e.
+`"truncated":false` with `"nextOffset":null`. The handler then published
+`"truncated":true` with a six-digit `nextOffset`. On a six-digit resume point the two serializations
+differ by exactly **one byte** (`true` against `null`, both over `false`), and they differ by more at
+smaller offsets, so the published entry was systematically **larger** than the entry that had been
+measured. The `> AGENT_CEILINGS.toolResultBytes` check therefore admitted a chunk whose real entry was
+over the ceiling: `stringifyToolResults` (`protocol.js:91`) threw `TOOL_ERROR`, `runtime.js:27-36`
+replaced the whole result with the literal `"the tool result could not be serialized"`, the model
+received **no text at all**, and the run's action log still recorded `outcome: "ok"`.
+
+**The reproduction** (the reviewer's, re-measured here). Document text
+`99998 × 'x' + 5397 × '漢' + 1 × 'я' + 63 × 'x'` = 105459 characters; call
+`{offset: 99998, maxChars: 5460}`. The chunk is 5460 characters = **16255 text bytes**; the
+nil-resume-point entry is **exactly 16384** (`= AGENT_CEILINGS.toolResultBytes`), so it passed the
+`> ceiling` check; the entry actually published is **16385**, the runtime serializer throws, the
+model-visible message is the literal refusal (confirmed end-to-end through `runAgent`), and the model
+never sees one character of the chunk.
+
+**The fix.** `nextOffset` is now computed *before* the measurement and the measurement is taken on the
+entry that is returned, byte for byte, in the protocol's own key order
+(`documentEntryBytes(text, offset, totalChars, nextOffset)`, `src/tools/word.js:249`). The exact form is
+chosen over the equivalent conservative guard: the measured value **is** the published value, so there is
+one measurement instead of two, no re-derivation when a field width changes, and no way for the checked
+shape to drift from the returned shape — which is precisely the drift that produced this defect. The
+chunk is still refused **whole** with the closed `BYTE_LIMIT` class when its published entry does not
+fit; at `{offset: 99998}` one character less (`maxChars: 5459`) is served, which is the same refusal
+decision the tool already made for three-byte scripts. `src/shared/limits.js` needed no change: the
+`readDocumentEntryBytes = 130` envelope already covers the truncated shape with the widest field width,
+and the advertised chunk (8000 Cyrillic characters = 16130 bytes) stays inside the ceiling.
+
+**Tests.** RED first, each of the three assertions failing on the pre-fix call site with the reproduction
+above (`16385 <= 16384` for `{"offset":99998,"maxChars":5460}`, and `the runtime never substituted its
+refusal` end-to-end), then GREEN for all ten of the reviewer's offset/maxChars cases. Four new tests:
+the end-to-end refusal-not-substitution case at the exact ceiling (plus the one-character-less contrast
+that serves), the entry-for-entry measurement statement (the nil-resume-point shape is exactly the
+published shape **minus one byte** when a six-digit resume point is published), the ten-case end-to-end
+sweep asserting no chunk text is ever delivered as a substitution while every `ok` carries its text, and
+a boundary sweep over the reviewer's own document (14 cases whose nil-resume-point entry sits in the last
+40 bytes under the ceiling, every one of them a closed refusal once the published shape is measured)
+where every published `ok` entry must be inside the ceiling and accepted by the runtime's own serializer.
+No existing test was weakened or deleted; the existing entry/measurement assertions stay as they were,
+and the assertion that reconstructed the nil-resume-point **shape** lives in the new test rather than in
+the tool. The focused word suite is **70/70**; the full suite grew **695 → 699** with `fail 0`;
+`node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` →
+exit 0 (`Plugin build: 8 allowlisted files; ZIP STORE SHA-256 7d1672e1…`). `src/agent/*` is untouched and
+the bridge leg is unchanged: still one read-only `GetFileHTML` on the owned slot, no new editor primitive.
+

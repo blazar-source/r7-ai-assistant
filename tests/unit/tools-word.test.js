@@ -1526,3 +1526,225 @@ test('read_document_text is offered with policy auto and a model call dispatches
   assert.equal(r.bridge.getState().busy, false);
 });
 
+// --- Regression: the published entry is the measured entry ----------------------------------------
+// The re-review of `read_document_text` found that the handler measured the entry while ASSUMING the
+// nil resume point — `documentEntryBytes(text, offset, totalChars, null)`, i.e. `truncated:false,
+// nextOffset:null` — and then PUBLISHED `truncated:true` with a six-digit `nextOffset`. The published
+// entry is 1 byte larger, so a chunk whose pre-measurement was exactly `AGENT_CEILINGS.toolResultBytes`
+// (16384) passed the `> ceiling` check and then made `stringifyToolResults` (protocol.js:91) throw:
+// `runtime.js:27-36` replaced the whole result with its literal refusal, the MODEL received no text,
+// and the run's action log still recorded `outcome: "ok"` — a fail-open signal for exactly the chunk
+// sizes the ceiling is meant to allow.
+// The document the reviewer measured is reproduced here verbatim: 99998 'x' + 5397 '漢' + 1 'я' +
+// 63 'x' = 105459 characters. At `{offset: 99998, maxChars: 5460}` the chunk pre-measures exactly
+// 16384 (passes) and the published entry is 16385 (refused).
+const REVIEWER_DOCUMENT = 'x'.repeat(99998) + '漢'.repeat(5397) + 'я' + 'x'.repeat(63);
+const REVIEWER_CALLS = Object.freeze([99998, 99999, 100000, 100001, 107000, 107001, 262143, 262144, 300000, 516304]
+  .map(offset => Object.freeze({ offset, maxChars: 5460 })));
+
+// The bytes of the result entry exactly as `stringifyToolResults` builds and measures it, with no
+// assumption about the fields: `{ tool, ...result }` in the protocol's own key order.
+function entryBytes(result) {
+  return utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result }));
+}
+// EVERY user-role message the model actually saw on a run — the request and each tool result — from the
+// transport's own argument. User-role only, because the context ALSO carries the system rules and the
+// assistant's emitted envelope, and neither is a tool result. An assertion on this is an assertion on
+// the model-visible transcript, not on the handler.
+function modelContents(seen) {
+  return seen.flat().filter(message => message.role === 'user').map(message => message.content);
+}
+// True only for the entry the runtime PUBLISHED for `read_document_text`. The runtime's substitution
+// for an unparseable entry is a DIFFERENT entry (`tool: 'batch'`), so this discriminates the two.
+function publishedEntry(content) {
+  let parsed;
+  try { parsed = JSON.parse(content); } catch { return null; }
+  const entry = parsed?.results?.[0];
+  return entry?.tool === 'read_document_text' ? entry : null;
+}
+
+test('read_document_text at the exact ceiling is refused closed instead of being replaced by the runtime', async () => {
+  // RED for the reviewer's reproduction. The chunk at `{offset:99998, maxChars:5460}` is 16255 text
+  // bytes; measured with the NIL resume point it is exactly the ceiling (16384), so the pre-fix handler
+  // answered `ok` — while the entry it actually published was 16385. The runtime's serializer threw and
+  // substituted its literal refusal: the model received NO text and the action log still said `ok`.
+  // With the measurement taken on the published fields the same call is a CLOSED refusal — the honest
+  // answer for a chunk that does not fit — and the model receives the refusal, never the substitution.
+  const seen = [];
+  const transport = async messages => {
+    seen.push(messages.map(message => ({ role: message.role, content: message.content })));
+    return seen.length === 1
+      ? { content: JSON.stringify({ type: 'tool_calls',
+        calls: [{ tool: 'read_document_text', arguments: { offset: 99998, maxChars: 5460 } }] }) }
+      : { content: '{"type":"final","message":"прочитано"}' };
+  };
+  const run = await runAgent({ registry: createRegistry(createWordTools(documentBridge(REVIEWER_DOCUMENT))),
+    editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT', settings: {},
+    uuid: '11111111-1111-4111-8111-111111111111', request: 'прочитай документ', transport });
+  assert.equal(run.status, 'FINAL');
+  // The action log no longer claims `ok` for a read the model cannot receive text from.
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['read_document_text', 'error', 'BYTE_LIMIT']]);
+  const contents = modelContents(seen);
+  assert.equal(contents.some(content => content.includes('could not be serialized')), false,
+    'the runtime must never substitute its literal refusal');
+  const resultMessages = contents.filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(resultMessages.length, 1, 'exactly one tool-result message reached the model');
+  const entry = publishedEntry(resultMessages[0]);
+  assert.ok(entry, 'the tool-result entry the model saw is the read, not a substituted batch refusal');
+  assert.equal(entry.ok, false, 'the model received a closed refusal, not text it cannot trust');
+  assert.equal(entry.code, 'BYTE_LIMIT');
+  assert.equal(entry.message, 'отказ');
+  // The refusal decision is the chunk's own SIZE and nothing else: one character less at the same
+  // offset fits, is served, and proves the boundary case above was refused for being over the ceiling.
+  const fitting = await readDocument(documentBridge(REVIEWER_DOCUMENT))
+    .execute({ offset: 99998, maxChars: 5459 }, { editor: 'word' });
+  assert.equal(fitting.ok, true, 'one character less at the same offset is served');
+  assert.equal(fitting.data.text.length, 5459);
+  assert.equal(fitting.data.nextOffset, 105457);
+  assert.ok(entryBytes(fitting) <= AGENT_CEILINGS.toolResultBytes);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result: fitting }]));
+});
+
+test('read_document_text measures the exact entry it publishes, not one with the nil resume point', async () => {
+  // The unit-level statement of the defect, on the reviewer's own offsets. The entry the runtime
+  // serializes is built from the fields the handler PUBLISHED; the pre-fix handler measured a DIFFERENT
+  // entry — the same fields with the nil resume point assumed. The comparison below reconstructs both
+  // shapes. For a chunk that ends inside the document the published shape carries a six-digit resume
+  // point and the two differ by exactly the byte the defect dropped — which is why the 16255-byte chunk
+  // at `{offset:99998, maxChars:5460}` was measured as 16384 (admitted) and published as 16385 (refused
+  // by the runtime). The fix measures the published shape, so that exact chunk is now a closed refusal.
+  const tool = readDocument(documentBridge(REVIEWER_DOCUMENT));
+  for (const args of REVIEWER_CALLS) {
+    const result = await tool.execute(args, { editor: 'word' });
+    const label = JSON.stringify(args);
+    // The entry with the fields that were actually published — what the fix measures.
+    const measured = result.ok ? entryBytes(result) : null;
+    // The entry the pre-fix measurement re-derived: the same fields with the nil resume point.
+    const assumed = result.ok ? utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+      data: { text: result.data.text, offset: result.data.offset, totalChars: result.data.totalChars,
+        truncated: false, nextOffset: null } })) : null;
+    if (!result.ok) {
+      // A closed refusal: no entry for the runtime to serialize at all, the class and the refusal word.
+      assert.equal(result.code, 'BYTE_LIMIT', label);
+      assert.equal(result.message, 'отказ', label);
+      assert.equal(JSON.stringify(result).includes('漢'), false, `${label}: no document text in a refusal`);
+      assert.equal(args.offset, 99998, `${label}: only the over-ceiling chunk in the reviewer's set is refused`);
+      continue;
+    }
+    assert.equal(result.data.truncated, result.data.nextOffset !== null, `${label}: the two flags are one fact`);
+    assert.ok(measured <= AGENT_CEILINGS.toolResultBytes, `${label}: ${measured} <= ${AGENT_CEILINGS.toolResultBytes}`);
+    assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
+      `${label}: the runtime serializer accepts the published entry`);
+    // With no resume point the two shapes are the same entry; a six-digit resume point makes the
+    // published entry exactly one byte larger than the shape the defect measured.
+    assert.equal(measured, result.data.nextOffset !== null ? assumed + 1 : assumed,
+      `${label}: the published shape is the measured shape`);
+  }
+  // The boundary this fix is about, as its own observation: the pre-fix measurement of this chunk is
+  // EXACTLY the ceiling, so it passed the `> ceiling` check while its published entry is one larger.
+  const boundary = REVIEWER_CALLS.find(args => args.offset === 99998);
+  const chunk = REVIEWER_DOCUMENT.slice(boundary.offset, boundary.offset + boundary.maxChars);
+  assert.equal(utf8ByteLength(chunk), 16255);
+  assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+    data: { text: chunk, offset: boundary.offset, totalChars: REVIEWER_DOCUMENT.length,
+      truncated: false, nextOffset: null } })), AGENT_CEILINGS.toolResultBytes,
+  'the nil-resume-point measurement is exactly the ceiling and passes the check');
+  const refused = await tool.execute(boundary, { editor: 'word' });
+  assert.equal(refused.ok, false, 'the fix refuses the chunk it can measure but cannot publish whole');
+  assert.equal(refused.code, 'BYTE_LIMIT');
+  assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+    data: { text: chunk, offset: boundary.offset, totalChars: REVIEWER_DOCUMENT.length,
+      truncated: true, nextOffset: 105458 } })), AGENT_CEILINGS.toolResultBytes + 1,
+  'the published shape of that chunk is one byte over the ceiling');
+});
+
+test('read_document_text returns text the model receives for every reviewer offset', async () => {
+  // The end-to-end sweep of the reviewer's ten calls, each through the REAL runtime: whatever the
+  // handler publishes as `ok` must reach the model AS TEXT, and any call that cannot deliver must be a
+  // closed refusal with no entry at all — never an `ok` the model never sees.
+  for (const args of REVIEWER_CALLS) {
+    const seen = [];
+    const transport = async messages => {
+      seen.push(messages.map(message => ({ role: message.role, content: message.content })));
+      return seen.length === 1
+        ? { content: JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'read_document_text', arguments: args }] }) }
+        : { content: '{"type":"final","message":"прочитано"}' };
+    };
+    const run = await runAgent({ registry: createRegistry(createWordTools(documentBridge(REVIEWER_DOCUMENT))),
+      editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT', settings: {},
+      uuid: '11111111-1111-4111-8111-111111111111', request: 'прочитай документ', transport });
+    const label = JSON.stringify(args);
+    assert.equal(run.status, 'FINAL', label);
+    const contents = modelContents(seen);
+    assert.equal(contents.some(content => content.includes('could not be serialized')), false,
+      `${label}: the runtime never substituted its refusal`);
+    // The action log must not claim `ok` for a read whose text the model did not receive.
+    const published = contents.map(publishedEntry).find(entry => entry !== null);
+    const outcome = run.actions[0].outcome;
+    if (outcome === 'ok') {
+      assert.ok(published, `${label}: an ok action published a read entry the model can parse`);
+      assert.equal(published.ok, true, label);
+      assert.equal(published.data.text, REVIEWER_DOCUMENT.slice(args.offset, args.offset + args.maxChars), label);
+      assert.ok(utf8ByteLength(JSON.stringify(published)) <= AGENT_CEILINGS.toolResultBytes, label);
+    } else {
+      assert.equal(outcome, 'error', `${label}: a read that cannot deliver is a closed refusal`);
+      assert.equal(run.actions[0].code, 'BYTE_LIMIT', label);
+      const refusal = JSON.parse(contents.find(content => content.includes('"type":"tool_results"')));
+      assert.equal(refusal.results[0].tool, 'read_document_text', label);
+      assert.equal(refusal.results[0].ok, false, label);
+      assert.equal(refusal.results[0].code, 'BYTE_LIMIT', label);
+      // The closed class and the refusal word, and NOTHING of the document.
+      assert.equal(JSON.stringify(refusal).includes(REVIEWER_DOCUMENT.slice(args.offset, args.offset + 1)), false,
+        `${label}: no document text leaks into a refusal`);
+    }
+  }
+});
+
+test('read_document_text never publishes ok for an entry the runtime will refuse', async () => {
+  // The invariant, swept around the serialization boundary over the reviewer's OWN document: chunks at
+  // `maxChars` 8000 whose entry, measured with the nil resume point the defect assumed, lands in the
+  // last 40 bytes below `AGENT_CEILINGS.toolResultBytes`. Every case that is `ok` must be an entry the
+  // runtime's own serializer ACCEPTS, inside the ceiling, measured with the fields it published; the
+  // exact-ceiling chunk whose published shape is one byte larger must be a CLOSED refusal — which is
+  // the branch the pre-fix handler could not reach, because it published that entry as `ok` and the
+  // runtime then replaced it with its literal refusal.
+  const total = REVIEWER_DOCUMENT.length;
+  const tool = readDocument(documentBridge(REVIEWER_DOCUMENT));
+  let cases = 0;
+  for (let offset = 99500; offset <= 101500; offset += 1) {
+    const args = { offset, maxChars: 8000 };
+    const end = Math.min(total, offset + args.maxChars);
+    const text = REVIEWER_DOCUMENT.slice(offset, end);
+    const nextOffset = end > offset && end < total ? end : null;
+    // What the DEFECT measured: the entry with the nil resume point assumed. `entryBytes` below is the
+    // same shape with the fields that are PUBLISHED — for a six-digit resume point, one byte more.
+    const assumed = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+      data: { text, offset, totalChars: total, truncated: false, nextOffset: null } }));
+    if (assumed < AGENT_CEILINGS.toolResultBytes - 40 || assumed > AGENT_CEILINGS.toolResultBytes) continue;
+    if (text.length === 0) continue;
+    cases += 1;
+    const label = JSON.stringify(args);
+    const result = await tool.execute(args, { editor: 'word' });
+    if (result.ok) {
+      // An `ok` is a promise that the model receives this text: the entry the runtime serializes from
+      // the PUBLISHED fields must be inside the ceiling, and the serializer must accept it.
+      const published = entryBytes(result);
+      assert.ok(published <= AGENT_CEILINGS.toolResultBytes,
+        `${label}: ${published} <= ${AGENT_CEILINGS.toolResultBytes}`);
+      assert.equal(result.data.text, text, label);
+      assert.equal(result.data.truncated, nextOffset !== null, label);
+      assert.equal(result.data.nextOffset, nextOffset, label);
+      assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
+        `${label}: the runtime serializer accepts every published entry`);
+      continue;
+    }
+    // A refusal must be closed, carry no entry and leak no character of the document.
+    assert.equal(result.code, 'BYTE_LIMIT', label);
+    assert.equal(result.message, 'отказ', label);
+    assert.equal(result.data, undefined, label);
+    assert.equal(JSON.stringify(result).includes('漢'), false, label);
+  }
+  assert.ok(cases >= 10, `${cases} boundary cases measured`);
+});
+
