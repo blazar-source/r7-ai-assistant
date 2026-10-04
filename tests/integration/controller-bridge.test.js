@@ -266,3 +266,63 @@ test('an insert whose native PasteText callback never arrives stops the run as u
   assert.equal(inserts.length, 1);
   panel.dispose(); controller.dispose();
 });
+
+// The CONTROL leg for the mutation mapping above: the same controller -> runAgent -> registry ->
+// real-bridge path, but the native `PasteText` callback IS delivered with a boolean acknowledgement.
+// The bridge envelope becomes `{ok:true, data:{sent:true}}`, which `word.js` must publish as an
+// ordinary `ok` action, so the run reaches COMPLETE/FINAL with 2 steps and the action outcome `ok` —
+// the new uncertain classifier must not have turned every insert into a run-stopping uncertain
+// outcome. Once the delivered callback settles the ticket, no write lock may remain held.
+test('an acknowledged insert reaches COMPLETE/FINAL with the action ok and no write lock left held', async () => {
+  let time = 0; const tasks = new Map(); const selections = []; const identity = []; const inserts = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    // The document identity leg is the bridge's own synchronous callCommand probe: it stays native
+    // until its callback is delivered, exactly like the selection read and the insert below.
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push(callback); return false; }
+      // The dispatched mutation: unlike the uncertain leg above, this callback IS delivered below.
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
+    JSON.stringify({ type: 'final', message: 'Готово' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  controller.setMode('EDIT');
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('добавь абзац');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  // (1) the controller's own context capture: one selection read and one identity probe.
+  assert.equal(selections.length, 1); assert.equal(identity.length, 0);
+  selections[0]('контекст запроса'); await tick();
+  assert.equal(identity.length, 1);
+  identity[0](['bounded-id', true, true, false]); await tick();
+  // (2) the model's mutation dispatch under its own identity proof, then the acknowledgement.
+  assert.equal(inserts.length, 0);
+  assert.equal(identity.length, 2, 'the insert runs under its own document identity proof');
+  identity[1](['bounded-id', true, true, false]); await tick();
+  assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
+  assert.deepEqual(inserts[0].args, ['Новый абзац'], 'the validated payload crosses unchanged');
+  inserts[0].callback(true); await tick();
+  await operation;
+  const state = controller.getState();
+  // (a) an acknowledged insert is an ordinary success, never the uncertain outcome.
+  assert.equal(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'FINAL');
+  assert.equal(calls, 2, 'the acknowledged insert result feeds a second model step');
+  assert.equal(state.agent.steps, 2);
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome]),
+    [['insert_paragraph', 'ok']]);
+  assert.equal(tree.id('actions').textContent, 'insert_paragraph: ok');
+  // (b) the delivered callback settled the ticket: no pending write and no write lock remains.
+  assert.equal(bridge.getState().writePending, false, 'the acknowledged mutation is not left pending');
+  assert.equal(state.writeLocked, false, 'a settled insert releases the write lock');
+  panel.dispose(); controller.dispose();
+});

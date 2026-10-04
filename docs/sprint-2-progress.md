@@ -4,7 +4,7 @@
 
 Sprint 2 delivered the generic bounded **Agent Runtime**, the extensible **Tool Registry** and the
 per-tool execution policy (`auto` / `confirm` / `deny`). The engine is verified **host-side only**:
-full suite `603/603`, source static audit PASS, bundle build PASS (all quoted below, measured on the
+full suite `604/604`, source static audit PASS, bundle build PASS (all quoted below, measured on the
 final tree).
 
 **Two things are NOT proven, and nothing in this document claims otherwise:**
@@ -20,8 +20,8 @@ The final-review defect that was item 1 here — the uncertain-mutation outcome 
 **fixed and re-verified**; it is recorded under [What was proven after the final review](#what-was-proven-after-the-final-review)
 and is no longer an open defect.
 
-Sprint 2's implementation range is **39 commits**, `a9784e4..HEAD` on branch `stage-b`, of which the
-final-review fix `f0781d8` and the closing correction commits (`c324d09`, plus this round's
+Sprint 2's implementation range is **40 commits**, `a9784e4..HEAD` on branch `stage-b`, of which the
+final-review fix `f0781d8` and the closing correction commits (`c324d09`, `c7ae521`, plus this round's
 tests/documents commit) are the last few. **No `src/` file changed after `f0781d8`**, so the tree this
 document records and the tree the three verification commands below were run on have the same product
 code and the same bundle input.
@@ -59,7 +59,7 @@ after `f0781d8`, so the bundle input is byte-identical and the bundle hash is `f
 result lines:
 
 - **Full host suite** — `node --test` (three consecutive runs, every one identical):
-  `ℹ tests 603` / `ℹ pass 603` / `ℹ fail 0` / `ℹ cancelled 0` / `ℹ skipped 0` / `ℹ todo 0`.
+  `ℹ tests 604` / `ℹ pass 604` / `ℹ fail 0` / `ℹ cancelled 0` / `ℹ skipped 0` / `ℹ todo 0`.
 - **Source static audit** — `node scripts/static-audit.mjs`:
   `Authored-code audit PASS` (exit 0).
 - **Bundle audit** — `node scripts/build-plugin.mjs`:
@@ -88,8 +88,10 @@ stop exporting withheld tools*. It:
 
 - classifies **both** the thrown and the RETURNED `{ok:false, code:'APPLY_UNCERTAIN'}` insert outcome as
   `TOOL_UNCERTAIN`, so the runtime halts on a genuinely unknown mutation outcome;
-- stops exporting the withheld `read_context` descriptor through `registry.tools`, so it appears in
-  neither `tools` nor any catalogue and no iterate-and-dispatch consumer can reach it;
+- withholds the `read_context` descriptor from `registry.tools` and from every `catalogue(...)` result,
+  so no consumer iterating either surface can reach it; `createWordTools` itself still returns the
+  descriptor by design (its denial-site comment says so), which is what keeps the probe-driven switch
+  back a one-value change;
 - adds the controller→`runAgent`→real-bridge mutation integration test and the registry/word
   regression tests for both legs.
 
@@ -101,14 +103,16 @@ stop exporting withheld tools*. It:
   one native mutation were dispatched, the action is `insert_paragraph`/`uncertain`/`TOOL_UNCERTAIN`,
   and the write lock holds. PASS.
 - The control leg: an acknowledged insert (`{ok:true, data:{sent:true}}`) still reaches `COMPLETE` /
-  `FINAL` with the second model step — verified by driving the controller directly in this round, so
+  `FINAL` with the second model step — pinned by *"an acknowledged insert reaches COMPLETE/FINAL with the
+  action ok and no write lock left held"* in
+  [tests/integration/controller-bridge.test.js](<../tests/integration/controller-bridge.test.js>) — so
   the new mapping cannot have turned every insert into an uncertain outcome.
 - `tests/unit/tools-word.test.js` — *"insert_paragraph classifies a RETURNED uncertain insert exactly
   like a thrown one"* and the pre-existing thrown-form pin both PASS;
   `tests/unit/tools-registry.test.js` — *"registry.tools publishes no withheld descriptor"* PASS;
   `tests/unit/tools-word.test.js` — *"read_context is withheld from every catalogue until a public
   document read is confirmed"* (which now also asserts `registry.tools`) PASS.
-- The three commands above (603/603, audit PASS, bundle PASS) were run on the final tree.
+- The three commands above (604/604, audit PASS, bundle PASS) were run on the final tree.
 
 The **uncertain-mutation leg therefore belongs in the PROVEN list** and the three-case per-action model
 is claimed for the insert path, the one auto-mutation this sprint ships.
@@ -122,11 +126,16 @@ no body built) depending only on how many milliseconds the host spent between th
 runs it produced both outcomes, so a suite that contained it could not support any stable `x/x` claim.
 
 The harness now takes a dev-only **`--frozen-now <ms>`** clock injection (mock mode only, refused
-otherwise; documented in the [harness README](<../tests/acceptance/agent/README.md#L53-L77>) as a
-testing aid), and the test uses it: the runtime and the transport read the SAME constant clock, so the
-`1 ms` deadline is exactly expired and the refusal is deterministic. The assertion is **not** a weaker
-one — it still requires `status: ERROR`, `code: TIMEOUT`, `mock.requests: 0` (no request was made) and
-`perStep[0].bytes: null` (no body was built); it simply no longer depends on how long the process took.
+otherwise; documented in the [harness README](<../tests/acceptance/agent/README.md#L53-L80>) as a
+testing aid), and the test uses it. The injection reaches only the runtime's own `now`: the harness's
+transport still calls the product's `requestCompletion` without a `clock`, so the transport keeps
+`Date.now`, while the deadline the runtime hands it is computed from the synthetic reading. Determinism
+comes from that synthetic deadline staying far below any real timestamp (the option parser caps the
+frozen reading and the deadline override at 9 digits each), so the transport's own
+`start >= deadline` entry check is already true when it runs — not from a shared clock. The assertion is
+**not** a weaker one — it still requires `status: ERROR`, `code: TIMEOUT`, `mock.requests: 0` (no request
+was made) and `perStep[0].bytes: null` (no body was built); it simply no longer depends on how long the
+process took.
 `frozenNow` is published in the record so a frozen-clock run can never be mistaken for a real-timed one.
 Evidence: the focused file passed **10/10** consecutive runs, and the full suite **3/3** runs.
 
@@ -163,15 +172,17 @@ so the harness cannot authenticate a real Qwen workload.
   JSON-discipline and guardrail-reached counts) **do not exist**.
 - **Mock records are not calibration data.** In `--mock` mode the fixed envelope yields exactly **one
   model step and zero tool calls** for all three workloads, and the elapsed ms is loop **overhead**, not
-  model latency. The [harness README](<../tests/acceptance/agent/README.md#L136-L143>) states this, and
+  model latency. The [harness README](<../tests/acceptance/agent/README.md#L139-L146>) states this, and
   mock mode proves the harness/transport/registry wiring only.
 - What mock mode *does* demonstrate: the multi-step and repair accounting (`proposal` profile),
   a `LIMIT` with the named guardrail (`--max-steps 1`), a bounded per-request `TIMEOUT`, and an
   over-ceiling `BYTE_LIMIT` — all through the product's own `createRequest`/`requestCompletion`.
   The evidence is now a committed `node --test` artifact:
   [tests/acceptance/agent/dev-qwen-workloads.test.js](<../tests/acceptance/agent/dev-qwen-workloads.test.js>)
-  drives each profile as a child process (9/9 in the full suite), beside the documented commands in the
-  [harness README](<../tests/acceptance/agent/README.md#L126-L134>).
+  drives three of the four mock profiles as child processes — `final`, `proposal` and `oversize`; the
+  stalling `timeout` profile is deliberately excluded because it waits on wall-clock time — and all
+  nine of the file's cases pass in the full suite (9/9), beside the documented commands in the
+  [harness README](<../tests/acceptance/agent/README.md#L111-L119>).
 - **What would close it:** a real run of the three workloads
   (`node tests/acceptance/agent/dev-qwen-workloads.mjs word|excel|powerpoint` with
   `AGENT_DEV_ENDPOINT`/`AGENT_DEV_KEY` from a readable development credential) and setting §12.2 from
@@ -242,7 +253,9 @@ These are recorded, deliberate, and none is a hidden success claim:
   timed-out mutation stays busy/uncertain until it settles or the plugin is reinitialised). The UI maps
   the uncertain outcome to an authored caption. On the insert path that outcome reached the UI for the
   THROWN bridge form, and the final-review fix `f0781d8` extended it to the RETURNED form, without any
-  change to the UI behaviour itself. An acknowledged insert still reaches `COMPLETE`/`FINAL`.
+  change to the UI behaviour itself. An acknowledged insert still reaches `COMPLETE`/`FINAL`, pinned by
+  *"an acknowledged insert reaches COMPLETE/FINAL with the action ok and no write lock left held"* in
+  [tests/integration/controller-bridge.test.js](<../tests/integration/controller-bridge.test.js>).
 - **Constraint discovered — the audit is scope-insensitive.** After esbuild concatenation, two modules
   with same-named locals can produce a **spurious `DYNAMIC_PROPERTY`**. The remedy is **renaming in the
   colliding module, never weakening the audit**; a regression test now documents this. A security gate
@@ -281,10 +294,12 @@ Sprint 3+ grows the **catalogue**, not the runtime:
 - **PROVEN (host-side):** the bounded runtime's loop, batch dispatch, guardrails, Stop and deadline, the
   closed protocol, the bounded context window, the registry and policy, the representative Word tool
   descriptors/handlers behind the injected bridge, the UI lifecycle, and the static/bundle security
-  audits — `603/603`, both audits PASS, per-task independent reviews with rework where needed. The
+  audits — `604/604`, both audits PASS, per-task independent reviews with rework where needed. The
   runtime's **uncertain-mutation leg is in this list as of `f0781d8`**: the returned
   `APPLY_UNCERTAIN` insert outcome stops the run as `TOOL_UNCERTAIN`, and an acknowledged insert still
-  reaches `FINAL` (re-verified in this round; see "What was proven after the final review").
+  reaches `FINAL` (pinned by the control test in
+  [tests/integration/controller-bridge.test.js](<../tests/integration/controller-bridge.test.js>);
+  see "What was proven after the final review").
 - **FIXED AND RE-VERIFIED (was the final review's defect):** the uncertain-mutation outcome on the insert
   path — commit `f0781d8`; the withheld `read_context` is also no longer exported through
   `registry.tools`. No host-side defect from the final review remains open.

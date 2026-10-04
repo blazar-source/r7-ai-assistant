@@ -132,7 +132,7 @@ Registry rules:
    Function`, string timers and computed function access are rejected by the static audit.
 3. Every handler returns a bounded plain-data result `{ ok: true, data }` or
    `{ ok: false, code, message }` with `code` from a fixed enum. Exactly one code,
-   `EDITOR_UNCERTAIN`, means "it is unknown whether the mutation executed" and is the only code that
+   `TOOL_UNCERTAIN`, means "it is unknown whether the mutation executed" and is the only code that
    stops the run (§8.3); every other code is a known tool error returned to the model. Unknown/extra
    fields are rejected.
 4. Sprint 3+ adds tools by adding descriptors and handlers; the runtime, protocol and UI do not change.
@@ -207,7 +207,7 @@ run(userRequest):
         if desc.policy != 'auto': return knownToolError()
         result = desc.execute(call.arguments, ctx)       # static handler, bounded result
         results.push({tool, result})
-        if result.code == 'EDITOR_UNCERTAIN': return uncertain()   # §8.3 — run stops
+        if result.code == 'TOOL_UNCERTAIN': return uncertain()   # §8.3 — run stops
         # any other handled failure is a known tool error: keep going, the model sees it and may replan
      messages += toolResultMessage(results)
   return limitReached()

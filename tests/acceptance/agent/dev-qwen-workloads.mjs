@@ -83,8 +83,8 @@ const USAGE = [
   `  --deadline-ms <n>          guardrail override (default ${DEFAULT_GUARDRAILS.operationDeadlineMs})`,
   `  --http-timeout-seconds <n> settings-governed per-request HTTP timeout, ${LIMITS.httpTimeoutMinSeconds}..${LIMITS.httpTimeoutMaxSeconds} (default ${DEFAULT_HTTP_TIMEOUT_SECONDS})`,
   '  --steps-report <path>      also write the same count-only record to this file',
-  '  --frozen-now <ms>          TESTING AID: inject a frozen synthetic clock (see README) so a',
-  '                             deadline is reached exactly instead of raced; refused for a real run',
+  '  --frozen-now <ms>          TESTING AID: freeze the runtime clock (see README) so the transport',
+  '                             deadline check is already expired instead of raced; refused for a real run',
   '  --help                     print this help',
   '',
   'real mode  requires AGENT_DEV_ENDPOINT and AGENT_DEV_KEY in the environment;',
@@ -349,11 +349,15 @@ function createTransport({ settings, uuid, fetchImpl, stepSamples }) {
 // record can name the guardrail instead of guessing from the counts. `now` is the same Date.now the
 // runtime uses by default.
 //
-// `frozenNow` (the `--frozen-now` testing aid) replaces that clock with a constant synthetic reading, so
-// a test can reach a deadline EXACTLY instead of racing the wall clock: `now` then returns the SAME
-// value on the runtime's pre-step check and on the transport's own `start = clock.now()`, which makes
-// the transport's `start >= deadline` outcome — not the host's speed — decide the run. The elapsed and
-// per-step `ms` values are still measured with Date.now, because they report the run, not the deadline.
+// `frozenNow` (the `--frozen-now` testing aid) replaces ONLY the runtime's `now` with a constant
+// synthetic reading. The transport is NOT given that clock: createTransport calls the product's
+// requestCompletion without a `clock`, so the transport keeps its own `Date.now`, while the deadline it
+// is handed was computed by runAgent from the synthetic reading. Determinism therefore does not come
+// from a shared clock but from that synthetic deadline (a <=9-digit frozen reading plus a <=9-digit
+// override) staying far below any real timestamp: the transport's own `start >= deadline` entry check is
+// trivially true, so the refusal — no request, no body — is decided by the frozen deadline rather than
+// by the host's speed. The elapsed and per-step `ms` values are still measured with Date.now, because
+// they report the run, not the deadline.
 function createDeadlineWatch(operationDeadlineMs, frozenNow = null) {
   const watch = { calls: 0, deadline: null, fired: false };
   if (frozenNow !== null) {

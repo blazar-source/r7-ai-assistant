@@ -52,8 +52,9 @@ always states the limits it ran under.
 
 ## `--frozen-now <ms>` — testing aid (mock mode only)
 
-`--frozen-now` injects a **constant synthetic clock** in place of `Date.now` for the run's deadline
-arithmetic. It is an offline testing aid, not a calibration option: it is refused without `--mock`
+`--frozen-now` injects a **constant synthetic clock** into the runtime's own `now` for the run's
+deadline arithmetic; the harness's transport is not given that clock, so the transport keeps `Date.now`.
+It is an offline testing aid, not a calibration option: it is refused without `--mock`
 (exit `2`, before any transport exists), must be a positive integer of at most 9 digits, and is not a
 real timestamp. When it is used, the injected reading is published in the record as `frozenNow`, so a
 reader can never mistake a frozen-clock run for a real-timed one; `ms` and `perStep[].ms` are still
@@ -63,9 +64,11 @@ Why it exists: the `--deadline-ms 1` case is the one refusal a wall clock cannot
 Two independent checks can fire it — the runtime's own pre-step check (which returns `LIMIT` and sends
 nothing) and the transport's check at entry (which returns `ERROR`/`code: "TIMEOUT"` before the body is
 built). Which one wins depends only on how many milliseconds the host spent between those two reads, so
-on a slower run the same command legitimately reports `LIMIT` instead. With `--frozen-now` the runtime
-and the transport read the SAME constant, so `1` is exactly expired at the transport and the refusal is
-deterministic:
+on a slower run the same command legitimately reports `LIMIT` instead. `--frozen-now` removes the race
+without sharing a clock: the runtime computes its deadline from the synthetic reading (so its own
+`frozenNow >= frozenNow + 1` pre-step check is false on every host), and the transport still reads the
+real `Date.now`, which is far larger than that synthetic deadline — so the transport's own
+`start >= deadline` entry check is trivially true and the refusal is deterministic:
 
 ```powershell
 node tests/acceptance/agent/dev-qwen-workloads.mjs word --mock --deadline-ms 1 --frozen-now 1000000
@@ -182,10 +185,10 @@ configuration were refused before any network call.
 
 A `LIMIT` is never a completed workload, and the record says which guardrail produced it and with which
 counts. Attribution: if a deadline check fired (the runtime observes its own clock through the injected
-`now`, which is the same `Date.now`), the guardrail is `operationDeadlineMs`; otherwise the exhausted
-counter is named (`maxSteps` when the step budget is spent, `maxToolCalls` when the tool-call budget
-is). `ms` and `guardrails.operationDeadlineMs` are both in the record, so a reader can see when more
-than one limit was in play.
+`now` — the host `Date.now` unless `--frozen-now` overrides it), the guardrail is `operationDeadlineMs`;
+otherwise the exhausted counter is named (`maxSteps` when the step budget is spent, `maxToolCalls` when
+the tool-call budget is). `ms` and `guardrails.operationDeadlineMs` are both in the record, so a reader
+can see when more than one limit was in play.
 
 Note that a *stalled request* is not a `LIMIT`: the transport's own deadline aborts it first and the run
 ends `ERROR` with `code: "TIMEOUT"`. `limit.guardrail: "operationDeadlineMs"` means the runtime's loop

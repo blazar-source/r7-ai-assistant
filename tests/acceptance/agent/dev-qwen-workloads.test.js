@@ -71,7 +71,7 @@ function recordOf(run) {
   if (record.mock.requests > 0) assert.equal(record.mock.sessions, 1, 'one session per run');
   return record;
 }
-// The four real-development variables are the only environment input the harness reads; a no-run case
+// The three real-development variables are the only environment input the harness reads; a no-run case
 // proves its refusal names the variable and that no transport existed, so a leak of any of these
 // values (or of a newline-carrying value) would show up here.
 function withoutExternalVariables() {
@@ -153,9 +153,10 @@ test('a missing real-development environment exits 2 before any transport exists
 // The terminal refusal a deadline produces is the one outcome a wall clock cannot be trusted to
 // reproduce: whether the runtime's own pre-step deadline check fires first (LIMIT, no request) or the
 // transport's check fires first (ERROR/TIMEOUT, body never built) depends only on how many milliseconds
-// the host spent between those two reads. `--frozen-now` removes the race entirely: the runtime and the
-// transport read the SAME constant clock, so `1 ms` is exactly expired by the time the transport
-// computes `start + 1` — every run, on every host. The elapsed `ms` values stay real by design.
+// the host spent between those two reads. `--frozen-now` removes the race: it freezes only the runtime's
+// `now`, and the transport keeps the real `Date.now`, so the synthetic deadline is far below any real
+// `start` and the transport's entry check is trivially true — ERROR/TIMEOUT with no body, every run, on
+// every host. The elapsed `ms` values stay real by design.
 const FROZEN_NOW = '1000000';
 test('a 1 ms operation deadline refuses before a request body is even built', () => {
   const run = runHarness(['word', '--mock', '--deadline-ms', '1', '--frozen-now', FROZEN_NOW]);
