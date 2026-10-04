@@ -55,7 +55,14 @@ test('validateBatch resolves the whole batch before any execution', () => {
   assert.equal(resolved[0].descriptor.kind, 'read');
   assert.ok(Object.isFrozen(resolved));
   assert.throws(() => validateBatch(catalogue, [{ tool: 'read_selection', arguments: {} }, { tool: 'nope', arguments: {} }]), /TOOL_ERROR/);
-  assert.throws(() => validateBatch(catalogue, [{ tool: 'insert_paragraph', arguments: {} }, { tool: 'replace_selection', arguments: {} }]), /PROTOCOL_ERROR/);
+  // A mixed confirm batch is a KNOWN tool error (§6.2), not a protocol error: a protocol error would
+  // consume the run's single repair slot, and its repair text never asks the model to split the step.
+  assert.throws(() => validateBatch(catalogue, [{ tool: 'insert_paragraph', arguments: {} }, { tool: 'replace_selection', arguments: {} }]), /TOOL_ERROR/);
+});
+
+test('validateBatch reports a repeated confirm tool as a known tool error', () => {
+  const call = { tool: 'replace_selection', arguments: {} };
+  assert.throws(() => validateBatch(catalogue, [call, { ...call }]), /TOOL_ERROR/);
 });
 
 test('validateBatch bounds the whole serialized arguments payload of one action', () => {
@@ -79,6 +86,30 @@ test('tool results travel as bounded compatible user messages', () => {
   assert.equal(messages.length, 1);
   assert.equal(messages[0].role, 'user');
   assert.match(messages[0].content, /read_selection/);
+});
+
+test('toolResultMessages bounds every single result, not only the batch total', () => {
+  const ok = (tool, characters) => [{ tool, result: { ok: true, data: { text: 'я'.repeat(characters) } } }];
+  // Each entry is bounded on its own (§12.1: 16 KiB per result), independently of the batch total.
+  assert.throws(() => toolResultMessages(ok('read_selection', 9000)), /TOOL_ERROR/);
+  // The aggregate ceiling is the outer limit, so several small entries that together exceed 16 KiB are
+  // accepted — a per-result rule must not turn the whole batch into a failure.
+  const twoSmall = [...ok('read_selection', 3000), ...ok('read_selection', 3000)];
+  assert.equal(toolResultMessages(twoSmall).length, 1);
+});
+
+test('toolResultMessages converts every malformed batch into a classified tool error', () => {
+  assert.throws(() => toolResultMessages(null), /TOOL_ERROR/);
+  assert.throws(() => toolResultMessages({ length: 1, 0: { tool: 'read_selection', result: { ok: true, data: {} } } }), /TOOL_ERROR/);
+  assert.throws(() => toolResultMessages('results'), /TOOL_ERROR/);
+  assert.throws(() => toolResultMessages([null]), /TOOL_ERROR/);
+  // JSON.stringify throws the raw TypeError; it must never escape the classified-error contract.
+  assert.throws(() => toolResultMessages([{ tool: 'read_selection', result: { ok: true, data: 10n } }]), /TOOL_ERROR/);
+  const circular = { ok: true, data: {} };
+  circular.data.self = circular;
+  assert.throws(() => toolResultMessages([{ tool: 'read_selection', result: circular }]), /TOOL_ERROR/);
+  const trap = { ok: true, get data() { throw new Error('trap'); } };
+  assert.throws(() => toolResultMessages([{ tool: 'read_selection', result: trap }]), /TOOL_ERROR/);
 });
 
 test('repairMessage carries only a closed code, never raw content', () => {

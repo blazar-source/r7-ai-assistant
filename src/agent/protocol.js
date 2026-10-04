@@ -55,14 +55,41 @@ export function validateBatch(catalogue, calls) {
     if (!descriptor) throw new SafeError(ERROR_CODES.TOOL_ERROR);
     return Object.freeze({ descriptor, arguments: validateArguments(descriptor.schema, call.arguments, AGENT_CEILINGS.argumentsBytes) });
   });
+  // §6.2: a confirm action must travel alone. This is a KNOWN tool error (the model can split the step
+  // and retry immediately), never a protocol error — a protocol error would burn the run's only repair.
   if (resolved.some(entry => entry.descriptor.policy === 'confirm') && resolved.length > 1) {
-    throw new SafeError(ERROR_CODES.PROTOCOL_ERROR);
+    throw new SafeError(ERROR_CODES.TOOL_ERROR);
   }
   return Object.freeze(resolved);
 }
-export function toolResultMessages(results) {
-  const payload = JSON.stringify({ type: 'tool_results', results: results.map(entry => ({ tool: entry.tool, ...entry.result })) });
+// The mapping and the serialization of tool results are the last place model-adjacent data is touched
+// before it becomes a message: a non-array, a null entry, a BigInt, a cycle or a throwing getter must
+// all land on the closed error contract and escape as TOOL_ERROR, never as a raw exception.
+function stringifyToolResults(results) {
+  if (!Array.isArray(results)) throw new SafeError(ERROR_CODES.TOOL_ERROR);
+  const payloads = results.map(entry => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    // Read every own property once, here: a value that cannot be serialized (BigInt, cycle, throwing
+    // getter) is then refused by the bound check instead of exploding inside the aggregate stringify.
+    const value = { tool: entry.tool, ...entry.result };
+    let serialized;
+    try { serialized = JSON.stringify(value); } catch { throw new SafeError(ERROR_CODES.TOOL_ERROR); }
+    if (typeof serialized !== 'string') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    // §12.1 bounds ONE result; the caller bounds the whole message. Per result first, so the reported
+    // code names the real breach instead of the batch total by accident.
+    if (utf8ByteLength(serialized) > AGENT_CEILINGS.toolResultBytes) throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    return value;
+  });
+  const payload = JSON.stringify({ type: 'tool_results', results: payloads });
   assertByteLimit(payload, AGENT_CEILINGS.toolResultBytes * Math.max(1, results.length));
+  return payload;
+}
+export function toolResultMessages(results) {
+  let payload;
+  try { payload = stringifyToolResults(results); } catch (error) {
+    if (error instanceof SafeError) throw error;
+    throw new SafeError(ERROR_CODES.TOOL_ERROR);
+  }
   return Object.freeze([Object.freeze({ role: 'user', content: payload })]);
 }
 export function repairMessage(error) {
