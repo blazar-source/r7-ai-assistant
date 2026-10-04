@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { runAgent } from '../../src/agent/runtime.js';
 import { createRegistry } from '../../src/tools/registry.js';
 import { ERROR_CODES, SafeError } from '../../src/shared/errors.js';
+import { AGENT_CEILINGS } from '../../src/shared/limits.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
   schema: { type: 'object', additionalProperties: false, required: [], properties: {} } };
@@ -523,4 +525,91 @@ test('an injected clock and the default transport measure the same frame', async
   assert.equal(result.status, 'FINAL');
   assert.equal(result.message, 'ок');
   assert.equal(bodies.length, 1);
+});
+
+// --- Fix round 4, finding 6(b): the result-mapping step is failure-safe ---------------------------
+// toolResultMessages(...) runs OUTSIDE the per-action guard, so a throw there used to reach the outer
+// catch and end the whole task as a generic ERROR. §8.3 confines a known failure to its action/batch:
+// an unserializable result becomes a literal, bounded tool-result refusal and the loop continues.
+
+test('a result that cannot be serialized becomes a bounded refusal and the run still reaches final', async () => {
+  // A BigInt is a real, in-band unserializable handler result: the action itself succeeds and is
+  // recorded as such, and only the mapping of its result into a model message can refuse.
+  const hostile = createRegistry([
+    { ...base, name: 'read_selection', precondition: () => null, execute: () => ({ ok: true, data: 10n }) }
+  ]);
+  const wire = [];
+  let index = 0;
+  const sequence = [
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ];
+  const result = await runAgent({ ...baseArgs, registry: hostile, transport: async (messages) => {
+    wire.push(messages.map(message => message.content).join('\n'));
+    return { content: sequence[Math.min(index++, sequence.length - 1)] };
+  } });
+  assert.equal(result.status, 'FINAL', 'an unserializable result must be that batch\'s known error, never a run-ending ERROR');
+  assert.equal(result.code, null);
+  assert.equal(result.steps, 2, 'the loop must continue after the refusal');
+  assert.equal(result.toolCalls, 1);
+  assert.equal(result.actions.length, 1);
+  // The model sees exactly one bounded, literal tool-result refusal: fixed shape, ok:false, closed code.
+  const refusals = wire[1].split('\n').filter(line => line.includes('"type":"tool_results"'));
+  assert.equal(refusals.length, 1, 'the refusal must reach the model as a tool result');
+  const refusal = JSON.parse(refusals[0]);
+  assert.equal(refusal.type, 'tool_results');
+  assert.equal(refusal.results.length, 1);
+  assert.deepEqual(Object.keys(refusal.results[0]).sort(), ['code', 'message', 'ok', 'tool']);
+  assert.equal(refusal.results[0].ok, false);
+  assert.equal(refusal.results[0].code, ERROR_CODES.TOOL_ERROR);
+  assert.ok(utf8ByteLength(refusals[0]) <= AGENT_CEILINGS.toolResultBytes, 'the literal refusal is bounded by the per-result ceiling');
+});
+
+// --- Fix round 4, finding 7: a published code must be a MEMBER of the closed vocabulary ------------
+// `instanceof SafeError` is forgeable: Object.create(SafeError.prototype) with its own `code` passes it
+// and used to publish an arbitrary string into the model-visible tool result. Membership in ERROR_CODES
+// is the only thing that certifies a code; anything else collapses to TOOL_ERROR.
+
+test('a forged error object is TOOL_ERROR and never publishes its forged code', async () => {
+  const forgedPrototype = () => {
+    const error = Object.create(SafeError.prototype);
+    Object.defineProperty(error, 'code', { value: 'FORGED_SECRET_CODE', enumerable: true });
+    error.message = 'FORGED-SECRET-TEXT';
+    return error;
+  };
+  const forgedPlain = () => ({ code: 'FORGED_SECRET_CODE', message: 'FORGED-SECRET-TEXT' });
+  const cases = [
+    ['a prototype-based forgery thrown from a read handler', forgedPrototype(), 'execute'],
+    ['a plain-object forgery thrown from a read handler', forgedPlain(), 'execute'],
+    ['a prototype-based forgery thrown from a precondition', forgedPrototype(), 'precondition'],
+    ['a plain-object forgery thrown from a precondition', forgedPlain(), 'precondition']
+  ];
+  const sequence = [
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"ок"}'
+  ];
+  assert.ok(Object.create(SafeError.prototype) instanceof SafeError, 'the prototype forgery really does pass instanceof — that is the hole');
+  for (const [label, error, where] of cases) {
+    const tools = [
+      { ...base, name: 'read_selection',
+        precondition: where === 'precondition' ? () => { throw error; } : () => null,
+        execute: where === 'execute' ? () => { throw error; } : () => { calls.push('must-not-run'); return { ok: true, data: {} }; } },
+      { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+    ];
+    calls.length = 0;
+    const wire = [];
+    let index = 0;
+    const result = await runAgent({ ...baseArgs, registry: createRegistry(tools), transport: async (messages) => {
+      wire.push(messages.map(message => message.content).join('\n'));
+      return { content: sequence[Math.min(index++, sequence.length - 1)] };
+    } });
+    assert.equal(result.status, 'FINAL', `${label}: a forged error is a known error, never a run-ending one`);
+    assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok'], label);
+    assert.equal(result.actions[0].code, ERROR_CODES.TOOL_ERROR, `${label}: the forged code must collapse to TOOL_ERROR`);
+    assert.deepEqual(calls, ['after'], `${label}: the batch continues`);
+    assert.ok(!wire[1].includes('FORGED_SECRET_CODE'), `${label}: the forged code must never reach the model`);
+    assert.ok(!wire[1].includes('FORGED-SECRET-TEXT'), `${label}: the forged message must never reach the model`);
+    assert.ok(!JSON.stringify(result.actions).includes('FORGED_SECRET_CODE'), `${label}: the forged code must never reach the action log`);
+    assert.ok(!JSON.stringify(result.actions).includes('FORGED-SECRET-TEXT'), `${label}: the forged text must never reach the action log`);
+  }
 });

@@ -9,6 +9,42 @@ import { requestCompletion } from '../ai/transport.js';
 // A refusal payload is trusted, model-facing text: it names the class of the refusal, never the
 // document, the arguments or any raw error.
 const BATCH_REFUSAL = 'one action per batch for a confirm tool; unknown tool name or invalid arguments';
+const UNSERIALIZABLE_REFUSAL = 'the tool result could not be serialized';
+// §12.1/§8.3: the tool-result mapping runs OUTSIDE the per-action guard, so a result that cannot be
+// serialized must not escape to the outer catch and end the task. It becomes that batch's known tool
+// error instead: one LITERAL, bounded message, never derived from the failure, the document or the
+// arguments — a fixed envelope with a closed code, nothing from the exception is even read.
+const RESULT_REFUSAL_MESSAGE = Object.freeze({
+  role: 'user',
+  content: JSON.stringify({
+    type: 'tool_results',
+    results: [{ tool: 'batch', ok: false, code: ERROR_CODES.TOOL_ERROR, message: UNSERIALIZABLE_REFUSAL }]
+  })
+});
+// Appends the batch's tool-result messages, or the literal refusal when they cannot be produced. Any
+// closure of the failure — a SafeError or anything else — lands on the same fixed refusal, so the loop
+// continues exactly like the per-action guard's contract instead of ending the run as a generic ERROR.
+function appendToolResults(context, results) {
+  let messages;
+  try {
+    messages = toolResultMessages(results);
+  } catch {
+    context.append(RESULT_REFUSAL_MESSAGE);
+    return;
+  }
+  for (const message of messages) context.append(message);
+}
+// A code is certified by MEMBERSHIP in the closed vocabulary, never by the error's prototype:
+// `instanceof SafeError` is forgeable (`Object.create(SafeError.prototype)` with its own `code`), and a
+// forged error must not publish an arbitrary string into the model-visible result or the action log.
+// The `code` read is contained too — this is the last gate before publication, so a hostile accessor
+// on a forged error must collapse to the tool-error class rather than become a raw exception.
+function closedCode(source) {
+  if (source === null || (typeof source !== 'object' && typeof source !== 'function')) return null;
+  let candidate;
+  try { candidate = source.code; } catch { return null; }
+  return typeof candidate === 'string' && ERROR_CODES[candidate] === candidate ? candidate : null;
+}
 
 // §8.3 is a three-case model, so the actions log carries its three outcomes only. The handler's raw
 // code is classified here and never published; an unreadable handler result is a closed 'error',
@@ -24,34 +60,30 @@ function actionOutcome(result) {
 // an arbitrary string, a message and any document content are never copied into the record — and a
 // failure with no readable class is the tool-error class.
 function actionCode(result) {
-  const candidate = result?.code;
-  return typeof candidate === 'string' && ERROR_CODES[candidate] === candidate ? candidate : ERROR_CODES.TOOL_ERROR;
+  return closedCode(result) ?? ERROR_CODES.TOOL_ERROR;
 }
 // §8.3 for a THROWN PRECONDITION. A precondition is a pure, pre-dispatch check: if it throws, nothing
 // was dispatched, so whether the mutation happened is definitely KNOWN — it did not. The throw is
 // therefore always a KNOWN error for this action and the batch continues; the descriptor's kind is
 // deliberately ignored, because TOOL_UNCERTAIN would be false information about a document that was
-// never touched. The published class is the thrown SafeError's own closed code (a SafeError always
-// carries one — its constructor coerces anything else to INTERNAL_ERROR); any other thrown value, and
-// the inapplicable TOOL_UNCERTAIN class, become the tool-error class. The raw exception is never read
-// for text and never published.
+// never touched. The published class is the thrown SafeError's own closed code — and it is published
+// only after MEMBERSHIP in ERROR_CODES certifies it, because `instanceof` alone is forgeable. Any other
+// thrown value, a forged code and the inapplicable TOOL_UNCERTAIN class all become the tool-error class.
+// The raw exception is never read for text and never published.
 function preconditionThrowResult(error) {
-  const code = error instanceof SafeError && error.code !== ERROR_CODES.TOOL_UNCERTAIN
-    ? error.code
-    : ERROR_CODES.TOOL_ERROR;
-  return { ok: false, code, message: code };
+  const code = error instanceof SafeError ? closedCode(error) : null;
+  const published = code !== null && code !== ERROR_CODES.TOOL_UNCERTAIN ? code : ERROR_CODES.TOOL_ERROR;
+  return { ok: false, code: published, message: published };
 }
 // §8.3 for a HANDLER that THROWS, i.e. only for a throw from the awaited execute. A closed code — from
 // a SafeError, or from any error carrying one — is a KNOWN local failure: it becomes this action's
 // result, is recorded as an error and the batch continues, so the model sees it and may replan.
 // Anything else is unknown: a mutation that threw may already have applied a change, so its outcome is
 // genuinely uncertain and the run stops fail-safe without a retry, while a read that threw is an
-// ordinary tool error and the batch continues. Only the closed code is published: the raw exception is
-// never read for text and never returned or logged.
+// ordinary tool error and the batch continues. Only a code that MEMBERSHIP certifies is published —
+// neither the prototype nor a raw exception text is ever read for it.
 function thrownActionResult(error, descriptor) {
-  const code = error instanceof SafeError
-    ? error.code
-    : (typeof error?.code === 'string' && ERROR_CODES[error.code] === error.code ? error.code : null);
+  const code = closedCode(error);
   if (code !== null) return { ok: false, code, message: code };
   const failure = descriptor.kind === 'mutate' ? ERROR_CODES.TOOL_UNCERTAIN : ERROR_CODES.TOOL_ERROR;
   return { ok: false, code: failure, message: failure };
@@ -125,7 +157,7 @@ export async function runAgent(options) {
         if (error.code === ERROR_CODES.TOOL_ERROR) {
           context.append({ role: 'assistant', content: JSON.stringify(envelope) });
           const refusal = [{ tool: 'batch', result: { ok: false, code: ERROR_CODES.TOOL_ERROR, message: BATCH_REFUSAL } }];
-          for (const message of toolResultMessages(refusal)) context.append(message);
+          appendToolResults(context, refusal);
           continue;
         }
         if (repairs >= AGENT_CEILINGS.protocolRepair) return finish('PROTOCOL_ERROR');
@@ -175,7 +207,7 @@ export async function runAgent(options) {
         results.push({ tool: entry.descriptor.name, result });
       }
       context.append({ role: 'assistant', content: JSON.stringify(envelope) });
-      for (const message of toolResultMessages(results)) context.append(message);
+      appendToolResults(context, results);
     }
     return finish('LIMIT');
   } catch (error) {

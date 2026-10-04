@@ -140,3 +140,52 @@ test('repairMessage carries only a closed code, never raw content', () => {
   assert.doesNotMatch(message, /SECRET-DOCUMENT-TEXT/);
   assert.match(repairMessage(new SafeError(ERROR_CODES.TOOL_ERROR)), /TOOL_ERROR/);
 });
+
+// --- Fix round 4, finding 6(a): an entry is bounded by its OWN serialization ----------------------
+// §12.1 bounds one tool RESULT. The 36-byte message envelope ({"type":"tool_results","results":[…]})
+// CARRIES the entry; charging those bytes to the entry refused a legal result whose own serialization
+// sat in the top 36 bytes of the ceiling (16348..16384) — a batch that previously travelled as one
+// message accepted exactly that entry.
+
+// Pad an entry's `text` so its own serialization — the value the protocol actually measures — is
+// exactly `bytes`. The shape alone is 54 bytes, so the test builds sizes, never trusts a magic one.
+const entryEnvelopeBytes = tool => utf8ByteLength(JSON.stringify({ tool, ok: true, data: { text: '' } }));
+function entryOfOwnSize(tool, bytes) {
+  const result = { ok: true, data: { text: '' } };
+  const base = entryEnvelopeBytes(tool);
+  assert.ok(bytes >= base, `cannot build a ${bytes}-byte entry: the shape alone is ${base} bytes`);
+  result.data.text = 'a'.repeat(bytes - base);
+  return { tool, result };
+}
+const ownSize = entry => utf8ByteLength(JSON.stringify({ tool: entry.tool, ...entry.result }));
+
+test('a tool result is bounded by its own serialization, never by the envelope that carries it', () => {
+  const limit = AGENT_CEILINGS.toolResultBytes;
+  const exact = entryOfOwnSize('read_selection', limit);
+  const justUnder = entryOfOwnSize('read_selection', limit - 1);
+  const over = entryOfOwnSize('read_selection', limit + 1);
+  assert.equal(ownSize(exact), limit);
+  assert.equal(ownSize(justUnder), limit - 1);
+  assert.equal(ownSize(over), limit + 1);
+  for (const entry of [exact, justUnder]) {
+    const messages = toolResultMessages([entry]);
+    assert.equal(messages.length, 1);
+    // The MESSAGE is larger than the per-result ceiling by the envelope's own bytes — that is the
+    // point: the entry passed its bound, so the envelope must not be charged against it.
+    assert.ok(utf8ByteLength(messages[0].content) > limit);
+    assert.deepEqual(JSON.parse(messages[0].content), { type: 'tool_results', results: [{ tool: entry.tool, ...entry.result }] });
+  }
+  // One byte past the entry's own ceiling is still the entry's own breach.
+  assert.throws(() => toolResultMessages([over]), /TOOL_ERROR/);
+});
+
+test('a multi-action batch accepts an entry in the previously-refused top-36-byte window', () => {
+  // 16350 is inside 16348..16384: legal against the entry ceiling, but 16386 bytes once the envelope
+  // was counted — which is exactly how the envelope came to refuse it.
+  const wide = entryOfOwnSize('read_selection', 16350);
+  const messages = toolResultMessages([wide, { tool: 'read_selection', result: { ok: true, data: {} } }]);
+  assert.equal(messages.length, 2, 'one message per result, both accepted');
+  assert.deepEqual(Object.keys(JSON.parse(messages[0].content)).sort(), ['results', 'type']);
+  assert.equal(JSON.parse(messages[0].content).results[0].data.text.length, wide.result.data.text.length);
+  assert.deepEqual(JSON.parse(messages[1].content), { type: 'tool_results', results: [{ tool: 'read_selection', ok: true, data: {} }] });
+});

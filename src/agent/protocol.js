@@ -62,6 +62,17 @@ export function validateBatch(catalogue, calls) {
   }
   return Object.freeze(resolved);
 }
+// §12.1 bounds ONE result by its OWN serialization (`{ tool, ...result }`). The message envelope that
+// carries it is not part of the entry, so its fixed overhead must never be charged against the entry's
+// ceiling: an entry in the top 36 bytes of the limit (16348..16384) is legal and was refused before.
+const TOOL_RESULTS_PREFIX = '{"type":"tool_results","results":[';
+const TOOL_RESULTS_SUFFIX = ']}';
+// The empty serialized envelope plus one byte for the comma between entries. The sanity bound adds
+// this per entry, so a message can never refuse a batch whose every entry already passed its own bound.
+const TOOL_RESULTS_ENVELOPE_BYTES = utf8ByteLength(JSON.stringify({ type: 'tool_results', results: [] })) + 1;
+function toolResultsMessageBudget(count) {
+  return (AGENT_CEILINGS.toolResultBytes + TOOL_RESULTS_ENVELOPE_BYTES) * Math.max(1, count);
+}
 // The mapping and the serialization of tool results are the last place model-adjacent data is touched
 // before it becomes a message: a non-array, a null entry, a BigInt, a cycle or a throwing getter must
 // all land on the closed error contract and escape as TOOL_ERROR, never as a raw exception.
@@ -75,13 +86,16 @@ function stringifyToolResults(results) {
     let serialized;
     try { serialized = JSON.stringify(value); } catch { throw new SafeError(ERROR_CODES.TOOL_ERROR); }
     if (typeof serialized !== 'string') throw new SafeError(ERROR_CODES.TOOL_ERROR);
-    // §12.1 bounds ONE result; the caller bounds ONE message around it. Per result first, so the
-    // reported code names the real breach instead of the message total by accident.
+    // The ENTRY's own bytes, never the envelope's: per result first, so the reported code names the
+    // real breach instead of the message total by accident.
     if (utf8ByteLength(serialized) > AGENT_CEILINGS.toolResultBytes) throw new SafeError(ERROR_CODES.TOOL_ERROR);
-    return value;
+    return serialized;
   });
-  const payload = JSON.stringify({ type: 'tool_results', results: payloads });
-  assertByteLimit(payload, AGENT_CEILINGS.toolResultBytes * Math.max(1, results.length));
+  // Assembled from the strings that were measured, so the published bytes are exactly the bounded ones.
+  const payload = `${TOOL_RESULTS_PREFIX}${payloads.join(',')}${TOOL_RESULTS_SUFFIX}`;
+  // A SANITY bound on the whole message only: it carries the envelope's own bytes as slack and can
+  // therefore never refuse an entry that passed its own bound, while still capping the aggregate.
+  if (utf8ByteLength(payload) > toolResultsMessageBudget(results.length)) throw new SafeError(ERROR_CODES.TOOL_ERROR);
   return payload;
 }
 export function toolResultMessages(results) {
