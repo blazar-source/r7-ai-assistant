@@ -202,6 +202,13 @@ Measured records (per-step fields are in step order; the table's `qwen3-235b` is
 `qwen/qwen3-235b-a22b-2507` and `qwen3-30b` is `qwen/qwen3-30b-a3b-instruct-2507`; `null` is the
 record's own value for "no valid envelope observed"):
 
+**Record source.** Each row below is a count-only JSON record the harness wrote with
+`--steps-report` into the gitignored workspace
+`.superpowers/sdd/2026-10-04-sprint-2-agent-runtime/calib-<model>-<workload>.json` (six files, one per
+run). They are re-derivable by re-running the documented command, but they do **not** travel with a
+clone — the same caveat as the ledger `progress.md` named above. The numbers in this section are read
+from those files, not from memory.
+
 | Workload | Model | Terminal | Steps | Tool calls | Repairs | Total ms | Per-step ms | Per-step request bytes | Actions per step | Result bytes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | word | `qwen3-235b` | **`ERROR`** / `TIMEOUT` | 0 completed | 0 | 0 | 30009 | — | 1040 (body built) | — | — |
@@ -209,7 +216,7 @@ record's own value for "no valid envelope observed"):
 | powerpoint | `qwen3-235b` | `FINAL` | 1 | 0 | 0 | 3704 | 3704 | 947 | 0 | — |
 | word | `qwen3-30b` | `FINAL` | 5 | 1 | 0 | 11743 | 1226 / 5562 / 1936 / 1722 / 1293 | 1047 / 1339 / 2127 / 2930 / 3733 | 1 / 1 / 1 / 1 / 0 | `[65]` |
 | excel | `qwen3-30b` | `FINAL` | 5 | 3 | **1** | 27472 | 907 / 14221 / 1250 / 6228 / 4861 | 1029 / 1321 / 1617 / 1909 / 2201 | one repair step `null` | — |
-| powerpoint | `qwen3-30b` | **`PROTOCOL_ERROR`** | 3 | 1 | **1** | 29426 | — (largest step 17.8 s) | — | two steps `null` | — |
+| powerpoint | `qwen3-30b` | **`PROTOCOL_ERROR`** | 3 | 1 | **1** | 29426 | 1038 / 10580 / 17806 | — | two steps `null` | — |
 
 - The `qwen3-235b` **word** run ended `ERROR` / `TIMEOUT` at 30 009 ms: a 1040-byte body was built, but
   **0 steps of work completed** — the settings `httpTimeoutSeconds = 30` bound fired because the model
