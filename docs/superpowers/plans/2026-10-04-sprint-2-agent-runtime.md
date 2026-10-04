@@ -631,7 +631,7 @@ git commit -m "feat(tools): extensible registry with catalogue filtering and lit
 
 **Interfaces:**
 - Consumes: `AGENT_CEILINGS`, `validateArguments`, registry `catalogue`/`resolve`
-- Produces: `parseEnvelope(content) → { type:'tool_calls', calls:[{tool,arguments}] } | { type:'final', message }` (throws `PROTOCOL_ERROR`); `validateBatch(catalogue, calls) → frozen [{descriptor, arguments}]` (throws `TOOL_ERROR`, and `PROTOCOL_ERROR` when a `confirm` tool shares a batch); `toolResultMessages(results) → [{role:'user',content}]`; `repairMessage(error) → string`
+- Produces: `parseEnvelope(content) → { type:'tool_calls', calls:[{tool,arguments}] } | { type:'final', message }` (throws `PROTOCOL_ERROR`); `validateBatch(catalogue, calls) → frozen [{descriptor, arguments}]` (throws `TOOL_ERROR` for an unknown tool, an invalid action shape or a `confirm` tool sharing a batch with another action; `PROTOCOL_ERROR` only for a structurally invalid `calls` array); `toolResultMessages(results) → [{role:'user',content}]`; `repairMessage(error) → string`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -673,7 +673,7 @@ test('validateBatch resolves the whole batch before any execution', () => {
   assert.equal(resolved[0].descriptor.kind, 'read');
   assert.ok(Object.isFrozen(resolved));
   assert.throws(() => validateBatch(catalogue, [{ tool: 'read_selection', arguments: {} }, { tool: 'nope', arguments: {} }]), /TOOL_ERROR/);
-  assert.throws(() => validateBatch(catalogue, [{ tool: 'insert_paragraph', arguments: {} }, { tool: 'replace_selection', arguments: {} }]), /PROTOCOL_ERROR/);
+  assert.throws(() => validateBatch(catalogue, [{ tool: 'insert_paragraph', arguments: {} }, { tool: 'replace_selection', arguments: {} }]), /TOOL_ERROR/);
 });
 
 test('tool results travel as bounded compatible user messages', () => {
@@ -1100,6 +1100,16 @@ export async function runAgent(options) {
       try {
         batch = validateBatch(catalogue, envelope.calls);
       } catch (error) {
+        // Design §6.2: an unknown tool, an invalid action shape or a confirm action sharing a batch
+        // is a KNOWN TOOL ERROR - it goes back to the model as a tool result and the run continues,
+        // so the model can split the step. Only a structurally invalid envelope burns the single
+        // protocol repair.
+        if (error instanceof SafeError && error.code === ERROR_CODES.TOOL_ERROR) {
+          context.append({ role: 'assistant', content: JSON.stringify(envelope) });
+          const refusal = [{ tool: 'batch', result: { ok: false, code: ERROR_CODES.TOOL_ERROR, message: 'one action per batch for a confirm tool; unknown tool name or invalid arguments' } }];
+          for (const message of toolResultMessages(refusal)) context.append(message);
+          continue;
+        }
         if (repairs >= AGENT_CEILINGS.protocolRepair) return finish('PROTOCOL_ERROR');
         repairs += 1;
         context.append({ role: 'user', content: repairMessage(error) });
