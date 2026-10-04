@@ -31,3 +31,31 @@ test('enforces UTF-8 byte limits, not UTF-16 length', () => {
   assert.throws(() => validateArguments(schema, { text: 'ж'.repeat(3), after: 1 }, 4), /TOOL_ERROR/);
   assert.equal(validateArguments(schema, { text: 'ж', after: 1 }, 2).text, 'ж');
 });
+
+test('rejects unknown keywords on the root schema object', () => {
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false, properties: {}, description: 'x' }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false, properties: {}, patternProperties: {} }), /INVALID_DATA/);
+});
+
+const arraySchema = { type: 'object', additionalProperties: false, required: ['tags'],
+  properties: { tags: { type: 'array', items: { type: 'string' }, maxItems: 4 } } };
+
+const objectArraySchema = { type: 'object', additionalProperties: false, required: ['items'],
+  properties: { items: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { n: { type: 'integer' } } } } } };
+
+test('freezes validated array values', () => {
+  const out = validateArguments(arraySchema, { tags: ['a', 'b'] }, 8192);
+  assert.ok(Object.isFrozen(out.tags));
+});
+
+test('returns a copy of a validated array, not the caller array', () => {
+  const tags = ['a', 'b'];
+  const out = validateArguments(arraySchema, { tags }, 8192);
+  tags.push('c');
+  assert.deepEqual(out.tags, ['a', 'b']);
+});
+
+test('freezes normalized object entries inside arrays', () => {
+  const out = validateArguments(objectArraySchema, { items: [{ n: 1 }] }, 8192);
+  assert.ok(Object.isFrozen(out.items[0]));
+});

@@ -8,11 +8,12 @@ const keywords = new Set(['type', 'properties', 'required', 'additionalPropertie
   'minimum', 'maximum', 'maxItems', 'maxBytes', 'minBytes']);
 export function validateToolSchema(schema) {
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  for (const keyword of Object.keys(schema)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (schema.type !== 'object' || schema.additionalProperties !== false) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (schema.properties === null || typeof schema.properties !== 'object') throw new SafeError(ERROR_CODES.INVALID_DATA);
   const required = schema.required ?? [];
   if (!Array.isArray(required) || required.some(name => !Object.hasOwn(schema.properties, name))) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  for (const [name, property] of Object.entries(schema.properties)) {
+  for (const property of Object.values(schema.properties)) {
     if (!types.has(property?.type)) throw new SafeError(ERROR_CODES.INVALID_DATA);
     for (const keyword of Object.keys(property)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
     if (property.type === 'object') validateToolSchema(property);
@@ -21,7 +22,6 @@ export function validateToolSchema(schema) {
       for (const keyword of Object.keys(property.items)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
     }
     if (property.enum !== undefined && (!Array.isArray(property.enum) || property.enum.length === 0)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-    void name;
   }
   return true;
 }
@@ -49,7 +49,7 @@ function checkValue(rule, value, limitBytes) {
   }
   if (rule.type === 'array') {
     if (rule.maxItems !== undefined && value.length > rule.maxItems) throw new SafeError(ERROR_CODES.TOOL_ERROR);
-    for (const entry of value) checkValue(rule.items, entry, limitBytes);
+    return Object.freeze(value.map(entry => checkValue(rule.items, entry, limitBytes)));
   }
   if (rule.type === 'object') {
     if (Object.keys(value).some(key => !Object.hasOwn(rule.properties, key))) throw new SafeError(ERROR_CODES.TOOL_ERROR);
