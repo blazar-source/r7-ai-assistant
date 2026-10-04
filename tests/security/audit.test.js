@@ -178,6 +178,16 @@ for (const [name, source] of computedDispatch) {
     assert.ok(findings.every(finding => finding.label === 'dispatch-fixture.js' && Number.isInteger(finding.line) && finding.line >= 1));
   });
 }
+// Hazard notes for the allowed forms below (both are conditions on the allowance, not claims it is
+// unconditional):
+// (a) `descriptor.execute(args)` is clean only while that local name is UNTAINTED. The analysis is
+//     scope-insensitive, so in the real bundle a computed DATA read in ANOTHER module
+//     (`const descriptor = descriptors[name]`) taints every same-named local and this authored case
+//     then reads as a computed callee — the same collision class the bundle fixture below documents.
+// (b) The allowance is a property of the AUDIT (literal property calls are permitted), not a
+//     statement about the runtime's dispatch shape: src/tools/registry.js has no name-keyed switch —
+//     the model's name is only a data key resolved against the catalogue, and the handler is the
+//     descriptor's own static `execute`.
 for (const [name, source] of [
   ['switch over literal tool names', 'export function run(name) { switch (name) { case "read_selection": return 1; case "insert_paragraph": return 2; case "replace_selection": return 3; default: return null; } }'],
   ['literal property call on the descriptor', 'export function dispatch(descriptor, args) { return descriptor.execute(args); }'],
@@ -192,32 +202,47 @@ for (const [name, source] of [
 // is exactly what happened when src/tools/registry.js first entered the production bundle, and
 // it was fixed by renaming the colliding local, never by weakening the audit.
 test('bundle concatenation collides same-named module locals into a computed-callee finding', () => {
-  const registryModule = [
-    '// the shape of src/tools/registry.js: a literal method call on a local',
-    'export function createRegistry(descriptors) {',
-    '  const defined = descriptors.map(defineTool);',
-    '  return Object.freeze(defined);',
-    '}'
-  ].join('\n');
-  const bridgeModule = [
-    '// the shape of src/plugin/bridge.js: a computed DATA read taints the same local name',
+  // Module 1 carries the taint source: the shape of src/plugin/bridge.js, whose computed DATA read
+  // (`const descriptors = Object.getOwnPropertyDescriptors(raw)`) adds `descriptors` to the
+  // scope-insensitive alias set.
+  const taintModule = [
+    '// the shape of src/plugin/bridge.js: a computed DATA read taints the local name',
     'export function readMembers(raw, name) {',
     '  const descriptors = Object.getOwnPropertyDescriptors(raw);',
     '  const descriptor = descriptors[name];',
     '  return !!descriptor && Object.hasOwn(descriptor, "value");',
     '}'
   ].join('\n');
+  // Module 2 is the colliding CONSUMER: the shape of src/tools/registry.js, whose authored
+  // `descriptors.map(defineTool)` is a literal method call on a same-named local. It is placed
+  // second on purpose, so the collision finding can be proven to land in THIS module's half of the
+  // bundle (module 1's own half must stay finding-free, or the flag would not be a collision).
+  const consumerModule = [
+    '// the shape of src/tools/registry.js: a literal method call on a same-named local',
+    'export function createRegistry(descriptors) {',
+    '  const defined = descriptors.map(defineTool);',
+    '  return Object.freeze(defined);',
+    '}'
+  ].join('\n');
   // Each module alone is clean...
-  assert.deepEqual(auditSource(registryModule, 'registry.js'), []);
-  assert.deepEqual(auditSource(bridgeModule, 'bridge.js'), []);
-  // ...but the concatenated bundle is not: the taint from one module reaches the other's
-  // same-named local, so a literal `descriptors.map(...)` reads as a computed callee.
-  const bundle = auditSource(`${registryModule}\n${bridgeModule}`, 'panel.js');
-  assert.ok(bundle.some(finding => finding.code === 'DYNAMIC_PROPERTY'), `missing collision finding; got ${JSON.stringify(bundle)}`);
+  assert.deepEqual(auditSource(taintModule, 'bridge.js'), []);
+  assert.deepEqual(auditSource(consumerModule, 'registry.js'), []);
+  // ...but the concatenated bundle is not: module 1's taint reaches module 2's same-named local,
+  // so a literal `descriptors.map(...)` reads as a computed callee.
+  const bundle = auditSource(`${taintModule}\n${consumerModule}`, 'panel.js');
+  const collisions = bundle.filter(finding => finding.code === 'DYNAMIC_PROPERTY');
+  // Line span of module 2 in the bundle, derived from the fixture's own offsets (never hardcoded).
+  const consumerFirstLine = taintModule.split('\n').length + 1;
+  const consumerLastLine = consumerFirstLine + consumerModule.split('\n').length - 1;
+  assert.ok(collisions.length > 0, `missing collision finding; got ${JSON.stringify(bundle)}`);
+  assert.ok(
+    collisions.every(finding => finding.line >= consumerFirstLine && finding.line <= consumerLastLine),
+    `collision must be localised to the second module's line span ${consumerFirstLine}..${consumerLastLine}; got ${JSON.stringify(bundle)}`
+  );
   assert.ok(bundle.every(finding => finding.label === 'panel.js'));
   // The documented remedy is a RENAME in the colliding module, not loosening the audit.
-  const renamed = registryModule.replaceAll('descriptors', 'entries');
-  assert.deepEqual(auditSource(`${renamed}\n${bridgeModule}`, 'panel.js'), []);
+  const renamed = consumerModule.replaceAll('descriptors', 'entries');
+  assert.deepEqual(auditSource(`${taintModule}\n${renamed}`, 'panel.js'), []);
 });
 
 // The repository's own production sources must stay clean, so a future computed call anywhere
@@ -225,4 +250,14 @@ test('bundle concatenation collides same-named module locals into a computed-cal
 test('the repository authored src/ tree is clean', async () => {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   assert.deepEqual(await auditPaths(root, ['src']), []);
+  // Positive control: `[]` is also what a sweep that VISITED NOTHING returns — an existing but
+  // empty or extension-less `src/` audits vacuously clean, so the assertion above cannot stand
+  // alone. Auditing ONE known authored file by explicit path proves the walk resolves and reads
+  // repository sources, and a path that does not exist must produce a finding rather than an empty
+  // list (the explicit-path scan is non-optional and never suppresses ENOENT), so a clean `[]`
+  // above really does mean "walked and found nothing".
+  assert.deepEqual(await auditPaths(root, ['src/tools/registry.js']), []);
+  const missing = await auditPaths(root, ['src/tools/does-not-exist.js']);
+  assert.notDeepEqual(missing, []);
+  assert.equal(missing[0]?.code, 'READ_ERROR');
 });
