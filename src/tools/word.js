@@ -73,6 +73,48 @@ function scopeLimit(scope) {
 // established document count would tighten it where the structure read resolves the address.
 const MAX_CONTEXT_INDEX = 64;
 
+// The exact bytes of ONE tool-result ENTRY in the form the runtime serializes and bounds:
+// `JSON.stringify({ tool: name, ...result })` in that key order — the shape `stringifyToolResults`
+// (src/agent/protocol.js) builds and measures against `AGENT_CEILINGS.toolResultBytes`, and the shape
+// whose refusal `appendToolResults` (src/agent/runtime.js) turns into the literal "the tool result
+// could not be serialized". This module cannot import that function (src/agent/* is the runtime's own
+// layer), so it reproduces the shape; a test pins the two together by measuring the real serializer.
+// `utf8ByteLength` counts a STRING value's contribution exactly as `JSON.stringify` emits it, including
+// the `\uXXXX` escaping of control characters and lone surrogates, so the whole entry is measured, not
+// just the text.
+function documentEntryBytes(text, offset, totalChars, nextOffset) {
+  let serialized;
+  try {
+    serialized = JSON.stringify({ tool: 'read_document_text', ok: true,
+      data: { text, offset, totalChars, truncated: nextOffset !== null, nextOffset } });
+  } catch { return null; }
+  return typeof serialized === 'string' ? utf8ByteLength(serialized) : null;
+}
+// The slice is over UTF-16 code units, so a cut can land BETWEEN the two units of one character's
+// surrogate pair. A chunk that begins on a low surrogate or ends on an unpaired high one is not a
+// well-formed string (JSON.stringify would emit a 6-byte `\ud83d` escape and the raw code unit never
+// becomes UTF-8), which is the cut `prefixWithin` in src/agent/context.js already steps back to avoid.
+// The same rule is applied here, to BOTH ends:
+//   * a START inside a pair is moved back over the low surrogate, to the pair's high unit — the chunk
+//     then begins on a complete character and not on half of one;
+//   * an END inside a pair is moved forward past the low surrogate, so the pair is completed instead of
+//     being truncated to its high unit.
+// Moving OUTWARD is what keeps the walk exact: the returned chunk still covers a whole character, its
+// resume point is the next character's first unit, and `nextOffset > offset` always advances, so an
+// offset that names the tail of a pair can neither repeat a chunk nor stall a resumed read.
+function characterStart(text, offset) {
+  const previous = text.charCodeAt(offset - 1);
+  const current = text.charCodeAt(offset);
+  return offset > 0 && previous >= 0xd800 && previous <= 0xdbff && current >= 0xdc00 && current <= 0xdfff
+    ? offset - 1 : offset;
+}
+function characterEnd(text, cut) {
+  const previous = text.charCodeAt(cut - 1);
+  const current = text.charCodeAt(cut);
+  return cut < text.length && previous >= 0xd800 && previous <= 0xdbff && current >= 0xdc00 && current <= 0xdfff
+    ? cut + 1 : cut;
+}
+
 export function createWordTools(bridge) {
   return [
     defineTool({
@@ -142,27 +184,57 @@ export function createWordTools(bridge) {
         if (document.ok !== true) return known(refusalCode(document.code, ERROR_CODES.TOOL_ERROR));
         if (typeof document.text !== 'string' || document.totalChars !== document.text.length) return known();
         const totalChars = document.totalChars;
+        // A character count beyond what ANY readable document can hold cannot be true of a document
+        // this bridge read: the export is bounded by `documentHtmlBytes` and its decoded text cannot
+        // exceed `readDocumentOffsetMax` characters. The check is not cosmetic — the address bound is
+        // what makes every published resume point valid, and a count past it would make the read's own
+        // range unservable — so the answer is a closed BYTE_LIMIT refusal, never a `totalChars` the
+        // tool itself would contradict by clamping. The bound is stated in the limits module and covers
+        // every export shape; a real bridge answer is always inside it.
+        if (totalChars > LIMITS.readDocumentOffsetMax) return known(ERROR_CODES.BYTE_LIMIT);
         // An EMPTY document is a legitimate RESULT, not a refusal: the text of a document nobody has
         // typed into yet is '' with length 0, so `ok` with `text:''`, `totalChars:0`,
         // `truncated:false`, `nextOffset:null` is the whole truth about it. That is deliberately NOT
         // the `read_selection` convention of treating an empty read as `known()`: there an empty
         // SELECTION means there is nothing to reason about, while here the empty answer IS the complete
         // answer to "what does this document say".
-        // The chunk. An offset at or past the end yields '' and the nil resume point below reports it
-        // as a finished read: "read from here" honestly has nothing left, so it is an `ok`, not a
-        // refusal. Nothing is trimmed, normalised or re-encoded: the slice is the document's own text.
-        const text = document.text.slice(offset, offset + maxChars);
-        // The ENFORCED bound: the returned chunk is measured in UTF-8 bytes, because the per-result
-        // ceiling the runtime applies is a BYTE ceiling and the advertised character cap cannot imply
-        // it (three bytes per character is reachable, so the largest advertised chunk can exceed the
-        // ceiling). An over-ceiling chunk is refused WHOLE as the closed BYTE_LIMIT class, never
-        // clipped — a clipped chunk would publish a resume point that skips text the model never saw.
-        if (utf8ByteLength(text) > LIMITS.editorResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        // The chunk, made of whole UTF-16 characters: both cuts are stepped off a surrogate pair, so no
+        // lone surrogate can reach the result (`characterStart` / `characterEnd` above). Nothing is
+        // trimmed, normalised or re-encoded: the slice is the document's own text.
+        //
+        // The END is also clamped by `readDocumentOffsetMax`. The address bound is what makes every
+        // PUBLISHED resume point valid, so no chunk may run past it; the `totalChars` fence above keeps
+        // every document this reader serves inside that range, which is what makes the clamp a
+        // fail-closed guarantee rather than a routine truncation. The publish rule below still handles
+        // the clamped shape, because a bound that is never enforced defensively is not a bound.
+        const start = characterStart(document.text, Math.min(offset, document.text.length));
+        const end = characterEnd(document.text, Math.min(document.text.length, offset + maxChars, LIMITS.readDocumentOffsetMax));
+        const text = document.text.slice(start, end);
+        // The ENFORCED bound is the ACTUAL serialized tool-result entry, not the raw text and not
+        // `LIMITS.editorResultBytes`: the runtime bounds `JSON.stringify({tool, ...result})` by
+        // `AGENT_CEILINGS.toolResultBytes` — 16384 bytes, not 65536 — and an entry above it is refused
+        // whole, with the model receiving the literal "the tool result could not be serialized" and NO
+        // text. Measuring the entry here is what makes the tool's own bound and the runtime's the same
+        // bound. The arithmetic (Cyrillic 2 bytes/character, ASCII 1, CJK 3, an astral pair 4 over two
+        // units) plus the envelope `LIMITS.readDocumentEntryBytes` is what sizes the advertised chunk:
+        // 8000 Cyrillic characters = 16000 bytes + 130 = 16130 <= 16384. A chunk that does not fit even
+        // so is refused with the closed BYTE_LIMIT class, never truncated — a truncated chunk would
+        // publish a resume point that skips text the model never saw — and the refusal is the only thing
+        // an entry above the ceiling can ever produce from here. Together with the `totalChars` fence
+        // above, this is the fail-closed floor: nothing the handler cannot serialize or cannot address
+        // leaves it as a result at all.
+        const bytes = documentEntryBytes(text, offset, totalChars, null);
+        if (bytes === null || bytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         // `truncated` and `nextOffset` are ONE fact: a successor exists exactly when the chunk did not
         // reach the end of the document, and a chunk that ends exactly at the end — or an offset at or
         // past it — has none. Everything is counted in the string's own code units, the same unit
         // `offset`/`maxChars`/`totalChars` use, so a resumed read is contiguous and cannot skip.
-        const nextOffset = offset + text.length < totalChars ? offset + text.length : null;
+        // A chunk that consumed NOTHING has no successor to publish: publishing `nextOffset === offset`
+        // would invite a call that returns the same empty chunk forever. A chunk the ADDRESS BOUND
+        // stopped publishes that bound as its resume point — an address the schema accepts, whose read
+        // is the empty tail — because the bound and the end of the text are the same place from here.
+        const nextOffset = end > offset && end < totalChars ? end
+          : end === LIMITS.readDocumentOffsetMax && end < totalChars ? LIMITS.readDocumentOffsetMax : null;
         return ok({ text, offset, totalChars, truncated: nextOffset !== null, nextOffset });
       }
     }),

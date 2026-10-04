@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createWordTools } from '../../src/tools/word.js';
 import { createRegistry } from '../../src/tools/registry.js';
 import { validateArguments } from '../../src/tools/schemas.js';
-import { validateBatch } from '../../src/agent/protocol.js';
+import { validateBatch, toolResultMessages } from '../../src/agent/protocol.js';
 import { runAgent } from '../../src/agent/runtime.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { AGENT_CEILINGS, LIMITS } from '../../src/shared/limits.js';
@@ -832,11 +832,24 @@ test('read_document_text advertises the closed bounded schema the contract names
   assert.equal(tool.schema.properties.offset.maximum, LIMITS.readDocumentOffsetMax);
   assert.equal(tool.schema.properties.maxChars.minimum, 1);
   assert.equal(tool.schema.properties.maxChars.maximum, LIMITS.readDocumentMaxChars);
-  // The hard cap is chosen on the product's realistic worst case: a Cyrillic character is TWO UTF-8
-  // bytes, so the largest advertised chunk is exactly the per-result ceiling.
-  assert.equal(LIMITS.readDocumentMaxChars * 2, LIMITS.editorResultBytes);
-  assert.equal(LIMITS.readDocumentChars, 12000, 'the documented default chunk');
-  assert.ok(LIMITS.readDocumentChars < LIMITS.readDocumentMaxChars);
+  // The bound is the SERIALIZED tool-result entry, not the raw text: the runtime refuses an entry whose
+  // JSON exceeds `AGENT_CEILINGS.toolResultBytes` (16384), NOT `LIMITS.editorResultBytes` (65536), and
+  // substitutes the literal refusal "the tool result could not be serialized". A Cyrillic character is
+  // TWO UTF-8 bytes, and `readDocumentEntryBytes` is the envelope the entry's own serialization adds
+  // on top of the encoded text, so the largest advertised chunk plus that envelope must fit:
+  //   8000 * 2 + readDocumentEntryBytes = 16000 + 130 = 16130 <= 16384.
+  assert.equal(LIMITS.readDocumentMaxChars, 8000, 'the largest advertised chunk that always fits');
+  assert.equal(LIMITS.readDocumentEntryBytes, 130, 'the measured serialization envelope');
+  assert.ok(LIMITS.readDocumentMaxChars * 2 + LIMITS.readDocumentEntryBytes <= AGENT_CEILINGS.toolResultBytes);
+  assert.equal(LIMITS.readDocumentChars, 8000, 'the documented default chunk');
+  assert.equal(LIMITS.readDocumentChars, LIMITS.readDocumentMaxChars);
+  // The offset maximum is NOT the export byte bound: one export byte can decode to more than one
+  // character (the element end tags add a newline each), so the bound is derived from the largest
+  // export the bridge decodes plus the expansion it can add, and it must accept every `nextOffset`
+  // the tool can publish.
+  assert.equal(LIMITS.readDocumentOffsetMax, 524305);
+  assert.equal(LIMITS.readDocumentOffsetMax, 2 * LIMITS.documentHtmlBytes + 1 + 16);
+  assert.equal(LIMITS.editorResultBytes, 65536, 'the per-scope editor bound the tool no longer uses as a chunk cap');
 });
 
 test('read_document_text accepts its closed argument set and rejects everything else at the schema', () => {
@@ -992,35 +1005,374 @@ test('read_document_text refuses an out-of-range address that never crossed the 
   assert.deepEqual(bridge.requests, [], 'an uninterpretable address never reaches the bridge');
 });
 
-test('read_document_text keeps a Cyrillic chunk inside the per-result byte ceiling', async () => {
-  // Cyrillic is the product's realistic worst case at TWO bytes per character: the largest advertised
-  // chunk measures exactly the 65536-byte per-result ceiling and is therefore served whole.
-  const document = 'я'.repeat(LIMITS.readDocumentMaxChars + 5000);
-  const result = await readDocument(documentBridge(document)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
-  assert.equal(result.ok, true);
-  assert.equal(result.data.text.length, LIMITS.readDocumentMaxChars);
-  assert.equal(utf8ByteLength(result.data.text), LIMITS.editorResultBytes);
-  assert.ok(utf8ByteLength(result.data.text) <= LIMITS.editorResultBytes, 'the returned chunk is inside the ceiling');
+test('read_document_text keeps a DEFAULT Cyrillic read inside the per-result serialization ceiling', async () => {
+  // The defect this pins: the handler bounded the chunk by `editorResultBytes` (65536), while the
+  // runtime refuses any tool-result entry whose serialization exceeds `AGENT_CEILINGS.toolResultBytes`
+  // (16384) and substitutes "the tool result could not be serialized" — so the 12000-character default
+  // (24000 Cyrillic bytes) published a refusal INSTEAD of text for the product's main language. The
+  // document here is deliberately longer than that old threshold.
+  const document = 'я'.repeat(12500);
+  const tool = readDocument(documentBridge(document));
+  const result = await tool.execute({}, { editor: 'word' });
+  assert.equal(result.ok, true, 'a Cyrillic document read with the DEFAULT arguments delivers text');
+  assert.equal(result.data.text.length, LIMITS.readDocumentChars);
+  assert.equal(result.data.text, document.slice(0, LIMITS.readDocumentChars));
   assert.equal(result.data.truncated, true);
-  assert.equal(result.data.nextOffset, LIMITS.readDocumentMaxChars);
+  assert.equal(result.data.nextOffset, LIMITS.readDocumentChars);
+  // The measurement is the entry the runtime serializes: `{ tool, ...result }` in the protocol's own
+  // key order, measured in UTF-8 bytes — never the raw text alone.
+  const measured = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result }));
+  assert.equal(measured, 16123, 'the exact serialized entry the runtime will measure');
+  assert.ok(measured <= AGENT_CEILINGS.toolResultBytes, `${measured} <= ${AGENT_CEILINGS.toolResultBytes}`);
+  // And the envelope `readDocumentEntryBytes` budgets for is this one: 8000 Cyrillic characters cost
+  // 16000 bytes, plus 121 here, plus the widest field width below — all inside 16384.
+  assert.equal(measured - utf8ByteLength(JSON.stringify(result.data.text)), 121,
+    'the serialization envelope of this field width');
+  assert.ok(LIMITS.readDocumentEntryBytes >= measured - utf8ByteLength(JSON.stringify(result.data.text)));
+  // ...and the runtime's REAL serializer accepts it: this call throws TOOL_ERROR for an over-ceiling
+  // entry, and the runtime then replaces the whole result with its literal refusal.
+  const messages = toolResultMessages([{ tool: 'read_document_text', result }]);
+  assert.equal(messages.length, 1);
+  const modelVisible = JSON.parse(messages[0].content);
+  assert.equal(modelVisible.results[0].tool, 'read_document_text');
+  assert.equal(modelVisible.results[0].ok, true);
+  assert.equal(modelVisible.results[0].data.text.length, LIMITS.readDocumentChars, 'the text survives, whole');
+  assert.equal(utf8ByteLength(messages[0].content) <= AGENT_CEILINGS.toolResultBytes + 32, true,
+    'the message envelope stays within one entry plus the framing slack');
+  // The chunk is resumable: the tail is a second, fitting read that reaches the end.
+  const tail = await tool.execute({ offset: result.data.nextOffset }, { editor: 'word' });
+  assert.equal(tail.ok, true);
+  assert.equal(tail.data.text, document.slice(LIMITS.readDocumentChars));
+  assert.equal(tail.data.text.length, 12500 - LIMITS.readDocumentChars);
+  assert.equal(tail.data.truncated, false);
+  assert.equal(tail.data.nextOffset, null);
 });
 
-test('read_document_text refuses a slice above the per-result byte ceiling as BYTE_LIMIT', async () => {
-  // The advertised cap bounds the CHUNK's character count, and the widest encoding of one BMP
-  // character is THREE UTF-8 bytes (CJK text, typographic punctuation), so the largest advertised
-  // chunk can measure 1.5x the ceiling. The tool measures the slice it is about to return.
+test('read_document_text measures the serialized entry the protocol serializer measures', async () => {
+  // Backs the `readDocumentEntryBytes` constant the limits module names: it is the exact overhead the
+  // real serialization adds on top of one JSON-encoded text value. If either the entry shape or the
+  // constant drifts, this test and the tool's own measurement diverge — which is why the handler
+  // measures the freshly built entry rather than trusting a fixed number for its verdict.
+  const text = 'я'.repeat(100);
+  const result = { ok: true, data: { text, offset: 0, totalChars: 100000, truncated: true, nextOffset: 100 } };
+  const serialized = JSON.stringify({ tool: 'read_document_text', ...result });
+  const overhead = utf8ByteLength(serialized) - utf8ByteLength(JSON.stringify(text));
+  assert.equal(overhead, 121, 'the envelope of this field width');
+  // The measured envelope is the WIDEST field width the schema admits — a six-digit offset and a
+  // six-digit `totalChars`, with a four-character `null` resume point. This is the budget
+  // `readDocumentEntryBytes` carries, and the real serialization must not exceed it.
+  const widest = { ok: true, data: { text: 'я', offset: LIMITS.readDocumentOffsetMax - 1,
+    totalChars: LIMITS.readDocumentOffsetMax, truncated: false, nextOffset: null } };
+  const widestOverhead = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...widest })) -
+    utf8ByteLength(JSON.stringify('я'));
+  assert.ok(widestOverhead <= LIMITS.readDocumentEntryBytes, `${widestOverhead} <= ${LIMITS.readDocumentEntryBytes}`);
+  assert.ok(LIMITS.readDocumentEntryBytes >= overhead);
+});
+
+test('read_document_text delivers its default chunk to the model through the REAL runtime', async () => {
+  // The end-to-end leg of the same defect, against the actual loop: the reviewer's reproduction ran
+  // the real runtime and the model received `"the tool result could not be serialized"` with no text.
+  // The assertion here is on the transport's own messages — what the model actually sees.
+  const document = 'я'.repeat(12500);
+  const sent = [];
+  const transport = async messages => {
+    sent.push(messages.map(message => message.content));
+    return sent.length === 1
+      ? { content: '{"type":"tool_calls","calls":[{"tool":"read_document_text","arguments":{}}]}' }
+      : { content: '{"type":"final","message":"прочитано"}' };
+  };
+  const run = await runAgent({ registry: createRegistry(createWordTools(documentBridge(document))),
+    editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT', settings: {},
+    uuid: '11111111-1111-4111-8111-111111111111', request: 'прочитай документ', transport });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['read_document_text', 'ok']]);
+  const refusal = sent.flat().filter(content => content.includes('could not be serialized'));
+  assert.deepEqual(refusal, [], 'the runtime must never substitute its literal refusal for this read');
+  const resultMessages = sent.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(resultMessages.length, 1, 'exactly one tool-result message reached the model');
+  const entry = JSON.parse(resultMessages[0]).results[0];
+  assert.equal(entry.tool, 'read_document_text');
+  assert.equal(entry.ok, true);
+  assert.equal(entry.data.text.length, LIMITS.readDocumentChars, 'the model received the text, not a refusal');
+  assert.ok(utf8ByteLength(JSON.stringify(entry)) <= AGENT_CEILINGS.toolResultBytes);
+});
+
+test('read_document_text keeps every entry inside the ceiling and every refusal closed', async () => {
+  // The fail-closed rule: an entry above `AGENT_CEILINGS.toolResultBytes` is refused with a closed code
+  // BEFORE it reaches the runtime, so the handler can never hand the runtime an entry it will have to
+  // replace with its literal "the tool result could not be serialized" refusal. This is the case the
+  // reviewer's runtime reported as an unparseable result; here it can no longer leave the handler.
+  // The widest encodings reach it legitimately: three bytes per character at the advertised maximum is
+  // 24000 bytes, above the 16384-byte entry ceiling, and the refusal names the class without leaking
+  // one character of the document.
+  for (const [unit, width] of [['漢', 3], ['я', 2]]) {
+    const document = unit.repeat(LIMITS.readDocumentMaxChars + 5);
+    const result = await readDocument(documentBridge(document))
+      .execute({ offset: 0, maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+    if (width * LIMITS.readDocumentMaxChars > AGENT_CEILINGS.toolResultBytes) {
+      assert.equal(result.ok, false, `${unit}: an entry that cannot fit is a refusal`);
+      assert.equal(result.code, 'BYTE_LIMIT');
+      assert.equal(result.message, 'отказ');
+      assert.equal(result.data, undefined, 'a refusal carries no entry for the runtime to serialize');
+      assert.equal(JSON.stringify(result).includes(unit), false, 'no document text leaks into a refusal');
+      assert.equal(JSON.stringify(result).includes('could not be serialized'), false);
+      continue;
+    }
+    // The same request for an encoding that fits is SERVED, and its entry is inside the ceiling: the
+    // refusal above is the size of the encoding, never a blanket cap on the tool.
+    assert.equal(result.ok, true, `${unit}: the same chunk is served at this width`);
+    assert.equal(result.data.text.length, LIMITS.readDocumentMaxChars);
+    assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result })) <= AGENT_CEILINGS.toolResultBytes);
+  }
+  // A bridge whose character count is past every readable document is a promise this reader cannot
+  // serve: the address bound would clamp its own range, so the answer is refused rather than published
+  // with a `totalChars` the tool contradicts. (A real bridge answer is always inside the bound.)
+  const overBound = await readDocument(documentBridge('x'.repeat(LIMITS.readDocumentOffsetMax + 5)))
+    .execute({ offset: 0, maxChars: 1 }, { editor: 'word' });
+  assert.equal(overBound.ok, false);
+  assert.equal(overBound.code, 'BYTE_LIMIT');
+  assert.equal(overBound.data, undefined);
+  // A document one character short of the bound: its final chunk REACHES the end, so it publishes the
+  // nil resume point rather than an address past it, and its entry is inside the ceiling.
+  const ascii = 'x'.repeat(LIMITS.readDocumentOffsetMax - 1);
+  const asciiTail = await readDocument(documentBridge(ascii))
+    .execute({ offset: LIMITS.readDocumentOffsetMax - 8001, maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(asciiTail.ok, true);
+  assert.equal(asciiTail.data.text.length, LIMITS.readDocumentMaxChars);
+  assert.equal(asciiTail.data.truncated, false);
+  assert.equal(asciiTail.data.nextOffset, null);
+  assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...asciiTail })) <= AGENT_CEILINGS.toolResultBytes);
+});
+
+test('read_document_text refuses a chunk above the per-result byte ceiling as BYTE_LIMIT', async () => {
+  // DEFENSIVE branch. Every chunk the SCHEMA admits now fits (the next test walks the advertised
+  // space), because the maximum is sized on the widest encoding plus the serialization envelope. A
+  // descriptor is executable when held directly, though, so the handler still measures the entry it
+  // is about to return rather than trusting the advertised cap, and refuses an over-ceiling one WHOLE
+  // — never clipped, which would publish a resume point that skips text the model never saw.
   const wide = '漢'.repeat(LIMITS.readDocumentMaxChars + 100);
-  assert.equal(utf8ByteLength(wide.slice(0, LIMITS.readDocumentMaxChars)), LIMITS.readDocumentMaxChars * 3);
+  assert.ok(utf8ByteLength(wide.slice(0, LIMITS.readDocumentMaxChars)) > AGENT_CEILINGS.toolResultBytes,
+    'the widest encoding of the advertised maximum exceeds the per-result ceiling');
   const refused = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
   assert.equal(refused.ok, false);
   assert.equal(refused.code, 'BYTE_LIMIT');
   assert.equal(refused.message, 'отказ');
   assert.equal(JSON.stringify(refused).includes('漢'), false, 'no document text leaks into a refusal');
   // The same document is served in a chunk that fits, so the refusal is the size and not the text.
-  const fitting = await readDocument(documentBridge(wide)).execute({ maxChars: 8000 }, { editor: 'word' });
+  const fitting = await readDocument(documentBridge(wide)).execute({ maxChars: 4000 }, { editor: 'word' });
   assert.equal(fitting.ok, true);
-  assert.equal(utf8ByteLength(fitting.data.text), 24000);
-  assert.ok(utf8ByteLength(fitting.data.text) <= LIMITS.editorResultBytes);
+  assert.equal(utf8ByteLength(fitting.data.text), 12000);
+  assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...fitting })) <= AGENT_CEILINGS.toolResultBytes);
+});
+
+test('read_document_text serves every chunk it RETURNS inside the per-result ceiling', async () => {
+  // The invariant the runtime enforces, asserted end to end: whatever the handler returns is an entry
+  // the runtime's own serializer accepts, and whatever it refuses is a closed refusal with no entry at
+  // all — never an unparseable result. The schema's maximum is sized on Cyrillic (the product's
+  // language) and ASCII, both of which are served whole at that maximum; a THREE-byte encoding of the
+  // same character count does not fit and is a closed BYTE_LIMIT the model can retry smaller, which is
+  // the honest outcome for the widest script rather than a silent refusal.
+  for (const unit of ['я', 'x']) {
+    const document = unit.repeat(LIMITS.readDocumentMaxChars + 5);
+    for (const args of [{}, { maxChars: LIMITS.readDocumentMaxChars }, { maxChars: 1 },
+      { offset: 0, maxChars: LIMITS.readDocumentMaxChars }, { offset: 4096, maxChars: LIMITS.readDocumentMaxChars - 1000 }]) {
+      const result = await readDocument(documentBridge(document)).execute(args, { editor: 'word' });
+      assert.equal(result.ok, true, `${unit} ${JSON.stringify(args)}`);
+      assert.equal(result.data.text, document.slice(args.offset ?? 0, (args.offset ?? 0) + (args.maxChars ?? LIMITS.readDocumentChars)),
+        `${unit} ${JSON.stringify(args)}: the chunk is the requested slice`);
+      const measured = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result }));
+      assert.ok(measured <= AGENT_CEILINGS.toolResultBytes,
+        `${unit} ${JSON.stringify(args)}: ${measured} <= ${AGENT_CEILINGS.toolResultBytes}`);
+      assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
+        `${unit} ${JSON.stringify(args)}: the runtime serializer accepts the entry`);
+    }
+  }
+  // The widest script at the advertised maximum: refused as a closed class, never clipped and never
+  // published with a resume point the model could follow into a skipped range.
+  const wide = '漢'.repeat(LIMITS.readDocumentMaxChars + 100);
+  const refused = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'BYTE_LIMIT');
+  assert.equal(refused.data, undefined);
+  // The same document at a size that fits is served, and its entry is inside the ceiling too.
+  const fitting = await readDocument(documentBridge(wide)).execute({ maxChars: 4000 }, { editor: 'word' });
+  assert.equal(fitting.ok, true);
+  assert.equal(utf8ByteLength(fitting.data.text), 12000);
+  assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...fitting })) <= AGENT_CEILINGS.toolResultBytes);
+});
+
+test('read_document_text never returns a lone surrogate, at either cut', async () => {
+  // The defect this pins: the slice is over UTF-16 code units with no pair guard, so `"a😀b"` with
+  // {offset:1, maxChars:1} returned `"\ud83d"` and {offset:2, maxChars:2} returned `"\ude00b"` — a raw
+  // unit that is not UTF-8 encodable. `context.js` already steps back to forbid exactly this cut.
+  const EMOJI = '😀';
+  const document = `a${EMOJI}b`;
+  assert.equal(document.length, 4, 'the emoji is one astral code point over two code units');
+  const tool = readDocument(documentBridge(document));
+  // Every high surrogate is followed by its low partner and no low surrogate stands alone.
+  const surrogateFree = (text) => {
+    for (let i = 0; i < text.length; i += 1) {
+      const unit = text.charCodeAt(i);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = text.charCodeAt(i + 1);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+        i += 1;
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+    }
+    return true;
+  };
+  // The reviewer's two reproductions, one per cut: neither may return a lone unit.
+  const startCut = await tool.execute({ offset: 1, maxChars: 1 }, { editor: 'word' });
+  assert.equal(startCut.ok, true);
+  assert.notEqual(startCut.data.text, '\ud83d', 'a lone HIGH surrogate is never returned');
+  assert.equal(surrogateFree(startCut.data.text), true, JSON.stringify(startCut.data.text));
+  const endCut = await tool.execute({ offset: 2, maxChars: 2 }, { editor: 'word' });
+  assert.equal(endCut.ok, true);
+  assert.notEqual(endCut.data.text.charCodeAt(0), 0xde00, 'a lone LOW surrogate never starts the chunk');
+  assert.equal(surrogateFree(endCut.data.text), true, JSON.stringify(endCut.data.text));
+  // The pair at the START cut is served WHOLE — the smallest safe chunk is the pair itself.
+  assert.equal(startCut.data.text.includes(EMOJI), true, 'the whole pair is the smallest safe chunk');
+  // A pair exactly AT the chunk boundary: `maxChars` ends on the cut between the two units, so the
+  // chunk is completed rather than truncated, and the resume point is the NEXT character.
+  const boundary = await tool.execute({ offset: 0, maxChars: 2 }, { editor: 'word' });
+  assert.deepEqual(boundary.data, { text: `a${EMOJI}`, offset: 0, totalChars: 4, truncated: true, nextOffset: 3 });
+  // Ordinary neighbours are untouched.
+  assert.equal((await tool.execute({ offset: 0, maxChars: 1 }, { editor: 'word' })).data.text, 'a');
+  assert.equal((await tool.execute({ offset: 3, maxChars: 1 }, { editor: 'word' })).data.text, 'b');
+  // Whatever the tool returns, the document is still walkable: for every chunk the text is well formed,
+  // the chunks tile the document exactly, and every resume point ADVANCES — an offset inside the pair
+  // can neither repeat a chunk nor stall the walk.
+  for (const maxChars of [1, 2, 3, 4]) {
+    const parts = [];
+    let offset = 0;
+    for (let step = 0; step < 20; step += 1) {
+      const result = await tool.execute({ offset, maxChars }, { editor: 'word' });
+      assert.equal(result.ok, true, `maxChars ${maxChars} step ${step}`);
+      assert.equal(surrogateFree(result.data.text), true, `maxChars ${maxChars} step ${step}: ${JSON.stringify(result.data.text)}`);
+      assert.equal(result.data.offset, offset, 'the result names the address it was asked for');
+      parts.push(result.data.text);
+      if (!result.data.truncated) break;
+      assert.ok(result.data.nextOffset > offset, `maxChars ${maxChars}: the resume point advances`);
+      offset = result.data.nextOffset;
+    }
+    assert.equal(parts.join(''), document, `maxChars ${maxChars}: the chunks reconstruct the document`);
+  }
+  // The reviewer's second reproduction address: an offset on the pair's TAIL either repeats no text
+  // that was already served or steps off the pair, and it never stalls.
+  const tailOffset = await tool.execute({ offset: 2, maxChars: 1 }, { editor: 'word' });
+  assert.equal(tailOffset.ok, true);
+  assert.equal(surrogateFree(tailOffset.data.text), true);
+  assert.ok(tailOffset.data.nextOffset === null || tailOffset.data.nextOffset > 2);
+});
+
+test('read_document_text keeps every published nextOffset inside its own schema', async () => {
+  // The defect this pins: `readDocumentOffsetMax` rested on "the export needs at least one byte per
+  // character", so a 100-byte pure-text export decoding to 101 characters made a character count above
+  // the maximum possible. For `totalChars = 262146` the tail {offset: 262144, maxChars: 1} published
+  // `nextOffset 262145`, which this tool's OWN schema (`maximum: 262144`) rejects — the tail could
+  // never be read. Every offset the tool can publish must be an offset it accepts.
+  // The reviewer's reproduction, exactly: `totalChars = 262146` and the tail read
+  // {offset: 262144, maxChars: 1}. It used to publish `nextOffset 262145`, which this tool's own
+  // schema (`maximum: 262144`) then rejected, so that tail could never be read.
+  const reproduction = 'x'.repeat(262146);
+  const reviewer = readDocument(documentBridge(reproduction));
+  const tail = await reviewer.execute({ offset: 262144, maxChars: 1 }, { editor: 'word' });
+  assert.equal(tail.ok, true);
+  assert.equal(tail.data.nextOffset, 262145);
+  assert.doesNotThrow(() => validateArguments(reviewer.schema, { offset: tail.data.nextOffset }),
+    'the reviewer\u2019s published resume point validates against the tool\u2019s own schema');
+  assert.ok(tail.data.nextOffset <= LIMITS.readDocumentOffsetMax);
+  assert.equal((await reviewer.execute({ offset: tail.data.nextOffset, maxChars: 1 }, { editor: 'word' })).ok, true,
+    'the tail the old bound made unreadable is readable');
+  // A length past the OLD bound publishes resume points the old schema would have refused, and each
+  // one is accepted now.
+  const document = 'x'.repeat(300000);
+  const tool = readDocument(documentBridge(document));
+  const middle = await tool.execute({ offset: 262153, maxChars: 1 }, { editor: 'word' });
+  assert.equal(middle.ok, true);
+  assert.equal(middle.data.text, 'x');
+  assert.equal(middle.data.nextOffset, 262154);
+  assert.doesNotThrow(() => validateArguments(tool.schema, { offset: middle.data.nextOffset }));
+  // The last character of a document that ends INSIDE the bound, and the nil resume point an exactly
+  // completed read publishes — no invalid address is ever named.
+  const endInside = 'x'.repeat(LIMITS.readDocumentOffsetMax - 5);
+  const lastInside = await readDocument(documentBridge(endInside)).execute({ offset: LIMITS.readDocumentOffsetMax - 6, maxChars: 1 }, { editor: 'word' });
+  assert.equal(lastInside.ok, true);
+  assert.equal(lastInside.data.text, 'x');
+  assert.equal(lastInside.data.truncated, false);
+  assert.equal(lastInside.data.nextOffset, null);
+  // The bound itself is accepted. A chunk the readable range has to clamp is a FINISHED read: it
+  // publishes no resume point, because the schema would reject the only one it could name. It is
+  // unreachable for a real document (whose text is shorter than the bound) and is the fail-closed
+  // guarantee that every PUBLISHED resume point stays inside the schema.
+  const atBound = await readDocument(documentBridge('x'.repeat(LIMITS.readDocumentOffsetMax))).execute({ offset: LIMITS.readDocumentOffsetMax, maxChars: 1 }, { editor: 'word' });
+  assert.deepEqual(atBound.data, { text: '', offset: LIMITS.readDocumentOffsetMax,
+    totalChars: LIMITS.readDocumentOffsetMax, truncated: false, nextOffset: null });
+  // The bound is a closed SCHEMA bound: an offset above it is refused before any dispatch...
+  const bridge = documentBridge(endInside);
+  const over = await readDocument(bridge).execute({ offset: LIMITS.readDocumentOffsetMax + 1, maxChars: 1 }, { editor: 'word' });
+  assert.equal(over.ok, false);
+  assert.equal(over.code, 'TOOL_ERROR');
+  assert.deepEqual(bridge.requests, [], 'an out-of-bounds address never reaches the bridge');
+  // ...while a document whose text runs past the bound would still publish a resume point the schema
+  // accepts: the ADDRESS BOUND itself, whose read is the empty tail — the case the old bound resolved
+  // by publishing an address past its own maximum, the unresumable tail this test forbids. (For a real
+  // document the text ends before the bound, so its final chunk reaches the document end and publishes
+  // the nil resume point; the clamped form is the fail-closed guard behind that.)
+  const resumed = 'x'.repeat(LIMITS.readDocumentOffsetMax - 16);
+  const last = await readDocument(documentBridge(resumed))
+    .execute({ offset: LIMITS.readDocumentOffsetMax - 8000, maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(last.ok, true);
+  assert.equal(last.data.text, resumed.slice(LIMITS.readDocumentOffsetMax - 8000));
+  assert.equal(last.data.truncated, false);
+  assert.equal(last.data.nextOffset, null, 'the last chunk reaches the document\u2019s own end');
+  // The address bound itself is accepted and answers the empty tail: nothing further can be named.
+  const beyond = await readDocument(documentBridge(resumed))
+    .execute({ offset: LIMITS.readDocumentOffsetMax, maxChars: 1 }, { editor: 'word' });
+  assert.equal(beyond.ok, true);
+  assert.equal(beyond.data.text, '');
+  assert.equal(beyond.data.nextOffset, null);
+  assert.equal(validateArguments(reviewer.schema, { offset: LIMITS.readDocumentOffsetMax }).offset, LIMITS.readDocumentOffsetMax);
+  assert.throws(() => validateArguments(reviewer.schema, { offset: LIMITS.readDocumentOffsetMax + 1 }), /TOOL_ERROR/);
+});
+
+test('read_document_text publishes a resumable chunk for every length around the offset bound', async () => {
+  // The property the bound exists for, asserted rather than argued: for texts at, around and far past
+  // the bound, EVERY published `nextOffset` is accepted by the tool's own schema and the read resumes
+  // from it. A chunk the readable range has to clamp cannot publish a resume point at all — that is
+  // what keeps the invariant true at every length rather than only at the ones a fixture happens to
+  // cover — so a clamped read is a finished one and never an invitation to call back.
+  const lengths = [LIMITS.readDocumentOffsetMax - 2, LIMITS.readDocumentOffsetMax - 1, LIMITS.readDocumentOffsetMax,
+    LIMITS.readDocumentOffsetMax - 5, 3 * LIMITS.readDocumentMaxChars];
+  for (const length of lengths) {
+    for (const unit of ['x', 'я']) {
+      const document = unit.repeat(length);
+      const tool = readDocument(documentBridge(document));
+      const offsets = [0, length - 2, length - 1, length,
+        Math.min(LIMITS.readDocumentOffsetMax - 1, length - 1), LIMITS.readDocumentOffsetMax]
+        .filter(offset => Number.isSafeInteger(offset) && offset >= 0 && offset <= LIMITS.readDocumentOffsetMax);
+      for (const offset of offsets) {
+        const result = await tool.execute({ offset, maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+        assert.equal(result.ok, true, `length ${length} offset ${offset}`);
+        assert.equal(result.data.offset, offset, `length ${length} offset ${offset}`);
+        const text = result.data.text;
+        assert.equal(text, document.slice(offset, offset + text.length),
+          `length ${length} offset ${offset}: the chunk is the document's own text at that address`);
+        assert.ok(text.length <= LIMITS.readDocumentMaxChars, `length ${length} offset ${offset}: never above maxChars`);
+        if (result.data.nextOffset === null) continue;
+        assert.equal(result.data.truncated, true);
+        assert.ok(result.data.nextOffset > offset, `length ${length} offset ${offset}: the resume point advances`);
+        assert.ok(result.data.nextOffset <= LIMITS.readDocumentOffsetMax,
+          `length ${length} offset ${offset}: nextOffset ${result.data.nextOffset} is inside the schema bound`);
+        // The next call the tool invites must be one the tool accepts — schema first, then the handler.
+        assert.doesNotThrow(() => validateArguments(tool.schema, { offset: result.data.nextOffset, maxChars: 1 }),
+          `length ${length} offset ${offset}: the schema accepts the published nextOffset`);
+        const resumed = await tool.execute({ offset: result.data.nextOffset, maxChars: 1 }, { editor: 'word' });
+        assert.equal(resumed.ok, true, `length ${length} offset ${offset}: the published resume point is readable`);
+        assert.equal(resumed.data.offset, result.data.nextOffset);
+      }
+    }
+  }
 });
 
 test('read_document_text forwards the caller signal to its single bridge read', async () => {

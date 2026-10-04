@@ -495,6 +495,9 @@ own `DOMParser`; the fixture is not a browser.
 
 ## 8. Sprint 3, tool 1 — `read_document_text`, the bounded chunked document read
 
+> Historical record of the tool's first landing, kept as written. The bounds and the enforcement rule it
+> records were corrected by the independent review in **§8a**, which is what the code now does.
+
 The first tool of the §10 catalogue. It is a **read**, so it needs no delta, no readback and no
 uncertainty class: a string is an unambiguous result and there is no mutation whose effect would have to
 be established. Its mechanism is the one Phase 0 measured on **both** builds and the insert confirmation
@@ -519,6 +522,10 @@ answer is `INVALID_DATA`.
 chunk whose **Cyrillic** encoding fits, and Cyrillic is this product's realistic worst case), and
 `readDocumentOffsetMax = 262144` (no readable document's text can be longer than `documentHtmlBytes`
 characters, since every character costs at least one UTF-8 byte).
+**SUPERSEDED by §8a:** an independent review showed this arithmetic was bound to the wrong ceiling — the
+runtime's entry ceiling is `toolResultBytes` (16384), not `editorResultBytes` (65536) — and the offset
+premise was false. The values in force are `readDocumentChars = readDocumentMaxChars = 8000`,
+`readDocumentEntryBytes = 130` and `readDocumentOffsetMax = 524305`.
 
 **Result shape:** `ok({ text, offset, totalChars, truncated, nextOffset })`, where `text` is the
 requested slice, `totalChars` is the whole document's own character count, `truncated`/`nextOffset` are
@@ -568,4 +575,67 @@ matches this model (the element vocabulary question of §5–§7, now also the s
 model), and how a real R7 document's text behaves around an offset that lands inside a surrogate pair or
 a paragraph-boundary separator. An editor that does not implement `GetFileHTML` gets no document read at
 all: the ticket settles `TIMEOUT`, a known class, never a document.
+
+## 8a. Independent review of tool 1: three defects found and fixed
+
+The tool shipped in §8 passed its own suite but defeated itself in production. All three defects below
+were reproduced against the REAL runtime/protocol before the fix (RED), and the corrected bounds and
+guards are what the tests now pin.
+
+**D1 (HIGH) — the chunk was bound to the wrong ceiling.** The handler bounded the slice by
+`LIMITS.editorResultBytes` (65536), but the runtime refuses any tool-result entry whose **serialization**
+exceeds `AGENT_CEILINGS.toolResultBytes` (**16384**, `protocol.js:91`) and substitutes the literal
+`"the tool result could not be serialized"` (`runtime.js:27-36`). Measured through the real protocol
+serializer on `'я'.repeat(12500)`: the handler answered `ok` with 12000 characters, the entry measured
+**24124 bytes**, `toolResultMessages` threw `TOOL_ERROR`, and the model received no text at all. The
+threshold was any Cyrillic chunk over ~8144 characters — the 12000-character DEFAULT already exceeded it,
+so for the product's main language the tool failed on every non-trivial document.
+
+The fix measures the ACTUAL serialized entry the runtime measures — `JSON.stringify({ tool, ...result })`
+in the protocol's own key order (`documentEntryBytes` in the tool, pinned by a test against the real
+shape) — and sizes the advertised chunk from it. The arithmetic, stated as the limits module states it:
+
+| quantity | value | arithmetic |
+| --- | --- | --- |
+| the enforcing ceiling | `AGENT_CEILINGS.toolResultBytes` = **16384** | `JSON.stringify({tool, ...result})` |
+| non-text envelope of one entry | **130** bytes (`readDocumentEntryBytes`) | widest admitted field width: 6-digit `offset`, 6-digit `totalChars`, `"truncated":false`, 4-character `null` |
+| Cyrillic (2 bytes/character) | **8000 characters** = 16000 bytes | 16000 + 130 = **16130 \<= 16384** (254 slack); exact floor 8127 |
+| ASCII (1 byte/character) | 8000 characters = 8000 bytes | 8000 + 130 = 8130 |
+| CJK (3 bytes/character) | 8000 characters = 24000 bytes | above the ceiling → closed `BYTE_LIMIT`, retry smaller |
+
+`readDocumentChars` (the DEFAULT) and `readDocumentMaxChars` (the advertised cap) are both **8000**, so a
+default Cyrillic read — the case the reviewer measured — is delivered whole, and every advertised maximum
+is a chunk the tool can return. The handler still measures the entry it is about to return and refuses an
+over-ceiling one with the closed `BYTE_LIMIT` class (never clipped, never shipped unparseable); a bridge
+answer whose own `totalChars` is past every readable document is refused the same way.
+
+**D2 (MEDIUM) — a lone surrogate could be shipped.** The slice was taken over UTF-16 code units with no
+pair guard: `"a😀b"` with `{offset:1, maxChars:1}` returned `"\ud83d"` and `{offset:2, maxChars:2}`
+returned `"\ude00b"`. The same technique `prefixWithin` (`context.js:21-38`) already uses is applied to
+BOTH cuts: a start inside a pair steps BACK over the low surrogate (so the chunk begins on a whole
+character), and an end inside a pair steps FORWARD past it (so the pair is completed rather than truncated
+to its high unit). Moving outward is what keeps the walk exact: every returned chunk is well formed, the
+chunks still tile the document, and `nextOffset` always advances, so an offset that names the tail of a
+pair can neither repeat a chunk nor stall a resumed read.
+
+**D3 (LOW) — the offset maximum made a tail unresumable.** `readDocumentOffsetMax` rested on "the export
+needs at least one byte per character", which is false: the decoder appends one newline per block-level
+element, so a 100-byte pure-text export decodes to 101 characters and the text CAN be longer than the
+export. Reproduced with `totalChars = 262146`: `{offset: 262144, maxChars: 1}` published
+`nextOffset 262145`, which the tool's OWN schema (`maximum: 262144`) rejected — that tail could never be
+read. The bound is now derived from the export it is read through — 2 × 262144 + 1 + 16 = **524305** —
+and the handler also clamps the chunk's end to it, so **every `nextOffset` the tool can publish is an
+offset its own schema accepts**. A property test asserts exactly that for texts at, around and past the
+bound, for both ASCII and Cyrillic.
+
+**Tests and verification.** RED first (the numbers above), then GREEN. The focused word suite is
+**66/66**; the full suite grew **688 → 695** with `fail 0`; `node scripts/static-audit.mjs` →
+`Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` → exit 0 (`Plugin build: 8
+allowlisted files; ZIP STORE SHA-256 addb8abb…`). Changed tests and why: the schema test now asserts the
+serialization-derived bounds (8000/8000/130/524305) instead of the arithmetically wrong
+`editorResultBytes / 2` and the `documentHtmlBytes` premise; the "Cyrillic chunk" case now asserts the
+exact serialized entry (`16123` bytes) and that the runtime's own serializer accepts it; the over-ceiling
+case now covers both the defensive refusal and the in-ceiling service for each encoding. No test was
+weakened or deleted. `src/agent/*` was not touched: the fix lives in the tool, the limits module and the
+tests, and the bridge leg is unchanged (one `GetFileHTML` on the owned slot, still read-only).
 

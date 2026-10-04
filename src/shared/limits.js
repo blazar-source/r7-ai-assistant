@@ -19,28 +19,57 @@ export const LIMITS = Object.freeze({
   // miss an occurrence or count a partial one — so it makes the read unusable and the insert settles
   // APPLY_UNCERTAIN (fail-closed), never a false success.
   documentHtmlBytes: 262144,
-  // The bounded, CHUNKED whole-document text read (`read_document_text`). `readDocumentChars` is the
-  // DEFAULT chunk a call that names no `maxChars` receives: 12000 characters, a comfortably large
-  // working block for the model that still leaves the per-result ceiling three times over for a
-  // Cyrillic document, where every character costs TWO UTF-8 bytes (24000 against `editorResultBytes`).
-  // `readDocumentMaxChars` is the HARD per-call cap the schema advertises: 32768 characters, exactly
-  // `editorResultBytes / 2` — the largest chunk whose Cyrillic encoding still fits the per-result
-  // ceiling, and Cyrillic is this product's realistic worst case. It is deliberately NOT a proof for
-  // every string: the widest UTF-8 encoding of one BMP character in this byte counter is THREE bytes
-  // (CJK text, typographic punctuation; a lone surrogate counts as U+FFFD, also three), so a chunk of
-  // 32768 such characters measures 98304 bytes — above the ceiling. The bound that is actually
-  // ENFORCED is therefore the one the tool measures on the slice it is about to return, and an
-  // over-ceiling chunk is refused with the closed `BYTE_LIMIT` class rather than truncated.
-  readDocumentChars: 12000,
-  readDocumentMaxChars: 32768,
-  // The largest `offset` any readable document can address. The decoded text is derived from the
-  // export, which is bounded by `documentHtmlBytes` bytes, and every character of that text costs at
-  // least ONE UTF-8 byte, so no readable document's text can be longer than that many characters — an
-  // offset at or above this bound lies beyond the end of every document this bridge can read. It is
-  // still a closed SCHEMA bound: an offset above it is refused as an invalid argument (`TOOL_ERROR`)
+  // The bounded, CHUNKED whole-document text read (`read_document_text`). What its schema advertises is
+  // a CHARACTER count, but the bound that decides whether the read survives to the model is the byte
+  // ceiling the runtime applies to ONE tool-result entry:
+  //   `AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({ tool, ...handlerResult })`
+  //   (protocol.js: `stringifyToolResults`, which REFUSES an entry above it; runtime.js:27-36 then
+  //   substitutes the literal "the tool result could not be serialized" and the model receives no text).
+  // So the arithmetic is done on the SERIALIZED ENTRY, not on the raw text:
+  //   Cyrillic (this product's realistic worst case): 2 UTF-8 bytes per character;
+  //   ASCII: 1 byte; CJK / typographic punctuation: 3 bytes; an astral code point: 4 bytes (2 units).
+  // `readDocumentEntryBytes` is the entry's own non-text envelope, measured on the widest field width
+  // the schema admits (a six-digit offset, a six-digit `totalChars`, a four-character `null` resume
+  // point) and pinned by a test against the protocol's serialization shape. The maximum chunk is
+  // therefore the largest ROUND character count whose Cyrillic encoding plus that envelope fits:
+  //   8000 * 2 + 130 = 16130 <= 16384, with 254 bytes of slack;
+  //   the floor of the exact affordance is (16384 - 130) / 2 = 8127 characters.
+  // `readDocumentChars` is the DEFAULT a call that names no `maxChars` receives — the same 8000, so a
+  // default Cyrillic read (16000 bytes) is delivered whole instead of refused. `readDocumentMaxChars`
+  // is the HARD per-call cap the schema advertises and equals the default: a chunk the schema admits
+  // must be a chunk the tool can return, so the advertised maximum is deliberately NOT the largest
+  // ASCII slice (16254 characters) — advertising that would promise a size that is guaranteed to be
+  // refused for the two byte-wider encodings of a Unicode document. The bound that is nevertheless
+  // ENFORCED is the one the tool measures on the entry it is about to return, and an over-ceiling
+  // entry is refused with the closed `BYTE_LIMIT` class rather than truncated.
+  readDocumentChars: 8000,
+  readDocumentMaxChars: 8000,
+  // The measured non-text envelope of one `read_document_text` entry with the widest field values the
+  // schema admits. It is exported because the tool and its test must name the SAME overhead the
+  // protocol serializer contributes; the test recomputes it from the real serialization shape.
+  readDocumentEntryBytes: 130,
+  // The largest `offset` any readable document can address, and it is NOT the export byte bound.
+  // The premise that bound rested on — "every character of the decoded text costs at least one UTF-8
+  // byte, so the text cannot be longer than the export" — is false: the decoder appends one newline per
+  // block-level element, so an export of N bytes can decode to MORE than N characters (the reviewer's
+  // 100-byte pure-text export decodes to 101 characters). The bound is derived from the export it is
+  // read through instead. `documentHtmlBytes` = 262144 bytes is the largest export the bridge decodes,
+  // and the expansion is bounded by the export's own length: the newline per element costs one byte of
+  // END tag, and an element contributing a newline without one contributes at least its two tag bytes,
+  // so the decoded text cannot exceed twice the export plus the one character a zero-length export can
+  // still yield: 2 * 262144 + 1 = 524289. The bound is that worst case plus 16 characters of margin.
+  // The number exists for two properties, and both are tested:
+  //   * it is at least as large as the largest `nextOffset` the tool can PUBLISH — a schema that
+  //     rejects the tool's own resume point makes that tail unreadable (the defect this bound fixes:
+  //     with the old 262144, `totalChars = 262146` published `nextOffset 262145`, which this tool's own
+  //     schema then refused);
+  //   * it bounds the readable range: a document whose own character count is past it is refused by the
+  //     handler (`BYTE_LIMIT`, the `totalChars` fence), so the chunk it serves never runs past the bound
+  //     and every published resume point is inside it by construction.
+  // It stays a closed SCHEMA bound: an offset above it is refused as an invalid argument (`TOOL_ERROR`)
   // before any dispatch, while an offset INSIDE the bound but past the end of THIS document is the
   // legitimate empty-tail read the handler answers with `ok` and no text.
-  readDocumentOffsetMax: 262144,
+  readDocumentOffsetMax: 524305,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
