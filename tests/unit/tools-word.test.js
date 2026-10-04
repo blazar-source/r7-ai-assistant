@@ -28,7 +28,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['insert_paragraph', 'read_context', 'read_document_text', 'read_selection', 'replace_selection']);
+  assert.deepEqual(names, ['insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
@@ -60,7 +60,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['insert_paragraph', 'read_document_text', 'read_selection', 'replace_selection'],
+    ['insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -102,8 +102,8 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['insert_paragraph', 'read_document_text', 'read_selection', 'replace_selection']);
-  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text']);
+    ['insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
+  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph']);
 });
 
 test('replace_selection advertises the argument ceiling its handler enforces', async () => {
@@ -2069,5 +2069,358 @@ test('read_document_text refuses closed when not even ONE whole character can be
     offset = result.data.nextOffset;
   }
   assert.ok(offset >= document.length || steps > 0, 'the walk ran');
+});
+
+// --- Sprint 3, tool 2: `read_paragraph` — the caret context read -----------------------------------
+//
+// THE PRIMITIVE EVIDENCE, measured on the vendored copy of the installed build's word SDK source
+// (`.local/stage-b-runtime/vendor-word-sdk-all.js`, dev-only), by counting occurrences in the file's
+// text rather than with `Select-String`, which silently reports ZERO on this 15 MB bundle:
+//   `pluginMethod_GetCurrentParagraph` 0, `pluginMethod_GetCurrentSentence` 0,
+//   `pluginMethod_GetCurrentWord` 0, `pluginMethod_GetSelectedText` 0.
+// Those zeros prove NOTHING, because `pluginMethod_` is not a naming convention in this bundle: it
+// occurs FOUR times in total — the explicit `PasteHtml` / `PasteText` / `OnEncryption` members and the
+// dispatcher's own `"pluginMethod_"+methodName` lookup — so the editor resolves every other method name
+// dynamically and no prefixed literal exists to count.
+// The BARE names are what exist: `GetCurrentParagraph` 125, `GetSelectedText` 101, `GetCurrentWord` 7,
+// `GetCurrentSentence` 6. No plugin-level PARAGRAPH getter is established: every sampled
+// `GetCurrentParagraph` is document-content-level (`documentContent.GetCurrentParagraph()` and
+// `Ct.prototype.GetCurrentParagraph`, the `Api` builder route this descriptor is forbidden to use),
+// which is why no `pluginMethod_GetCurrentParagraph` is dispatched anywhere in this repo.
+// `GetCurrentSentence` IS established at the plugin level, by this repo's own history: commit ed65dd5
+// dispatched exactly `plugin.executeMethod('GetCurrentSentence', [], callback)` through the one owned
+// dispatch channel and records it as "the primitive the live build actually answers with the inserted
+// sentence" on R7-Office 2026.3.1.
+// The tool therefore reads the SENTENCE at the caret — the most precise caret read that exists — and
+// says so in `scope`, rather than naming a paragraph the primitive cannot deliver.
+const CARET_SENTENCE = 'Привет, мир.';
+
+// A bridge that records every request the tool makes, so "the refusal never reached the bridge" and
+// "exactly one read, no write method" are observations rather than assumptions.
+function caretBridge(text, extras = {}) {
+  const requests = [];
+  return { requests, readParagraph: async (request) => { requests.push(request); return { ok: true, text }; }, ...extras };
+}
+function readParagraph(bridge) { return createWordTools(bridge).find(entry => entry.name === 'read_paragraph'); }
+
+// The real plugin facade exposes the editor methods ONLY through its single public dispatch channel,
+// exactly as `nativeRig` above documents. This leg carries NO identity probe: a caret context read
+// returns no OWNED TARGET a later write could be applied to, so there is no handle whose ownership
+// would have to be proven and the read is ONE dispatch.
+function caretRig({ dispatchChannel = true } = {}) {
+  const calls = [];
+  function dispatch(name, params, callback) { calls.push({ name, params, callback }); return false; }
+  const base = { info: { editorType: 'word' } };
+  const plugin = dispatchChannel
+    ? { ...base, executeMethod: dispatch }
+    : Object.assign(Object.create({ executeMethod: dispatch }), base);
+  const bridge = bridgeWith(plugin, { editorType: 'word', clock: { now: () => 0 },
+    timers: { schedule() { return {}; }, clear() {} } });
+  return { bridge, plugin, calls };
+}
+
+test('read_paragraph advertises the closed schema, the scope it really reads and the bound it enforces', () => {
+  const tool = readParagraph(caretBridge(CARET_SENTENCE));
+  assert.equal(tool.kind, 'read');
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual(tool.editors, ['word']);
+  assert.deepEqual(tool.requires, ['document.read']);
+  assert.equal(tool.schema.type, 'object');
+  assert.equal(tool.schema.additionalProperties, false, 'the schema is CLOSED');
+  assert.deepEqual(tool.schema.required, [], 'the caret read takes no model arguments at all');
+  assert.deepEqual(Object.keys(tool.schema.properties), [],
+    'the primitive takes no parameters, so the schema advertises none');
+  // The bound is the SERIALIZED tool-result entry, not the raw text: the runtime refuses an entry whose
+  // JSON exceeds `AGENT_CEILINGS.toolResultBytes` (16384) — NOT `LIMITS.editorResultBytes` (65536) — and
+  // substitutes the literal "the tool result could not be serialized". The caret text is the product's
+  // realistic worst case at two UTF-8 bytes per character, so the largest text the tool may publish
+  // plus its measured envelope must fit: 16000 + 87 = 16087 <= 16384, with 297 bytes of slack.
+  assert.equal(LIMITS.readParagraphBytes, 16000, 'the largest caret context the tool serves');
+  assert.ok(LIMITS.readParagraphBytes + 87 <= AGENT_CEILINGS.toolResultBytes,
+    'a full Cyrillic caret context plus its envelope fits the per-result ceiling');
+  assert.ok(LIMITS.readParagraphBytes < AGENT_CEILINGS.contextReadBytes.paragraph,
+    'the caret read has its OWN bound, never the paragraph context budget reused as an alias');
+});
+
+test('read_paragraph accepts only the empty argument object and rejects every other key at the schema', () => {
+  const tool = readParagraph(caretBridge(CARET_SENTENCE));
+  assert.doesNotThrow(() => validateArguments(tool.schema, {}), 'the one legal call site');
+  // An unknown key — including one a plausible caller would guess, such as the SCOPE the RESULT names —
+  // is a closed TOOL_ERROR raised by the schema itself and can never reach the handler. The result bound
+  // is not a model argument: nothing the model sends can widen or narrow it.
+  for (const args of [{ scope: 'sentence' }, { text: 'x' }, { bytes: 1 }, { maxBytes: 1 },
+    { offset: 0 }, { extra: 1 }, [], null, 'text', 1]) {
+    assert.throws(() => validateArguments(tool.schema, args), /TOOL_ERROR/, JSON.stringify(args));
+  }
+});
+
+test('read_paragraph refuses an editor that is not Word before any dispatch', async () => {
+  const bridge = caretBridge(CARET_SENTENCE);
+  const tool = readParagraph(bridge);
+  for (const editor of ['cell', 'slide', 'unknown']) {
+    const refusal = tool.precondition({}, { editor });
+    assert.equal(refusal.code, 'CAPABILITY_UNAVAILABLE', editor);
+    assert.equal(refusal.message, 'отказ', editor);
+  }
+  assert.equal(tool.precondition({}, { editor: 'word' }), null);
+  assert.deepEqual(bridge.requests, [], 'the precondition is what refuses, and it dispatches nothing');
+});
+
+test('read_paragraph returns the caret sentence with exact Cyrillic byte accounting', async () => {
+  const bridge = caretBridge(CARET_SENTENCE);
+  const result = await readParagraph(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { scope: 'sentence', text: CARET_SENTENCE, bytes: 21 });
+  assert.equal(result.data.bytes, utf8ByteLength(CARET_SENTENCE), 'the byte count is the text\u2019s own');
+  assert.equal(CARET_SENTENCE.length, 12, 'and it is NOT the UTF-16 code-unit length');
+  assert.equal(Object.isFrozen(result.data), true);
+  assert.deepEqual(bridge.requests, [{ maxBytes: LIMITS.readParagraphBytes }],
+    'the model arguments stay out of the bridge request');
+});
+
+test('read_paragraph treats an empty caret context as a closed known refusal, never as empty text', async () => {
+  // THE STATED DECISION. An empty caret context means the caret is in no sentence at all — there is
+  // nothing to reason about, exactly like an empty SELECTION in `read_selection` — so the tool refuses
+  // with the module's closed `known()` class. This is deliberately NOT the whole-document convention
+  // (`read_document_text` returns `ok` for an empty document), where `''` IS the complete answer to
+  // "what does this document say". A caret read has no such question to answer.
+  for (const empty of ['', null, undefined, 42, {}]) {
+    const result = await readParagraph(caretBridge(empty)).execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(empty));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(empty));
+    assert.equal(result.message, 'отказ', JSON.stringify(empty));
+    assert.equal(result.data, undefined, 'a refusal carries no entry for the runtime to serialize');
+  }
+});
+
+test('read_paragraph refuses a caret context longer than its bound as BYTE_LIMIT', async () => {
+  const tool = readParagraph(caretBridge('я'.repeat(LIMITS.readParagraphBytes)));
+  const over = await tool.execute({}, { editor: 'word' });
+  assert.equal(over.ok, false);
+  assert.equal(over.code, 'BYTE_LIMIT');
+  assert.equal(over.message, 'отказ');
+  assert.equal(JSON.stringify(over).includes('я'), false, 'no native text leaks through a refusal');
+  // The boundary is exact and the served side is inside the per-result serialization ceiling: the
+  // largest text the tool ACCEPTS still produces an entry the runtime serializer accepts.
+  const edge = await readParagraph(caretBridge('я'.repeat(LIMITS.readParagraphBytes / 2))).execute({}, { editor: 'word' });
+  assert.equal(edge.ok, true, 'the bound itself is served, not refused');
+  assert.equal(edge.data.bytes, LIMITS.readParagraphBytes);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_paragraph', result: edge }]));
+});
+
+test('read_paragraph republishes the closed class the bridge reported, never a raw failure', async () => {
+  const classes = ['TIMEOUT', 'CANCELLED', 'INVALID_DATA', 'CAPABILITY_UNAVAILABLE', 'EDITOR_BUSY', 'BYTE_LIMIT'];
+  for (const code of classes) {
+    const result = await readParagraph(caretBridge('', { readParagraph: async () => ({ ok: false, code }) }))
+      .execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code, `${code} crosses unchanged`);
+    assert.equal(result.message, 'отказ', code);
+  }
+  // Only a class from the closed vocabulary is republished: an arbitrary bridge string keeps the
+  // module's own tool-error fallback rather than reaching the run as an invented code.
+  for (const code of ['SOMETHING_ELSE', '', 7, null]) {
+    const result = await readParagraph(caretBridge('', { readParagraph: async () => ({ ok: false, code }) }))
+      .execute({}, { editor: 'word' });
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(code));
+  }
+  // A THROWN classified refusal crosses the same way as a returned one.
+  const thrown = await readParagraph(caretBridge('', { readParagraph: async () => { const error = new Error('x'); error.code = 'TIMEOUT'; throw error; } }))
+    .execute({}, { editor: 'word' });
+  assert.equal(thrown.code, 'TIMEOUT');
+});
+
+test('read_paragraph maps a returned or thrown uncertain class to TOOL_UNCERTAIN', async () => {
+  const returned = await readParagraph(caretBridge('', { readParagraph: async () => ({ ok: false, code: 'APPLY_UNCERTAIN' }) }))
+    .execute({}, { editor: 'word' });
+  assert.equal(returned.ok, false);
+  assert.equal(returned.code, 'TOOL_UNCERTAIN', 'a returned uncertain bridge answer stops the run');
+  const thrown = await readParagraph(caretBridge('', { readParagraph: async () => { const error = new Error('x'); error.code = 'APPLY_UNCERTAIN'; throw error; } }))
+    .execute({}, { editor: 'word' });
+  assert.deepEqual(thrown, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' },
+    'a thrown uncertain answer is classified identically');
+});
+
+test('read_paragraph refuses a bridge that cannot serve the caret read instead of crashing', async () => {
+  // The entry point is absent, or present and not a function: both are the same closed capability
+  // refusal with NOTHING dispatched, never a raw TypeError out of the handler.
+  for (const bridge of [null, undefined, {}, { readParagraph: 'no' }, { readParagraph: 7 }]) {
+    const result = await readParagraph(bridge).execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(bridge));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(bridge));
+    assert.equal(result.message, 'отказ', JSON.stringify(bridge));
+  }
+});
+
+test('read_paragraph touches exactly one bridge read and no write method at all', async () => {
+  const touched = [];
+  const record = (method, value) => async () => { touched.push({ method }); return value; };
+  const bridge = {
+    readParagraph: async (request) => { touched.push({ method: 'readParagraph', request }); return { ok: true, text: CARET_SENTENCE }; },
+    readSelection: record('readSelection', {}),
+    readContext: record('readContext', {}),
+    readDocumentText: record('readDocumentText', {}),
+    insertParagraph: record('insertParagraph', { ok: true, data: {} }),
+    applySelection: record('applySelection', {})
+  };
+  const result = await readParagraph(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(touched, [{ method: 'readParagraph', request: { maxBytes: LIMITS.readParagraphBytes } }],
+    'one caret context read, no mutation leg, no other read leg');
+  // READ-ONLY BY CONSTRUCTION: no mutate path is reachable from this descriptor, and the assertion is
+  // over the set of write/other methods the bridge actually exposes rather than a claim about intent.
+  for (const method of ['insertParagraph', 'applySelection', 'readSelection', 'readContext', 'readDocumentText']) {
+    assert.equal(touched.some(entry => entry.method === method), false, `${method} is never reached`);
+  }
+});
+
+test('read_paragraph forwards the caller signal to its single bridge read', async () => {
+  const bridge = caretBridge(CARET_SENTENCE);
+  const controller = new AbortController();
+  await readParagraph(bridge).execute({}, { editor: 'word', signal: controller.signal });
+  assert.deepEqual(bridge.requests, [{ maxBytes: LIMITS.readParagraphBytes, signal: controller.signal }]);
+});
+
+test('read_paragraph publishes an entry the runtime serializer accepts, measured exactly', async () => {
+  const text = 'я'.repeat(4000);
+  const tool = readParagraph(caretBridge(text));
+  const result = await tool.execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { scope: 'sentence', text, bytes: 8000 });
+  // The measurement is the entry the runtime PUBLISHES — `JSON.stringify({ tool, ...result })` — and it
+  // must be inside the same ceiling `stringifyToolResults` enforces, so the model receives the text
+  // instead of the literal "the tool result could not be serialized".
+  const measured = utf8ByteLength(JSON.stringify({ tool: 'read_paragraph', ...result }));
+  assert.ok(measured <= AGENT_CEILINGS.toolResultBytes, `${measured} <= ${AGENT_CEILINGS.toolResultBytes}`);
+  const messages = toolResultMessages([{ tool: 'read_paragraph', result }]);
+  assert.equal(messages.length, 1);
+  const modelVisible = JSON.parse(messages[0].content);
+  assert.equal(modelVisible.results[0].tool, 'read_paragraph');
+  assert.equal(modelVisible.results[0].ok, true);
+  assert.equal(modelVisible.results[0].data.scope, 'sentence', 'the model sees WHAT was read');
+  assert.equal(modelVisible.results[0].data.text, text, 'the caret text survives, whole');
+  assert.equal(modelVisible.results[0].data.bytes, 8000);
+  assert.equal(utf8ByteLength(messages[0].content) <= AGENT_CEILINGS.toolResultBytes + 32, true,
+    'the message envelope stays within one entry plus the framing slack');
+});
+
+test('read_paragraph refuses a context whose SERIALIZED entry alone is over the ceiling', async () => {
+  // The raw byte count is NOT the entry, and this is the case the entry measurement exists for.
+  // `JSON.stringify` escapes every C0 control character to TWO characters, so a caret context of 16000
+  // newlines is 16000 raw bytes — inside `LIMITS.readParagraphBytes` — and an entry of 32087 bytes, far
+  // outside `AGENT_CEILINGS.toolResultBytes`. A tool that measured only the raw text would publish `ok`
+  // for an entry the runtime refuses, the model would receive the literal "the tool result could not be
+  // serialized" instead of the sentence, and the action log would still claim success.
+  const escaped = '\n'.repeat(LIMITS.readParagraphBytes);
+  assert.equal(utf8ByteLength(escaped), LIMITS.readParagraphBytes, 'the raw text is inside the text bound');
+  assert.ok(utf8ByteLength(JSON.stringify(escaped)) > AGENT_CEILINGS.toolResultBytes,
+    'and its serialization is far outside the entry ceiling');
+  const control = await readParagraph(caretBridge(escaped)).execute({}, { editor: 'word' });
+  assert.equal(control.ok, false, 'the entry, not the raw text, is the enforced bound');
+  assert.equal(control.code, 'BYTE_LIMIT');
+  assert.equal(JSON.stringify(control).includes('\\n'), false, 'no native text leaks through the refusal');
+  // A lone surrogate is the same defect by a different route: three raw UTF-8 bytes, SIX bytes once
+  // serialized, so 15000 raw bytes of them make an entry of 30087.
+  const lone = '\ud800'.repeat(5000);
+  assert.equal(utf8ByteLength(lone), 15000, 'inside the text bound');
+  const surrogate = await readParagraph(caretBridge(lone)).execute({}, { editor: 'word' });
+  assert.equal(surrogate.ok, false);
+  assert.equal(surrogate.code, 'BYTE_LIMIT');
+  // And the escape rule is a bound on what is SERVED, not on what is legal: a context whose entries fit
+  // is served with its own bytes, escapes and all, and the published entry still serializes.
+  const small = await readParagraph(caretBridge('a\nb\tc')).execute({}, { editor: 'word' });
+  assert.equal(small.ok, true);
+  assert.equal(small.data.text, 'a\nb\tc');
+  assert.equal(small.data.bytes, 5);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_paragraph', result: small }]));
+});
+
+test('bridge readParagraph dispatches GetCurrentSentence ONCE by name and decodes the sentence', async () => {
+  const r = caretRig();
+  assert.equal(Object.hasOwn(r.plugin, 'GetCurrentSentence'), false,
+    'the caret read is reached by NAME, never as a facade property');
+  const pending = r.bridge.readParagraph({ maxBytes: LIMITS.readParagraphBytes });
+  assert.equal(typeof pending.then, 'function');
+  assert.equal(r.calls.length, 1, 'the caret read is the ONLY native dispatch of this leg');
+  assert.equal(r.calls[0].name, 'GetCurrentSentence');
+  assert.deepEqual(r.calls[0].params, [], 'the public caret primitive takes no parameters');
+  assert.ok(Object.isFrozen(r.calls[0].params));
+  assert.equal(r.bridge.getState().busy, true, 'the slot stays owned until the native callback');
+  r.calls[0].callback(CARET_SENTENCE);
+  const result = await pending;
+  assert.deepEqual(result, { ok: true, text: CARET_SENTENCE });
+  assert.ok(Object.isFrozen(result));
+  assert.equal(r.bridge.getState().busy, false);
+  assert.deepEqual(r.calls.map(call => call.name), ['GetCurrentSentence'],
+    'exactly one dispatch: no identity probe and no second read');
+});
+
+test('bridge readParagraph decodes against the requested budget and closes an oversized answer', async () => {
+  const r = caretRig();
+  const pending = r.bridge.readParagraph({ maxBytes: 8 });
+  assert.equal(r.calls.length, 1);
+  r.calls[0].callback('я'.repeat(20)); // 40 UTF-8 bytes, past the 8-byte window
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'BYTE_LIMIT');
+  assert.equal(JSON.stringify(result).includes('я'), false, 'an oversized native read never leaks');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('bridge readParagraph refuses a budget or a dispatch channel it cannot use, with no SDK work', async () => {
+  for (const raw of [{}, { maxBytes: 0 }, { maxBytes: -1 }, { maxBytes: 1.5 }, { maxBytes: null }, { maxBytes: '8' }]) {
+    const r = caretRig();
+    const result = await r.bridge.readParagraph(raw);
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(raw));
+    assert.deepEqual(r.calls, [], JSON.stringify(raw));
+    assert.equal(r.bridge.getState().busy, false);
+  }
+  const r = caretRig({ dispatchChannel: false });
+  assert.equal(typeof r.plugin.executeMethod, 'function', 'a plain typeof would accept the inherited method');
+  const result = await r.bridge.readParagraph({ maxBytes: LIMITS.readParagraphBytes });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'CAPABILITY_UNAVAILABLE');
+  assert.deepEqual(r.calls, [], 'nothing is dispatched by name');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('bridge readParagraph refuses a pre-aborted signal without any dispatch', async () => {
+  const r = caretRig();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await r.bridge.readParagraph({ maxBytes: LIMITS.readParagraphBytes, signal: controller.signal });
+  assert.deepEqual(result, { ok: false, code: 'CANCELLED' });
+  assert.deepEqual(r.calls, [], 'nothing reaches the editor');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('read_paragraph is offered with policy auto and a model call dispatches one caret read', async () => {
+  const r = caretRig();
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'read_paragraph');
+  assert.ok(offered, 'the offered catalogue contains read_paragraph');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'read');
+  assert.equal(offered.requires.includes('document.read'), true);
+  const batch = validateBatch(catalogue, [{ tool: 'read_paragraph', arguments: {} }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'read_paragraph');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"read_paragraph","arguments":{}}]}',
+    '{"type":"final","message":"прочитано"}'];
+  let step = 0;
+  const pending = runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '22222222-2222-4222-8222-222222222222', request: 'прочитай абзац',
+    transport: async () => ({ content: responses[step++] ?? responses[responses.length - 1] }) });
+  assert.equal(await untilDispatches(r.calls, 1), 1, 'the caret read is dispatched by the real handler');
+  assert.equal(r.calls[0].name, 'GetCurrentSentence');
+  r.calls[0].callback(CARET_SENTENCE);
+  const run = await pending;
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['read_paragraph', 'ok']]);
+  assert.deepEqual(r.calls.map(call => call.name), ['GetCurrentSentence'],
+    'one caret read for the whole run, and no write path touched');
+  assert.equal(r.bridge.getState().busy, false);
 });
 

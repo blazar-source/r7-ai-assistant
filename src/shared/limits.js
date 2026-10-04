@@ -73,6 +73,31 @@ export const LIMITS = Object.freeze({
   // before any dispatch, while an offset INSIDE the bound but past the end of THIS document is the
   // legitimate empty-tail read the handler answers with `ok` and no text.
   readDocumentOffsetMax: 524305,
+  // The bounded CARET-CONTEXT read (`read_paragraph`) — the SECOND Sprint 3 Word tool. Its scope is the
+  // SENTENCE the caret sits in, because that is the primitive the live build answers with (the
+  // descriptor carries the evidence), so this is the largest caret text the reader may publish.
+  // It is DERIVED FROM THE SERIALIZED ENTRY, not from the raw text, because the entry is the value the
+  // runtime actually bounds:
+  //   `AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({ tool, ...handlerResult })`
+  //   (protocol.js: `stringifyToolResults`, which REFUSES an entry above it; runtime.js:27-36 then
+  //   substitutes the literal "the tool result could not be serialized" and the model receives no text).
+  // The entry is `{"tool":"read_paragraph","ok":true,"data":{"scope":"sentence","text":T,"bytes":N}}`, and
+  // its non-text envelope — measured by the descriptor's own `paragraphEntryBytes` and pinned by a test —
+  // is a fixed 82 bytes plus one byte per DIGIT of `N`. At this bound `N` is five digits, so the envelope
+  // is 87 bytes. 16000 is the largest ROUND ceiling that fits the product's realistic worst case,
+  // Cyrillic at two UTF-8 bytes per character:
+  //   16000 + 87 = 16087 <= 16384, with 297 bytes of slack.
+  // The EXACT largest text that fits is 16297 bytes (its entry is exactly 16384; 16298 makes 16385), so
+  // 16000 is deliberately conservative and round — the same rule `readDocumentChars` follows, so the
+  // advertised bound is a size a Cyrillic caret read returns whole.
+  // This is NOT an alias of `AGENT_CEILINGS.contextReadBytes.paragraph`: that entry bounds a raw
+  // PARAGRAPH addressed by `read_context`, while this one bounds the SERIALIZED entry of a caret read,
+  // and this module's own rule forbids serving one scope from another scope's budget.
+  // The bound is a TEXT bound and is deliberately NOT the whole enforcement: `JSON.stringify` escapes
+  // every C0 control character and every lone surrogate to two or six characters, so a text inside this
+  // bound can still serialize to an entry far above the ceiling. The handler therefore measures the
+  // ACTUAL entry as well, and that measurement is the enforced bound.
+  readParagraphBytes: 16000,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,

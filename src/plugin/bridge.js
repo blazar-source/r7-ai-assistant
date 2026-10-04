@@ -435,14 +435,14 @@ export function createR7Bridge(plugin, {
   function start(kind, signal, { replacement, beforeDispatch, maxBytes } = {}, params) {
     if (signal?.aborted) return Promise.reject(new SafeError(ERROR_CODES.CANCELLED));
     // Decode bound for THIS ticket. A `contextread` ticket has exactly one creator, `readContext`,
-    // which refuses a non-safe-integer or `< 1` `maxBytes` as CAPABILITY_UNAVAILABLE BEFORE it
-    // dispatches, so this leg always carries its budget and there is no second window it can fall back
-    // to — `LIMITS.selectionBytes` is not consulted on this branch at all, and a fallback here would be
-    // dead code whose only effect was to hide a future caller that forgot the budget behind an 8 KiB
-    // decode. Without one, such a caller gets `assertByteLimit`'s closed INVALID_DATA instead of a
-    // silent under-bound decode. Every other kind keeps its own window (the selection read stays at
-    // LIMITS.selectionBytes).
-    const readBound = kind === 'contextread' ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
+    // and a `caretread` ticket exactly one, `readParagraph`; both refuse a non-safe-integer or `< 1`
+    // `maxBytes` as CAPABILITY_UNAVAILABLE BEFORE they dispatch, so these legs always carry their
+    // budget and there is no second window they can fall back to — `LIMITS.selectionBytes` is not
+    // consulted on this branch at all, and a fallback here would be dead code whose only effect was to
+    // hide a future caller that forgot the budget behind an 8 KiB decode. Without one, such a caller
+    // gets `assertByteLimit`'s closed INVALID_DATA instead of a silent under-bound decode. Every other
+    // kind keeps its own window (the selection read stays at LIMITS.selectionBytes).
+    const readBound = kind === 'contextread' || kind === 'caretread' ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
     return new Promise((resolve, reject) => {
       const owned = { kind, dispatched: false, uncertain: false, settled: false, timer: null, deadline: readClock() + LIMITS.callbackTimeoutMs, cancel: null };
       slot = owned;
@@ -679,6 +679,7 @@ export function createR7Bridge(plugin, {
           } else if (kind === 'read') result = decodeText(value, LIMITS.selectionBytes);
           else if (kind === 'context') result = decodeContext(value);
           else if (kind === 'contextread') result = decodeText(value, readBound);
+          else if (kind === 'caretread') result = decodeText(value, readBound);
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -767,6 +768,23 @@ export function createR7Bridge(plugin, {
           if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
           owned.dispatched = true;
           plugin.executeMethod('GetFileHTML', Object.freeze({}), callback);
+        } else if (kind === 'caretread') {
+          // The CARET-CONTEXT READ: `GetCurrentSentence`, the one caret primitive this repo has
+          // actually observed the live build answer (commit ed65dd5 dispatched exactly this name
+          // through exactly this channel and recorded it as "the primitive the live build actually
+          // answers with the inserted sentence" on R7-Office 2026.3.1; the descriptor carries the
+          // vendor-source counts). The guard is the channel check every leg applies — an own data
+          // descriptor on the facade — and the method is reached BY NAME: the facade exposes no editor
+          // method as its own property, so a `plugin.GetCurrentSentence` property test would prove
+          // nothing about the installed build and is not consulted. A build that does not implement the
+          // name never calls back, and the ticket then settles its own read class (TIMEOUT), never as a
+          // sentence. It is a READ: this leg matches no write class, so `pendingMutation` stays false
+          // and nothing on this path reaches `PasteText`/`ReplaceTextSmart`. ONE dispatch, and it
+          // carries NO identity probe: a caret context read returns no OWNED TARGET a later write could
+          // be applied to, so there is no handle whose ownership would have to be proven.
+          if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          plugin.executeMethod('GetCurrentSentence', Object.freeze([]), callback);
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -845,6 +863,36 @@ export function createR7Bridge(plugin, {
         if (disposed) throw new SafeError(ERROR_CODES.CANCELLED);
         const text = await start('contextread', signal, { maxBytes }, Object.freeze([Object.freeze([scope, index, maxBytes])]));
         if (text === '') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        return Object.freeze({ ok: true, text });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded CARET-CONTEXT read behind `read_paragraph`. It adds ONE editor primitive —
+    // `GetCurrentSentence`, the caret read this repo has already observed the live build answer — and
+    // no capability beyond the read channel every other leg already uses. The descriptor's own comment
+    // carries the primitive evidence; what matters HERE is the shape: ONE leg and NO identity probe (a
+    // caret context read returns no OWNED TARGET a later write could be applied to, exactly like
+    // `readDocumentText`), dispatched BY NAME through the one owned callback slot and decoded against
+    // the budget the caller requested, so a sentence is never silently held to the selection read's
+    // 8 KiB window. Every outcome is classified — an unavailable dispatch channel, a malformed native
+    // answer and a read above the requested budget are closed classes, never a raw exception — and the
+    // caller's `signal` cancels exactly as it does in `readContext`: an abort before the leg prevents
+    // that dispatch, an abort after one invalidates the caller while the queued SDK work keeps the slot
+    // until its own callback. It is a READ: no leg of it matches a write class.
+    // An EMPTY answer crosses as an ordinary `{ok:true, text:''}`: the bridge reports exactly what the
+    // editor answered, and the empty-CARET convention belongs to the descriptor that publishes the
+    // contract, so the one place that decides it is the tool's own comment and handler.
+    async readParagraph(raw) {
+      const maxBytes = raw?.maxBytes, signal = raw?.signal;
+      // The budget is a closed precondition, never an optional refinement: a caller that cannot name
+      // one gets a refusal rather than an SDK call decoded under a window it did not ask for.
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !adapter.executeMethod) { slot = null; throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); }
+        const text = await start('caretread', signal, { maxBytes });
         return Object.freeze({ ok: true, text });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });

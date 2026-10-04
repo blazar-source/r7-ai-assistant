@@ -789,3 +789,85 @@ is the **largest** length that fits (one character more is measured over the cei
 served rather than refused, and `nextOffset` names the shrunk boundary. No test was weakened or deleted,
 and the tool is still read-only: one `GetFileHTML`, no write path, `src/agent/*` untouched.
 
+## 9. Sprint 3, tool 2 — `read_paragraph`, the caret context read
+
+**The primitive had to be established before anything was written, and the first evidence tool lied.**
+`Select-String` returns **zero** matches for `GetCurrent`, `GetSelectedText` and `pluginMethod_` on
+`.local/stage-b-runtime/vendor-word-sdk-all.js`, while the file's own text holds **265**, **101** and
+**4**. The bundle is a 15 MB single-line artifact and `Select-String` is simply not usable as evidence
+on it; the counts below come from reading the file's text and matching it directly. Every count in the
+`read_context` withdrawal comment (§ above, `GetDocumentStructure` 0 / `GetSelectedText` 101) should be
+read with that caveat.
+
+**What the counts are.** `pluginMethod_GetCurrentParagraph`, `pluginMethod_GetCurrentSentence`,
+`pluginMethod_GetCurrentWord` and `pluginMethod_GetSelectedText` occur **0** times each — and those
+zeros prove **nothing**, because `pluginMethod_` is **not** a naming convention in this bundle: it
+occurs **four** times in total (the explicit `PasteHtml` / `PasteText` / `OnEncryption` members and the
+dispatcher's own `"pluginMethod_"+methodName` lookup), so the editor resolves every other method name
+**dynamically** and no prefixed literal exists to count. The **bare** names are what exist:
+`GetCurrentParagraph` **125**, `GetSelectedText` **101**, `GetCurrentWord` **7**, `GetCurrentSentence`
+**6**.
+
+**No plugin-level paragraph getter is established.** Every sampled `GetCurrentParagraph` is
+document-content-level — `documentContent.GetCurrentParagraph()` in the paste and cursor paths, and the
+single `Ct.prototype.GetCurrentParagraph`, which is the `Api` / `getTargetDocContent()` route that
+manipulates the **document** rather than the caret (and which Phase 0 measured as exposing no
+`GetSelection`). So this tool dispatches no `GetCurrentParagraph` and never reaches for `Api`.
+
+**`GetCurrentSentence` is established, by this repo's own history.** Commit `ed65dd5` dispatched exactly
+`plugin.executeMethod('GetCurrentSentence', [], callback)` through the one owned dispatch channel and
+records it as *"the primitive the live build actually answers with the inserted sentence"* on
+R7-Office **2026.3.1**. That is the most precise caret read that exists, so `read_paragraph` reads the
+**sentence** at the caret and its result says so: `scope` is the literal `"sentence"`. The descriptor is
+named `read_paragraph` by the sprint contract, and nothing in the result claims a paragraph the
+primitive cannot deliver. (`defineTool`'s field allowlist carries no `description` field, so the truth
+lives in `scope` — which the model sees — in the descriptor comment and in the failure contract.)
+
+**The bound is the serialized entry, and the entry measurement is load-bearing, not decorative.** The
+tool-result entry `{"tool":"read_paragraph","ok":true,"data":{"scope":"sentence","text":T,"bytes":N}}`
+is bounded by `AGENT_CEILINGS.toolResultBytes` = **16384** (`stringifyToolResults` refuses an entry above
+it and `runtime.js` substitutes *"the tool result could not be serialized"* — the model gets **no text**
+while the action log still records `ok`). The envelope is a fixed **82** bytes plus one byte per digit
+of `N`, i.e. **87** at this bound, and `LIMITS.readParagraphBytes = 16000` is the largest **round**
+ceiling that fits the product's realistic worst case: `16000 + 87 = 16087 <= 16384`, **297** bytes of
+slack (the exact largest text is 16297; 16298 makes 16385). It is **not** an alias of
+`contextReadBytes.paragraph` — that entry bounds a raw paragraph the `read_context` tool addresses,
+while this one bounds the serialized entry of a caret read, and the module's own rule forbids serving
+one scope from another scope's budget.
+The text bound alone is **not sufficient**: `JSON.stringify` escapes every C0 control character to two
+characters and every lone surrogate to six, so **16000 newlines** are 16000 raw bytes — comfortably
+inside the text bound — and a **32087**-byte entry. The handler therefore measures the **actua**
+serialized entry and closes it as `BYTE_LIMIT`; that case is a test, not a hypothesis, and it is the
+reason the entry measurement cannot be replaced by an arithmetic envelope.
+
+**The declared failure contract.** wrong editor → `CAPABILITY_UNAVAILABLE` (precondition, nothing
+dispatched); a bridge with no `readParagraph` entry point → `CAPABILITY_UNAVAILABLE`; a bridge refusal →
+the module's `refusalCode` mapping, so `TIMEOUT` / `CANCELLED` / `INVALID_DATA` cross unchanged and an
+arbitrary string keeps the closed `TOOL_ERROR` fallback; a `returned` **or** `thrown`
+`APPLY_UNCERTAIN` → `TOOL_UNCERTAIN`; an over-bound text **or** an over-ceiling entry → `BYTE_LIMIT`; and
+an **empty caret context** → the module's closed `known()` (`TOOL_ERROR`). That last one is a
+**decision**, stated in the handler: an empty caret context means the caret is in no sentence at all —
+nothing to reason about, like an empty selection in `read_selection` — which is deliberately **not** the
+whole-document convention where `''` is the complete answer to "what does this document say".
+
+**The bridge leg.** `readParagraph` adds exactly one editor primitive and no capability: ticket kind
+`caretread`, **one** dispatch of `GetCurrentSentence` with `[]` through the same owned callback slot,
+decoded under the caller's `maxBytes` (the `readBound` branch that `contextread` already uses), and **no
+identity probe** — a caret context read returns no OWNED TARGET a later write could be applied to, so
+there is no handle whose ownership would have to be proven. It adds no write class: `pendingMutation`
+stays false throughout, and an empty answer crosses as an ordinary `{ok:true, text:''}` because the
+convention belongs to the descriptor that publishes the contract. Whether the installed build exposes
+`GetCurrentSentence` is **measured on 2026.3.1** (§ history above); a build that does not implement it
+never calls back and the ticket settles `TIMEOUT`, a known class, never as a sentence.
+
+**This round.** Focused word suite **76 → 94** (`94/94`), full suite **705 → 723** with `fail 0`;
+`node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` →
+exit 0 (`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+ba403410d6e7f28ce22af849e4ab47520d701373540fb7702496624065e0d1bd`). The tool is read-only by
+construction and by test: exactly **one** bridge call (`readParagraph`) and no write method reachable
+from the descriptor. Three existing exhaustive catalogue assertions grew by one name
+(`the representative descriptor set`, `read_context is withheld …`, `registry accepts the word tools …`)
+— extended, none weakened or deleted; the ASK catalogue order is asserted unsorted, so
+`read_paragraph` is **appended last** there: `['read_selection', 'read_document_text', 'read_paragraph']`.
+`src/agent/*` untouched.
+

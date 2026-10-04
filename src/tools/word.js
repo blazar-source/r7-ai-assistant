@@ -134,6 +134,22 @@ function publishedChunk(document, start, end, offset, totalChars) {
   return { text, nextOffset, bytes: documentEntryBytes(text, offset, totalChars, nextOffset) };
 }
 
+// The exact bytes of ONE `read_paragraph` tool-result ENTRY in the form the runtime serializes and
+// bounds: `JSON.stringify({ tool: name, ...result })` in that key order, the same shape and the same
+// reasoning as `documentEntryBytes` above (the runtime's own serializer is `stringifyToolResults` in
+// src/agent/protocol.js, which this module cannot import, so a test pins the two shapes together).
+// The measurement is NOT a formality and it is NOT the text's own byte count: `JSON.stringify` escapes
+// every C0 control character to two characters and every lone surrogate to six, so a caret context well
+// inside `LIMITS.readParagraphBytes` can serialize to an entry far above `AGENT_CEILINGS.toolResultBytes`.
+// Measuring the real entry is the only bound that cannot be defeated by the text's own characters.
+function paragraphEntryBytes(text, bytes) {
+  let serialized;
+  try {
+    serialized = JSON.stringify({ tool: 'read_paragraph', ok: true, data: { scope: 'sentence', text, bytes } });
+  } catch { return null; }
+  return typeof serialized === 'string' ? utf8ByteLength(serialized) : null;
+}
+
 export function createWordTools(bridge) {
   return [
     defineTool({
@@ -365,6 +381,89 @@ export function createWordTools(bridge) {
         // address or cannot serve within the ceiling leaves it as a result at all.
         if (chunk.bytes === null || chunk.bytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok({ text: chunk.text, offset, totalChars, truncated: chunk.nextOffset !== null, nextOffset: chunk.nextOffset });
+      }
+    }),
+    defineTool({
+      // Sprint 3 Word tool 2: the caret context read. It is a READ, so it needs no delta and no
+      // readback: a string is an unambiguous result and there is no mutation whose effect would have to
+      // be established. It adds ONE editor primitive to the catalogue and no capability beyond the read
+      // channel every other leg already uses.
+      //
+      // THE PRIMITIVE EVIDENCE. The vendored copy of the installed build's word SDK source
+      // (`.local/stage-b-runtime/vendor-word-sdk-all.js`, dev-only) was counted by scanning the file's
+      // TEXT: `Select-String` reports ZERO matches for every one of these names on that 15 MB bundle and
+      // is NOT usable as evidence here (measured: it returns 0 for `GetCurrent`, `GetSelectedText` and
+      // `pluginMethod_` alike, while the file's text holds 265, 101 and 4). `pluginMethod_GetCurrentParagraph`,
+      // `pluginMethod_GetCurrentSentence`, `pluginMethod_GetCurrentWord` and `pluginMethod_GetSelectedText`
+      // each occur 0 times, and those zeros prove NOTHING: `pluginMethod_` is not a naming convention in
+      // this bundle, it occurs FOUR times in total — the explicit `PasteHtml` / `PasteText` /
+      // `OnEncryption` members and the dispatcher's own `"pluginMethod_"+methodName` lookup — so the
+      // editor resolves every other method name dynamically and no prefixed literal exists to count.
+      // The BARE names are what exist: `GetCurrentParagraph` 125, `GetSelectedText` 101,
+      // `GetCurrentWord` 7, `GetCurrentSentence` 6. NO plugin-level PARAGRAPH getter is established:
+      // every sampled `GetCurrentParagraph` is document-content-level — `documentContent.GetCurrentParagraph()`
+      // and the single `Ct.prototype.GetCurrentParagraph`, i.e. the `Api`/`getTargetDocContent()` route,
+      // which manipulates the DOCUMENT rather than the caret and which Phase 0 measured as exposing no
+      // `GetSelection` — so this descriptor dispatches no `GetCurrentParagraph` and never reaches for
+      // `Api`. `GetCurrentSentence` IS established at the plugin level, by this repo's own history:
+      // commit ed65dd5 dispatched exactly `plugin.executeMethod('GetCurrentSentence', [], callback)`
+      // through the one owned dispatch channel and records it as "the primitive the live build actually
+      // answers with the inserted sentence" on R7-Office 2026.3.1. That is the most precise caret read
+      // that exists, so this tool reads the SENTENCE at the caret, and the result's `scope` says
+      // `"sentence"` — never a name the primitive cannot deliver.
+      // The registry's `defineTool` field allowlist carries no `description` field, so the truth lives
+      // in `scope` (which the model sees), in this comment, and in the failure contract below.
+      name: 'read_paragraph', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      // CLOSED and EMPTY: the primitive takes no parameters (`GetCurrentSentence` is dispatched with
+      // `[]`), so the schema advertises none. A caller that guesses an argument — including the `scope`
+      // the RESULT names — is refused by the schema itself, and nothing the model sends can widen the
+      // bound the handler applies.
+      schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'readParagraph')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The ONE request this tool makes. The budget is this tool's own bound, so the bridge's decode
+        // window and the bound the tool advertises are the same number. The caller's signal crosses
+        // with it so a Stop cancels before dispatch, while an abort after dispatch invalidates the
+        // caller and leaves the queued SDK work owning the bridge slot until its own callback.
+        const request = { maxBytes: LIMITS.readParagraphBytes,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let response;
+        try { response = await bridge.readParagraph(request); }
+        catch (error) {
+          // A bridge that reports its own UNCERTAIN class means the read's outcome is unknown: that is
+          // the one case which stops the run, and it is classified before any ordinary refusal path.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // An answer this tool cannot interpret is the module's unknown convention (`known()`, the
+        // closed tool-error class), while a bridge REFUSAL in between keeps the closed class it
+        // reported. Only a class from the closed vocabulary is republished.
+        if (!response || typeof response !== 'object') return known();
+        const uncertain = uncertainResult(response);
+        if (uncertain) return uncertain;
+        if (response.ok !== true) return known(refusalCode(response.code, ERROR_CODES.TOOL_ERROR));
+        // THE EMPTY-CARET DECISION. An empty caret context means the caret is in no sentence at all —
+        // there is nothing to reason about, exactly like an empty SELECTION in `read_selection` — so it
+        // is the module's closed `known()` refusal. This is deliberately NOT the whole-document
+        // convention (`read_document_text` answers `ok` for an empty document), where `''` IS the
+        // complete answer to "what does this document say". A caret read has no such question to
+        // answer, so an empty answer is never published as a result with an empty `text`.
+        if (typeof response.text !== 'string' || response.text === '') return known();
+        // TWO bounds, both closed as BYTE_LIMIT, and they are NOT the same bound. The first is the text
+        // ceiling `LIMITS.readParagraphBytes` advertises. The second is the ACTUAL serialized entry
+        // measured against `AGENT_CEILINGS.toolResultBytes`, and it is the binding one: `JSON.stringify`
+        // escapes every C0 control character to two characters and every lone surrogate to six, so a
+        // caret context comfortably inside the first bound can still produce an entry the runtime
+        // refuses — and a refused entry reaches the model as the literal "the tool result could not be
+        // serialized" with NO text, while the action log would still record `ok`. Measuring the entry
+        // exactly is what makes the difference between a delivered sentence and a fail-open `ok`.
+        const bytes = utf8ByteLength(response.text);
+        if (bytes > LIMITS.readParagraphBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        const entry = paragraphEntryBytes(response.text, bytes);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok({ scope: 'sentence', text: response.text, bytes });
       }
     }),
     defineTool({
