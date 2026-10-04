@@ -208,59 +208,103 @@ export function createR7Bridge(plugin, {
         settle(errorFor(kind, (kind === 'write' || kind === 'insert') && owned.dispatched ? null : new SafeError(ERROR_CODES.CANCELLED)));
       }
       owned.cancel = cancel;
-      // The confirmation leg of an unusable insert acknowledgement: ONE bounded read of the confirmed
-      // public read primitive (`GetSelectedText`, the same primitive every read leg of this bridge
-      // uses). The ticket KEEPS the slot, so the mutation stays pending (design §8.4) and no second
-      // mutation can be dispatched while the effect is unknown. The read is dispatched once, never
-      // retried, and never through a second channel.
+      // The confirmation LADDER of an unusable insert acknowledgement. The acknowledgement carries no
+      // value, so the still-OWNED ticket asks an ordered series of public reads, ONE dispatch per leg,
+      // on the same slot: the mutation stays pending (design §8.4) and no second mutation can be
+      // dispatched while the effect is unknown. No leg ever re-dispatches the mutation.
+      //
+      // A leg confirms only by reproducing the dispatched payload through its OWN exact rule; every
+      // other observation — a different string, the empty string, a malformed or byte-oversized value,
+      // a read error, an observation delivered past the ticket deadline, a dispatch that threw — is
+      // "not confirmed" and hands the ticket to the NEXT leg. Only when the LAST leg is not confirmed
+      // does the ladder settle the uncertain class, and even then the slot is NOT released: nothing
+      // observed here proves the paste did not apply.
+      //
+      // Leg 1 `GetSelectedText` byte-equality is kept FIRST because it is the primitive that can
+      // confirm on a build whose paste leaves the inserted text selected. It is measured to answer `""`
+      // on R7-Office 2026.3.1 (immediately and after +400 ms) — it cannot confirm there — but a read
+      // that does reproduce the payload still proves the effect, so the leg stays a real first step.
+      // Leg 2 `GetCurrentSentence` is the primitive the live build actually answers with the inserted
+      // sentence; its ONE normalization is documented at its comparison below.
+      //
+      // A whole-document `GetFileHTML` containment leg is deliberately ABSENT. `includes(payload)`
+      // over the entire exported document is satisfied by a payload that was ALREADY in the document,
+      // so on a build where the paste silently did nothing it would report `effectVerified:true` for an
+      // effect that never happened. Making it honest needs a pre-dispatch baseline count, which is a
+      // second read shape before the mutation and outside this repair; the ladder stops at the
+      // caret-scoped exact-equality legs the live build was measured to answer.
       function confirmInsert() {
         owned.confirming = true;
         try {
           const payload = params[0]; // the exact string that was dispatched to the editor
-          owned.confirmPayload = payload;
-          // The read's budget is THIS payload's own byte length, capped by the editor-result ceiling
-          // that bounds every native read: the confirmation is bounded by construction, never
-          // unbounded, and never a wider window than the payload it is checking.
-          owned.confirmBytes = Math.min(utf8ByteLength(payload), LIMITS.editorResultBytes);
-          plugin.executeMethod('GetSelectedText', Object.freeze([]), confirmCallback);
+          // Both exact-equality legs are bounded by THIS payload's own byte length, capped by the
+          // editor-result ceiling that bounds every native read: the confirmation can never widen the
+          // read window beyond the bytes it is checking for.
+          const budget = Math.min(utf8ByteLength(payload), LIMITS.editorResultBytes);
+          // Leg 2's expected observation. `position:'end'` dispatched `text + "\n"` and a sentence read
+          // cannot contain a paragraph break, so exactly ONE trailing newline is removed — no other
+          // whitespace is trimmed, no case is folded, and no prefix/suffix matching is accepted.
+          const sentence = payload.endsWith('\n') ? payload.slice(0, -1) : payload;
+          owned.confirmLegs = [
+            Object.freeze({ method: 'GetSelectedText', budget, expected: payload }),
+            Object.freeze({ method: 'GetCurrentSentence', budget, expected: sentence })
+          ];
+          owned.confirmLeg = 0;
+          dispatchConfirmLeg();
         } catch {
-          // A confirmation read that never even ran proves nothing about the effect and never unlocks
-          // the mutation: exactly like a dispatched write whose callback never arrived.
+          // A ladder that never even started proves nothing about the effect and never unlocks the
+          // mutation: exactly like a dispatched write whose callback never arrived.
           owned.uncertain = true;
           settle(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
         }
         notify();
       }
-      // STRICT confirmation: the effect counts as verified only when the read reproduces the dispatched
-      // payload BYTE-FOR-BYTE. A different string, an empty string, a malformed or byte-oversized value
-      // and a read error are all "not confirmed" — the uncertain class, never a success claim and never
-      // an ordinary known error. "Not confirmed" is not a release either: nothing observed here proves
-      // the paste did not apply, so the ticket keeps the slot (and the write lock) exactly like an
-      // unanswered write, and only a later callback for this same ticket can release it.
-      function confirmCallback(value) {
-        if (slot !== owned) return;
-        if (owned.settled) { slot = null; notify(); return; }
-        let confirmed = false;
-        try {
-          if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
-          if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
-          confirmed = decodeText(value, owned.confirmBytes) === owned.confirmPayload;
-        } catch { confirmed = false; }
-        if (!confirmed) {
-          owned.uncertain = true;
-          settle(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
-          notify();
-          return;
+      // ONE dispatch per leg, on the ticket's own slot. The callback is bound to THIS leg so a
+      // duplicate or late callback from a leg the ladder has already left can never be judged by the
+      // next leg's rule (that is the only way a stale read could fabricate a confirmation).
+      function dispatchConfirmLeg() {
+        const index = owned.confirmLeg;
+        const leg = owned.confirmLegs[index];
+        function legCallback(value) {
+          if (slot !== owned) return;
+          if (owned.settled) { slot = null; notify(); return; }
+          if (index !== owned.confirmLeg) return; // a superseded leg observation is not this leg's
+          let confirmed = false;
+          try {
+            if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
+            if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
+            confirmed = decodeText(value, leg.budget) === leg.expected;
+          } catch { confirmed = false; }
+          if (confirmed) {
+            slot = null;
+            settle(null, Object.freeze({ acknowledged: null, effectVerified: true }));
+            notify();
+            return;
+          }
+          confirmNextLeg();
         }
-        slot = null;
-        settle(null, Object.freeze({ acknowledged: null, effectVerified: true }));
+        try {
+          plugin.executeMethod(leg.method, Object.freeze([]), legCallback);
+        } catch {
+          // A leg that cannot even be dispatched observed nothing: not confirmed, next leg. No private
+          // native detail escapes and the mutation is never re-dispatched.
+          confirmNextLeg();
+        }
+      }
+      function confirmNextLeg() {
+        if (slot !== owned || owned.settled) return;
+        owned.confirmLeg += 1;
+        if (owned.confirmLeg < owned.confirmLegs.length) { dispatchConfirmLeg(); notify(); return; }
+        // The whole ladder failed to confirm: the uncertain class, with the slot still held.
+        owned.uncertain = true;
+        settle(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
         notify();
       }
       function callback(value) {
         if (slot !== owned) return; // old/duplicate callback cannot release a new owner
         if (owned.settled) { slot = null; notify(); return; } // release only, never late content/UI
-        // A second acknowledgement for this same dispatch cannot preempt the confirmation read the
-        // first one started: this ticket's outcome is decided by that read alone.
+        // A second acknowledgement for this same dispatch cannot preempt the confirmation ladder the
+        // first one started: this ticket's outcome is decided by that ladder alone.
         if (owned.confirming) return;
         try {
           if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
@@ -403,9 +447,10 @@ export function createR7Bridge(plugin, {
     // installed R7 build implements `PasteText` is PENDING NATIVE VERIFICATION — an editor that does
     // not implement it never calls back, so the ticket settles APPLY_UNCERTAIN rather than success.
     // An acknowledgement that carries NO value is the one measured case on the live 2026.3.1 build
-    // (the paste applies and the callback receives `undefined`): the ticket then asks ONE bounded read
-    // of the confirmed public selection primitive, and reports success only when that read reproduces
-    // the dispatched payload byte-for-byte. No mutation is ever retried by this bridge.
+    // (the paste applies and the callback receives `undefined`): the ticket then asks its ordered
+    // confirmation ladder of bounded public reads, and reports success only when one of those legs
+    // reproduces the dispatched payload through that leg's own exact rule. No mutation is ever retried
+    // by this bridge.
     // The caller's `signal` is honoured the same way: an abort before dispatch prevents it, an abort
     // after dispatch keeps the write-class uncertain-until-callback behaviour.
     async insertParagraph(raw) {

@@ -351,9 +351,19 @@ test('Apply rejects caller-forged serializable target certificates without any S
 // Proven natively on R7-Office 2026.3.1 (Windows): `PasteText` APPLIES the insert and then calls its
 // callback with `undefined`. A callback value that carries nothing is neither evidence of success nor
 // evidence of failure, so it is never an automatic success and never an ordinary known error. The
-// ticket stays OWNED (still a pending mutation, still write-locked) and exactly ONE bounded read of
-// the confirmed public read primitive decides; the effect counts as verified only when that read
-// reproduces the dispatched payload byte-for-byte.
+// ticket stays OWNED (still a pending mutation, still write-locked) and an ordered CONFIRMATION
+// LADDER of independent public reads decides; the effect counts as verified only when one leg
+// reproduces the dispatched payload through that leg's own exact rule.
+//
+// The ladder exists because the first read primitive cannot confirm on the measured build:
+// `GetSelectedText` answers `""` immediately and after +400 ms — the paste does NOT leave the
+// inserted text selected there — while `GetCurrentSentence` answers with exactly the inserted
+// sentence. Leg 1 is kept first because it is the primitive that can confirm on another build; leg 2
+// is the primitive the live build actually answers. Both are byte-exact equality reads with ONE
+// documented normalization on leg 2 (a single trailing newline removed). A third leg over the
+// whole-document `GetFileHTML` is deliberately ABSENT: `includes(payload)` in a whole-document export
+// is satisfied by a payload that was already in the document, so it would claim a verified effect
+// that never happened — a false success is worse than the false failure this fix removes.
 const VERIFIED = { ok: true, data: { sent: true, effectVerified: true } };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function dispatchInsert(r, request = { text: 'Абзац' }) {
@@ -365,8 +375,24 @@ async function dispatchInsert(r, request = { text: 'Абзац' }) {
 }
 const reads = r => r.calls.filter(call => call.name === 'GetSelectedText');
 const inserts = r => r.calls.filter(call => call.name === 'PasteText');
+const sentences = r => r.calls.filter(call => call.name === 'GetCurrentSentence');
+const confirmationOrder = r => r.calls
+  .filter(call => call.name === 'GetSelectedText' || call.name === 'GetCurrentSentence').map(call => call.name);
+// Drive ladder legs 1 and 2 for the cases where leg 1 is refused: deliver the void acknowledgement,
+// answer the selection leg, then answer the sentence leg the refusal must hand the ticket to. Every
+// assertion inside the helper is part of the ladder contract, so a single-leg implementation fails
+// here instead of hanging on an unanswered promise.
+async function runLadder(r, { request = { text: 'Абзац' }, selection, sentence } = {}) {
+  const { pending, insert } = await dispatchInsert(r, request);
+  insert.callback(undefined);
+  assert.equal(reads(r).length, 1, 'the ladder always starts at the selection leg');
+  reads(r)[0].callback(selection);
+  assert.equal(sentences(r).length, 1, 'a refused selection leg hands the ticket to the sentence leg');
+  sentences(r)[0].callback(sentence);
+  return pending;
+}
 
-test('a void insert acknowledgement is confirmed by exactly one bounded read of the payload', async () => {
+test('a void insert acknowledgement is confirmed by the first ladder read when it reproduces the payload', async () => {
   const r = rig();
   const { pending, insert } = await dispatchInsert(r);
   assert.deepEqual(insert.params, ['Абзац'], 'the dispatched payload is the one the read must reproduce');
@@ -380,7 +406,9 @@ test('a void insert acknowledgement is confirmed by exactly one bounded read of 
   assert.deepEqual(await pending, VERIFIED);
   assert.equal(r.bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
   assert.equal(inserts(r).length, 1, 'the mutation is never retried');
-  assert.equal(reads(r).length, 1, 'one dispatch, one confirmation read');
+  assert.equal(reads(r).length, 1, 'one dispatch, one selection read');
+  assert.deepEqual(sentences(r), [], 'a confirmed first leg never dispatches the next leg');
+  assert.deepEqual(confirmationOrder(r), ['GetSelectedText'], 'the ladder stops at its first confirming leg');
 });
 
 test('a boolean acknowledgement keeps the existing unverified envelope and reads nothing', async () => {
@@ -396,19 +424,19 @@ test('a boolean acknowledgement keeps the existing unverified envelope and reads
   }
 });
 
-test('a void acknowledgement the read cannot reproduce is the uncertain class, never a known error', async () => {
-  // A different string and the empty string are both "not confirmed": the uncertain class, one
-  // dispatch, one read, no retry, and the write lock is not released over an unknown outcome.
+test('a void acknowledgement no leg can reproduce is the uncertain class, never a known error', async () => {
+  // A different string and the empty string are both "not confirmed" at BOTH legs: the uncertain
+  // class, one mutation, no retry, and the write lock is not released over an unknown outcome.
   for (const returned of ['Другой текст', '']) {
     const r = rig();
-    const { pending, insert } = await dispatchInsert(r);
-    insert.callback(undefined);
-    reads(r)[0].callback(returned);
+    const pending = await runLadder(r, { selection: returned, sentence: returned });
     const result = await pending;
     assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, JSON.stringify(returned));
     assert.notEqual(result.code, 'INVALID_DATA', 'a void acknowledgement is never a plain known error');
     assert.equal(inserts(r).length, 1, 'the mutation is never retried');
-    assert.equal(reads(r).length, 1, 'exactly one confirmation read');
+    assert.equal(reads(r).length, 1, 'exactly one selection read');
+    assert.equal(sentences(r).length, 1, 'exactly one sentence read');
+    assert.deepEqual(confirmationOrder(r), ['GetSelectedText', 'GetCurrentSentence'], 'the ladder is ordered');
     assert.equal(r.bridge.getState().writePending, true, 'an unconfirmed mutation stays pending');
     assert.equal(r.bridge.getState().uncertain, true);
     assert.deepEqual(await r.bridge.insertParagraph({ text: 'Второй' }), { ok: false, code: 'EDITOR_BUSY' },
@@ -417,8 +445,9 @@ test('a void acknowledgement the read cannot reproduce is the uncertain class, n
   }
 });
 
-test('a confirmation read that never answers, errs or cannot be dispatched keeps the mutation pending', async () => {
-  // (a) the read never settles: the callback deadline is the only settlement, and it is uncertain.
+test('a ladder leg that never answers, errs or cannot be dispatched keeps the mutation pending', async () => {
+  // (a) no leg ever answers: the ticket's own callback deadline is the only settlement, and it is
+  // uncertain. A silent leg is bounded by the ticket deadline, never by an unbounded wait.
   const stalled = rig();
   const stalledInsert = await dispatchInsert(stalled);
   stalledInsert.insert.callback(undefined);
@@ -430,19 +459,22 @@ test('a confirmation read that never answers, errs or cannot be dispatched keeps
   late.callback('Абзац'); // a late callback only frees the owner; it never becomes a success
   assert.equal(stalled.bridge.getState().writePending, false);
 
-  // (b) the read callback carries a value the decode refuses: no usable observation exists.
+  // (b) a leg callback carries a value the decode refuses: no usable observation exists, so the ladder
+  // moves on instead of settling on a malformed result.
   const malformed = rig();
   const malformedInsert = await dispatchInsert(malformed);
   malformedInsert.insert.callback(undefined);
   reads(malformed)[0].callback(null);
+  assert.equal(sentences(malformed).length, 1, 'an unusable observation is not a settlement: the ladder moves on');
+  sentences(malformed)[0].callback('нет');
   assert.deepEqual(await malformedInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
   assert.equal(malformed.bridge.getState().writePending, true, 'an unusable confirmation read is not a release');
 
-  // (c) the confirmation read cannot even be dispatched: the SDK throws synchronously.
+  // (c) no leg can even be dispatched: the SDK throws synchronously for every confirmation name.
   const calls = [];
   const thrown = rig('word', { executeMethod(name, params, callback) {
     calls.push({ name, params, callback });
-    if (name === 'GetSelectedText') throw new Error('private native detail');
+    if (name === 'GetSelectedText' || name === 'GetCurrentSentence') throw new Error('private native detail');
     return false;
   } });
   const thrownPending = thrown.bridge.insertParagraph({ text: 'Абзац' });
@@ -452,12 +484,15 @@ test('a confirmation read that never answers, errs or cannot be dispatched keeps
   assert.equal(thrownResult.ok, false);
   assert.equal(thrownResult.code, 'APPLY_UNCERTAIN');
   assert.equal(JSON.stringify(thrownResult).includes('private native detail'), false);
+  assert.equal(calls.filter(call => call.name === 'GetSelectedText').length, 1, 'the first leg is attempted exactly once');
+  assert.equal(calls.filter(call => call.name === 'GetCurrentSentence').length, 1,
+    'a leg that cannot be dispatched is not the end of the ladder: the next leg is attempted exactly once');
   assert.equal(thrown.bridge.getState().writePending, true, 'a confirmation read that never ran is not a release');
 });
 
 test('a malformed non-boolean acknowledgement takes the same confirmation path and is never a success by itself', async () => {
   // A string, an object and `null` are all unusable acknowledgements: the SAME void path, never
-  // INVALID_DATA, and no success unless the independent read proves the effect.
+  // INVALID_DATA, and no success unless an independent ladder leg proves the effect.
   for (const value of ['true', { acknowledged: true }, null]) {
     const label = JSON.stringify(value) ?? String(value);
     const refused = rig();
@@ -465,6 +500,8 @@ test('a malformed non-boolean acknowledgement takes the same confirmation path a
     refusal.insert.callback(value);
     assert.equal(reads(refused).length, 1, `${label}: the malformed value starts the confirmation read`);
     reads(refused)[0].callback('Абзацx');
+    assert.equal(sentences(refused).length, 1, `${label}: the refused leg hands the ticket to the sentence leg`);
+    sentences(refused)[0].callback('Абзацx');
     assert.deepEqual(await refusal.pending, { ok: false, code: 'APPLY_UNCERTAIN' }, label);
     // The success below is the READ's proof, never the malformed native value's: the envelope says so.
     const confirmed = rig();
@@ -472,17 +509,20 @@ test('a malformed non-boolean acknowledgement takes the same confirmation path a
     confirmation.insert.callback(value);
     reads(confirmed)[0].callback('Абзац');
     assert.deepEqual(await confirmation.pending, VERIFIED, label);
+    assert.deepEqual(sentences(confirmed), [], `${label}: a confirmed first leg stops the ladder`);
   }
 });
 
-test('the confirmation read is bounded by the dispatched payload itself, never an unbounded window', async () => {
-  // 'Абзац' is 10 UTF-8 bytes. A read one byte longer is refused by the decode bound and therefore
-  // cannot be confirmed, while the exact payload is accepted: together the two legs pin the budget to
-  // the payload's own byte length rather than to the 8 KiB selection window.
+test('each ladder leg is bounded by the dispatched payload itself, never an unbounded window', async () => {
+  // 'Абзац' is 10 UTF-8 bytes. A read one byte longer is refused by that leg's decode bound and
+  // therefore cannot be confirmed, while the exact payload is accepted: together the cases pin every
+  // leg's budget to the payload's own byte length rather than to the 8 KiB selection window.
   const over = rig();
   const overInsert = await dispatchInsert(over);
   overInsert.insert.callback(undefined);
-  reads(over)[0].callback('Абзацx'); // 11 bytes
+  reads(over)[0].callback('Абзацx'); // 11 bytes at the selection leg
+  assert.equal(sentences(over).length, 1, 'an over-budget observation is not a settlement');
+  sentences(over)[0].callback('Абзацx'); // 11 bytes at the sentence leg too
   assert.deepEqual(await overInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
 
   const exact = rig();
@@ -490,14 +530,17 @@ test('the confirmation read is bounded by the dispatched payload itself, never a
   exactInsert.insert.callback(undefined);
   reads(exact)[0].callback('Абзац'); // exactly 10 bytes
   assert.deepEqual(await exactInsert.pending, VERIFIED);
+  assert.deepEqual(sentences(exact), [], 'the exact payload never reaches the sentence leg');
 
-  // `end` dispatches text + "\n", and the budget is that DISPATCHED payload's own size: one byte
-  // short is not the payload, while the 11-byte payload itself fits the budget.
+  // `end` dispatches text + "\n", and each leg's budget is that DISPATCHED payload's own size: the
+  // un-newlined text is not the SELECTION payload, and one byte short is not the payload.
   const short = rig();
   const shortInsert = await dispatchInsert(short, { text: 'Абзац', position: 'end' });
   assert.deepEqual(shortInsert.insert.params, ['Абзац\n'], 'the newline is part of the dispatched payload');
   shortInsert.insert.callback(undefined);
   reads(short)[0].callback('Абзац');
+  assert.equal(sentences(short).length, 1, 'the un-newlined text is not the selection payload: the ladder moves on');
+  sentences(short)[0].callback('нет');
   assert.deepEqual(await shortInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' });
 
   const ended = rig();
@@ -505,6 +548,7 @@ test('the confirmation read is bounded by the dispatched payload itself, never a
   endedInsert.insert.callback(undefined);
   reads(ended)[0].callback('Абзац\n'); // 11 bytes: only inside the budget if it is the payload's own
   assert.deepEqual(await endedInsert.pending, VERIFIED);
+  assert.deepEqual(sentences(ended), [], 'the selection leg confirmed the newline payload on its own');
 });
 
 test('a duplicate acknowledgement for the same dispatch cannot preempt the confirmation read', async () => {
@@ -532,4 +576,133 @@ test('a void acknowledgement that arrives past the deadline is the uncertain cla
   assert.equal(result.code, 'APPLY_UNCERTAIN');
   assert.equal(reads(r).length, 0, 'an expired ticket does not dispatch a confirmation read');
   assert.equal(inserts(r).length, 1, 'and it certainly does not retry the mutation');
+});
+
+// --- the ladder's second leg: `GetCurrentSentence`, the primitive the live build answers ----------
+
+test('GetSelectedText returning the measured empty string no longer condemns an insert the sentence leg confirms', async () => {
+  // The measured 2026.3.1 behaviour: the paste does not leave the inserted text selected, so leg 1
+  // answers "" both immediately and after +400 ms, while `GetCurrentSentence` answers with exactly the
+  // inserted sentence. The insert is therefore CONFIRMED, in ladder order, with one call per leg.
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  insert.callback(undefined);
+  assert.equal(reads(r).length, 1);
+  assert.equal(r.bridge.getState().writePending, true, 'the ticket is still owned while leg 1 answers');
+  reads(r)[0].callback(''); // the live measurement, not a hypothetical
+  assert.equal(sentences(r).length, 1, 'the refused selection leg dispatches the sentence leg');
+  assert.deepEqual(sentences(r)[0].params, []);
+  assert.ok(Object.isFrozen(sentences(r)[0].params));
+  assert.deepEqual(confirmationOrder(r), ['GetSelectedText', 'GetCurrentSentence'], 'the ladder is ordered');
+  assert.equal(r.bridge.getState().writePending, true, 'the write lock spans the whole ladder');
+  sentences(r)[0].callback('Абзац');
+  assert.deepEqual(await pending, VERIFIED);
+  assert.equal(r.bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
+  assert.equal(reads(r).length, 1);
+  assert.equal(sentences(r).length, 1, 'one call per leg');
+  assert.equal(inserts(r).length, 1, 'the mutation is never retried');
+});
+
+test('the sentence leg refuses an empty or different sentence, including the measured trailing-period failure mode', async () => {
+  // Measured on the live build: a payload ending with a sentence terminator leaves the caret past the
+  // sentence and `GetCurrentSentence` answers "". That payload cannot be confirmed by leg 2, and the
+  // ladder settles the uncertain class rather than inventing a success.
+  const period = rig();
+  const pending = await runLadder(period, { request: { text: 'Готово.' }, selection: '', sentence: '' });
+  assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(period.bridge.getState().writePending, true, 'an unconfirmed mutation keeps the slot and the lock');
+  assert.equal(period.bridge.getState().uncertain, true);
+  assert.equal(inserts(period).length, 1, 'no leg failure retries the mutation');
+
+  const different = rig();
+  assert.deepEqual(await runLadder(different, { selection: '', sentence: 'Другое предложение' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' });
+
+  const prefix = rig();
+  assert.deepEqual(await runLadder(prefix, { selection: '', sentence: 'Абза' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a prefix of the payload is not equality');
+});
+
+test('the sentence leg normalization removes exactly one trailing newline and nothing else', async () => {
+  // `position:'end'` dispatched `text + "\n"`; a sentence read cannot contain a paragraph break. The ONE
+  // documented normalization is a single trailing newline removed — no other trimming, no case folding,
+  // no fuzzy matching and no second newline.
+  const end = rig();
+  const { pending, insert } = await dispatchInsert(end, { text: 'Привет', position: 'end' });
+  assert.deepEqual(insert.params, ['Привет\n']);
+  insert.callback(undefined);
+  reads(end)[0].callback('');
+  assert.equal(sentences(end).length, 1);
+  sentences(end)[0].callback('Привет'); // the payload minus its single trailing newline
+  assert.deepEqual(await pending, VERIFIED, 'the end payload is confirmed through the one normalization');
+
+  // The newline still on the sentence read is NOT the normalized form, so it must not confirm.
+  const kept = rig();
+  assert.deepEqual(await runLadder(kept, { request: { text: 'Привет', position: 'end' }, selection: '', sentence: 'Привет\n' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' });
+
+  // No other whitespace is trimmed, and the verbatim payload is the only string that confirms.
+  const padded = rig();
+  assert.deepEqual(await runLadder(padded, { request: { text: ' Абзац ' }, selection: '', sentence: 'Абзац' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' });
+  const verbatim = rig();
+  assert.deepEqual(await runLadder(verbatim, { request: { text: ' Абзац ' }, selection: '', sentence: ' Абзац ' }),
+    VERIFIED);
+
+  const folded = rig();
+  assert.deepEqual(await runLadder(folded, { request: { text: 'Абзац' }, selection: '', sentence: 'абзац' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' }, 'no case folding');
+});
+
+test('the sentence leg compares the payload literally, so quotes, angle brackets, ampersands and Cyrillic are not escaped', async () => {
+  // The ladder legs are plain text reads, not the HTML export: an HTML-escaped echo of the payload is a
+  // DIFFERENT string and must not confirm, while the verbatim payload must.
+  const payload = 'Он сказал "да" <и> & всё';
+  const verbatim = rig();
+  assert.deepEqual(await runLadder(verbatim, { request: { text: payload }, selection: '', sentence: payload }), VERIFIED);
+
+  const escaped = rig();
+  assert.deepEqual(await runLadder(escaped, { request: { text: payload }, selection: '', sentence: 'Он сказал &quot;да&quot; &lt;и&gt; &amp; всё' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' }, 'no HTML escaping or unescaping is applied to a plain sentence read');
+});
+
+test('the ladder has no whole-document leg: an unconfirmed ladder never reaches for GetFileHTML', async () => {
+  // `GetFileHTML` containment cannot distinguish a payload that just landed from one already in the
+  // document, so it is deliberately absent: a false success is worse than the false failure fixed here.
+  const r = rig();
+  assert.deepEqual(await runLadder(r, { selection: '', sentence: 'нет' }), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(r.calls.filter(call => call.name === 'GetFileHTML'), [],
+    'the whole-document read is never dispatched by the confirmation ladder');
+  assert.deepEqual(confirmationOrder(r), ['GetSelectedText', 'GetCurrentSentence'], 'exactly two legs, in order');
+});
+
+test('a superseded leg callback is never judged by the next leg rule and never advances the ladder twice', async () => {
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  insert.callback(undefined);
+  reads(r)[0].callback(''); // leg 1 refused
+  assert.equal(sentences(r).length, 1);
+  reads(r)[0].callback('Абзац'); // a duplicate leg-1 callback carrying the payload
+  assert.equal(sentences(r).length, 1, 'a superseded leg callback dispatches nothing');
+  assert.equal(r.bridge.getState().writePending, true, 'and it does not confirm under another leg rule');
+  sentences(r)[0].callback('Абзац'); // the current leg's own observation
+  assert.deepEqual(await pending, VERIFIED);
+  assert.equal(reads(r).length, 1);
+  assert.equal(sentences(r).length, 1);
+  assert.equal(inserts(r).length, 1);
+});
+
+test('an observation delivered past the ticket deadline is not confirmed and the ladder moves on', async () => {
+  // A leg that times out is "not confirmed" and hands the ticket to the next leg — never a retry of
+  // the mutation and never an immediate success.
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  insert.callback(undefined);
+  r.setNow(5000); // the ticket's own budget is spent before leg 1 answers
+  reads(r)[0].callback(''); // '' is a mismatch anyway, but the ticket expiry is checked first
+  assert.equal(sentences(r).length, 1, 'an expired observation is not a settlement: the next leg is dispatched');
+  sentences(r)[0].callback('Абзац'); // the right string, but the ticket budget is already spent
+  assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(inserts(r).length, 1, 'the mutation is never retried');
+  assert.equal(r.bridge.getState().writePending, true, 'an expired ladder leaves the mutation pending');
 });

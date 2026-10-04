@@ -606,10 +606,11 @@ test('the write path still dispatches the caller replacement unchanged', async (
 });
 
 // --- Sprint 3: the void `PasteText` acknowledgement proven on the live 2026.3.1 editor -------------
-// The native callback carries no value, so the bridge holds its ticket and asks ONE bounded read
-// through the confirmed public read primitive (`GetSelectedText`). A read that reproduces the
-// dispatched payload byte-for-byte is the only evidence that turns the insert into a success, and the
-// handler republishes that proof instead of dropping it.
+// The native callback carries no value, so the bridge holds its ticket and asks an ordered confirmation
+// LADDER of bounded public reads: `GetSelectedText` first (the measured build answers ""), then
+// `GetCurrentSentence` (the measured build answers the inserted sentence). A leg that reproduces the
+// dispatched payload through its own exact rule is the only evidence that turns the insert into a
+// success, and the handler republishes that proof instead of dropping it.
 
 test('the real bridge confirms a void acknowledgement and the handler republishes the proven effect', async () => {
   const r = nativeRig();
@@ -653,14 +654,44 @@ test('the handler publishes the effect the bridge proved and never invents one',
   assert.equal(forged.code, 'TOOL_ERROR');
 });
 
-test('a void acknowledgement the read cannot confirm is TOOL_UNCERTAIN and never a plain failure', async () => {
+test('the handler republishes a proof the sentence leg established when the selection leg answered empty', async () => {
+  // The measured live shape: `GetSelectedText` answers "", `GetCurrentSentence` answers the inserted
+  // sentence. The insert is a proven effect end to end, with one call per leg and no retry.
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'exactly one insert is dispatched');
+  r.calls[1].callback(undefined);
+  assert.equal(await untilDispatches(r.calls, 3), 3, 'the selection leg follows the void acknowledgement');
+  assert.equal(r.calls[2].name, 'GetSelectedText');
+  r.calls[2].callback(''); // the measured live answer
+  assert.equal(await untilDispatches(r.calls, 4), 4, 'the refused selection leg dispatches the sentence leg');
+  assert.equal(r.calls[3].name, 'GetCurrentSentence');
+  assert.deepEqual(r.calls[3].params, []);
+  r.calls[3].callback('Абзац');
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { acknowledged: true, bytes: 10, effectVerified: true },
+    'the sentence leg proved the effect and the handler republished that proof');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1, 'the mutation is never retried');
+  assert.equal(r.calls.filter(call => call.name === 'GetSelectedText').length, 1, 'one selection read');
+  assert.equal(r.calls.filter(call => call.name === 'GetCurrentSentence').length, 1, 'one sentence read');
+});
+
+test('a void acknowledgement no ladder leg can confirm is TOOL_UNCERTAIN and never a plain failure', async () => {
   const r = nativeRig();
   const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
   const pending = tool.execute({ text: 'Абзац' }, { editor: 'word' });
   r.releaseIdentity();
   assert.equal(await untilDispatches(r.calls, 2), 2);
   r.calls[1].callback(undefined);
-  r.calls[2].callback('');
+  assert.equal(await untilDispatches(r.calls, 3), 3);
+  r.calls[2].callback(''); // the measured selection answer: leg 1 cannot confirm
+  assert.equal(await untilDispatches(r.calls, 4), 4, 'leg 2 is attempted exactly once');
+  assert.equal(r.calls[3].name, 'GetCurrentSentence');
+  r.calls[3].callback(''); // the measured sentence answer for a payload ending with a terminator
   const result = await pending;
   assert.equal(result.ok, false);
   assert.equal(result.code, 'TOOL_UNCERTAIN', 'the runtime-stopping uncertain class, not a known error');
@@ -668,4 +699,5 @@ test('a void acknowledgement the read cannot confirm is TOOL_UNCERTAIN and never
   assert.equal(JSON.stringify(result).includes('APPLY_UNCERTAIN'), false);
   assert.equal(r.calls.filter(call => call.name === 'PasteText').length, 1,
     'an insert whose effect is unproven is never retried automatically');
+  assert.equal(r.bridge.getState().writePending, true, 'an unconfirmed mutation is never released as settled');
 });
