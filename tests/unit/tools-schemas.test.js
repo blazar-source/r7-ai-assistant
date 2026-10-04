@@ -59,3 +59,65 @@ test('freezes normalized object entries inside arrays', () => {
   const out = validateArguments(objectArraySchema, { items: [{ n: 1 }] }, 8192);
   assert.ok(Object.isFrozen(out.items[0]));
 });
+
+test('rejects item schemas that are not themselves closed and valid', () => {
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array', items: { type: 'object' } } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array', items: { type: 'array' } } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array', items: { type: 'array', items: { type: 'object' } } } } }), /INVALID_DATA/);
+});
+
+test('rejects unknown keywords nested inside an items schema', () => {
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array',
+      items: { type: 'object', additionalProperties: false, properties: { n: { type: 'integer', bogus: 1 } } } } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array', items: { type: 'array', items: { type: 'string', bogus: 1 } } } } }), /INVALID_DATA/);
+});
+
+const nestedItemsSchema = { type: 'object', additionalProperties: false, required: ['xs'],
+  properties: { xs: { type: 'array', maxItems: 2, items: { type: 'object', additionalProperties: false,
+    required: ['n'], properties: { n: { type: 'integer', minimum: 0 } } } } } };
+
+test('validates array entries through a well-formed items object schema', () => {
+  assert.equal(validateToolSchema(nestedItemsSchema), true);
+  const out = validateArguments(nestedItemsSchema, { xs: [{ n: 1 }, { n: 2 }] }, 8192);
+  assert.deepEqual({ ...out.xs[0] }, { n: 1 });
+  assert.ok(Object.isFrozen(out.xs[0]));
+  assert.throws(() => validateArguments(nestedItemsSchema, { xs: [{ n: 1, extra: 1 }] }, 8192), /TOOL_ERROR/);
+  assert.throws(() => validateArguments(nestedItemsSchema, { xs: [{}] }, 8192), /TOOL_ERROR/);
+  assert.throws(() => validateArguments(nestedItemsSchema, { xs: [{ n: -1 }] }, 8192), /TOOL_ERROR/);
+  assert.throws(() => validateArguments(nestedItemsSchema, { xs: [{ n: 1 }, { n: 2 }, { n: 3 }] }, 8192), /TOOL_ERROR/);
+});
+
+test('rejects non-integer numeric keyword values', () => {
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { text: { type: 'string', maxBytes: 'x' } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { n: { type: 'integer', minimum: 'x' } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array', items: { type: 'string' }, maxItems: 1.5 } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { text: { type: 'string', maxBytes: -1 } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { n: { type: 'integer', maximum: Number.NaN } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { text: { type: 'string', minBytes: '1' } } }), /INVALID_DATA/);
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false,
+    properties: { xs: { type: 'array', maxItems: 'x', items: { type: 'object', additionalProperties: false,
+      properties: { n: { type: 'integer', maximum: 'x' } } } } } }), /INVALID_DATA/);
+});
+
+test('a tighter maxBytes still wins and a broken maxBytes can never be registered', () => {
+  // Former fail-open: maxBytes:'x' made Math.min('x', 8192) NaN, so 20 000 bytes passed.
+  assert.throws(() => validateToolSchema({ type: 'object', additionalProperties: false, required: ['text'],
+    properties: { text: { type: 'string', maxBytes: 'x' } } }), /INVALID_DATA/);
+  const tighter = { type: 'object', additionalProperties: false, required: ['text'],
+    properties: { text: { type: 'string', maxBytes: 4 } } };
+  assert.equal(validateToolSchema(tighter), true);
+  assert.throws(() => validateArguments(tighter, { text: 'a'.repeat(20000) }, 8192), /TOOL_ERROR/);
+  assert.throws(() => validateArguments(tighter, { text: 'aaaaa' }, 8192), /TOOL_ERROR/);
+  assert.equal(validateArguments(tighter, { text: 'aaaa' }, 8192).text, 'aaaa');
+});

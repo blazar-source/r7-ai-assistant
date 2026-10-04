@@ -6,22 +6,43 @@ import { utf8ByteLength } from '../shared/bytes.js';
 const types = new Set(['object', 'string', 'integer', 'boolean', 'array']);
 const keywords = new Set(['type', 'properties', 'required', 'additionalProperties', 'items', 'enum',
   'minimum', 'maximum', 'maxItems', 'maxBytes', 'minBytes']);
+// A declared bound must be usable: maxBytes:'x' makes Math.min('x', ceil) NaN, so the
+// caller's hard byte ceiling would FAIL OPEN. Every bound is a non-negative safe integer.
+function bounded(value) {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+}
+function checkNumericKeywords(rule) {
+  bounded(rule.maxBytes);
+  bounded(rule.minBytes);
+  bounded(rule.maxItems);
+  bounded(rule.minimum);
+  bounded(rule.maximum);
+}
+function validateItems(items) {
+  if (items === null || typeof items !== 'object' || Array.isArray(items) || !types.has(items.type)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  validateSchemaNode(items);
+  if (items.type === 'object') validateToolSchema(items);
+  if (items.type === 'array') validateItems(items.items);
+}
+function validateSchemaNode(schema) {
+  for (const keyword of Object.keys(schema)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  checkNumericKeywords(schema);
+  if (schema.type === 'array' && (schema.items === undefined || schema.items === null)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (schema.enum !== undefined && (!Array.isArray(schema.enum) || schema.enum.length === 0)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+}
 export function validateToolSchema(schema) {
   if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  for (const keyword of Object.keys(schema)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  validateSchemaNode(schema);
   if (schema.type !== 'object' || schema.additionalProperties !== false) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (schema.properties === null || typeof schema.properties !== 'object') throw new SafeError(ERROR_CODES.INVALID_DATA);
   const required = schema.required ?? [];
   if (!Array.isArray(required) || required.some(name => !Object.hasOwn(schema.properties, name))) throw new SafeError(ERROR_CODES.INVALID_DATA);
   for (const property of Object.values(schema.properties)) {
     if (!types.has(property?.type)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-    for (const keyword of Object.keys(property)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    validateSchemaNode(property);
     if (property.type === 'object') validateToolSchema(property);
-    if (property.type === 'array') {
-      if (!property.items || !types.has(property.items.type)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-      for (const keyword of Object.keys(property.items)) if (!keywords.has(keyword)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-    }
-    if (property.enum !== undefined && (!Array.isArray(property.enum) || property.enum.length === 0)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    if (property.type === 'array') validateItems(property.items);
   }
   return true;
 }
