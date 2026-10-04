@@ -35,13 +35,16 @@ export const LIMITS = Object.freeze({
   //   8000 * 2 + 130 = 16130 <= 16384, with 254 bytes of slack;
   //   the floor of the exact affordance is (16384 - 130) / 2 = 8127 characters.
   // `readDocumentChars` is the DEFAULT a call that names no `maxChars` receives — the same 8000, so a
-  // default Cyrillic read (16000 bytes) is delivered whole instead of refused. `readDocumentMaxChars`
-  // is the HARD per-call cap the schema advertises and equals the default: a chunk the schema admits
-  // must be a chunk the tool can return, so the advertised maximum is deliberately NOT the largest
-  // ASCII slice (16254 characters) — advertising that would promise a size that is guaranteed to be
-  // refused for the two byte-wider encodings of a Unicode document. The bound that is nevertheless
-  // ENFORCED is the one the tool measures on the entry it is about to return, and an over-ceiling
-  // entry is refused with the closed `BYTE_LIMIT` class rather than truncated.
+  // default Cyrillic read (16000 bytes) is delivered whole instead of shrunk. `readDocumentMaxChars`
+  // is the HARD per-call cap the schema advertises and equals the default: it is the largest ROUND
+  // character count whose Cyrillic encoding — this product's realistic worst case — plus the envelope
+  // fits, so the advertised maximum is a size a Cyrillic read returns in ONE whole chunk, and the
+  // advertised space is not a promise of a size wider scripts can never receive.
+  // The bound that is nevertheless ENFORCED is the one the tool measures on the entry it is about to
+  // return, and a request whose slice does not fit it is served as the LARGEST smaller slice of the
+  // SAME offset rather than refused (`maxChars` is an UPPER BOUND, not a hard requirement): every
+  // schema-legal call delivers text, the entry is measured exactly, and only a slice where not even
+  // ONE whole character fits is still the closed `BYTE_LIMIT` refusal.
   readDocumentChars: 8000,
   readDocumentMaxChars: 8000,
   // The measured non-text envelope of one `read_document_text` entry with the widest field values the

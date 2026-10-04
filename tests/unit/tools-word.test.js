@@ -1097,32 +1097,37 @@ test('read_document_text delivers its default chunk to the model through the REA
   assert.ok(utf8ByteLength(JSON.stringify(entry)) <= AGENT_CEILINGS.toolResultBytes);
 });
 
-test('read_document_text keeps every entry inside the ceiling and every refusal closed', async () => {
-  // The fail-closed rule: an entry above `AGENT_CEILINGS.toolResultBytes` is refused with a closed code
-  // BEFORE it reaches the runtime, so the handler can never hand the runtime an entry it will have to
-  // replace with its literal "the tool result could not be serialized" refusal. This is the case the
-  // reviewer's runtime reported as an unparseable result; here it can no longer leave the handler.
-  // The widest encodings reach it legitimately: three bytes per character at the advertised maximum is
-  // 24000 bytes, above the 16384-byte entry ceiling, and the refusal names the class without leaking
-  // one character of the document.
+test('read_document_text serves the largest chunk its entry ceiling allows, for every encoding', async () => {
+  // The fail-closed rule and the UPPER-BOUND rule together. Whatever the handler returns is an entry the
+  // runtime's own serializer accepts: the handler measures the entry it is about to return rather than
+  // trusting the advertised character cap, so an over-ceiling entry can never leave it. What changed is
+  // what it does with an over-ceiling REQUEST: `maxChars` is a ceiling on the request, not a promise the
+  // tool must refuse, so the request is SERVED as the largest smaller slice of the same offset. The
+  // widest encoding reaches it legitimately — three bytes per character at the advertised maximum is
+  // 24000 bytes, above the 16384-byte entry ceiling — and a hard refusal would make a SCHEMA-LEGAL call
+  // fail for size with no way to learn the largest servable request. Serving the largest fitting chunk
+  // makes every legal call deliver text, keeps the entry exactly measured, and costs no extra step.
   for (const [unit, width] of [['漢', 3], ['я', 2]]) {
     const document = unit.repeat(LIMITS.readDocumentMaxChars + 5);
     const result = await readDocument(documentBridge(document))
       .execute({ offset: 0, maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+    assert.equal(result.ok, true, `${unit}: a schema-legal request is served, never refused for size`);
+    const served = result.data.text.length;
+    assert.equal(result.data.text, document.slice(0, served), `${unit}: the served chunk is the document's own text`);
+    assert.ok(served <= LIMITS.readDocumentMaxChars, `${unit}: the served chunk is never above the request`);
+    assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result })) <= AGENT_CEILINGS.toolResultBytes);
+    assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]));
     if (width * LIMITS.readDocumentMaxChars > AGENT_CEILINGS.toolResultBytes) {
-      assert.equal(result.ok, false, `${unit}: an entry that cannot fit is a refusal`);
-      assert.equal(result.code, 'BYTE_LIMIT');
-      assert.equal(result.message, 'отказ');
-      assert.equal(result.data, undefined, 'a refusal carries no entry for the runtime to serialize');
-      assert.equal(JSON.stringify(result).includes(unit), false, 'no document text leaks into a refusal');
-      assert.equal(JSON.stringify(result).includes('could not be serialized'), false);
+      // The requested chunk cannot fit, so it is SHRUNK: the served chunk is smaller than the request
+      // and is exactly the largest slice of this offset that fits — one character more is over the
+      // ceiling. That is what makes the shrink "as far as needed and no further".
+      assert.ok(served < LIMITS.readDocumentMaxChars, `${unit}: the oversized request is served as a smaller slice`);
+      assert.ok(entryBytesForLength(document, 0, served + 1) > AGENT_CEILINGS.toolResultBytes,
+        `${unit}: one character more does not fit, so the served chunk is the largest`);
       continue;
     }
-    // The same request for an encoding that fits is SERVED, and its entry is inside the ceiling: the
-    // refusal above is the size of the encoding, never a blanket cap on the tool.
-    assert.equal(result.ok, true, `${unit}: the same chunk is served at this width`);
-    assert.equal(result.data.text.length, LIMITS.readDocumentMaxChars);
-    assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result })) <= AGENT_CEILINGS.toolResultBytes);
+    // The request for an encoding that fits is served WHOLE, at exactly the requested size.
+    assert.equal(served, LIMITS.readDocumentMaxChars, `${unit}: a request that fits is served whole`);
   }
   // A bridge whose character count is past every readable document is a promise this reader cannot
   // serve: the address bound would clamp its own range, so the answer is refused rather than published
@@ -1144,21 +1149,30 @@ test('read_document_text keeps every entry inside the ceiling and every refusal 
   assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...asciiTail })) <= AGENT_CEILINGS.toolResultBytes);
 });
 
-test('read_document_text refuses a chunk above the per-result byte ceiling as BYTE_LIMIT', async () => {
-  // DEFENSIVE branch. Every chunk the SCHEMA admits now fits (the next test walks the advertised
-  // space), because the maximum is sized on the widest encoding plus the serialization envelope. A
-  // descriptor is executable when held directly, though, so the handler still measures the entry it
-  // is about to return rather than trusting the advertised cap, and refuses an over-ceiling one WHOLE
-  // — never clipped, which would publish a resume point that skips text the model never saw.
+test('read_document_text serves the largest chunk that fits instead of refusing the request', async () => {
+  // The decision this round implements, at the unit boundary. The schema advertises `maxChars` up to
+  // 8000, but for three-byte-per-character text 8000 characters (24000 bytes) cannot fit the 16384-byte
+  // result entry, so a hard refusal would fail a SCHEMA-LEGAL call for size. `maxChars` is now an UPPER
+  // BOUND: the tool serves the largest slice of the same `offset` whose published entry fits.
   const wide = '漢'.repeat(LIMITS.readDocumentMaxChars + 100);
   assert.ok(utf8ByteLength(wide.slice(0, LIMITS.readDocumentMaxChars)) > AGENT_CEILINGS.toolResultBytes,
     'the widest encoding of the advertised maximum exceeds the per-result ceiling');
-  const refused = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
-  assert.equal(refused.ok, false);
-  assert.equal(refused.code, 'BYTE_LIMIT');
-  assert.equal(refused.message, 'отказ');
-  assert.equal(JSON.stringify(refused).includes('漢'), false, 'no document text leaks into a refusal');
-  // The same document is served in a chunk that fits, so the refusal is the size and not the text.
+  const served = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(served.ok, true, 'the oversized request is served, never refused for size');
+  const length = served.data.text.length;
+  assert.equal(served.data.text, wide.slice(0, length), 'the served chunk is the requested text, shortened');
+  assert.ok(length < LIMITS.readDocumentMaxChars, 'the served chunk is smaller than the requested one');
+  assert.equal(served.data.truncated, true);
+  assert.equal(served.data.nextOffset, length, 'the resume point names the shrunk boundary');
+  assert.equal(served.data.offset, 0, 'the chunk is still the chunk at the requested offset');
+  // "Largest" is a measurement, not a claim: the entry of the served length fits, and one character more
+  // does not. The shrink stopped exactly where it had to.
+  assert.ok(entryBytesForLength(wide, 0, length) <= AGENT_CEILINGS.toolResultBytes);
+  assert.ok(entryBytesForLength(wide, 0, length + 1) > AGENT_CEILINGS.toolResultBytes,
+    'one character more is over the ceiling, so the served chunk is the largest that fits');
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result: served }]));
+  // The same document is served in a chunk that fits when the REQUEST fits: the shrink is the request's
+  // size and never a blanket cap on the tool.
   const fitting = await readDocument(documentBridge(wide)).execute({ maxChars: 4000 }, { editor: 'word' });
   assert.equal(fitting.ok, true);
   assert.equal(utf8ByteLength(fitting.data.text), 12000);
@@ -1167,11 +1181,11 @@ test('read_document_text refuses a chunk above the per-result byte ceiling as BY
 
 test('read_document_text serves every chunk it RETURNS inside the per-result ceiling', async () => {
   // The invariant the runtime enforces, asserted end to end: whatever the handler returns is an entry
-  // the runtime's own serializer accepts, and whatever it refuses is a closed refusal with no entry at
-  // all — never an unparseable result. The schema's maximum is sized on Cyrillic (the product's
-  // language) and ASCII, both of which are served whole at that maximum; a THREE-byte encoding of the
-  // same character count does not fit and is a closed BYTE_LIMIT the model can retry smaller, which is
-  // the honest outcome for the widest script rather than a silent refusal.
+  // the runtime's own serializer accepts, and a request whose slice is too wide is answered with the
+  // largest smaller slice of the same offset — never an unparseable result and never a refusal while a
+  // slice that fits exists. The schema's maximum is sized on Cyrillic (the product's language) and
+  // ASCII, both of which are served whole at that maximum; a THREE-byte encoding of the same character
+  // count is served as the largest slice that fits, which is the honest outcome for the widest script.
   for (const unit of ['я', 'x']) {
     const document = unit.repeat(LIMITS.readDocumentMaxChars + 5);
     for (const args of [{}, { maxChars: LIMITS.readDocumentMaxChars }, { maxChars: 1 },
@@ -1187,14 +1201,16 @@ test('read_document_text serves every chunk it RETURNS inside the per-result cei
         `${unit} ${JSON.stringify(args)}: the runtime serializer accepts the entry`);
     }
   }
-  // The widest script at the advertised maximum: refused as a closed class, never clipped and never
-  // published with a resume point the model could follow into a skipped range.
+  // The widest script at the advertised maximum: served as the largest slice that fits, with a resume
+  // point that names the shrunk boundary so the walk still reaches the rest of the document.
   const wide = '漢'.repeat(LIMITS.readDocumentMaxChars + 100);
-  const refused = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
-  assert.equal(refused.ok, false);
-  assert.equal(refused.code, 'BYTE_LIMIT');
-  assert.equal(refused.data, undefined);
-  // The same document at a size that fits is served, and its entry is inside the ceiling too.
+  const shrunk = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(shrunk.ok, true);
+  assert.ok(shrunk.data.text.length < LIMITS.readDocumentMaxChars);
+  assert.equal(shrunk.data.nextOffset, shrunk.data.text.length);
+  assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...shrunk })) <= AGENT_CEILINGS.toolResultBytes);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result: shrunk }]));
+  // The same document at a size that fits is served whole, and its entry is inside the ceiling too.
   const fitting = await readDocument(documentBridge(wide)).execute({ maxChars: 4000 }, { editor: 'word' });
   assert.equal(fitting.ok, true);
   assert.equal(utf8ByteLength(fitting.data.text), 12000);
@@ -1547,6 +1563,18 @@ const REVIEWER_CALLS = Object.freeze([99998, 99999, 100000, 100001, 107000, 1070
 function entryBytes(result) {
   return utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ...result }));
 }
+// The entry bytes of a HYPOTHETICAL chunk of `length` characters at `offset`, published exactly the way
+// the handler publishes one (the resume point is `offset + length` precisely when that is still inside
+// the document, the nil resume point otherwise). It exists to make "the LARGEST chunk that fits" a
+// MEASUREMENT rather than an assumption: the served length fits, and this same function one character
+// longer is over the ceiling. It reconstructs the protocol shape, never the handler's own decision.
+function entryBytesForLength(document, offset, length) {
+  const end = offset + length;
+  const nextOffset = end > offset && end < document.length ? end : null;
+  return utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+    data: { text: document.slice(offset, end), offset, totalChars: document.length,
+      truncated: nextOffset !== null, nextOffset } }));
+}
 // EVERY user-role message the model actually saw on a run — the request and each tool result — from the
 // transport's own argument. User-role only, because the context ALSO carries the system rules and the
 // assistant's emitted envelope, and neither is a tool result. An assertion on this is an assertion on
@@ -1563,13 +1591,14 @@ function publishedEntry(content) {
   return entry?.tool === 'read_document_text' ? entry : null;
 }
 
-test('read_document_text at the exact ceiling is refused closed instead of being replaced by the runtime', async () => {
-  // RED for the reviewer's reproduction. The chunk at `{offset:99998, maxChars:5460}` is 16255 text
-  // bytes; measured with the NIL resume point it is exactly the ceiling (16384), so the pre-fix handler
-  // answered `ok` — while the entry it actually published was 16385. The runtime's serializer threw and
-  // substituted its literal refusal: the model received NO text and the action log still said `ok`.
-  // With the measurement taken on the published fields the same call is a CLOSED refusal — the honest
-  // answer for a chunk that does not fit — and the model receives the refusal, never the substitution.
+test('read_document_text serves the exact-ceiling chunk as the largest slice that fits, end to end', async () => {
+  // RED for the reviewer's spurious refusal. The chunk at `{offset:99998, maxChars:5460}` is 16255 text
+  // bytes; its entry with the NIL resume point is exactly the ceiling (16384) and the entry it actually
+  // publishes is 16385, so the chunk does not fit WHOLE. The previous round refused that request with
+  // `BYTE_LIMIT` even though `maxChars: 5459` at the SAME offset was servable — a spurious refusal of a
+  // schema-legal call. `maxChars` is an UPPER BOUND: the handler now serves the largest slice of the
+  // same offset whose published entry fits, so the model receives text and the runtime never substitutes
+  // its literal refusal.
   const seen = [];
   const transport = async messages => {
     seen.push(messages.map(message => ({ role: message.role, content: message.content })));
@@ -1582,9 +1611,8 @@ test('read_document_text at the exact ceiling is refused closed instead of being
     editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT', settings: {},
     uuid: '11111111-1111-4111-8111-111111111111', request: 'прочитай документ', transport });
   assert.equal(run.status, 'FINAL');
-  // The action log no longer claims `ok` for a read the model cannot receive text from.
-  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome, action.code]),
-    [['read_document_text', 'error', 'BYTE_LIMIT']]);
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]),
+    [['read_document_text', 'ok']], 'the action log reports the read it served');
   const contents = modelContents(seen);
   assert.equal(contents.some(content => content.includes('could not be serialized')), false,
     'the runtime must never substitute its literal refusal');
@@ -1592,54 +1620,68 @@ test('read_document_text at the exact ceiling is refused closed instead of being
   assert.equal(resultMessages.length, 1, 'exactly one tool-result message reached the model');
   const entry = publishedEntry(resultMessages[0]);
   assert.ok(entry, 'the tool-result entry the model saw is the read, not a substituted batch refusal');
-  assert.equal(entry.ok, false, 'the model received a closed refusal, not text it cannot trust');
-  assert.equal(entry.code, 'BYTE_LIMIT');
-  assert.equal(entry.message, 'отказ');
-  // The refusal decision is the chunk's own SIZE and nothing else: one character less at the same
-  // offset fits, is served, and proves the boundary case above was refused for being over the ceiling.
+  assert.equal(entry.ok, true, 'the model received text, not a refusal');
+  assert.equal(entry.data.offset, 99998, 'the chunk is still the chunk at the requested offset');
+  assert.equal(entry.data.text.length, 5459, 'the largest slice of the same offset that fits');
+  assert.equal(entry.data.text, REVIEWER_DOCUMENT.slice(99998, 99998 + 5459), 'the served text is the document\u2019s own');
+  assert.equal(entry.data.nextOffset, 105457, 'the resume point names the shrunk boundary');
+  assert.equal(entry.data.truncated, true);
+  assert.ok(entryBytes(entry) <= AGENT_CEILINGS.toolResultBytes, 'the model-visible entry is inside the ceiling');
+  // The proof that the shrink is a shrink and not a refusal: asking for one character LESS at the same
+  // offset serves the SAME chunk, because both requests are above the largest slice that fits. The old
+  // boundary between "served" and "refused" no longer exists — `maxChars` is an upper bound, and the
+  // served length, `truncated` and `nextOffset` are the caller's own account of what was served.
   const fitting = await readDocument(documentBridge(REVIEWER_DOCUMENT))
     .execute({ offset: 99998, maxChars: 5459 }, { editor: 'word' });
   assert.equal(fitting.ok, true, 'one character less at the same offset is served');
   assert.equal(fitting.data.text.length, 5459);
+  assert.equal(fitting.data.text, entry.data.text, 'both request sizes serve the same largest chunk');
   assert.equal(fitting.data.nextOffset, 105457);
   assert.ok(entryBytes(fitting) <= AGENT_CEILINGS.toolResultBytes);
   assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result: fitting }]));
 });
 
 test('read_document_text measures the exact entry it publishes, not one with the nil resume point', async () => {
-  // The unit-level statement of the defect, on the reviewer's own offsets. The entry the runtime
+  // The unit-level statement of the D1 defect, on the reviewer's own offsets. The entry the runtime
   // serializes is built from the fields the handler PUBLISHED; the pre-fix handler measured a DIFFERENT
   // entry — the same fields with the nil resume point assumed. The comparison below reconstructs both
   // shapes. For a chunk that ends inside the document the published shape carries a six-digit resume
   // point and the two differ by exactly the byte the defect dropped — which is why the 16255-byte chunk
   // at `{offset:99998, maxChars:5460}` was measured as 16384 (admitted) and published as 16385 (refused
-  // by the runtime). The fix measures the published shape, so that exact chunk is now a closed refusal.
+  // by the runtime). The measurement is still taken on the published shape; what changed this round is
+  // that an over-ceiling published shape makes the chunk SHRINK rather than making the call a refusal.
   const tool = readDocument(documentBridge(REVIEWER_DOCUMENT));
   for (const args of REVIEWER_CALLS) {
     const result = await tool.execute(args, { editor: 'word' });
     const label = JSON.stringify(args);
-    // The entry with the fields that were actually published — what the fix measures.
-    const measured = result.ok ? entryBytes(result) : null;
-    // The entry the pre-fix measurement re-derived: the same fields with the nil resume point.
-    const assumed = result.ok ? utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
-      data: { text: result.data.text, offset: result.data.offset, totalChars: result.data.totalChars,
-        truncated: false, nextOffset: null } })) : null;
-    if (!result.ok) {
-      // A closed refusal: no entry for the runtime to serialize at all, the class and the refusal word.
-      assert.equal(result.code, 'BYTE_LIMIT', label);
-      assert.equal(result.message, 'отказ', label);
-      assert.equal(JSON.stringify(result).includes('漢'), false, `${label}: no document text in a refusal`);
-      assert.equal(args.offset, 99998, `${label}: only the over-ceiling chunk in the reviewer's set is refused`);
-      continue;
-    }
+    // Every one of the reviewer's ten calls now delivers a chunk: `maxChars` is an upper bound.
+    assert.equal(result.ok, true, label);
+    const served = result.data.text.length;
+    assert.ok(served <= args.maxChars, `${label}: never above the requested bound`);
+    assert.equal(result.data.text, REVIEWER_DOCUMENT.slice(args.offset, args.offset + served),
+      `${label}: the chunk is the document's own text at that address`);
+    // The entry with the fields that were actually published — what the handler measures.
+    const measured = entryBytes(result);
     assert.equal(result.data.truncated, result.data.nextOffset !== null, `${label}: the two flags are one fact`);
     assert.ok(measured <= AGENT_CEILINGS.toolResultBytes, `${label}: ${measured} <= ${AGENT_CEILINGS.toolResultBytes}`);
     assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
       `${label}: the runtime serializer accepts the published entry`);
-    // With no resume point the two shapes are the same entry; a six-digit resume point makes the
-    // published entry exactly one byte larger than the shape the defect measured.
+    // The entry the pre-fix measurement re-derived: the same fields with the nil resume point. With no
+    // resume point the two shapes are the same entry; a six-digit resume point makes the published entry
+    // exactly one byte larger than the shape the defect measured.
+    const assumed = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+      data: { text: result.data.text, offset: result.data.offset, totalChars: result.data.totalChars,
+        truncated: false, nextOffset: null } }));
     assert.equal(measured, result.data.nextOffset !== null ? assumed + 1 : assumed,
       `${label}: the published shape is the measured shape`);
+    // And the served length is the LARGEST that fits, not an arbitrary smaller one: when the CEILING is
+    // what stopped the chunk (there is more document, and the request was larger than what fits), the
+    // same offset one character longer would be over the ceiling. A chunk the document's own end stopped
+    // is at its natural length and has nothing to shrink.
+    if (served < args.maxChars && args.offset + served < REVIEWER_DOCUMENT.length) {
+      assert.ok(entryBytesForLength(REVIEWER_DOCUMENT, args.offset, served + 1) > AGENT_CEILINGS.toolResultBytes,
+        `${label}: one character more is over the ceiling, so the served chunk is the largest that fits`);
+    }
   }
   // The boundary this fix is about, as its own observation: the pre-fix measurement of this chunk is
   // EXACTLY the ceiling, so it passed the `> ceiling` check while its published entry is one larger.
@@ -1650,19 +1692,20 @@ test('read_document_text measures the exact entry it publishes, not one with the
     data: { text: chunk, offset: boundary.offset, totalChars: REVIEWER_DOCUMENT.length,
       truncated: false, nextOffset: null } })), AGENT_CEILINGS.toolResultBytes,
   'the nil-resume-point measurement is exactly the ceiling and passes the check');
-  const refused = await tool.execute(boundary, { editor: 'word' });
-  assert.equal(refused.ok, false, 'the fix refuses the chunk it can measure but cannot publish whole');
-  assert.equal(refused.code, 'BYTE_LIMIT');
+  const shrunk = await tool.execute(boundary, { editor: 'word' });
+  assert.equal(shrunk.ok, true, 'the chunk that cannot be published whole is served as the largest slice that can');
+  assert.equal(shrunk.data.text.length, boundary.maxChars - 1, 'the shrink drops exactly the character that did not fit');
   assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
     data: { text: chunk, offset: boundary.offset, totalChars: REVIEWER_DOCUMENT.length,
       truncated: true, nextOffset: 105458 } })), AGENT_CEILINGS.toolResultBytes + 1,
-  'the published shape of that chunk is one byte over the ceiling');
+  'the published shape of the REQUESTED chunk is one byte over the ceiling — which is why it is shrunk');
 });
 
 test('read_document_text returns text the model receives for every reviewer offset', async () => {
   // The end-to-end sweep of the reviewer's ten calls, each through the REAL runtime: whatever the
-  // handler publishes as `ok` must reach the model AS TEXT, and any call that cannot deliver must be a
-  // closed refusal with no entry at all — never an `ok` the model never sees.
+  // handler publishes as `ok` must reach the model AS TEXT — never the runtime's substitution — and a
+  // request whose slice does not fit whole must be served as the largest smaller slice of the same
+  // offset rather than refused. The model-visible entry is asserted, not the handler's return value.
   for (const args of REVIEWER_CALLS) {
     const seen = [];
     const transport = async messages => {
@@ -1676,39 +1719,34 @@ test('read_document_text returns text the model receives for every reviewer offs
       uuid: '11111111-1111-4111-8111-111111111111', request: 'прочитай документ', transport });
     const label = JSON.stringify(args);
     assert.equal(run.status, 'FINAL', label);
+    assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]),
+      [['read_document_text', 'ok']], `${label}: every reviewer call delivers a chunk`);
     const contents = modelContents(seen);
     assert.equal(contents.some(content => content.includes('could not be serialized')), false,
       `${label}: the runtime never substituted its refusal`);
-    // The action log must not claim `ok` for a read whose text the model did not receive.
+    // The model-visible entry is the read, and the text it carries is the served chunk: `maxChars` is an
+    // upper bound, so the served length may be shorter than the request but the entry is ALWAYS a read
+    // with text when the address has text, never a refusal and never the runtime's substitution.
     const published = contents.map(publishedEntry).find(entry => entry !== null);
-    const outcome = run.actions[0].outcome;
-    if (outcome === 'ok') {
-      assert.ok(published, `${label}: an ok action published a read entry the model can parse`);
-      assert.equal(published.ok, true, label);
-      assert.equal(published.data.text, REVIEWER_DOCUMENT.slice(args.offset, args.offset + args.maxChars), label);
-      assert.ok(utf8ByteLength(JSON.stringify(published)) <= AGENT_CEILINGS.toolResultBytes, label);
-    } else {
-      assert.equal(outcome, 'error', `${label}: a read that cannot deliver is a closed refusal`);
-      assert.equal(run.actions[0].code, 'BYTE_LIMIT', label);
-      const refusal = JSON.parse(contents.find(content => content.includes('"type":"tool_results"')));
-      assert.equal(refusal.results[0].tool, 'read_document_text', label);
-      assert.equal(refusal.results[0].ok, false, label);
-      assert.equal(refusal.results[0].code, 'BYTE_LIMIT', label);
-      // The closed class and the refusal word, and NOTHING of the document.
-      assert.equal(JSON.stringify(refusal).includes(REVIEWER_DOCUMENT.slice(args.offset, args.offset + 1)), false,
-        `${label}: no document text leaks into a refusal`);
-    }
+    assert.ok(published, `${label}: an ok action published a read entry the model can parse`);
+    assert.equal(published.ok, true, label);
+    const served = published.data.text.length;
+    assert.ok(served <= args.maxChars, `${label}: never above the requested bound`);
+    assert.equal(published.data.text, REVIEWER_DOCUMENT.slice(args.offset, args.offset + served), label);
+    assert.equal(published.data.truncated, published.data.nextOffset !== null, label);
+    if (args.offset < REVIEWER_DOCUMENT.length) assert.ok(served > 0, `${label}: a readable offset delivers text`);
+    assert.ok(utf8ByteLength(JSON.stringify(published)) <= AGENT_CEILINGS.toolResultBytes, label);
   }
 });
 
 test('read_document_text never publishes ok for an entry the runtime will refuse', async () => {
   // The invariant, swept around the serialization boundary over the reviewer's OWN document: chunks at
-  // `maxChars` 8000 whose entry, measured with the nil resume point the defect assumed, lands in the
-  // last 40 bytes below `AGENT_CEILINGS.toolResultBytes`. Every case that is `ok` must be an entry the
-  // runtime's own serializer ACCEPTS, inside the ceiling, measured with the fields it published; the
-  // exact-ceiling chunk whose published shape is one byte larger must be a CLOSED refusal — which is
-  // the branch the pre-fix handler could not reach, because it published that entry as `ok` and the
-  // runtime then replaced it with its literal refusal.
+  // `maxChars` 8000 whose REQUESTED slice would land in the last 40 bytes below
+  // `AGENT_CEILINGS.toolResultBytes`. Every case must be an entry the runtime's own serializer ACCEPTS,
+  // inside the ceiling, measured with the fields it published — and, because `maxChars` is an upper
+  // bound, every case must be an `ok` that delivers text: the exact-ceiling chunk whose published shape
+  // is one byte larger is SHRUNK by one character rather than refused. A refusal here would be the
+  // spurious failure this round removes.
   const total = REVIEWER_DOCUMENT.length;
   const tool = readDocument(documentBridge(REVIEWER_DOCUMENT));
   let cases = 0;
@@ -1716,7 +1754,6 @@ test('read_document_text never publishes ok for an entry the runtime will refuse
     const args = { offset, maxChars: 8000 };
     const end = Math.min(total, offset + args.maxChars);
     const text = REVIEWER_DOCUMENT.slice(offset, end);
-    const nextOffset = end > offset && end < total ? end : null;
     // What the DEFECT measured: the entry with the nil resume point assumed. `entryBytes` below is the
     // same shape with the fields that are PUBLISHED — for a six-digit resume point, one byte more.
     const assumed = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
@@ -1726,25 +1763,159 @@ test('read_document_text never publishes ok for an entry the runtime will refuse
     cases += 1;
     const label = JSON.stringify(args);
     const result = await tool.execute(args, { editor: 'word' });
-    if (result.ok) {
-      // An `ok` is a promise that the model receives this text: the entry the runtime serializes from
-      // the PUBLISHED fields must be inside the ceiling, and the serializer must accept it.
-      const published = entryBytes(result);
-      assert.ok(published <= AGENT_CEILINGS.toolResultBytes,
-        `${label}: ${published} <= ${AGENT_CEILINGS.toolResultBytes}`);
-      assert.equal(result.data.text, text, label);
-      assert.equal(result.data.truncated, nextOffset !== null, label);
-      assert.equal(result.data.nextOffset, nextOffset, label);
-      assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
-        `${label}: the runtime serializer accepts every published entry`);
-      continue;
+    // An `ok` is a promise that the model receives this text: the entry the runtime serializes from the
+    // PUBLISHED fields must be inside the ceiling, and the serializer must accept it.
+    assert.equal(result.ok, true, `${label}: a boundary request is served, never refused for size`);
+    const served = result.data.text.length;
+    assert.ok(served > 0, `${label}: the served chunk is non-empty`);
+    assert.ok(served <= args.maxChars, `${label}: never above the requested bound`);
+    assert.equal(result.data.text, REVIEWER_DOCUMENT.slice(offset, offset + served), label);
+    const published = entryBytes(result);
+    assert.ok(published <= AGENT_CEILINGS.toolResultBytes,
+      `${label}: ${published} <= ${AGENT_CEILINGS.toolResultBytes}`);
+    assert.equal(result.data.truncated, result.data.nextOffset !== null, label);
+    assert.equal(result.data.nextOffset, result.data.truncated ? offset + served : null, label);
+    assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
+      `${label}: the runtime serializer accepts every published entry`);
+    // The shrink stopped exactly where it had to: at this boundary offset one character more is over
+    // the ceiling, so the served chunk is the largest that fits.
+    if (offset + served + 1 <= total) {
+      assert.ok(entryBytesForLength(REVIEWER_DOCUMENT, offset, served + 1) > AGENT_CEILINGS.toolResultBytes,
+        `${label}: one character more is over the ceiling`);
     }
-    // A refusal must be closed, carry no entry and leak no character of the document.
-    assert.equal(result.code, 'BYTE_LIMIT', label);
-    assert.equal(result.message, 'отказ', label);
-    assert.equal(result.data, undefined, label);
-    assert.equal(JSON.stringify(result).includes('漢'), false, label);
   }
   assert.ok(cases >= 10, `${cases} boundary cases measured`);
+});
+
+// --- The upper-bound contract: the served chunk is the largest that fits ---------------------------
+
+test('read_document_text shrinks a three-byte script exactly as far as needed and no further', async () => {
+  // The "largest chunk that fits" claim, swept across request sizes on a three-byte-per-character
+  // document. Three outcomes are possible and each is asserted where it applies: a request the entry
+  // ceiling can satisfy is served WHOLE (no unnecessary shrink); a request it cannot satisfy is served
+  // at the largest smaller length, measured by the test's own reconstruction of the published entry —
+  // the served length fits and one character more does not; and every served entry is accepted by the
+  // runtime's own serializer. `maxChars` is an upper bound in all three.
+  const document = '漢'.repeat(20000);
+  for (const maxChars of [8000, 6000, 5461, 5460, 5459, 5450, 5000, 1000, 2, 1]) {
+    const label = `maxChars ${maxChars}`;
+    const result = await readDocument(documentBridge(document)).execute({ offset: 0, maxChars }, { editor: 'word' });
+    assert.equal(result.ok, true, label);
+    const served = result.data.text.length;
+    assert.ok(served <= maxChars, `${label}: never above the request`);
+    assert.equal(result.data.text, document.slice(0, served), `${label}: the chunk is the document's own text`);
+    assert.ok(entryBytesForLength(document, 0, served) <= AGENT_CEILINGS.toolResultBytes,
+      `${label}: the served entry is inside the ceiling`);
+    assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]), label);
+    if (served < maxChars) {
+      // Shrunk: and the shrink stopped exactly at the largest fitting length.
+      assert.ok(entryBytesForLength(document, 0, served + 1) > AGENT_CEILINGS.toolResultBytes,
+        `${label}: one character more does not fit, so no character was dropped unnecessarily`);
+    } else {
+      assert.equal(served, maxChars, `${label}: a request that fits is served whole`);
+    }
+  }
+  // The advertised maximum is a request the ceiling cannot satisfy at this width, so it is served by
+  // shrinking — the same length for every request above the fitting size, because the largest slice of
+  // an offset does not depend on how much was asked for beyond it.
+  const max = await readDocument(documentBridge(document)).execute({ offset: 0, maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  const above = await readDocument(documentBridge(document)).execute({ offset: 0, maxChars: 6000 }, { editor: 'word' });
+  assert.ok(max.data.text.length < LIMITS.readDocumentMaxChars, 'the schema-legal maximum is shrunk, not refused');
+  assert.equal(max.data.text, above.data.text, 'every request above the fitting size serves the same largest chunk');
+  assert.equal(max.data.nextOffset, above.data.nextOffset);
+  assert.ok(entryBytesForLength(document, 0, max.data.text.length + 1) > AGENT_CEILINGS.toolResultBytes);
+});
+
+test('read_document_text tiles the document exactly when the shrink moves the boundary onto a pair', async () => {
+  // The shrink must not break the walk. The chunk boundaries still TILE the document, so repeated
+  // `nextOffset` reads reproduce the decoded text exactly — no skipped and no duplicated character —
+  // including when the shrink moved the boundary, and including when an astral surrogate PAIR sits
+  // exactly at the shrunk boundary (the next chunk must then start ON the pair and serve it whole).
+  const probe = '漢'.repeat(20000);
+  const probeResult = await readDocument(documentBridge(probe)).execute({ offset: 0, maxChars: 8000 }, { editor: 'word' });
+  const fitted = probeResult.data.text.length;
+  assert.ok(fitted < 8000, 'the three-byte maximum really is shrunk');
+  // The character at index `fitted` is the high surrogate of an astral pair, so the shrunk boundary
+  // lands exactly on it: the first chunk ends before the pair, the next begins with both its units.
+  const document = '漢'.repeat(fitted) + '😀' + '漢'.repeat(20000 - fitted);
+  assert.equal(document.length, 20002, 'the pair costs two code units, so the total is two longer than the probe');
+  const surrogateFree = (text) => {
+    for (let i = 0; i < text.length; i += 1) {
+      const unit = text.charCodeAt(i);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = text.charCodeAt(i + 1);
+        if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+        i += 1;
+      } else if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+    }
+    return true;
+  };
+  const tool = readDocument(documentBridge(document));
+  const first = await tool.execute({ offset: 0, maxChars: 8000 }, { editor: 'word' });
+  assert.equal(first.ok, true);
+  assert.equal(first.data.text.length, fitted, 'the total character count is one longer, the fitting length is not');
+  assert.equal(first.data.nextOffset, fitted, 'the resume point is the shrunk boundary');
+  assert.equal(document.charCodeAt(fitted), 0xd83d, 'the shrunk boundary lands on the pair\u2019s high surrogate');
+  assert.equal(surrogateFree(first.data.text), true);
+  // The walk: every chunk whole, every resume point advancing, and the concatenation exact.
+  const parts = [];
+  let offset = 0;
+  for (let step = 0; step < 100; step += 1) {
+    const result = await tool.execute({ offset, maxChars: 8000 }, { editor: 'word' });
+    assert.equal(result.ok, true, `step ${step}`);
+    assert.equal(surrogateFree(result.data.text), true, `step ${step}: no lone surrogate`);
+    assert.equal(result.data.offset, offset, `step ${step}: the result names the address it was asked for`);
+    parts.push(result.data.text);
+    if (!result.data.truncated) break;
+    assert.ok(result.data.nextOffset > offset, `step ${step}: the resume point advances`);
+    offset = result.data.nextOffset;
+  }
+  assert.equal(parts.join(''), document, 'the chunks reconstruct the document exactly across the shrunk boundary');
+  // The chunk AFTER the shrunk boundary begins with the whole pair, so the shrink dropped nothing.
+  assert.equal(parts[1].startsWith('😀'), true, 'the pair at the shrunk boundary is served whole by the next chunk');
+});
+
+test('read_document_text refuses closed when not even ONE whole character can be served', async () => {
+  // The FLOOR of the shrink is ONE whole character, never zero: a chunk that consumed nothing would
+  // publish no resume point and stop the walk while text remained — exactly the skipped range the
+  // boundary rule forbids. So the tool never serves an empty chunk while the document has text at the
+  // address, and a request that not even one character can satisfy is a CLOSED refusal with no entry.
+  // One character inside a readable document is served, at the requested size, with no shrink at all:
+  const one = await readDocument(documentBridge('漢x')).execute({ offset: 0, maxChars: 1 }, { editor: 'word' });
+  assert.equal(one.ok, true, 'one whole character is served');
+  assert.equal(one.data.text, '漢');
+  assert.equal(one.data.nextOffset, 1, 'the chunk consumed exactly one character');
+  assert.equal(one.data.truncated, true);
+  // The reachable way not even ONE character can be served is the ADDRESS bound: a document whose own
+  // character count is past every readable range refuses before any chunk is built, because no resume
+  // point inside the schema could name the rest of it. (At the current ceilings one character can never
+  // reach the byte ceiling — at most a six-byte escaped surrogate plus the ~130-byte envelope — so the
+  // byte-ceiling floor is the fail-closed guard behind this, not a reachable production case.)
+  const unreadable = await readDocument(documentBridge('x'.repeat(LIMITS.readDocumentOffsetMax + 5)))
+    .execute({ offset: 0, maxChars: 1 }, { editor: 'word' });
+  assert.equal(unreadable.ok, false, 'not even one character can be addressed');
+  assert.equal(unreadable.code, 'BYTE_LIMIT');
+  assert.equal(unreadable.message, 'отказ');
+  assert.equal(unreadable.data, undefined, 'a refusal carries no entry for the runtime to serialize');
+  assert.equal(JSON.stringify(unreadable).includes('could not be serialized'), false);
+  // And the floor holds along a shrunken walk: a chunk that publishes a resume point always served at
+  // least one character, and a chunk that publishes none reached the document's own end.
+  const document = '漢'.repeat(12000) + 'x'.repeat(50);
+  const walk = readDocument(documentBridge(document));
+  let offset = 0;
+  let steps = 0;
+  for (; steps < 50; steps += 1) {
+    const result = await walk.execute({ offset, maxChars: 8000 }, { editor: 'word' });
+    assert.equal(result.ok, true, `step ${steps}`);
+    assert.equal(result.data.text, document.slice(offset, offset + result.data.text.length), `step ${steps}`);
+    if (result.data.nextOffset === null) {
+      assert.ok(offset + result.data.text.length >= document.length,
+        `step ${steps}: no resume point only at the document's own end`);
+      break;
+    }
+    assert.ok(result.data.text.length > 0, `step ${steps}: a chunk with a resume point served text`);
+    offset = result.data.nextOffset;
+  }
+  assert.ok(offset >= document.length || steps > 0, 'the walk ran');
 });
 

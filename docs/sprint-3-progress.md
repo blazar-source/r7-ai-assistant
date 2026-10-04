@@ -689,3 +689,75 @@ the tool. The focused word suite is **70/70**; the full suite grew **695 → 699
 exit 0 (`Plugin build: 8 allowlisted files; ZIP STORE SHA-256 7d1672e1…`). `src/agent/*` is untouched and
 the bridge leg is unchanged: still one read-only `GetFileHTML` on the owned slot, no new editor primitive.
 
+## 8c. Lead ruling: `maxChars` is an UPPER BOUND, so an over-ceiling request is served as the largest fitting slice
+
+`§8a`/`§8b` made the tool measure the entry it publishes, and a slice that did not fit that entry was
+refused **whole** with the closed `BYTE_LIMIT` class. The re-review showed what that costs: at
+`{offset: 99998, maxChars: 5460}` on the reviewer's document the published entry is 16385, so the call was
+refused — while `maxChars: 5459` at the **same offset** was servable. The schema advertises `maxChars` up
+to 8000, so that refusal rejects a **schema-legal** call for size, and the caller has no way to learn
+which smaller request the tool would have served without spending another step guessing.
+
+**The ruling.** `maxChars` stays the ceiling on what may be **requested**; the handler now serves the
+**largest slice of the same `offset` whose published entry fits**. The result's own `text` length,
+`truncated` and `nextOffset` tell the caller what was actually served, so the model needs no extra step.
+The tool stays fail-closed: the entry is still measured **exactly** on the values about to be published
+(one measurement, `publishedChunk`), and only a slice where **not even ONE whole character** fits is still
+a closed `BYTE_LIMIT` refusal. Clipping is still forbidden: the served chunk is always a whole-character
+**prefix** of the request, so its resume point cannot skip text.
+
+**The search.** Bisection over the cut, because the handler can **prove** the predicate is monotone:
+for two ends `e' < e`, `bytes(e') <= bytes(e)`. The slice from the same start is a **prefix** of the
+larger one, every removed UTF-16 code unit costs **at least one** UTF-8 byte of the serialized entry
+(cheapest: one ASCII byte; dearest: a six-byte `\uXXXX` escape), while the published envelope can grow by
+**at most one** byte as the end falls (a nil resume point becoming a six-digit one: `"truncated":false` +
+`"nextOffset":null` is 35 characters, `"truncated":true` + six digits is 36). So text bytes fall by at
+least one and the envelope rises by at most one — `bytes` is non-decreasing in the end and `fits` is
+downward-closed, which is exactly what bisection needs. Every probed cut is re-stepped over a surrogate
+pair with `characterEnd`, so each probed end is a whole character and a pair is never split. **Work
+bound:** one measurement for the request, one for the floor, and `ceil(log2(maxChars)) <= 13` probes —
+at most **15 exact measurements of one entry**, all through the same `documentEntryBytes`, so no second,
+competing measurement exists.
+
+**The reproduction, before and after** (document `99998 × 'x' + 5397 × '漢' + 1 × 'я' + 63 × 'x'`,
+105459 characters, `maxChars: 5460`):
+
+| offset | before | after | served | entry bytes |
+| --- | --- | --- | --- | --- |
+| 99998 | `BYTE_LIMIT` | **ok** | 5459 (the largest that fits) | **16384** (exactly the ceiling) |
+| 99999 | ok | ok | 5460 (whole) | 16382 |
+| 100000 | ok | ok | 5459 | 16380 |
+| 100001 | ok | ok | 5458 | 16377 |
+| 107000, 107001, 262143, 262144, 300000, 516304 | ok | ok | 0 (empty tail — past this document's end) | 130 |
+
+The CJK case at the advertised maximum: `'漢'.repeat(8100)` with `maxChars: 8000` used to be
+`BYTE_LIMIT`; it now serves **5420** characters (entry **16382**), and 5421 characters would be **16385**
+— the shrink is exactly as far as needed and no further.
+
+**Tests.** RED first: **10** focused cases failed on the pre-change tree (`63/73 pass, 10 fail`) — the
+seven tests that encoded the hard refusal, and the three new ones. GREEN: the focused word suite is
+**73/73**, and the full suite grew **699 → 702** with `fail 0`; `node scripts/static-audit.mjs` →
+`Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` → exit 0 (`Plugin build: 8
+allowlisted files; ZIP STORE SHA-256 0e3e1065…`). New coverage: the reviewer's ten
+offset/`maxChars` cases through the **real** `runAgent` (every one an `ok` the model receives, entry
+`<=` the ceiling, never the runtime's substitution string), a three-byte sweep showing the served length
+is the **largest** that fits (one character more is over the ceiling), a walk whose shrunk boundary lands
+exactly on an astral surrogate **pair** (chunks still tile the document with no skipped or duplicated
+character, and the pair is served whole by the next chunk), and the one-whole-character floor.
+
+**Which existing assertions moved, and why the replacements are stronger.** Seven tests encoded the
+old hard refusal and were **moved**, not deleted:
+`read_document_text keeps every entry inside the ceiling and every refusal closed` → *serves the largest
+chunk its entry ceiling allows, for every encoding*; `... refuses a chunk above the per-result byte
+ceiling as BYTE_LIMIT` → *serves the largest chunk that fits instead of refusing the request*;
+`read_document_text serves every chunk it RETURNS inside the per-result ceiling` (its CJK tail);
+`read_document_text at the exact ceiling is refused closed …` → *serves the exact-ceiling chunk as the
+largest slice that fits, end to end*; `... measures the exact entry it publishes …` (its refusal branch);
+`... returns text the model receives for every reviewer offset`; and `... never publishes ok for an entry
+the runtime will refuse` (its refusal branch). Each replacement asserts everything the old assertion
+did — the entry is inside the ceiling, the runtime serializer accepts it, the class of every refusal is
+closed — **plus** the new, stronger facts: the served text is the document's own text at that address, it
+is the **largest** length that fits (one character more is measured over the ceiling), the request is
+served rather than refused, and `nextOffset` names the shrunk boundary. No test was weakened or deleted,
+and the tool is still read-only: one `GetFileHTML`, no write path, `src/agent/*` untouched.
+

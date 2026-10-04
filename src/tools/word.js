@@ -114,6 +114,25 @@ function characterEnd(text, cut) {
   return cut < text.length && previous >= 0xd800 && previous <= 0xdbff && current >= 0xdc00 && current <= 0xdfff
     ? cut + 1 : cut;
 }
+// ONE chunk exactly as the handler publishes it, built and measured from the SAME `end`: the served
+// text, the `truncated`/`nextOffset` pair, and the byte count of the result entry the runtime will
+// serialize (`documentEntryBytes`, the module's one measurement). Everything the entry publishes is
+// derived here, so the value measured is the value returned, byte for byte — there is no second,
+// competing measurement that a field-width change could make drift from the returned shape.
+// `truncated` and `nextOffset` are ONE fact: a successor exists exactly when the chunk did not reach
+// the end of the document, and a chunk that ends exactly at the end — or an offset at or past it — has
+// none. Everything is counted in the string's own code units, the same unit `offset`/`maxChars`/
+// `totalChars` use, so a resumed read is contiguous and cannot skip. A chunk that consumed NOTHING has
+// no successor to publish: publishing `nextOffset === offset` would invite a call that returns the same
+// empty chunk forever. A chunk the ADDRESS BOUND stopped publishes that bound as its resume point — an
+// address the schema accepts, whose read is the empty tail — because the bound and the end of the text
+// are the same place from here.
+function publishedChunk(document, start, end, offset, totalChars) {
+  const text = document.slice(start, end);
+  const nextOffset = end > offset && end < totalChars ? end
+    : end === LIMITS.readDocumentOffsetMax && end < totalChars ? LIMITS.readDocumentOffsetMax : null;
+  return { text, nextOffset, bytes: documentEntryBytes(text, offset, totalChars, nextOffset) };
+}
 
 export function createWordTools(bridge) {
   return [
@@ -208,50 +227,98 @@ export function createWordTools(bridge) {
         // fail-closed guarantee rather than a routine truncation. The publish rule below still handles
         // the clamped shape, because a bound that is never enforced defensively is not a bound.
         const start = characterStart(document.text, Math.min(offset, document.text.length));
-        const end = characterEnd(document.text, Math.min(document.text.length, offset + maxChars, LIMITS.readDocumentOffsetMax));
-        const text = document.text.slice(start, end);
-        // `truncated` and `nextOffset` are ONE fact: a successor exists exactly when the chunk did not
-        // reach the end of the document, and a chunk that ends exactly at the end — or an offset at or
-        // past it — has none. Everything is counted in the string's own code units, the same unit
-        // `offset`/`maxChars`/`totalChars` use, so a resumed read is contiguous and cannot skip.
-        // A chunk that consumed NOTHING has no successor to publish: publishing `nextOffset === offset`
-        // would invite a call that returns the same empty chunk forever. A chunk the ADDRESS BOUND
-        // stopped publishes that bound as its resume point — an address the schema accepts, whose read
-        // is the empty tail — because the bound and the end of the text are the same place from here.
-        const nextOffset = end > offset && end < totalChars ? end
-          : end === LIMITS.readDocumentOffsetMax && end < totalChars ? LIMITS.readDocumentOffsetMax : null;
+        const requestedCut = Math.min(document.text.length, offset + maxChars, LIMITS.readDocumentOffsetMax);
+        const requestedEnd = characterEnd(document.text, requestedCut);
+        // The smallest chunk this read serves is ONE whole character after `start`. A chunk that
+        // consumed nothing publishes no resume point, so shrinking PAST this floor would stop the walk
+        // in the middle of the document — the skipped range the publish rule forbids — which is why the
+        // floor is a refusal boundary and never an empty `ok`. The cut is stepped over a surrogate pair
+        // (`characterEnd`), so one character may be two code units and a pair is never split. `floor` can
+        // never exceed the requested end: the request is at least one character wide and is clamped to
+        // the same address bound, so the guard only keeps the two in the stated order.
+        const floor = start < document.text.length ? characterEnd(document.text, start + 1) : start;
+        let end = requestedEnd < floor ? floor : requestedEnd;
         // The ENFORCED bound is the ACTUAL serialized tool-result entry, not the raw text and not
         // `LIMITS.editorResultBytes`: the runtime bounds `JSON.stringify({tool, ...result})` by
-        // `AGENT_CEILINGS.toolResultBytes` — 16384 bytes, not 65536 — and an entry above it is refused
-        // whole, with the model receiving the literal "the tool result could not be serialized" and NO
-        // text. Measuring the entry here is what makes the tool's own bound and the runtime's the same
-        // bound. The arithmetic (Cyrillic 2 bytes/character, ASCII 1, CJK 3, an astral pair 4 over two
-        // units) plus the envelope `LIMITS.readDocumentEntryBytes` is what sizes the advertised chunk:
-        // 8000 Cyrillic characters = 16000 bytes + 130 = 16130 <= 16384. A chunk that does not fit even
-        // so is refused with the closed BYTE_LIMIT class, never truncated — a truncated chunk would
-        // publish a resume point that skips text the model never saw — and the refusal is the only thing
-        // an entry above the ceiling can ever produce from here. Together with the `totalChars` fence
-        // above, this is the fail-closed floor: nothing the handler cannot serialize or cannot address
-        // leaves it as a result at all.
-        // The measurement carries the values that are ABOUT TO BE PUBLISHED, which is why `nextOffset`
-        // is computed first: the truncated shape serializes `"truncated":true` plus a numeric resume
-        // point, while the assumed nil shape serializes the shorter `"truncated":false` plus
-        // `"nextOffset":null` — 1 byte LESS on the six-digit offsets (`true` against `null`, both over
-        // `false`), and a wider gap at smaller offsets. A measurement taken against the nil resume point
-        // therefore UNDERCOUNTED the published entry, and a chunk whose assumed entry was exactly
-        // `AGENT_CEILINGS.toolResultBytes` (16384) passed the `> ceiling` check while the entry actually
-        // published made `stringifyToolResults` (protocol.js:91) throw; `runtime.js:27-36` replaced the
-        // whole result with its literal refusal, the model received NO text, and the run's action log
-        // still recorded `ok` — a fail-open signal for exactly the chunk sizes the ceiling is meant to
-        // allow. There is ONE measurement here, of the one entry, in the one shape that is published:
-        // the alternative — keeping the nil-resume-point figure and widening the guard by a byte or
-        // three — would be a second, competing measurement that has to be re-derived every time a field
-        // width changes and is exactly the drift this handler was caught by. The exact form is sound
-        // because the value measured is the value returned below, byte for byte, in the protocol's own
-        // key order.
-        const bytes = documentEntryBytes(text, offset, totalChars, nextOffset);
-        if (bytes === null || bytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
-        return ok({ text, offset, totalChars, truncated: nextOffset !== null, nextOffset });
+        // `AGENT_CEILINGS.toolResultBytes` — 16384 bytes, not 65536 — and an entry above it is replaced
+        // with the model-visible literal "the tool result could not be serialized" and no text. Measuring
+        // the entry here is what makes the tool's own bound and the runtime's the same bound. The
+        // arithmetic (Cyrillic 2 bytes/character, ASCII 1, CJK 3, an astral pair 4 over two units) plus
+        // the envelope `LIMITS.readDocumentEntryBytes` is what sizes the advertised chunk: 8000 Cyrillic
+        // characters = 16000 bytes + 130 = 16130 <= 16384.
+        //
+        // `maxChars` IS AN UPPER BOUND, NOT A HARD REQUIREMENT. The schema advertises `maxChars` up to
+        // 8000, but 8000 characters of three-byte text is 24000 bytes and cannot fit this 16384-byte
+        // entry, so refusing the request for size would fail a SCHEMA-LEGAL call and leave the caller
+        // unable to learn which smaller request the tool would serve. The tool therefore serves the
+        // LARGEST slice of the SAME `offset` whose published entry fits: every legal call delivers text,
+        // the tool stays fail-closed (the entry is still measured exactly, and not even one whole
+        // character fitting is still a closed refusal), and the model spends no extra step — the
+        // result's own `text` length, `truncated` and `nextOffset` tell the caller what was served. A
+        // clipped chunk is deliberately NOT what happens: clipping the requested slice would publish a
+        // resume point that skips text the model never saw, so the SHRINK is the whole serving rule.
+        //
+        // The measurement carries the values that are ABOUT TO BE PUBLISHED (`publishedChunk` builds
+        // text, `truncated` and `nextOffset` together and measures that one entry): the truncated shape
+        // serializes `"truncated":true` plus a numeric resume point, while the assumed nil shape
+        // serializes the shorter `"truncated":false` plus `"nextOffset":null` — 1 byte LESS on the
+        // six-digit offsets (`true` against `null`, both over `false`), and a wider gap at smaller
+        // offsets. A measurement taken against the nil resume point therefore UNDERCOUNTED the published
+        // entry, and a chunk whose assumed entry was exactly `AGENT_CEILINGS.toolResultBytes` (16384)
+        // passed the `> ceiling` check while the entry actually published made `stringifyToolResults`
+        // (protocol.js:91) throw; `runtime.js:27-36` replaced the whole result with its literal refusal,
+        // the model received NO text, and the run's action log still recorded `ok` — a fail-open signal
+        // for exactly the chunk sizes the ceiling is meant to allow. There is ONE measurement here, of
+        // the one entry, in the one shape that is published: the alternative — keeping the
+        // nil-resume-point figure and widening the guard by a byte or three — would be a second,
+        // competing measurement that has to be re-derived every time a field width changes and is
+        // exactly the drift this handler was caught by.
+        //
+        // The SHRINK is the bounded bisection below. It finds the LARGEST slice that fits, not merely
+        // one that fits, because "largest" is the whole point of the contract: a smaller slice than the
+        // ceiling allows makes the caller spend another step to learn what this one could have carried.
+        // The search rests on a monotonicity this handler can PROVE, so it needs no heuristic step size:
+        // for two ends e' < e, `bytes(e') <= bytes(e)`, because the slice from the same start is a
+        // PREFIX (each removed UTF-16 code unit costs at least one UTF-8 byte of the serialized entry —
+        // the cheapest is one ASCII byte, the dearest a six-byte `\uXXXX` escape — so text bytes fall by
+        // at least one) while the published envelope can grow by at most one byte (a nil resume point
+        // becoming a six-digit one). `fits` is therefore downward-closed in the end, so bisection over
+        // the cut finds the exact boundary. `characterEnd` re-steps every probed cut over a surrogate
+        // pair, so each probed end is a whole character and a pair is never split. The worst case is
+        // ONE measurement for the request, ONE for the floor, and ceil(log2(maxChars)) <= 13 probes of
+        // the same exact `documentEntryBytes` measurement — at most 15 measurements of one entry, and
+        // never a second, competing measurement.
+        let chunk = publishedChunk(document.text, start, end, offset, totalChars);
+        if (chunk.bytes === null || chunk.bytes > AGENT_CEILINGS.toolResultBytes) {
+          // The floor is the smallest chunk this read can serve; if even that does not fit, there is no
+          // slice to serve and the answer is the one closed refusal left.
+          const floorChunk = publishedChunk(document.text, start, floor, offset, totalChars);
+          if (floorChunk.bytes === null || floorChunk.bytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+          // `fits(E(start))` (the empty chunk) and `fits(E(floor))` hold, `fits(requestedEnd)` does not:
+          // bisect the CUT between a cut that fits and one that does not, keeping the last fitting end.
+          // The lower bound is `start + 1` — the cut that produces the floor — and not `start`, because
+          // the invariant is `chunk === E(lowCut)` and `E(start + 1) === floor` is the chunk the check
+          // above proved fits. The request is at least one character wide, so `start + 1 <= highCut`;
+          // equality would mean the requested chunk IS the floor chunk, which the `chunk` check above
+          // has already found fitting, so the branch would not be entered at all.
+          let lowCut = start + 1;
+          let highCut = requestedCut;
+          chunk = floorChunk;
+          while (highCut - lowCut > 1) {
+            const midCut = lowCut + ((highCut - lowCut) >> 1);
+            const candidate = publishedChunk(document.text, start, characterEnd(document.text, midCut), offset, totalChars);
+            if (candidate.bytes !== null && candidate.bytes <= AGENT_CEILINGS.toolResultBytes) {
+              lowCut = midCut;
+              chunk = candidate;
+            } else highCut = midCut;
+          }
+        }
+        // Not even ONE whole character fits (or the entry cannot be serialized at all): the one closed
+        // refusal left, and it still carries no character of the document. Together with the `totalChars`
+        // fence above, this is the fail-closed floor: nothing the handler cannot serialize, cannot
+        // address or cannot serve within the ceiling leaves it as a result at all.
+        if (chunk.bytes === null || chunk.bytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok({ text: chunk.text, offset, totalChars, truncated: chunk.nextOffset !== null, nextOffset: chunk.nextOffset });
       }
     }),
     defineTool({
