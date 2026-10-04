@@ -33,14 +33,15 @@ reported as a plain known error).
    - reads the document HTML **once AFTER the paste** and counts again;
    - reports `{ok:true, data:{sent:true, effectVerified:true}}` **only** when the post count is exactly
      `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste added the payload.
-4. **The counting form is ONE documented string: the minimally HTML-escaped dispatched payload.**
-   The document HTML escapes at least `&`, `<`, `>` and `"`, and the payload may contain Cyrillic,
-   quotes, angle brackets or ampersands, so the rule is stated exactly: `&` → `&amp;`, `<` → `&lt;`,
-   `>` → `&gt;`, `"` → `&quot;`, with `&` replaced **first** so an escape introduced by a later step is
-   never escaped a second time. The SAME form is counted before and after, so the delta compares like
-   with like; a document that renders the payload RAW is **not** a match (the raw form is a different
-   string, and accepting either form would make the count depend on which one the editor emits). The
-   count is non-overlapping, and an empty counting form is refused before any read.
+4. **The counting form is the dispatched payload counted in the document's DECODED TEXT.** The export
+   is parsed with the platform's own inert container (`createElement('div')` + `innerHTML`) and the text
+   nodes are collected with a single `"\n"` after every block-level element, so **markup and attribute
+   values never enter the count** and a paragraph break is a real separator. The needle is the **exact
+   dispatched payload** — `text` for `position:'cursor'`, `text + "\n"` for `position:'end'` — and no
+   escaping is applied anywhere: once the markup is parsed away, a payload holding `&`, `<`, `>`, `"` or
+   Cyrillic matches by its real characters, and the raw and entity spellings of the same character are
+   the same evidence. The count is non-overlapping, and an empty needle is refused before any read.
+   (The earlier **minimally HTML-escaped** counting form is **retired** — see §5: it was fail-open.)
 5. **Every other outcome is "not confirmed".** No new occurrence, two or more new occurrences, a
    payload that is simply absent, a missing/malformed/non-string answer, a read that threw, a post read
    above the byte ceiling, an observation delivered past the ticket deadline — all of them settle
@@ -193,11 +194,12 @@ wrong write.
   all **unmeasured**. A build where the export cannot be read refuses the insert (known class, slot
   released); a build where the delta is not exactly one settles `APPLY_UNCERTAIN`. Neither can ever
   produce a success claim.
-- The **escaping rule is the documented minimum** (`&`, `<`, `>`, `"`). If a live export escapes more
-  (for example `'` as `&#39;`, or non-ASCII as numeric entities, or a Cyrillic character as an entity),
-  the counting form will not match what the document contains and the insert settles `APPLY_UNCERTAIN`
-  — fail-closed. The fix in that case is to widen the DOCUMENTED escape set and its tests, never to
-  fall back to a containment test.
+- The **decoded-text rule removes the escaping question** (§5). What is still unmeasured is the element
+  vocabulary a live export uses: this rule separates the blocks named in `BLOCK_TAGS` and treats every
+  other element as inline. If a live export renders a document paragraph with an element outside that
+  set, two blocks concatenate in the extracted text and a payload spanning them could match — the same
+  class of uncertainty the `end` form has. Widening the set is an authored, tested change; the
+  separator rule itself stays.
 - The document delta and the ceiling were **not** measured natively. This document claims host-side
   tests only: the focused bridge/dispatch-API/handler/integration suites, the full `node --test` suite
   (**651/651** on the final tree, up from 649), the static audit and the bundle build, all run on the
@@ -255,3 +257,61 @@ change; what is proven here is evaluability in a module-free scope (the class of
 reported), host-side only. Final tree: `node --test` **653/653** (up from 651), the focused
 bridge/dispatch-API/handler/integration suites green, `Authored-code audit PASS` (exit 0), and the bundle
 build exit 0.
+
+## 5. The count moves to DECODED TEXT, and the duplicate-acknowledgement guard gets its assertion
+
+A third independent review found the document-delta rule from §4 still **fail-open**, but one layer
+lower: the count ran over the export's **raw HTML source**, so **markup and entity vocabulary**
+contributed occurrences that are not in the document's text.
+
+**The reproduction (no file writes).** Payload `amp`; baseline export `<p>a &amp; b</p>`; the fake
+`PasteText` inserts nothing while an unrelated change adds one more escaped ampersand → post export
+`<p>a &amp; b</p><p>c &amp; d</p>`. The source holds **three** `amp` substrings — one in `a`+`amp`+` b`,
+one inside `&amp;`, one in `c`+`amp`+` d` — so the rule `post === baseline + 1` fired and the insert was
+reported `{"ok":true,"data":{"sent":true,"effectVerified":true}}` **although nothing was pasted**. The
+non-adversarial trigger is ordinary: a user typing one `&` while a payload that collides with markup or
+entity vocabulary (`amp`, `lt`, `gt`, `quot`, `style`, `span`, `p`, a bare Latin letter) is in flight.
+
+**Repair.** The export is parsed with the platform's own inert container and the text nodes are collected
+with explicit block separators (`BLOCK_TAGS`, one `"\n"` after each block-level element; inline elements
+add nothing, and a bare `<` that the platform reads as text is text). The needle is the **exact
+dispatched payload** and nothing else; the rule stays `post === baseline + 1`; a missing needle, a
+different count, an unusable or oversized read, or a hung read still settle the **uncertain** class with
+the slot held and no retry; the pre-dispatch read is still a fail-closed **gate** (unusable ⇒ no paste,
+known class, slot released), and `LIMITS.documentHtmlBytes` still bounds the read and is still never
+truncated. The DOM is an **explicit option** of `createR7Bridge` (`document`), supplied by
+`src/ui/entry.js` from `platformDocument` at the one place that already holds the page document, so the
+authored source touches no global and the static audit stays green.
+
+**The escaping machinery is GONE** — `HTML_ESCAPES` / `escapedPayload` and the whole `&`-first escaping
+rule are deleted. With the count over decoded text there is nothing left to escape, and a payload
+containing `&`, `<`, `>` or `"` matches by its real characters; the raw and entity spellings of the same
+character are now the same evidence rather than two different strings.
+
+**Tests.** The reviewer's exact reproduction is RED on `25b4c6f` (it verified the no-op) and green after;
+the new cases pin that an entity-decoded `&` payload really added is verified, that markup (a tag name, an
+attribute value, a later block tag) never counts, that a payload spanning two paragraphs never matches,
+that the `end` form's appended `"\n"` matches a real paragraph break, and that one logical insert still
+dispatches one `PasteText` and at most two reads. The **`&`-first escaping test was removed and replaced
+by the stronger decoded-text test** (it asserted the retired rule and its RED half asserted the exact
+behaviour this change makes correct); `tests/fixtures/html-document.js` is the injected boundary, a small
+parser whose block set is named independently of the implementation.
+
+**D2 — the dropped guard assertion is restored.** An old test pinned that "a duplicate acknowledgement
+for the same dispatch cannot preempt the confirmation read"; it was dropped in `6131312`, leaving
+`if (owned.confirming) return;` with **no assertion at all**. The restored test sends
+`insert.callback(undefined)` and then `insert.callback(true)` in flight and asserts exactly two reads,
+`writePending === true` while the confirmation is in flight, and that the **VERIFIED** outcome can only
+have come from the read's own `+1` delta — not from the duplicate. Verified **non-vacuous**: with the
+guard line deleted the test fails ("the duplicate neither settles nor releases the ticket"), and with it
+restored it passes.
+
+**One pin was weakened, deliberately:** `tests/integration/package.test.js` no longer lists `innerHTML`
+among the bundle's forbidden strings, because the confirmation now parses the export with it. Assigning
+`innerHTML` on a detached element parses data and executes nothing, and this is the sanctioned DOM path
+in this task; every other forbidden string (dev/runtime markers, remote URLs, `window.parent`) stays.
+
+**Unverified natively:** the decoded-text rule has **not** been re-run on the live editor. What is proven
+host-side is the counting rule, the gate, the ceiling and the guard; what only a native run can show is
+the real `GetFileHTML` element vocabulary (whether every document block is named in `BLOCK_TAGS`) and
+whether the extracted text of a real export matches this model.

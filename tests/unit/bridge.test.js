@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
+import { htmlDocument } from '../fixtures/html-document.js';
+
+// The confirmation reads the document's DECODED TEXT, so the bridge needs the platform's inert container
+// parse. Every rig below injects the fixture DOM through the bridge's own `document` option: the
+// boundary is explicit and injected, never reached for through a global, and the real plugin page
+// passes `globalThis.document` (which the bridge itself does).
+const documentBoundary = htmlDocument();
 
 function runContext(body) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api'); let identity = false;
@@ -25,7 +32,7 @@ function rig(editorType = 'word', pluginOverrides = {}) {
     },
     ...pluginOverrides
   };
-  const bridge = createR7Bridge(plugin, {
+  const bridge = documentBoundaryRig(plugin, {
     editorType, clock: { now: () => now },
     timers: { schedule(fn, ms) { const id = {}; scheduled.set(id, { fn, at: now + ms }); return id; }, clear(id) { scheduled.delete(id); } }
   });
@@ -374,10 +381,17 @@ test('Apply rejects caller-forged serializable target certificates without any S
 // `GetFileHTML` export — once BEFORE the paste (the pre-dispatch baseline, by construction) and once
 // AFTER it — and confirms ONLY when the post count is exactly `baselineCount + 1`.
 //
-// THE COUNTING FORM. The document HTML escapes at least `&`, `<`, `>` and `"`, and the payload may
-// contain Cyrillic, quotes, angle brackets or ampersands, so ONE form is documented and counted: the
-// MINIMALLY HTML-ESCAPED dispatched payload (`&` first, then `<`, `>`, `"`). `escapeHtmlForCount`
-// below is that rule, written independently of the implementation.
+// THE COUNTING FORM. The confirmation counts in the document's DECODED TEXT, not in the markup: the
+// export is parsed with the platform's own inert container (`createElement('div')` + `innerHTML`) and
+// the text nodes are collected with ONE `"\n"` after every block-level element, so a paragraph break is
+// a real separator and markup/attributes never enter the stream. The needle is the EXACT dispatched
+// payload — `text` for `position:'cursor'`, `text + "\n"` for `position:'end'` — with no escaping at
+// all: once markup is parsed away there is nothing left to escape, and a payload holding `&`, `<`, `>`
+// or `"` matches by its real characters. (An independent review found the old markup counting
+// fail-open: payload `amp` over a baseline holding `&amp;` counted TWO occurrences of "amp" — the
+// literal `amp` in the text plus the one inside the decoded entity — so an unrelated `&` added by the
+// user moved the count by one and a no-op paste was reported VERIFIED.) The fixture DOM at
+// `../fixtures/html-document.js` stands in for the platform here and names the same block set.
 //
 // THE CEILING. The HTML read is bounded by `LIMITS.documentHtmlBytes` (256 KiB) and a result above it
 // is refused rather than truncated: counting inside a prefix could miss an occurrence or count a
@@ -406,10 +420,28 @@ const confirmRead = r => {
   const at = lastPasteAt(r);
   return at < 0 ? null : (r.calls.slice(at + 1).find(call => call.name === 'GetFileHTML') ?? null);
 };
-function escapeHtmlForCount(text) {
-  // The documented counting form, written independently of the implementation: the minimally
-  // HTML-escaped payload (`&`, `<`, `>`, `"`), ampersand first so an escape introduced by a later step
-  // is never escaped a second time.
+// The boundary between the bridge and the parsed document: a real (tiny) parser injected through the
+// bridge's `document` option, exactly as the plugin page injects the platform's own.
+function documentBoundaryRig(plugin, options) { return createR7Bridge(plugin, { ...options, document: documentBoundary }); }
+// A fake timer set for the rigs below. Without an injected timer a rig that never settles a ticket — the
+// whole point of the uncertain cases — arms the bridge's REAL 5 s deadline as a `setTimeout`, which keeps
+// the test process alive until it fires. The deadline is not what these tests assert, so it is held here
+// instead of in the process: `advance` delivers it exactly when a test wants to reason about the timeout.
+function fakeTimers() {
+  let now = 0;
+  const tasks = new Map();
+  return {
+    timers: { schedule(fn, ms) { const id = {}; tasks.set(id, { fn, at: now + ms }); return id; }, clear(id) { tasks.delete(id); } },
+    clock: { now: () => now },
+    advance(ms) { now += ms; for (const [id, timer] of [...tasks]) if (timer.at <= now) { tasks.delete(id); timer.fn(); } },
+    setNow(value) { now = value; }
+  };
+}
+// Minimal escaping for BUILDING a test document that renders a payload as TEXT, so the parsed text
+// holds the payload's real characters. It is deliberately not the bridge's rule any more — nothing in
+// the bridge escapes — and the tests below prove a genuinely added `"…&"` payload verifies through the
+// decoded text without it.
+function escapeHtml(text) {
   return text.split('&').join('&amp;').split('<').join('&lt;').split('>').join('&gt;').split('"').join('&quot;');
 }
 
@@ -439,7 +471,7 @@ function documentRig({ html = '<p>стар</p>', htmlFails = null } = {}) {
       return false;
     }
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', clock: { now: () => now },
+  const bridge = documentBoundaryRig(plugin, { editorType: 'word', clock: { now: () => now },
     timers: { schedule(fn, ms) { const id = {}; scheduled.set(id, { fn, at: now + ms }); return id; }, clear(id) { scheduled.delete(id); } } });
   return { bridge, calls, state: { html },
     named: name => calls.filter(call => call.name === name),
@@ -472,6 +504,7 @@ async function dispatchInsert(r, request = { text: 'Абзац' }, baselineHtml 
 function htmlRig({ html = '<p>стар</p>', caret = 'стар', applies = false, caretAfter = null } = {}) {
   const state = { html, caret };
   const calls = [];
+  const timer = fakeTimers();
   const plugin = {
     info: { editorType: 'word' },
     executeMethod(name, params, callback) {
@@ -479,7 +512,7 @@ function htmlRig({ html = '<p>стар</p>', caret = 'стар', applies = false
       if (name === 'GetFileHTML') callback(state.html);
       else if (name === 'GetSelectedText' || name === 'GetCurrentSentence') callback(state.caret);
       else if (name === 'PasteText') {
-        if (applies) state.html = `${state.html}<p>${escapeHtmlForCount(params[0])}</p>`;
+        if (applies) state.html = `${state.html}<p>${escapeHtml(params[0])}</p>`;
         if (caretAfter !== null) state.caret = caretAfter;
         callback(undefined);
       } else throw new Error(`unexpected native method ${name}`);
@@ -492,8 +525,38 @@ function htmlRig({ html = '<p>стар</p>', caret = 'стар', applies = false
       return false;
     }
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word' });
-  return { bridge, calls, state };
+  const bridge = documentBoundaryRig(plugin, { editorType: 'word', clock: timer.clock, timers: timer.timers });
+  return { bridge, calls, state, timer };
+}
+
+// The reviewer's D1 reproduction, as a rig: the fake editor's export is fixed BEFORE the paste and
+// whatever it holds afterwards is the test's own choice, so the exported markup and the exported text
+// can be varied independently. `applies` decides whether the paste really appends the payload as text.
+function markupRig({ pre, post = null, applies = false } = {}) {
+  const state = { html: pre };
+  const calls = [];
+  const timer = fakeTimers();
+  const plugin = {
+    info: { editorType: 'word' },
+    executeMethod(name, params, callback) {
+      calls.push({ name, params, callback });
+      if (name === 'GetFileHTML') callback(state.html);
+      else if (name === 'PasteText') {
+        if (post !== null) state.html = post;
+        else if (applies) state.html = `${state.html}<p>${escapeHtml(params[0])}</p>`;
+        callback(undefined);
+      } else throw new Error(`unexpected native method ${name}`);
+      return false;
+    },
+    callCommand(body, _close, _recalculate, callback) {
+      const result = runContext(body);
+      if (result.identity) callback(result.value);
+      else calls.push({ name: 'presence', callback });
+      return false;
+    }
+  };
+  const bridge = documentBoundaryRig(plugin, { editorType: 'word', clock: timer.clock, timers: timer.timers });
+  return { bridge, calls, state, timer, named: name => calls.filter(call => call.name === name) };
 }
 
 test('D-A: a no-op PasteText whose caret scope moves onto the payload is never verified', async () => {
@@ -519,7 +582,7 @@ test('a document that gained exactly one occurrence of the payload confirms the 
   assert.equal(r.named('GetFileHTML').length, 2, 'the void acknowledgement starts exactly one confirmation read');
   assert.deepEqual(confirmRead(r).params, {}, 'the same public document read the baseline used');
   assert.ok(Object.isFrozen(confirmRead(r).params));
-  confirmRead(r).callback(`${r.state.html}<p>${escapeHtmlForCount('Абзац')}</p>`);
+  confirmRead(r).callback(`${r.state.html}<p>${escapeHtml('Абзац')}</p>`);
   assert.deepEqual(await pending, VERIFIED);
   assert.equal(r.bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
   assert.equal(inserts(r).length, 1, 'the mutation is never retried');
@@ -533,7 +596,7 @@ test('a document that gained TWO new occurrences is not confirmation', async () 
   const r = documentRig({ html: '<p>стар</p>' });
   const { pending, insert } = await dispatchInsert(r);
   insert.callback(undefined);
-  const escaped = escapeHtmlForCount('Абзац');
+  const escaped = escapeHtml('Абзац');
   confirmRead(r).callback(`${r.state.html}<p>${escaped}</p><p>${escaped}</p>`);
   assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' });
   assert.equal(r.bridge.getState().writePending, true, 'an unconfirmed mutation stays pending');
@@ -566,48 +629,98 @@ test('a payload that is absent after the paste is never a success, and a pre-exi
   assert.deepEqual(await added.pending, VERIFIED, 'the DELTA is the evidence, not the absolute count');
 });
 
-test('the counting form escapes every special character the document HTML escapes', async () => {
-  for (const [label, payload, escaped] of [
-    ['ampersand', 'a & b', 'a &amp; b'],
-    ['less-than', 'a < b', 'a &lt; b'],
-    ['greater-than', 'a > b', 'a &gt; b'],
-    ['double-quote', 'a "b" c', 'a &quot;b&quot; c']
+test('D1: the reviewer\'s reproduction — a no-op paste over an unrelated escaped ampersand is never verified', async () => {
+  // The independent reproduction, exactly: payload `amp`, baseline export `<p>a &amp; b</p>`, the paste
+  // inserts NOTHING, and an unrelated change adds one more escaped ampersand. The old markup count saw
+  // TWO literal `amp` substrings in the baseline (`a` + `amp` + `&amp;` + ` b`), read the post export's
+  // third `amp` as one new occurrence, and settled a VERIFIED success for an insert that never happened.
+  // The decoded-text count reads `a & b` and `a & b` + `c & d` — the needle `amp` never occurs in the
+  // TEXT of either — so the delta is zero and the outcome is the uncertain class.
+  const r = markupRig({ pre: '<p>a &amp; b</p>', post: '<p>a &amp; b</p><p>c &amp; d</p>' });
+  const result = await r.bridge.insertParagraph({ text: 'amp' });
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' },
+    'an insert that never reached the document is never a success, however the markup moved');
+  assert.equal(r.named('PasteText').length, 1, 'the mutation is dispatched exactly once');
+  assert.equal(r.named('GetFileHTML').length, 2, 'exactly one baseline and one confirmation read');
+  assert.equal(r.bridge.getState().writePending, true, 'the unknown outcome keeps the slot and the write lock');
+  assert.equal(r.bridge.getState().uncertain, true);
+});
+
+test('D1: a payload containing & that the paste really adds once is verified, because entities decode', async () => {
+  // The positive half of the same rule: `&` is a real character of the document's TEXT, so a payload
+  // holding it verifies when — and only when — the document gained exactly one more occurrence.
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><p>a &amp; b</p>' });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'a & b' }), VERIFIED,
+    'the payload matches the decoded text, not the `&amp;` spelling');
+  assert.equal(r.named('PasteText').length, 1);
+  assert.equal(r.named('GetFileHTML').length, 2);
+  assert.equal(r.bridge.getState().writePending, false, 'a confirmed effect settles the mutation');
+});
+
+test('D1: markup never counts — a tag name or attribute value added only as markup is never a match', async () => {
+  for (const [label, pre, post, text] of [
+    ['tag name', '<p>стар</p>', '<p>стар</p><span>новое</span>', 'span'],
+    ['attribute value', '<p>стар</p>', '<p>стар</p><p class="amp">новое</p>', 'amp'],
+    ['block tag added later', '<p>стар</p>', '<div>новое</div>', 'div']
   ]) {
-    assert.equal(escapeHtmlForCount(payload), escaped, `${label}: the documented counting form`);
-    // The RAW form appearing once more is a DIFFERENT string: it is never counted, so it cannot confirm.
-    const raw = documentRig({ html: '<p>стар</p>' });
-    const rawInsert = await dispatchInsert(raw, { text: payload });
-    rawInsert.insert.callback(undefined);
-    confirmRead(raw).callback(`${raw.state.html}<p>${payload}</p>`);
-    assert.deepEqual(await rawInsert.pending, { ok: false, code: 'APPLY_UNCERTAIN' },
-      `${label}: the raw form is never counted`);
-    // The ESCAPED form appearing once more is exactly one new occurrence: confirmed.
-    const html = documentRig({ html: '<p>стар</p>' });
-    const escapedInsert = await dispatchInsert(html, { text: payload });
-    escapedInsert.insert.callback(undefined);
-    confirmRead(html).callback(`${html.state.html}<p>${escaped}</p>`);
-    assert.deepEqual(await escapedInsert.pending, VERIFIED, `${label}: the escaped form is what is counted`);
+    const r = markupRig({ pre, post });
+    assert.deepEqual(await r.bridge.insertParagraph({ text }), { ok: false, code: 'APPLY_UNCERTAIN' },
+      `${label}: markup alone is never a document delta`);
+    assert.equal(r.named('PasteText').length, 1, `${label}: the mutation is never retried`);
+    assert.equal(r.named('GetFileHTML').length, 2, `${label}: exactly two reads`);
   }
 });
 
-test('a document holding BOTH forms counts only the escaped one', async () => {
-  const payload = 'Он сказал "да"';
-  const escaped = 'Он сказал &quot;да&quot;';
-  assert.equal(escapeHtmlForCount(payload), escaped, 'the documented counting form');
-  // The baseline already holds the escaped form once AND the raw form once: the raw occurrence does not
-  // disturb the count, so exactly ONE new escaped occurrence is still exactly one new occurrence.
-  const r = documentRig({ html: `<p>${escaped}</p><p>${payload}</p>` });
-  const { pending, insert } = await dispatchInsert(r, { text: payload }, r.state.html);
-  insert.callback(undefined);
-  confirmRead(r).callback(`${r.state.html}<p>${escaped}</p>`);
-  assert.deepEqual(await pending, VERIFIED, 'the raw occurrence is invisible to the count');
-  // And a document whose ONLY occurrences are raw ones counts ZERO: a no-op paste cannot confirm.
-  const rawOnly = documentRig({ html: `<p>${payload}</p><p>${payload}</p>` });
-  const refused = await dispatchInsert(rawOnly, { text: payload }, rawOnly.state.html);
-  refused.insert.callback(undefined);
-  confirmRead(rawOnly).callback(rawOnly.state.html);
-  assert.deepEqual(await refused.pending, { ok: false, code: 'APPLY_UNCERTAIN' },
-    'raw occurrences alone are not the counting form');
+test('D1: block boundaries are real boundaries — a payload spanning two paragraphs is never a match', async () => {
+  // `01` is the END of one paragraph and the START of the next: the export holds it, the extracted
+  // text does not, because the block boundary is a separator. Without the separator the two blocks
+  // would concatenate into `...01...` and this no-op paste would be reported VERIFIED.
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><p>01</p><p>23</p>' });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: '0123' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a payload that only exists across a block boundary is not in the document text');
+  assert.equal(r.named('PasteText').length, 1);
+  assert.equal(r.named('GetFileHTML').length, 2);
+});
+
+test('D1: the dispatched payload is the needle — an end insert matches a real paragraph break', async () => {
+  // `position:'end'` dispatches `text + "\n"` (the caller's payload is unchanged by this ticket), and
+  // with block separators that newline is a real character of the extracted text: when the paste lands
+  // as its own block the needle is present exactly once more and the insert IS verified.
+  const landed = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><p>0123</p>' });
+  assert.deepEqual(await landed.bridge.insertParagraph({ text: '0123', position: 'end' }), VERIFIED,
+    'the newline of the `end` payload is the block separator');
+  assert.equal(landed.named('PasteText').length, 1);
+  assert.equal(landed.named('GetFileHTML').length, 2);
+  // The same characters split by a block boundary: the document holds `01` and `23` in two blocks, so
+  // the extracted text is `01\n23\n` and the contiguous `0123\n` the payload dispatched is NOT in it.
+  const split = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><p>01</p><p>23</p>' });
+  assert.deepEqual(await split.bridge.insertParagraph({ text: '0123', position: 'end' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a payload split by a block boundary is not in the document text');
+  assert.equal(split.named('PasteText').length, 1);
+  assert.equal(split.named('GetFileHTML').length, 2);
+});
+
+test('D1: the decoded text counts every character a payload can hold, with no escaping rule left', async () => {
+  for (const [label, payload, plain, escaped] of [
+    ['ampersand', 'a & b', '<p>стар</p><p>a &amp; b</p>', 'a &amp; b'],
+    ['less-than', 'a < b', '<p>стар</p><p>a &lt; b</p>', 'a &lt; b'],
+    ['greater-than', 'a > b', '<p>стар</p><p>a &gt; b</p>', 'a &gt; b'],
+    ['double-quote', 'a "b" c', '<p>стар</p><p>a &quot;b&quot; c</p>', 'a &quot;b&quot; c']
+  ]) {
+    assert.equal(escapeHtml(payload), escaped, `${label}: the test document really spells the character as an entity`);
+    const verified = markupRig({ pre: '<p>стар</p>', post: plain });
+    assert.deepEqual(await verified.bridge.insertParagraph({ text: payload }), VERIFIED,
+      `${label}: the entity decodes to the payload's real character`);
+    // The SAME export with the character written RAW is the same text after decoding, so it is the same
+    // evidence: the rule matches characters, not their spelling.
+    const raw = markupRig({ pre: '<p>стар</p>', post: `<p>стар</p><p>${payload}</p>` });
+    assert.deepEqual(await raw.bridge.insertParagraph({ text: payload }), VERIFIED,
+      `${label}: the raw spelling decodes to the same character and is equally the payload`);
+    // A no-op paste over an export that already holds the payload once is not a delta.
+    const noop = markupRig({ pre: plain, post: plain });
+    assert.deepEqual(await noop.bridge.insertParagraph({ text: payload }), { ok: false, code: 'APPLY_UNCERTAIN' },
+      `${label}: a pre-existing occurrence is not evidence that THIS paste added one`);
+  }
 });
 
 test('the HTML read is bounded by its own byte ceiling: exactly at it is accepted, one byte over is not', async () => {
@@ -747,6 +860,28 @@ test('a boolean acknowledgement keeps the existing unverified envelope and reads
   }
 });
 
+test('D2: a duplicate acknowledgement cannot preempt the in-flight confirmation read', async () => {
+  // The guard `if (owned.confirming) return;` had no assertion at all. It closes a real fail-open: a
+  // SECOND acknowledgement for the same dispatch, arriving while the confirmation read is already in
+  // flight, must not be judged on its own. Without the guard the acknowledged callback settles the
+  // ticket the moment the promise executor has run (`owned.settled` becomes true), and the
+  // confirmation read's own answer — the test's VERIFIED delta below — is then discarded by the stale
+  // guard while the caller has already received "sent, unverified".
+  const r = documentRig();
+  const { pending, insert } = await dispatchInsert(r);
+  insert.callback(undefined); // the void acknowledgement: the confirmation read is now in flight
+  assert.equal(r.named('GetFileHTML').length, 2, 'exactly one confirmation read was dispatched');
+  assert.equal(r.bridge.getState().writePending, true, 'the mutation is pending while the read is in flight');
+  insert.callback(true); // the duplicate carries a value, and must still be ignored
+  assert.equal(r.named('GetFileHTML').length, 2, 'the duplicate acknowledgement dispatches no third read');
+  assert.equal(r.bridge.getState().writePending, true, 'the duplicate neither settles nor releases the ticket');
+  confirmRead(r).callback(`${r.state.html}<p>Абзац</p>`); // exactly one NEW occurrence: the delta
+  assert.deepEqual(await pending, VERIFIED,
+    'a VERIFIED outcome can only come from the document delta, never from the duplicate acknowledgement');
+  assert.equal(r.named('PasteText').length, 1, 'the mutation is never retried');
+  assert.equal(r.named('GetFileHTML').length, 2, 'exactly one baseline and one confirmation read');
+});
+
 test('a malformed non-boolean acknowledgement takes the document-delta path and is never a success by itself', async () => {
   for (const value of ['true', { acknowledged: true }, null, 7]) {
     const label = JSON.stringify(value) ?? String(value);
@@ -795,17 +930,23 @@ test('the counted needle is the DISPATCHED payload: an end insert carries its ow
   const { pending, insert } = await dispatchInsert(r, { text: 'Абзац', position: 'end' });
   assert.deepEqual(insert.params, ['Абзац\n'], 'the newline is part of the dispatched payload');
   insert.callback(undefined);
-  // The document gained only the un-newlined text: that is a PREFIX of the dispatched payload, not the
-  // payload, so it is not one new occurrence of the counting form.
+  // The document gained the text as its own block. The extracted text is `Абзац\n` — the block
+  // separator IS the newline the `end` form dispatched — so the two agree and the insert is verified.
+  // (Under the retired markup rule this read was the ESCAPED payload; with decoded text there is no
+  // escaping left, and the newline is a real character of the text either way.)
   confirmRead(r).callback(`${r.state.html}<p>Абзац</p>`);
-  assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' },
-    'a prefix of the dispatched payload is never the counting form');
-  // The verbatim dispatched payload is.
-  const verbatim = documentRig();
-  const second = await dispatchInsert(verbatim, { text: 'Абзац', position: 'end' });
-  second.insert.callback(undefined);
-  confirmRead(verbatim).callback(`${verbatim.state.html}<p>${escapeHtmlForCount('Абзац\n')}</p>`);
-  assert.deepEqual(await second.pending, VERIFIED, 'the newline is part of the counted payload');
+  assert.deepEqual(await pending, VERIFIED, 'the block separator is the dispatched newline');
+  // The needle is the DISPATCHED payload and nothing else. The same document and the same added block,
+  // but a `cursor` dispatch carries `Абзац` with NO newline: the extracted text `стар\nАбзац\n` matches
+  // it exactly as it matched the `end` form, so this pins that the caller's payload was not changed —
+  // both forms are counted as they were dispatched.
+  const cursor = documentRig();
+  const short = await dispatchInsert(cursor, { text: 'Абзац' });
+  assert.deepEqual(short.insert.params, ['Абзац'], 'a cursor dispatch carries no newline');
+  short.insert.callback(undefined);
+  confirmRead(cursor).callback(`${cursor.state.html}<p>Абзац</p>`);
+  assert.deepEqual(await short.pending, VERIFIED,
+    'the cursor payload matches the block text it dispatched, with no newline invented for it');
 });
 
 test('a duplicate baseline answer cannot dispatch a second paste', async () => {
@@ -867,7 +1008,7 @@ test('a baseline that answers synchronously and then throws still dispatches one
       return false;
     }
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const bridge = documentBoundaryRig(plugin, { editorType: 'word' });
   const pending = bridge.insertParagraph({ text: 'Абзац' });
   await tick();
   assert.equal(calls.filter(call => call.name === 'GetFileHTML').length, 1, 'the baseline is dispatched exactly once');
@@ -897,7 +1038,7 @@ test('a baseline dispatch that throws without answering dispatches nothing at al
       return false;
     }
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const bridge = documentBoundaryRig(plugin, { editorType: 'word' });
   const result = await bridge.insertParagraph({ text: 'Абзац' });
   assert.equal(result.ok, false);
   assert.equal(result.code, 'EDITOR_ERROR');

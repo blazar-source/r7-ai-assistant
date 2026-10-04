@@ -6,6 +6,11 @@ import { createRegistry } from '../../src/tools/registry.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { AGENT_CEILINGS, LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
+import { htmlDocument } from '../fixtures/html-document.js';
+
+// The insert confirmation counts in the document's DECODED TEXT: the platform boundary the plugin page
+// supplies is injected here (the fixture stands in for the browser's inert container parse).
+function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, document: htmlDocument() }); }
 
 function fakeBridge(overrides = {}) {
   const seen = [];
@@ -252,7 +257,7 @@ function nativeRig({ scopeText = 'текст', dispatchChannel = true } = {}) {
   const plugin = dispatchChannel
     ? { ...base, executeMethod: dispatch }
     : Object.assign(Object.create({ executeMethod: dispatch }), base);
-  const bridge = createR7Bridge(plugin, { editorType: 'word', clock: { now: () => 0 },
+  const bridge = bridgeWith(plugin, { editorType: 'word', clock: { now: () => 0 },
     timers: { schedule() { return {}; }, clear() {} } });
   // The identity probe reports a bounded document ID with every capability present and tracking off;
   // the SDK callback itself stays held until the test releases it.
@@ -535,7 +540,7 @@ test('an insert whose native dispatch threw is the uncertain class and keeps its
       return false;
     }
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
+  const bridge = bridgeWith(plugin, { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
   const pending = bridge.insertParagraph({ text: 'Абзац' });
   await untilDispatches(calls, 1);
   calls[0].callback(['bounded-id', true, true, false]);
@@ -626,7 +631,7 @@ test('the write path still dispatches the caller replacement unchanged', async (
     executeMethod(name, params, callback) { calls.push({ name, params, callback }); return false; },
     callCommand(body, _c, _r, callback) { calls.push({ name: 'presence', callback }); return false; }
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
+  const bridge = bridgeWith(plugin, { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
   const captured = bridge.readSelection();
   await untilDispatches(calls, 1);
   calls[0].callback('исходный');

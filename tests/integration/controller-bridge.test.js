@@ -5,6 +5,12 @@ import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { mountPanel } from '../../src/ui/view.js';
 import { dom } from '../fixtures/dom.js';
+import { htmlDocument } from '../fixtures/html-document.js';
+
+// The insert confirmation reads the document's DECODED TEXT, so every bridge here is given the platform
+// boundary the plugin page supplies; the fixture stands in for the browser's inert container parse.
+const documentBoundary = htmlDocument();
+function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, document: documentBoundary }); }
 
 function setup(options = {}) {
   let time = 0; const tasks = new Map(); const callbacks = []; let calls = 0;
@@ -12,7 +18,7 @@ function setup(options = {}) {
   const clock = { now() { return time; } };
   const plugin = { info: { editorType: 'word' }, callCommand(_body, _close, _recalculate, cb) { cb(['bounded-id', true, true, false]); },
     executeMethod(name, args, cb) { assert.equal(name, 'GetSelectedText'); assert.deepEqual(args, []); callbacks.push(cb); return false; } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const controller = createController({ bridge, timers, clock, store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } }, transport: async () => { calls++; return { type: 'final', message: 'answer' }; }, ...options });
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   return { controller, bridge, callbacks, get calls() { return calls; }, advance(ms) { time += ms; for (const [key, task] of [...tasks]) if (task.at <= time) { tasks.delete(key); task.fn(); } } };
@@ -28,7 +34,7 @@ function probeFixture(editorType = 'word', hasCommand = true) {
     assert.equal(typeof body, 'function'); assert.equal(close, false); assert.equal(recalculate, false);
     dispatchTasks.push([...tasks.values()].map(task => task.at)); callbacks.push(callback); return false;
   };
-  const bridge = createR7Bridge(plugin, { editorType, timers, clock });
+  const bridge = bridgeWith(plugin, { editorType, timers, clock });
   const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
     crypto: { randomUUID() { uuidCalls++; return '00000000-0000-4000-8000-000000000001'; } },
     transport() { httpCalls++; throw Error('no HTTP for probe'); } });
@@ -159,7 +165,7 @@ test('the controller drives a real read tool through the owned bridge and render
     // until its callback is delivered, exactly like the selection read.
     callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
     executeMethod(name, args, callback) { callbacks.push([name, args, callback]); return false; } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'read_selection', arguments: {} }] }), JSON.stringify({ type: 'final', message: 'Прочитано' })];
   const tree = dom();
   const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
@@ -217,7 +223,7 @@ test('an insert whose native PasteText callback never arrives stops the run as u
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
     JSON.stringify({ type: 'final', message: 'Готово' })];
   const tree = dom();
@@ -295,7 +301,7 @@ test('an acknowledged insert reaches COMPLETE/FINAL with the action ok and no wr
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
     JSON.stringify({ type: 'final', message: 'Готово' })];
   const tree = dom();
@@ -358,7 +364,7 @@ test('a void insert acknowledgement confirmed by a document delta reaches COMPLE
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
     JSON.stringify({ type: 'final', message: 'Готово' })];
   const tree = dom();
@@ -419,7 +425,7 @@ test('a void acknowledgement the document does not confirm stops the run as unce
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
     JSON.stringify({ type: 'final', message: 'Готово' })];
   const tree = dom();
@@ -472,7 +478,7 @@ test('a document that gained TWO occurrences stops the run as uncertain instead 
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
     JSON.stringify({ type: 'final', message: 'Готово' })];
   const tree = dom();
@@ -517,7 +523,7 @@ test('a document baseline that never answers is a known refusal end to end, with
       if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
       throw new Error(`unexpected native method ${name}`);
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
     JSON.stringify({ type: 'final', message: 'Готово' })];
   const tree = dom();

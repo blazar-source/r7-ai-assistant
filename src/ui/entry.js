@@ -4,7 +4,7 @@ import { mountPanel } from './view.js';
 
 // Standard SDK init and two existing package-evidenced plugin event channels.
 // Neither event is an exhaustive, runtime-proved document/selection notification.
-export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, controllerFactory = createController, viewFactory = mountPanel } = {}) {
+export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, controllerFactory = createController, viewFactory = mountPanel, platformDocument = null } = {}) {
   let bridge = null;
   let controller = null;
   let view = null;
@@ -42,7 +42,7 @@ export function bindPanel(plugin, root, { bridgeFactory = createR7Bridge, contro
     try {
       const editorType = knownEditor();
       initializedEditorType = editorType;
-      bridge = bridgeFactory(plugin, { editorType });
+      bridge = bridgeFactory(plugin, { editorType, document: platformDocument });
       controller = controllerFactory({ bridge });
       view = viewFactory(root, controller);
       if (typeof plugin.attachEvent === 'function') {
@@ -61,7 +61,10 @@ if (typeof globalThis.document !== 'undefined') {
   const root = globalThis.document.getElementById('panel');
   const plugin = globalThis.Asc?.plugin;
   if (root && plugin) {
-    const binding = bindPanel(plugin, root);
+    // The platform's inert container parse is handed to the bridge HERE, at the one place that already
+    // holds the real page document. The bridge itself never reaches for a global: the boundary is an
+    // explicit argument, so the authored source keeps a single, auditable global touch point.
+    const binding = bindPanel(plugin, root, { platformDocument: globalThis.document });
     globalThis.addEventListener('pagehide', function () { binding.dispose(); });
   } else if (root) root.textContent = 'Локальный SDK Р7 недоступен. Проверьте установленный ../v1/plugins.js; удалённой загрузки нет.';
 }

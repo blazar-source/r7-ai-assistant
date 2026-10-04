@@ -184,37 +184,65 @@ function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
   return assertByteLimit(value, bound);
 }
-// The ONE documented counting form of the insert confirmation: the MINIMALLY HTML-escaped dispatched
-// payload. The document HTML escapes at least `&`, `<`, `>` and `"`, and the payload is arbitrary text
-// (Cyrillic, quotes, angle brackets, ampersands), so a single form is defined and the SAME form is
-// counted before and after the paste — the delta then compares like with like. `&` is replaced FIRST,
-// so an escape introduced by a later step is never escaped a second time. A document that renders the
-// payload RAW is deliberately NOT a match: the raw form is a different string, and accepting either
-// form would make the count depend on which of the two the editor happens to emit.
-const HTML_ESCAPES = Object.freeze([['&', '&amp;'], ['<', '&lt;'], ['>', '&gt;'], ['"', '&quot;']]);
-function escapedPayload(text) {
-  let escaped = text;
-  for (const [raw, html] of HTML_ESCAPES) escaped = escaped.split(raw).join(html);
-  return escaped;
+// The block-level element names the text extraction treats as BOUNDARIES: one "\n" is appended after
+// each of them, so a paragraph break is a real separator in the counted text and a payload that happens
+// to span two blocks cannot match spuriously. `br` is a line break rather than a block, and it is a
+// separator for the same reason — the line really ends there. Inline elements (`span`, `b`, `a`, …) and
+// the root itself add nothing: a block boundary is the only thing the document model guarantees.
+// Anything NOT named here is simply not a boundary, which can only affect whether the `position:'end'`
+// newline form matches, never whether markup counts.
+const BLOCK_TAGS = Object.freeze(new Set(['address', 'article', 'aside', 'blockquote', 'body', 'br', 'dd', 'div',
+  'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr',
+  'html', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'ul']));
+// The document's DECODED TEXT, built with explicit block separators. The export is parsed by the
+// platform's own inert container (`createElement('div')` + `innerHTML`), which decodes entities and
+// never executes the markup, and the text nodes are then collected in tree order with a single "\n"
+// after every block-level element. Plain `textContent` would be WRONG here: it concatenates blocks with
+// no separator, so a payload that happens to span a paragraph boundary would match spuriously, and no
+// entity spelling (`&amp;`, `&lt;`, …) can reach the count at all — markup and attribute values never
+// enter the text stream. That is the whole point: the count is over the document's TEXT, never its
+// markup, so a tag name, an attribute value or an unrelated entity cannot move it.
+function collectText(element, out = [], block = BLOCK_TAGS) {
+  for (const child of Array.from(element.childNodes ?? [])) {
+    if (child.nodeType === 1) collectText(child, out, block);
+    else if (child.nodeType === 3) out.push(child.nodeValue ?? '');
+    if (child.nodeType === 1 && block.has(String(child.nodeName).toLowerCase())) out.push('\n');
+  }
+  return out;
 }
-// The non-overlapping occurrence count of the counting form in the document HTML. The caller refuses
+function documentText(root, html) {
+  // The one DOM API this path needs. `createElement` is read once and checked before use, so the
+  // capability check is explicit rather than a TypeError from an unavailable platform API, and the
+  // returned string is what a caller counts in. No dynamic code generation is involved: assigning
+  // `innerHTML` to an INERT element parses data, it does not execute it.
+  let element;
+  try {
+    if (typeof root?.createElement === 'function') element = root.createElement('div');
+  } catch { element = null; }
+  if (!element || element.nodeType !== 1 || typeof element.childNodes === 'undefined') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  element.innerHTML = html;
+  return collectText(element).join('');
+}
+// The non-overlapping occurrence count of the counting form in the document TEXT. The caller refuses
 // an EMPTY needle before any read is dispatched (an empty needle would count characters, never a
 // payload), so an occurrence here is always a whole counting form.
-function countOccurrences(html, needle) {
+function countOccurrences(text, needle) {
   let count = 0;
   let from = 0;
   for (;;) {
-    const at = html.indexOf(needle, from);
+    const at = text.indexOf(needle, from);
     if (at < 0) return count;
     count += 1;
     from = at + needle.length;
   }
 }
-// A document HTML read is bounded by its OWN ceiling, never by the scoped editor-result window, and a
+// A document export read is bounded by its OWN ceiling, never by the scoped editor-result window, and a
 // result above it is refused rather than truncated: counting occurrences inside a prefix of the export
 // could miss an occurrence or count a partial one, so an export that cannot be read WHOLE makes the
-// read unusable (fail-closed). A non-string answer is refused by the same call.
-function decodeDocumentHtml(value) {
+// read unusable (fail-closed). A non-string answer is refused by the same call. The ceiling applies to
+// the EXPORT (the UTF-8 bytes the native answered), which is what the read costs, not to the shorter
+// decoded text derived from it.
+function decodeDocumentText(value) {
   return assertByteLimit(value, LIMITS.documentHtmlBytes);
 }
 // A native insert acknowledgement. `true`/`false` are the only values that carry information: they
@@ -279,6 +307,12 @@ function applyData(raw) {
 // on context/generation changes and dispose on teardown; neither retracts work.
 export function createR7Bridge(plugin, {
   editorType,
+  // The platform DOM the confirmation parses the document export with. It is an EXPLICIT option, never a
+  // lookup reached for through a global from inside the bridge: the boundary is declared where the bridge
+  // is created (the plugin page passes the platform's `document`, a test injects its own) and the authored
+  // source touches no global at all. Absent or unusable, the text cannot be built, which makes the read
+  // unusable — the fail-closed direction: no usable baseline means no evidence means no write.
+  document = null,
   clock = { now: () => Date.now() },
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
 } = {}) {
@@ -375,12 +409,21 @@ export function createR7Bridge(plugin, {
       owned.cancel = cancel;
       // THE DOCUMENT-DELTA CONFIRMATION of an unusable insert acknowledgement, and the PRE-DISPATCH
       // BASELINE it needs. The acknowledgement carries no value, so the still-OWNED ticket asks the
-      // DOCUMENT itself: it reads the document's own HTML export ONCE BEFORE the paste (`GetFileHTML`,
-      // the same public method channel every other read uses), counts the occurrences of the dispatched
-      // payload in it and stores that as the baseline; after the paste settles it reads the export ONCE
-      // more and counts again. The effect is verified ONLY when the post count is exactly
-      // `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste added the
-      // payload.
+      // DOCUMENT itself: it reads the document's own export ONCE BEFORE the paste (`GetFileHTML`, the
+      // same public method channel every other read uses), counts the occurrences of the dispatched
+      // payload in the document's DECODED TEXT and stores that as the baseline; after the paste settles
+      // it reads the export ONCE more and counts again. The effect is verified ONLY when the post count
+      // is exactly `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste
+      // added the payload.
+      //
+      // Why the TEXT and not the markup. Counting in the export's HTML source is fail-open: markup and
+      // entity vocabulary contribute occurrences that are not in the document's text. An independent
+      // review demonstrated it with payload `amp` over an export `<p>a &amp; b</p>`: the source holds
+      // TWO `amp` substrings (`a`+`amp`+`&amp;`+` b`), so one unrelated escaped ampersand added by the
+      // user moved the count by one and a paste that inserted NOTHING was reported
+      // `{"ok":true,"data":{"sent":true,"effectVerified":true}}`. In the decoded text those two
+      // occurrences do not exist at all, and a payload holding `&`, `<`, `>` or `"` matches by its real
+      // characters — the escaping rule this replaced is gone.
       //
       // Why a document delta and not a caret-scope equality. A post-dispatch observation that
       // reproduces the payload proves only that the caret scope EQUALS the payload, and "equals the
@@ -409,12 +452,18 @@ export function createR7Bridge(plugin, {
       function beginInsert() {
         const payload = params[0]; // the exact string that will be dispatched to the editor
         try {
-          // The ONE counting form, computed ONCE and used for BOTH reads, so the delta compares the
-          // same needle before and after. An EMPTY needle is a counting form that cannot describe a
-          // payload at all (it would count characters), so it makes the baseline unusable.
-          owned.htmlNeedle = escapedPayload(payload);
-          if (owned.htmlNeedle === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
-        } catch { owned.htmlNeedle = null; }
+          // The ONE needle, computed ONCE and used for BOTH reads, so the delta compares the same
+          // string before and after. It is the EXACT dispatched payload — `text` for `position:'cursor'`
+          // and `text + "\n"` for `position:'end'`, exactly as the caller built it (this ticket does not
+          // change the caller's payload): with block separators that trailing newline is a real
+          // character of the extracted text, so the `end` form can legitimately match a paragraph break.
+          // No escaping is applied anywhere: the count runs over decoded text, where a payload holding
+          // `&`, `<`, `>` or `"` is spelled by its real characters. An EMPTY needle is a counting form
+          // that cannot describe a payload at all (it would count characters), so it makes the baseline
+          // unusable.
+          owned.needle = String(payload);
+          if (owned.needle === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+        } catch { owned.needle = null; }
         owned.htmlBaseline = null;
         // The once-per-ticket dispatch marks: a read is dispatched at most once even when a native
         // delivers its callback SYNCHRONOUSLY and THEN throws out of the same call (see below).
@@ -423,24 +472,25 @@ export function createR7Bridge(plugin, {
         readHtmlBaseline();
         notify();
       }
-      // THE pre-dispatch baseline read. It never mutates anything: it reads the document's own HTML
-      // export and counts the counting form in it. The once-per-ticket boundary is STRUCTURAL, not an
-      // assumption about native callback ordering — a native that delivers this callback synchronously
+      // THE pre-dispatch baseline read. It never mutates anything: it reads the document's own export,
+      // parses it into text and counts the needle in it. The once-per-ticket boundary is STRUCTURAL, not
+      // an assumption about native callback ordering — a native that delivers this callback synchronously
       // and then throws out of the same call must not re-enter this function and dispatch a SECOND
       // baseline (which a ladder used to turn into a second `PasteText` for one logical insert).
       //
       // The read is the GATE of the whole insert: the paste is dispatched from THIS callback, after the
       // count was obtained. Anything else — the needle could not be built, the read threw, errored, was
-      // malformed or non-string, was above `LIMITS.documentHtmlBytes`, or the ticket deadline expired
-      // before the answer — means no baseline exists, so no confirmation is possible at all, and the
-      // ticket settles its own KNOWN class with NOTHING dispatched and the slot RELEASED. Reporting
-      // `APPLY_UNCERTAIN` here would be a false uncertainty about a mutation that never happened, and
-      // holding the slot would wedge the bridge behind a settled ticket.
+      // malformed or non-string, was above `LIMITS.documentHtmlBytes`, the platform DOM the text is built
+      // with is unusable, or the ticket deadline expired before the answer — means no baseline exists, so
+      // no confirmation is possible at all, and the ticket settles its own KNOWN class with NOTHING
+      // dispatched and the slot RELEASED. Reporting `APPLY_UNCERTAIN` here would be a false uncertainty
+      // about a mutation that never happened, and holding the slot would wedge the bridge behind a
+      // settled ticket.
       function readHtmlBaseline() {
         if (slot !== owned || owned.settled || disposed) return; // a settled ticket never dispatches the mutation
         if (owned.htmlBaselineDispatched) return; // this ticket's single baseline already went out
         owned.htmlBaselineDispatched = true;
-        if (owned.htmlNeedle === null) { refuseInsert(new SafeError(ERROR_CODES.INVALID_DATA)); return; }
+        if (owned.needle === null) { refuseInsert(new SafeError(ERROR_CODES.INVALID_DATA)); return; }
         let answered = false;
         function baselineCallback(value) {
           if (slot !== owned) return;
@@ -451,7 +501,7 @@ export function createR7Bridge(plugin, {
           try {
             if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
             if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
-            owned.htmlBaseline = countOccurrences(decodeDocumentHtml(value), owned.htmlNeedle);
+            owned.htmlBaseline = countOccurrences(documentText(document, decodeDocumentText(value)), owned.needle);
           } catch (error) { failure = error instanceof SafeError ? error : new SafeError(ERROR_CODES.EDITOR_ERROR); }
           if (failure === null) { dispatchPaste(); return; }
           refuseInsert(failure);
@@ -519,7 +569,7 @@ export function createR7Bridge(plugin, {
             // EXACTLY one NEW occurrence, and nothing else: zero (or a payload that is absent) means
             // this paste added nothing, two or more means the document changed in a way this single
             // paste does not explain, and an unreadable export proves nothing either way.
-            confirmed = countOccurrences(decodeDocumentHtml(value), owned.htmlNeedle) === owned.htmlBaseline + 1;
+            confirmed = countOccurrences(documentText(document, decodeDocumentText(value)), owned.needle) === owned.htmlBaseline + 1;
           } catch { confirmed = false; }
           if (confirmed) {
             slot = null;
@@ -720,11 +770,13 @@ export function createR7Bridge(plugin, {
     // not implement it never calls back, so the ticket settles APPLY_UNCERTAIN rather than success.
     // An acknowledgement that carries NO value is the one measured case on the live 2026.3.1 build
     // (the paste applies and the callback receives `undefined`): the ticket reads the document's own
-    // HTML export ONCE BEFORE the paste and counts the dispatched payload in it, dispatches the paste
-    // exactly once, and then reads that export ONCE more and reports success only when the post count
-    // is exactly `baselineCount + 1`. A paste that silently mutates nothing cannot move a document
-    // count, and neither can a concurrent change to the caret scope, so `effectVerified` now means
-    // what it says: the DOCUMENT gained this payload once. No mutation is ever retried by this bridge.
+    // export ONCE BEFORE the paste, decodes it to TEXT and counts the dispatched payload in that text,
+    // dispatches the paste exactly once, and then reads the export ONCE more and reports success only
+    // when the post count is exactly `baselineCount + 1`. Counting in decoded text rather than in the
+    // export's markup is what makes the rule sound: markup and entities cannot contribute an
+    // occurrence, so a paste that silently mutates nothing cannot move a document count and neither can
+    // an unrelated `&` the user typed. `effectVerified` therefore means what it says: the DOCUMENT's
+    // TEXT gained exactly this payload once. No mutation is ever retried by this bridge.
     // The pre-dispatch read is itself a gate: without a usable baseline count there is nothing to
     // compare against, so the insert refuses with its own known class before any dispatch and releases
     // the slot. The caller's `signal` is honoured the same way: an abort before the paste is dispatched

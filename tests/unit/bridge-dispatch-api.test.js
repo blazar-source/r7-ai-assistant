@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
+import { htmlDocument } from '../fixtures/html-document.js';
+
+// The insert confirmation counts in the document's DECODED TEXT, so every bridge in this file is handed
+// the platform boundary the plugin page supplies (the fixture stands in for the browser's inert
+// container parse). Nothing here depends on a browser global.
+const documentBoundary = htmlDocument();
+function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, document: documentBoundary }); }
 
 // --- the target build's dispatch API: `executeCommand` vs `callCommand` ---------------------------
 // Measured on the exact target (Astra Linux + R7-Office 2026.1.2.1942): the plugin object exposes
@@ -87,7 +94,7 @@ function dispatchRig(command) {
         return false;
       } : undefined
   };
-  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const bridge = bridgeWith(plugin, { editorType: 'word' });
   return { bridge, commands, calls,
     pastes: () => calls.filter(call => call[0] === 'PasteText') };
 }
@@ -162,7 +169,7 @@ test('the presence body observes presence only: no identity call, no selection r
       try { callback(body()); } finally { if (previous) Object.defineProperty(globalThis, 'Api', previous); else delete globalThis.Api; }
       return false;
     } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const bridge = bridgeWith(plugin, { editorType: 'word' });
   const result = await bridge.probeCapabilities();
   assert.deepEqual(result.methodPresence, presence(true), 'the facade is inspected as an object of methods, never invoked');
   assert.equal(carriedWhich(carried), 'capability', 'the presence body is the one dispatched by the capability probe');
@@ -200,7 +207,7 @@ function productRig(command) {
         callback(commandAnswer(which));
         return false;
       } : undefined };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   return { bridge, commands, selections, html, inserts };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -256,7 +263,7 @@ test('the panel capability action reports presence on the executeCommand-only sh
   const plugin = { info: { editorType: 'word' },
     executeMethod() { throw new Error('the presence probe must not read selection'); },
     executeCommand(_name, source, callback) { callback(commandAnswer(carriedWhich(source))); return false; } };
-  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const bridge = bridgeWith(plugin, { editorType: 'word', timers, clock });
   const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
     crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
     transport: async () => { throw new Error('no HTTP for a capability probe'); } });
@@ -303,7 +310,7 @@ function carriedRig(command = 'callCommand') {
         callback(commandAnswer(carriedWhich(source)));
         return false;
       } : undefined };
-  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const bridge = bridgeWith(plugin, { editorType: 'word' });
   return { bridge, commands };
 }
 
