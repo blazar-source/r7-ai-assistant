@@ -211,3 +211,24 @@ test('raw mode rejects a pre-aborted signal before any request', async () => {
   assert.equal(calls, 0);
   assert.equal(env.delays.length, 0);
 });
+
+test('the agent option threads the agent snapshot through requestCompletion', async () => {
+  const env = environment();
+  const conversation = [{ role: 'system', content: 'rules' }, { role: 'user', content: 'сделай' },
+    { role: 'user', content: 'earlier tool results were dropped from context; re-read what you still need' }];
+  for (let n = 0; n < 16; n += 1) {
+    conversation.push({ role: 'assistant', content: `{"type":"tool_calls","n":${n}}` });
+    conversation.push({ role: 'user', content: `{"type":"tool_results","n":${n}}` });
+  }
+  let captured;
+  const result = await requestCompletion(settings(), conversation, uuid, options(env,
+    async (url, init) => { captured = { url, init }; return response(envelope('{"type":"final","message":"ок"}')); },
+    { parse: 'raw', agent: true }));
+  assert.deepEqual(result, { content: '{"type":"final","message":"ок"}' });
+  assert.deepEqual(JSON.parse(captured.init.body).messages, conversation);
+  assert.ok(JSON.parse(captured.init.body).messages.length > 32, 'the agent snapshot must exceed the Sprint 1 count cap');
+  // Without the option the same conversation is refused by the untouched chat snapshot, before any fetch.
+  let calls = 0;
+  await assert.rejects(requestCompletion(settings(), conversation, uuid, options(env, async () => { calls++; return response(); }, { parse: 'raw' })), code('BYTE_LIMIT'));
+  assert.equal(calls, 0);
+});

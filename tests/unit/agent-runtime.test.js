@@ -21,6 +21,14 @@ function respond(sequence) {
   return async () => ({ content: sequence[Math.min(index++, sequence.length - 1)] });
 }
 
+// A shaped Response for the default (non-injected) transport path: the runtime test below drives the
+// real requestCompletion against a stubbed global fetch.
+function modelResponse(content) {
+  const bytes = new TextEncoder().encode(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content } }] }));
+  let read = false;
+  return { status: 200, body: { getReader: () => ({ read: async () => { if (read) return { done: true }; read = true; return { done: false, value: bytes }; }, cancel: async () => {}, releaseLock: () => {} }) } };
+}
+
 test('runs read then a batch of auto mutations then final, in order', async () => {
   calls.length = 0;
   const result = await runAgent({ ...baseArgs, transport: respond([
@@ -45,6 +53,7 @@ test('a known tool error is returned to the model and the run continues', async 
   ]) });
   assert.equal(result.status, 'FINAL');
   assert.equal(result.actions[0].outcome, 'error');
+  assert.equal(result.actions[0].code, 'TOOL_ERROR');
 });
 
 test('an uncertain mutation stops the run and prevents the rest of the batch', async () => {
@@ -245,6 +254,68 @@ test('an uncertain action is recorded as uncertain, not as an ordinary tool erro
   ]) });
   assert.equal(result.status, 'UNCERTAIN');
   assert.deepEqual(result.actions.map(action => action.outcome), ['uncertain']);
+  assert.deepEqual(result.actions.map(action => action.code), ['TOOL_UNCERTAIN']);
+});
+
+test('the action record carries a closed code only when the outcome is not ok', async () => {
+  const failing = createRegistry([
+    { ...base, name: 'read_selection', precondition: () => null, execute: () => ({ ok: false, code: 'PRIVATE_DETAIL', message: 'synthetic-key secret' }) }
+  ]);
+  const result = await runAgent({ ...baseArgs, registry: failing, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ]) });
+  assert.equal(result.actions[0].outcome, 'error');
+  // A handler code outside the closed vocabulary collapses to the tool-error class, and neither the
+  // handler's code nor its raw message is ever published into the action record.
+  assert.equal(result.actions[0].code, 'TOOL_ERROR');
+  assert.deepEqual(Object.keys(result.actions[0]).sort(), ['bytes', 'code', 'outcome', 'tool']);
+  assert.ok(!JSON.stringify(result.actions).includes('PRIVATE_DETAIL'));
+  assert.ok(!JSON.stringify(result.actions).includes('synthetic-key'));
+});
+
+test('a failed action with no readable code still carries the tool-error class', async () => {
+  const broken = createRegistry([
+    { ...base, name: 'read_selection', precondition: () => null, execute: () => 'not a result' }
+  ]);
+  const result = await runAgent({ ...baseArgs, registry: broken, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}',
+    '{"type":"final","message":"ок"}'
+  ]) });
+  assert.equal(result.actions[0].outcome, 'error');
+  assert.equal(result.actions[0].code, 'TOOL_ERROR');
+});
+
+test('a precondition refusal keeps its closed class in the action record', async () => {
+  const busy = createRegistry([
+    { ...base, name: 'read_selection', precondition: () => ({ code: 'EDITOR_BUSY', message: 'busy' }), execute: () => ({ ok: true, data: {} }) }
+  ]);
+  const result = await runAgent({ ...baseArgs, registry: busy, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}',
+    '{"type":"final","message":"ок"}'
+  ]) });
+  assert.equal(result.actions[0].outcome, 'error');
+  assert.equal(result.actions[0].code, 'EDITOR_BUSY');
+  assert.ok(!JSON.stringify(result.actions).includes('busy'));
+});
+
+test('the default send carries a run past the Sprint 1 chat caps with the agent snapshot', async () => {
+  const sent = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { sent.push(JSON.parse(init.body)); return modelResponse('{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}'); };
+  let result;
+  try {
+    result = await runAgent({ ...baseArgs,
+      settings: { endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic-key' },
+      guardrails: { maxSteps: 20, maxToolCalls: 32, operationDeadlineMs: 150000 } });
+  } finally { globalThis.fetch = original; }
+  // Without the agent snapshot the 17th step would be refused (BYTE_LIMIT at 34 messages > 32).
+  assert.equal(result.status, 'LIMIT');
+  assert.equal(result.steps, 20);
+  assert.equal(result.code, null);
+  assert.equal(sent.length, 20);
+  assert.deepEqual(sent[0].messages.map(message => message.role), ['system', 'user']);
+  assert.ok(sent.at(-1).messages.length > 32, 'the agent snapshot must carry more than the Sprint 1 count cap');
 });
 
 test('an invalid setup is a closed result, never a rejected promise', async () => {

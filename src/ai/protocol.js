@@ -2,7 +2,7 @@ import { validateRequestSettings } from '../config/settings.js';
 import { LIMITS } from '../shared/limits.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 import { assertByteLimit, utf8ByteLength } from '../shared/bytes.js';
-import { validateUUID, snapshotRequestMessages } from '../shared/session.js';
+import { validateUUID, snapshotRequestMessages, snapshotAgentMessages } from '../shared/session.js';
 
 function jsonStringBytes(text) {
   let bytes = 2;
@@ -18,10 +18,12 @@ function jsonStringBytes(text) {
   }
   return bytes;
 }
-export function createRequest(settings, messages, uuid) {
+// The default path is the strict chat snapshot, byte for byte. The agent loop asks explicitly for its
+// own snapshot, which is the only caller that may send a runtime-authored conversation.
+export function createRequest(settings, messages, uuid, options = {}) {
   const effective = validateRequestSettings(settings);
   validateUUID(uuid);
-  const snapshot = snapshotRequestMessages(messages);
+  const snapshot = options.agent === true ? snapshotAgentMessages(messages) : snapshotRequestMessages(messages);
   // Empty-content serialization accounts for keys, punctuation and numeric settings.
   const skeleton = JSON.stringify({ model: effective.model, messages: snapshot.map(entry => ({ role: entry.role, content: '' })), max_tokens: effective.maxTokens, temperature: effective.temperature });
   let bytes = utf8ByteLength(skeleton);

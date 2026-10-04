@@ -1,4 +1,4 @@
-import { LIMITS } from './limits.js';
+import { LIMITS, AGENT_CEILINGS } from './limits.js';
 import { ERROR_CODES, SafeError } from './errors.js';
 import { assertByteLimit, utf8ByteLength } from './bytes.js';
 
@@ -48,6 +48,35 @@ export function snapshotRequestMessages(messages) {
   const context = hasContext ? [message(messages.at(-2), 'user', LIMITS.selectionBytes)] : [];
   const result = [system, ...pairs(messages.slice(1, hasContext ? -2 : -1)), ...context, current];
   if (contentBytes(result) > LIMITS.sentHistoryBytes) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
+  return Object.freeze(result);
+}
+// One message of an agent conversation declares its own role, so the strict helper still owns every
+// shape check: a second `system` message or an unknown role is refused by the helper's own role
+// comparison, never by a check written here. A shape failure is retried under the other legal role;
+// any classified failure other than that mismatch (a byte limit, for instance) is reported as itself.
+function agentMessage(raw, maximum) {
+  for (const role of ['user', 'assistant']) {
+    try { return message(raw, role, maximum); }
+    catch (error) {
+      if (!(error instanceof SafeError) || error.code !== ERROR_CODES.INVALID_DATA) throw error;
+    }
+  }
+  return invalid();
+}
+// The agent loop owns its conversation, so its snapshot is not the chat snapshot. There is
+// deliberately NO alternation requirement: the context window preserves the runtime-authored order,
+// pair eviction keeps the conversation coherent, and the drop marker is a deliberate adjacent `user`
+// note telling the model it may re-read. An evicted tool result can likewise leave two adjacent
+// assistant envelopes, and neither shape is one the model cannot answer.
+//
+// There is deliberately no message-count cap of its own: the window's content+per-message accounting
+// and createRequest's existing requestBytes budget already bind the request, and §12.2 requires far
+// larger maxSteps to work without a runtime change.
+export function snapshotAgentMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) invalid();
+  const maximum = AGENT_CEILINGS.activeContextBytes;
+  const result = [message(messages[0], 'system', maximum), ...messages.slice(1).map(raw => agentMessage(raw, maximum))];
+  if (contentBytes(result) > maximum) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
   return Object.freeze(result);
 }
 export function buildContextMessages(system, current, selection, history = []) {

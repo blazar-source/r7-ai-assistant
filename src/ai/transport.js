@@ -32,7 +32,9 @@ function discardResponse(response) {
 // deadline is the caller's absolute operation deadline (same clock), e.g. analysis-start + 150000.
 // It can shorten, never extend, the locally owned total/HTTP deadlines. No retries/repair.
 export async function requestCompletion(settings, messages, uuid, options = {}) {
-  const request = createRequest(settings, messages, uuid);
+  // Only an explicit `agent: true` selects the agent conversation snapshot; every other caller keeps
+  // the strict chat snapshot unchanged.
+  const request = createRequest(settings, messages, uuid, { agent: options.agent === true });
   const mode = options.mode ?? 'ASK';
   if (mode !== 'ASK' && mode !== 'EDIT') throw safe(ERROR_CODES.INVALID_DATA);
   const fetch = options.fetch ?? globalThis.fetch;

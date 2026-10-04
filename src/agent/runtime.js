@@ -19,6 +19,14 @@ function actionOutcome(result) {
   if (result.code === ERROR_CODES.TOOL_UNCERTAIN) return 'uncertain';
   return result.ok === true ? 'ok' : 'error';
 }
+// An action that did not succeed also carries the closed class of its failure (Task 9 renders the
+// reason from it). The handler's own code is republished only when it is one of the closed classes —
+// an arbitrary string, a message and any document content are never copied into the record — and a
+// failure with no readable class is the tool-error class.
+function actionCode(result) {
+  const candidate = result?.code;
+  return typeof candidate === 'string' && ERROR_CODES[candidate] === candidate ? candidate : ERROR_CODES.TOOL_ERROR;
+}
 // Technical size of one result for the actions log: content is measured, never retained, and a
 // value that cannot be serialized must not turn a technical metric into a run-ending exception.
 function payloadBytes(result) {
@@ -44,7 +52,7 @@ export async function runAgent(options) {
     const context = createContextWindow();
     // Deterministic deadline on the injected clock, checked before every step and every action.
     const deadline = now() + guardrails.operationDeadlineMs;
-    const send = transport ?? (messages => requestCompletion(settings, messages, uuid, { parse: 'raw', signal, deadline }));
+    const send = transport ?? (messages => requestCompletion(settings, messages, uuid, { parse: 'raw', agent: true, signal, deadline }));
     context.append({ role: 'system', content: systemRules(catalogue, mode) });
     context.append({ role: 'user', content: request });
     while (steps < guardrails.maxSteps) {
@@ -111,7 +119,10 @@ export async function runAgent(options) {
           ? { ok: false, code: refusal.code ?? ERROR_CODES.TOOL_ERROR, message: refusal.message ?? 'precondition' }
           : await entry.descriptor.execute(entry.arguments, { editor, capabilities, mode });
         const outcome = actionOutcome(result);
-        actions.push(Object.freeze({ tool: entry.descriptor.name, outcome, bytes: payloadBytes(result) }));
+        const bytes = payloadBytes(result);
+        actions.push(Object.freeze(outcome === 'ok'
+          ? { tool: entry.descriptor.name, outcome, bytes }
+          : { tool: entry.descriptor.name, outcome, code: actionCode(result), bytes }));
         onEvent(Object.freeze({ step: steps, tool: entry.descriptor.name, outcome }));
         if (outcome === 'uncertain') return finish('UNCERTAIN');
         results.push({ tool: entry.descriptor.name, result });
