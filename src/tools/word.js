@@ -74,21 +74,41 @@ function scopeLimit(scope) {
 const MAX_CONTEXT_INDEX = 64;
 
 // The exact bytes of ONE tool-result ENTRY in the form the runtime serializes and bounds:
-// `JSON.stringify({ tool: name, ...result })` in that key order — the shape `stringifyToolResults`
-// (src/agent/protocol.js) builds and measures against `AGENT_CEILINGS.toolResultBytes`, and the shape
-// whose refusal `appendToolResults` (src/agent/runtime.js) turns into the literal "the tool result
-// could not be serialized". This module cannot import that function (src/agent/* is the runtime's own
-// layer), so it reproduces the shape; a test pins the two together by measuring the real serializer.
+// `JSON.stringify({ tool, ok: true, data })` — the shape `stringifyToolResults` (src/agent/protocol.js)
+// builds from `{ tool, ...result }` for the handler's own `ok(data)` result and measures against
+// `AGENT_CEILINGS.toolResultBytes`, and the shape whose refusal `appendToolResults`
+// (src/agent/runtime.js:27-36) turns into the literal "the tool result could not be serialized". This
+// module cannot import that function (src/agent/* is the runtime's own layer), so it reproduces the
+// shape; tests pin the two together by measuring the real serializer against the published result.
 // `utf8ByteLength` counts a STRING value's contribution exactly as `JSON.stringify` emits it, including
 // the `\uXXXX` escaping of control characters and lone surrogates, so the whole entry is measured, not
 // just the text.
-function documentEntryBytes(text, offset, totalChars, nextOffset) {
+// There is ONE such measurement for the whole module — every read handler's bound is this call, and the
+// per-tool wrappers below only name the data object their handler publishes. That is deliberate: a
+// second, competing measurement of the same entry is how `read_selection` and `read_context` came to
+// bound their raw text alone while the entries they published were refused, so the shape cannot be
+// allowed to drift from one tool to the next.
+function toolResultEntryBytes(tool, data) {
   let serialized;
-  try {
-    serialized = JSON.stringify({ tool: 'read_document_text', ok: true,
-      data: { text, offset, totalChars, truncated: nextOffset !== null, nextOffset } });
-  } catch { return null; }
+  try { serialized = JSON.stringify({ tool, ok: true, data }); }
+  catch { return null; }
   return typeof serialized === 'string' ? utf8ByteLength(serialized) : null;
+}
+// `read_document_text`'s own entry: `truncated` and `nextOffset` are ONE fact (`nextOffset !== null`),
+// exactly as the handler publishes them.
+function documentEntryBytes(text, offset, totalChars, nextOffset) {
+  return toolResultEntryBytes('read_document_text',
+    { text, offset, totalChars, truncated: nextOffset !== null, nextOffset });
+}
+// `read_selection`'s own entry, measured on the values ABOUT TO BE PUBLISHED (`text` and its own byte
+// count), exactly like the two reads above it.
+function selectionEntryBytes(text, bytes) {
+  return toolResultEntryBytes('read_selection', { text, bytes });
+}
+// `read_context`'s own entry, measured on the fields its handler republishes — including the scope and
+// the index, which are part of the entry the runtime bounds.
+function contextEntryBytes(scope, index, text, bytes) {
+  return toolResultEntryBytes('read_context', { scope, index, text, bytes });
 }
 // The slice is over UTF-16 code units, so a cut can land BETWEEN the two units of one character's
 // surrogate pair. A chunk that begins on a low surrogate or ends on an unpaired high one is not a
@@ -134,20 +154,15 @@ function publishedChunk(document, start, end, offset, totalChars) {
   return { text, nextOffset, bytes: documentEntryBytes(text, offset, totalChars, nextOffset) };
 }
 
-// The exact bytes of ONE `read_paragraph` tool-result ENTRY in the form the runtime serializes and
-// bounds: `JSON.stringify({ tool: name, ...result })` in that key order, the same shape and the same
-// reasoning as `documentEntryBytes` above (the runtime's own serializer is `stringifyToolResults` in
-// src/agent/protocol.js, which this module cannot import, so a test pins the two shapes together).
+// The exact bytes of ONE `read_paragraph` tool-result ENTRY, through the module's one measurement
+// (`toolResultEntryBytes`): `JSON.stringify({ tool: 'read_paragraph', ok: true,
+// data: { scope: 'sentence', text, bytes } })`, the shape this handler publishes.
 // The measurement is NOT a formality and it is NOT the text's own byte count: `JSON.stringify` escapes
 // every C0 control character to two characters and every lone surrogate to six, so a caret context well
 // inside `LIMITS.readParagraphBytes` can serialize to an entry far above `AGENT_CEILINGS.toolResultBytes`.
 // Measuring the real entry is the only bound that cannot be defeated by the text's own characters.
 function paragraphEntryBytes(text, bytes) {
-  let serialized;
-  try {
-    serialized = JSON.stringify({ tool: 'read_paragraph', ok: true, data: { scope: 'sentence', text, bytes } });
-  } catch { return null; }
-  return typeof serialized === 'string' ? utf8ByteLength(serialized) : null;
+  return toolResultEntryBytes('read_paragraph', { scope: 'sentence', text, bytes });
 }
 
 export function createWordTools(bridge) {
@@ -165,6 +180,19 @@ export function createWordTools(bridge) {
             typeof selection.text !== 'string' || selection.text === '') return known();
         const bytes = utf8ByteLength(selection.text);
         if (bytes > AGENT_CEILINGS.contextReadBytes.selection) return known(ERROR_CODES.BYTE_LIMIT);
+        // The RAW bound above is not the bound the runtime applies. The runtime bounds ONE tool-result
+        // ENTRY — `JSON.stringify({ tool, ...result })` — by `AGENT_CEILINGS.toolResultBytes`, and
+        // `JSON.stringify` escapes every C0 control character to TWO characters and every lone surrogate
+        // to SIX: a selection of 8192 newlines is 8192 raw bytes and a 16451-byte entry, which
+        // `stringifyToolResults` (protocol.js:91) refuses, `runtime.js:27-36` replaces with the literal
+        // "the tool result could not be serialized", and the run's action log still records `ok` — the
+        // model receives NO text for a call the run calls successful. A selection read must NOT be
+        // shortened to fit either: a shortened selection would be presented as THE selection, and the
+        // model cannot tell it from one the user really made, so the only closed outcome left is the
+        // refusal. The entry is measured on the values about to be published, exactly as
+        // `read_paragraph` and `read_document_text` measure theirs.
+        const entry = selectionEntryBytes(selection.text, bytes);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok({ text: selection.text, bytes });
       }
     }),
@@ -390,10 +418,13 @@ export function createWordTools(bridge) {
       // channel every other leg already uses.
       //
       // THE PRIMITIVE EVIDENCE. The vendored copy of the installed build's word SDK source
-      // (`.local/stage-b-runtime/vendor-word-sdk-all.js`, dev-only) was counted by scanning the file's
-      // TEXT: `Select-String` reports ZERO matches for every one of these names on that 15 MB bundle and
-      // is NOT usable as evidence here (measured: it returns 0 for `GetCurrent`, `GetSelectedText` and
-      // `pluginMethod_` alike, while the file's text holds 265, 101 and 4). `pluginMethod_GetCurrentParagraph`,
+      // (`.local/stage-b-runtime/vendor-word-sdk-all.js`, dev-only) was counted by matching the file's
+      // TEXT. `Select-String` was MISUSED on the first pass — its default form is LINE-level and
+      // case-insensitive, so on this single-line 15 MB bundle it reports 17 lines for `GetCurrent`, 12
+      // for `GetSelectedText` and 2 for `pluginMethod_`: counts of LINES, never zero — and it is the
+      // misuse, not the tool, that was wrong: `Select-String -CaseSensitive -AllMatches` returns the
+      // exact per-occurrence totals the file's text holds, 265 / 101 / 4, the same numbers quoted below.
+      // `pluginMethod_GetCurrentParagraph`,
       // `pluginMethod_GetCurrentSentence`, `pluginMethod_GetCurrentWord` and `pluginMethod_GetSelectedText`
       // each occur 0 times, and those zeros prove NOTHING: `pluginMethod_` is not a naming convention in
       // this bundle, it occurs FOUR times in total — the explicit `PasteHtml` / `PasteText` /
@@ -401,11 +432,14 @@ export function createWordTools(bridge) {
       // editor resolves every other method name dynamically and no prefixed literal exists to count.
       // The BARE names are what exist: `GetCurrentParagraph` 125, `GetSelectedText` 101,
       // `GetCurrentWord` 7, `GetCurrentSentence` 6. NO plugin-level PARAGRAPH getter is established:
-      // every sampled `GetCurrentParagraph` is document-content-level — `documentContent.GetCurrentParagraph()`
-      // and the single `Ct.prototype.GetCurrentParagraph`, i.e. the `Api`/`getTargetDocContent()` route,
-      // which manipulates the DOCUMENT rather than the caret and which Phase 0 measured as exposing no
-      // `GetSelection` — so this descriptor dispatches no `GetCurrentParagraph` and never reaches for
-      // `Api`. `GetCurrentSentence` IS established at the plugin level, by this repo's own history:
+      // the 125 hits hold exactly ONE literal `Ct.prototype.GetCurrentParagraph` — the
+      // `Api`/`getTargetDocContent()` route — while the sample `documentContent.GetCurrentParagraph()`
+      // occurs ZERO times and must not be quoted as evidence; the other 124 hits are
+      // `this.X.GetCurrentParagraph` call sites and other `*.prototype.` definitions. All of them are
+      // document-content-level, and that level manipulates the DOCUMENT rather than the caret and was
+      // measured by Phase 0 as exposing no `GetSelection` — so this descriptor dispatches no
+      // `GetCurrentParagraph` and never reaches for `Api`. `GetCurrentSentence` IS established at the
+      // plugin level, by this repo's own history:
       // commit ed65dd5 dispatched exactly `plugin.executeMethod('GetCurrentSentence', [], callback)`
       // through the one owned dispatch channel and records it as "the primitive the live build actually
       // answers with the inserted sentence" on R7-Office 2026.3.1. That is the most precise caret read
@@ -515,6 +549,15 @@ export function createWordTools(bridge) {
         if (typeof response.text !== 'string' || response.text === '') return known();
         const bytes = utf8ByteLength(response.text);
         if (bytes > maxBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        // The SAME measurement the other reads apply, and it is taken here while the policy is still
+        // `deny`. The registry's `deny` withholds this descriptor from every catalogue, but the handler
+        // stays executable when the descriptor is held directly, so the moment this policy is flipped to
+        // `auto` a raw-text-only bound would publish `ok` for an entry the runtime refuses — the model
+        // would receive the literal "the tool result could not be serialized" and the action log would
+        // still record `ok`. THIS measurement is what makes that future `auto` flip safe: the bound the
+        // handler enforces and the bound the runtime enforces are the same bound by construction.
+        const entry = contextEntryBytes(args.scope, args.index, response.text, bytes);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok({ scope: args.scope, index: args.index, text: response.text, bytes });
       }
     }),

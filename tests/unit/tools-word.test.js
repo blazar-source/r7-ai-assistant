@@ -73,6 +73,136 @@ test('read_selection returns bounded data and marks refusals as known errors', a
   assert.equal((await refused.execute({}, { editor: 'word' })).code, 'TOOL_ERROR');
 });
 
+// --- `read_selection` is bounded by the SERIALIZED entry, exactly like the other reads --------------
+//
+// The runtime bounds ONE tool-result entry — `JSON.stringify({ tool, ...result })` — by
+// `AGENT_CEILINGS.toolResultBytes` (16384): `stringifyToolResults` (src/agent/protocol.js:91) refuses an
+// entry above it and `runtime.js:27-36` replaces the whole result with the literal "the tool result could
+// not be serialized", so the model receives NO text while the run's action log still records `ok` — a
+// fail-open signal for exactly the selections the ceiling exists to refuse. Bounding the raw text alone
+// cannot see that: `JSON.stringify` escapes every C0 control character to TWO characters and every lone
+// surrogate to SIX, so a selection inside `contextReadBytes.selection` (8192 raw bytes) can serialize to
+// an entry far outside the ceiling.
+function selectionBridge(text, extras = {}) {
+  const requests = [];
+  return { requests, readSelection: async (request) => { requests.push(request); return { eligible: true, text }; }, ...extras };
+}
+function readSelection(bridge) { return createWordTools(bridge).find(entry => entry.name === 'read_selection'); }
+
+test('read_selection publishes an entry the runtime serializer accepts, measured exactly', async () => {
+  const text = 'я'.repeat(2000);
+  const bridge = selectionBridge(text);
+  const result = await readSelection(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { text, bytes: 4000 });
+  assert.deepEqual(bridge.requests, [{}], 'the selection read makes one bridge call and no arguments');
+  // The measurement is the entry the runtime PUBLISHES — `JSON.stringify({ tool, ...result })` — and it
+  // must be inside the same ceiling `stringifyToolResults` enforces, so the model receives the selection
+  // instead of the literal "the tool result could not be serialized".
+  const measured = utf8ByteLength(JSON.stringify({ tool: 'read_selection', ...result }));
+  assert.ok(measured <= AGENT_CEILINGS.toolResultBytes, `${measured} <= ${AGENT_CEILINGS.toolResultBytes}`);
+  const messages = toolResultMessages([{ tool: 'read_selection', result }]);
+  assert.equal(messages.length, 1);
+  const modelVisible = JSON.parse(messages[0].content);
+  assert.equal(modelVisible.results[0].tool, 'read_selection');
+  assert.equal(modelVisible.results[0].data.text, text, 'the selection survives, whole');
+  assert.equal(modelVisible.results[0].data.bytes, 4000);
+  assert.equal(utf8ByteLength(messages[0].content) <= AGENT_CEILINGS.toolResultBytes + 32, true,
+    'the message envelope stays within one entry plus the framing slack');
+  // Every legal call whose own bound admits it must publish an `ok` the serializer ACCEPTS: the walk
+  // covers the escape-heavy shapes the entry ceiling really bites on, on both sides of the boundary.
+  for (const length of [1, 2, 100, 4095, 4096]) {
+    const walkResult = await readSelection(selectionBridge('я'.repeat(length))).execute({}, { editor: 'word' });
+    assert.equal(walkResult.ok, true, `Cyrillic length ${length}`);
+    assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_selection', result: walkResult }]),
+      `Cyrillic length ${length} must serialize inside the ceiling`);
+  }
+});
+
+test('read_selection refuses a selection whose SERIALIZED entry alone is over the ceiling', async () => {
+  // THE REVIEWER'S EXACT REPRODUCTION. A selection of 8192 newlines is 8192 RAW bytes — inside
+  // `contextReadBytes.selection` — and its published entry is 16451 bytes: 16384 escaped characters plus
+  // the 67-byte envelope. `toolResultMessages` (the runtime serializer) throws on it, so a handler that
+  // measured only the raw text would publish `ok` for a result the runtime replaces with the literal
+  // "the tool result could not be serialized".
+  const text = '\n'.repeat(AGENT_CEILINGS.contextReadBytes.selection);
+  assert.equal(AGENT_CEILINGS.contextReadBytes.selection, 8192);
+  assert.equal(utf8ByteLength(text), 8192, 'the raw text is inside the text bound');
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'read_selection', ok: true, data: { text, bytes: 8192 } }));
+  assert.equal(entry, 16451, 'the reviewer measured 16451 on this exact shape');
+  assert.ok(entry > AGENT_CEILINGS.toolResultBytes, 'and the entry is outside the result ceiling');
+  assert.throws(() => toolResultMessages([{ tool: 'read_selection', result: { ok: true, data: { text, bytes: 8192 } } }]),
+    /TOOL_ERROR/, 'the runtime serializer really refuses that entry');
+  const result = await readSelection(selectionBridge(text)).execute({}, { editor: 'word' });
+  assert.equal(result.ok, false, 'the entry, not the raw text, is the enforced bound');
+  assert.equal(result.code, 'BYTE_LIMIT', 'the closed refusal, never an `ok` the model does not receive');
+  assert.equal(result.message, 'отказ');
+  assert.equal(result.data, undefined, 'a refusal carries no document text at all');
+  assert.equal(JSON.stringify(result).includes('\n'), false, 'no native text leaks through the refusal');
+  assert.equal(JSON.stringify(result).includes('could not be serialized'), false);
+  // The same defect by the other route: a lone surrogate is three raw UTF-8 bytes and SIX once
+  // serialized, so 2730 of them are 8190 raw bytes and a 16447-byte entry.
+  const lone = '\ud800'.repeat(2730);
+  assert.equal(utf8ByteLength(lone), 8190, 'inside the text bound');
+  assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_selection', ok: true, data: { text: lone, bytes: 8190 } })), 16447);
+  const surrogate = await readSelection(selectionBridge(lone)).execute({}, { editor: 'word' });
+  assert.equal(surrogate.ok, false);
+  assert.equal(surrogate.code, 'BYTE_LIMIT');
+  assert.equal(surrogate.data, undefined, 'a refusal carries no document text at all');
+});
+
+test('no read_selection ok result can exceed the runtime result ceiling', async () => {
+  // The invariant, not a spot check: for every candidate shape, an `ok` answer must survive the real
+  // runtime serializer, and an answer that cannot is a closed refusal that carries no document text.
+  const candidates = ['a'.repeat(8192), 'a'.repeat(8193), '\n'.repeat(8158), '\n'.repeat(8159),
+    '\n'.repeat(8192), '\ud800'.repeat(2719), '\ud800'.repeat(2720), 'я'.repeat(4096), 'я'.repeat(4097),
+    '漢'.repeat(2730), '漢'.repeat(2731), `a${'\n'.repeat(100)}b`, 'a\nb\tc'];
+  let served = 0;
+  for (const text of candidates) {
+    const result = await readSelection(selectionBridge(text)).execute({}, { editor: 'word' });
+    if (result.ok) {
+      served += 1;
+      const measured = utf8ByteLength(JSON.stringify({ tool: 'read_selection', ...result }));
+      assert.ok(measured <= AGENT_CEILINGS.toolResultBytes,
+        `served entry ${measured} > ${AGENT_CEILINGS.toolResultBytes} for ${JSON.stringify(text.slice(0, 8))}`);
+      assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_selection', result }]),
+        `served entry must serialize for ${JSON.stringify(text.slice(0, 8))}`);
+      assert.equal(result.data.text, text, 'a served selection is never shortened');
+    } else {
+      assert.equal(result.code, 'BYTE_LIMIT', JSON.stringify(text.slice(0, 8)));
+      assert.equal(result.data, undefined, 'a refusal carries no document text');
+    }
+  }
+  assert.ok(served >= 3, `the walk really served some selections (served ${served})`);
+});
+
+test('a read_selection the runtime would refuse reaches the model as a closed refusal, never as ok', async () => {
+  // End-to-end through the loop: the action log and the model-visible tool result must agree, and the
+  // fail-open shape — the action recorded `ok` while the model received "could not be serialized" —
+  // must be unobservable.
+  const text = '\n'.repeat(AGENT_CEILINGS.contextReadBytes.selection);
+  const registry = createRegistry(createWordTools(selectionBridge(text)));
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}',
+    '{"type":"final","message":"прочитано"}'];
+  const seen = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '33333333-3333-4333-8333-333333333333', request: 'прочитай выделение',
+    transport: async (messages) => { seen.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['read_selection', 'error', 'BYTE_LIMIT']], 'the run records the refusal it really produced');
+  const crossed = seen[1].filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(crossed.length, 1, 'one tool-result message crossed to the model');
+  const parsed = JSON.parse(crossed[0]);
+  assert.equal(parsed.results[0].tool, 'read_selection');
+  assert.equal(parsed.results[0].ok, false);
+  assert.equal(parsed.results[0].code, 'BYTE_LIMIT');
+  assert.equal(parsed.results[0].data, undefined, 'no document text crossed');
+  assert.equal(crossed[0].includes('\\n\\n'), false, 'the selection itself never crossed');
+  assert.equal(crossed[0].includes('could not be serialized'), false, 'the fail-open substitution never fired');
+});
+
 test('insert_paragraph requires non-empty text and passes it through unchanged', async () => {
   const bridge = fakeBridge();
   const tool = createWordTools(bridge).find(entry => entry.name === 'insert_paragraph');
@@ -87,6 +217,43 @@ test('read_context refuses an out-of-range or unknown scope as a known error', a
   const bad = tool.precondition({ scope: 'galaxy', index: 0 }, { editor: 'word' });
   assert.equal(bad.code, 'TOOL_ERROR');
   assert.equal(tool.precondition({ scope: 'paragraph', index: 99 }, { editor: 'word' }).code, 'TOOL_ERROR');
+});
+
+// --- the same entry measurement for the latent `read_context` bound ---------------------------------
+//
+// `read_context` is policy `deny` today, so the handler is unreachable through every catalogue and this
+// leg cannot fail live. It is fixed anyway: the descriptor is executable when held directly (the
+// registry's `deny` is what withholds it, not the handler), so the moment that policy is flipped to
+// `auto` a raw-text-only bound would publish `ok` for entries the runtime refuses. The measurement below
+// is what makes that future flip safe.
+test('read_context bounds the SERIALIZED entry, not only the raw text, so a future auto flip is safe', async () => {
+  const text = '\n'.repeat(AGENT_CEILINGS.contextReadBytes.paragraph);
+  const tool = createWordTools({ readContext: async () => ({ ok: true, text }) }).find(entry => entry.name === 'read_context');
+  assert.equal(tool.policy, 'deny', 'withheld today, which is exactly why the latent bound is fixed now');
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'read_context', ok: true,
+    data: { scope: 'paragraph', index: 0, text, bytes: 16384 } }));
+  assert.equal(entry, 32864, 'the measured entry of the published shape');
+  assert.ok(entry > AGENT_CEILINGS.toolResultBytes, 'the raw text is inside its own bound, the entry is not');
+  assert.throws(() => toolResultMessages([{ tool: 'read_context', result: { ok: true,
+    data: { scope: 'paragraph', index: 0, text, bytes: 16384 } } }]), /TOOL_ERROR/);
+  const result = await tool.execute({ scope: 'paragraph', index: 0 }, { editor: 'word' });
+  assert.equal(result.ok, false, 'the entry, not the raw text, is the enforced bound');
+  assert.equal(result.code, 'BYTE_LIMIT');
+  assert.equal(result.message, 'отказ');
+  assert.equal(result.data, undefined, 'a refusal carries no document text at all');
+  // The same defect by the other route: a lone surrogate triples the raw bytes once serialized.
+  const lone = '\ud800'.repeat(3000);
+  const surrogate = await createWordTools({ readContext: async () => ({ ok: true, text: lone }) })
+    .find(entry => entry.name === 'read_context').execute({ scope: 'section', index: 1 }, { editor: 'word' });
+  assert.equal(surrogate.ok, false);
+  assert.equal(surrogate.code, 'BYTE_LIMIT');
+  assert.equal(surrogate.data, undefined);
+  // A context whose entry fits is still served whole, with its own scope and index republished.
+  const served = await createWordTools({ readContext: async () => ({ ok: true, text: 'я'.repeat(100) }) })
+    .find(entry => entry.name === 'read_context').execute({ scope: 'section', index: 3 }, { editor: 'word' });
+  assert.equal(served.ok, true);
+  assert.deepEqual(served.data, { scope: 'section', index: 3, text: 'я'.repeat(100), bytes: 200 });
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_context', result: served }]));
 });
 
 test('replace_selection never executes from the loop and keeps its confirm policy', () => {
@@ -2075,7 +2242,11 @@ test('read_document_text refuses closed when not even ONE whole character can be
 //
 // THE PRIMITIVE EVIDENCE, measured on the vendored copy of the installed build's word SDK source
 // (`.local/stage-b-runtime/vendor-word-sdk-all.js`, dev-only), by counting occurrences in the file's
-// text rather than with `Select-String`, which silently reports ZERO on this 15 MB bundle:
+// text: `Select-String` was MISUSED on the first pass — its default form is LINE-level and
+// case-insensitive, so on this single-line 15 MB bundle it reports 17 lines for `GetCurrent`, 12 for
+// `GetSelectedText` and 2 for `pluginMethod_`, counts of LINES and never zero — while
+// `Select-String -CaseSensitive -AllMatches` returns the exact per-occurrence totals 265 / 101 / 4, the
+// same numbers the file's own text holds:
 //   `pluginMethod_GetCurrentParagraph` 0, `pluginMethod_GetCurrentSentence` 0,
 //   `pluginMethod_GetCurrentWord` 0, `pluginMethod_GetSelectedText` 0.
 // Those zeros prove NOTHING, because `pluginMethod_` is not a naming convention in this bundle: it
@@ -2083,10 +2254,12 @@ test('read_document_text refuses closed when not even ONE whole character can be
 // dispatcher's own `"pluginMethod_"+methodName` lookup — so the editor resolves every other method name
 // dynamically and no prefixed literal exists to count.
 // The BARE names are what exist: `GetCurrentParagraph` 125, `GetSelectedText` 101, `GetCurrentWord` 7,
-// `GetCurrentSentence` 6. No plugin-level PARAGRAPH getter is established: every sampled
-// `GetCurrentParagraph` is document-content-level (`documentContent.GetCurrentParagraph()` and
-// `Ct.prototype.GetCurrentParagraph`, the `Api` builder route this descriptor is forbidden to use),
-// which is why no `pluginMethod_GetCurrentParagraph` is dispatched anywhere in this repo.
+// `GetCurrentSentence` 6. No plugin-level PARAGRAPH getter is established: the 125 hits hold exactly one
+// `Ct.prototype.GetCurrentParagraph` (the `Api`/`getTargetDocContent()` route this descriptor is
+// forbidden to use), the other 124 being `this.X.GetCurrentParagraph` call sites and other
+// `*.prototype.` definitions, and the sample `documentContent.GetCurrentParagraph()` occurs ZERO times
+// and must not be quoted — which is why no `pluginMethod_GetCurrentParagraph` is dispatched anywhere in
+// this repo.
 // `GetCurrentSentence` IS established at the plugin level, by this repo's own history: commit ed65dd5
 // dispatched exactly `plugin.executeMethod('GetCurrentSentence', [], callback)` through the one owned
 // dispatch channel and records it as "the primitive the live build actually answers with the inserted

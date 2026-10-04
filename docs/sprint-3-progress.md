@@ -791,13 +791,15 @@ and the tool is still read-only: one `GetFileHTML`, no write path, `src/agent/*`
 
 ## 9. Sprint 3, tool 2 — `read_paragraph`, the caret context read
 
-**The primitive had to be established before anything was written, and the first evidence tool lied.**
-`Select-String` returns **zero** matches for `GetCurrent`, `GetSelectedText` and `pluginMethod_` on
-`.local/stage-b-runtime/vendor-word-sdk-all.js`, while the file's own text holds **265**, **101** and
-**4**. The bundle is a 15 MB single-line artifact and `Select-String` is simply not usable as evidence
-on it; the counts below come from reading the file's text and matching it directly. Every count in the
-`read_context` withdrawal comment (§ above, `GetDocumentStructure` 0 / `GetSelectedText` 101) should be
-read with that caveat.
+**The primitive had to be established before anything was written, and the first evidence pass MISUSED its tool.**
+`Select-String` was run in its default form — LINE-level and case-insensitive — on
+`.local/stage-b-runtime/vendor-word-sdk-all.js`, a 15 MB single-line artifact, so it reported **17**
+lines for `GetCurrent`, **12** for `GetSelectedText` and **2** for `pluginMethod_`: counts of **lines**,
+not of occurrences, and never zero. `Select-String -CaseSensitive -AllMatches` on the same file returns
+the exact per-occurrence totals **265**, **101** and **4**, the same numbers the file's own text holds.
+The tool was **misused, not unusable**; the counts below come from matching the file's text directly.
+Every count in the `read_context` withdrawal comment (§ above, `GetDocumentStructure` 0 /
+`GetSelectedText` 101) is consistent with that measurement.
 
 **What the counts are.** `pluginMethod_GetCurrentParagraph`, `pluginMethod_GetCurrentSentence`,
 `pluginMethod_GetCurrentWord` and `pluginMethod_GetSelectedText` occur **0** times each — and those
@@ -808,11 +810,12 @@ dispatcher's own `"pluginMethod_"+methodName` lookup), so the editor resolves ev
 `GetCurrentParagraph` **125**, `GetSelectedText` **101**, `GetCurrentWord` **7**, `GetCurrentSentence`
 **6**.
 
-**No plugin-level paragraph getter is established.** Every sampled `GetCurrentParagraph` is
-document-content-level — `documentContent.GetCurrentParagraph()` in the paste and cursor paths, and the
-single `Ct.prototype.GetCurrentParagraph`, which is the `Api` / `getTargetDocContent()` route that
-manipulates the **document** rather than the caret (and which Phase 0 measured as exposing no
-`GetSelection`). So this tool dispatches no `GetCurrentParagraph` and never reaches for `Api`.
+**No plugin-level paragraph getter is established.** The **125** `GetCurrentParagraph` hits hold exactly
+one literal **`Ct.prototype.GetCurrentParagraph`**, which is the `Api` / `getTargetDocContent()` route
+that manipulates the **document** rather than the caret (and which Phase 0 measured as exposing no
+`GetSelection`); the other **124** are `this.X.GetCurrentParagraph` call sites and other `*.prototype.`
+definitions, and the sample `documentContent.GetCurrentParagraph()` occurs **zero** times and must not be
+quoted as evidence. So this tool dispatches no `GetCurrentParagraph` and never reaches for `Api`.
 
 **`GetCurrentSentence` is established, by this repo's own history.** Commit `ed65dd5` dispatched exactly
 `plugin.executeMethod('GetCurrentSentence', [], callback)` through the one owned dispatch channel and
