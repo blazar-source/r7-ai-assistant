@@ -21,7 +21,29 @@ test('the representative descriptor set is well formed and policy-correct', () =
   assert.deepEqual(names, ['insert_paragraph', 'read_context', 'read_selection', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
+  assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
+    'an unverified public read may be neither offered nor executed');
   assert.ok(tools.every(tool => tool.editors.includes('word')));
+});
+
+test('read_context is withheld from every catalogue until a public document read is confirmed', () => {
+  const tools = createWordTools(fakeBridge());
+  const context = tools.find(entry => entry.name === 'read_context');
+  // The switch is one value: the descriptor, its schema, its precondition and its handler stay in
+  // place so a confirmed native probe turns read_context back on by changing this policy alone.
+  assert.equal(context.policy, 'deny', 'never offered, never executable');
+  assert.deepEqual(Object.keys(context).sort(),
+    ['editors', 'execute', 'kind', 'name', 'policy', 'precondition', 'requires', 'schema'],
+    'the descriptor keeps exactly the eight registry fields');
+  assert.equal(typeof context.execute, 'function', 'the handler is kept for the probe-driven switch');
+  assert.deepEqual(context.schema.properties.scope.enum, ['paragraph', 'section', 'structure'],
+    'the schema is kept intact for the same reason');
+  const registry = createRegistry(tools);
+  const full = ['document.read', 'document.write'];
+  for (const mode of ['EDIT', 'ASK']) {
+    const offered = registry.catalogue({ editor: 'word', capabilities: full, mode });
+    assert.equal(offered.some(tool => tool.name === 'read_context'), false, `${mode} must not offer read_context`);
+  }
 });
 
 test('read_selection returns bounded data and marks refusals as known errors', async () => {
@@ -59,8 +81,23 @@ test('registry accepts the word tools and filters them by mode', () => {
   const registry = createRegistry(createWordTools(fakeBridge()));
   const edit = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
   const ask = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'ASK' });
-  assert.equal(edit.length, 4);
-  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_context']);
+  // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
+  // the three confirmed tools and ASK exposes neither a mutation nor the unverified read.
+  assert.deepEqual(edit.map(tool => tool.name).sort(),
+    ['insert_paragraph', 'read_selection', 'replace_selection']);
+  assert.deepEqual(ask.map(tool => tool.name), ['read_selection']);
+});
+
+test('replace_selection advertises the argument ceiling its handler enforces', async () => {
+  const tool = createWordTools(fakeBridge()).find(entry => entry.name === 'replace_selection');
+  assert.equal(tool.schema.properties.text.maxBytes, AGENT_CEILINGS.argumentsBytes,
+    'the per-action argument ceiling the runtime applies');
+  assert.equal(AGENT_CEILINGS.argumentsBytes, 8192);
+  assert.notEqual(tool.schema.properties.text.maxBytes, AGENT_CEILINGS.resultDataBytes,
+    'the result-data ceiling is not the bound a model argument crosses');
+  const over = await tool.execute({ text: 'я'.repeat(4097) }, { editor: 'word' });
+  assert.equal(over.code, 'BYTE_LIMIT', 'a text above the advertised bound is a known error');
+  assert.equal((await tool.execute({ text: 'замена' }, { editor: 'word' })).ok, true);
 });
 
 test('insert_paragraph reports the native acknowledgement instead of a plain success', async () => {

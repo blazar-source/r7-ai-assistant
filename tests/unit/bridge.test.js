@@ -85,6 +85,51 @@ test('late callback checks clock even before timer delivery', async () => {
   assert.equal(r.bridge.getState().busy, false); assert.equal(r.scheduled.size, 0);
 });
 
+test('an in-flight insert is a pending mutation the UI write lock can see', async () => {
+  const r = rig();
+  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+  // The identity leg settles synchronously in this rig, so the insert dispatch is reached at the next
+  // event-loop checkpoint: a fact about the bridge, not a guessed tick count.
+  await new Promise(resolve => setImmediate(resolve));
+  const insert = r.calls.find(call => call.name === 'PasteText');
+  assert.ok(insert, 'the insert was dispatched');
+  assert.equal(r.bridge.getState().writePending, true, 'a dispatched insert is a pending mutation');
+  // The panel lock reads exactly this state (controller.writeLocked()), so a second mutation must be
+  // refused for as long as it holds.
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'Второй' }), { ok: false, code: 'EDITOR_BUSY' });
+  insert.callback(true);
+  assert.deepEqual(await pending, { ok: true, data: { sent: true } });
+  assert.equal(r.bridge.getState().writePending, false, 'the lock is released when the insert settles');
+  const next = r.bridge.insertParagraph({ text: 'Третий' });
+  await new Promise(resolve => setImmediate(resolve));
+  const nextInsert = r.calls.find(call => call.name === 'PasteText' && call !== insert);
+  assert.ok(nextInsert, 'the released slot accepts the next mutation');
+  nextInsert.callback(true);
+  assert.deepEqual(await next, { ok: true, data: { sent: true } });
+
+  // A read is not a mutation: it never sets the write lock even while it owns the slot.
+  const readRig = rig();
+  const read = readRig.bridge.readSelection();
+  assert.equal(readRig.bridge.getState().busy, true);
+  assert.equal(readRig.bridge.getState().writePending, false, 'a read is not a pending mutation');
+  readRig.calls[0].callback('текст');
+  await read;
+
+  // A dispatched insert whose acknowledgement never arrives stays pending until its own callback:
+  // the timeout is uncertain-until-callback, never a release of the lock.
+  const heldRig = rig();
+  const held = heldRig.bridge.insertParagraph({ text: 'Абзац' });
+  await new Promise(resolve => setImmediate(resolve));
+  const heldInsert = heldRig.calls.find(call => call.name === 'PasteText');
+  assert.equal(heldRig.bridge.getState().writePending, true);
+  heldRig.advance(5000);
+  assert.deepEqual(await held, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(heldRig.bridge.getState().writePending, true, 'uncertain-until-callback stays pending');
+  assert.equal(heldRig.bridge.getState().uncertain, true);
+  heldInsert.callback(true);
+  assert.equal(heldRig.bridge.getState().writePending, false, 'the late callback releases the lock');
+});
+
 test('duplicate old callback cannot release or complete a new slot', async () => {
   const r = rig(); const first = r.bridge.readSelection(); const old = r.calls[0].callback;
   old('first'); await first;

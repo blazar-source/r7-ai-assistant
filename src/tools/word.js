@@ -76,7 +76,18 @@ export function createWordTools(bridge) {
       }
     }),
     defineTool({
-      name: 'read_context', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      // Ruling A — WITHHELD FROM EVERY CATALOGUE, NEVER EXECUTED. `read_context` rests on a public
+      // document read primitive that is NOT verified: the installed build's word SDK source copy
+      // (dev-only evidence, `.local/stage-b-runtime/vendor-word-sdk-all.js`) contains
+      // `GetDocumentStructure` 0 times and `pluginMethod_GetDocumentStructure` 0 times, while
+      // `GetSelectedText` occurs 101 times and `pluginMethod_PasteText` exists. The dispatch resolves
+      // methods BY NAME, so this is evidence AGAINST the primitive rather than conclusive proof, and
+      // no positive evidence exists because the native target is unreachable from here. A native probe
+      // must confirm a public document read before this becomes `auto` again. The descriptor, its
+      // schema, its precondition and its handler are deliberately kept, so the switch back is this one
+      // value; `deny` is the registry's existing "never offered, never executable" policy (the
+      // catalogue drops it before the runtime can resolve it). PENDING NATIVE VERIFICATION.
+      name: 'read_context', kind: 'read', editors: ['word'], policy: 'deny', requires: ['document.read'],
       schema: { type: 'object', additionalProperties: false, required: ['scope', 'index'],
         properties: { scope: { type: 'string', enum: ['paragraph', 'section', 'structure'] },
           index: { type: 'integer', minimum: 0, maximum: MAX_CONTEXT_INDEX } } },
@@ -151,10 +162,15 @@ export function createWordTools(bridge) {
       name: 'replace_selection', kind: 'mutate', editors: ['word'], policy: 'confirm',
       requires: ['document.read', 'document.write'],
       schema: { type: 'object', additionalProperties: false, required: ['text'],
-        properties: { text: { type: 'string', maxBytes: AGENT_CEILINGS.resultDataBytes, minBytes: 1 } } },
+        properties: { text: { type: 'string', maxBytes: AGENT_CEILINGS.argumentsBytes, minBytes: 1 } } },
       precondition: () => null,
       // Never reached from the loop: the runtime publishes PREVIEW_READY for a confirm descriptor.
-      execute: async (args) => ok({ proposed: utf8ByteLength(args.text) })
+      // The advertised bound is still the one the runtime applies (`AGENT_CEILINGS.argumentsBytes`),
+      // and the handler applies the same bound so advertised and enforced cannot drift apart.
+      execute: async (args) => {
+        if (utf8ByteLength(args.text) > AGENT_CEILINGS.argumentsBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok({ proposed: utf8ByteLength(args.text) });
+      }
     })
   ];
 }

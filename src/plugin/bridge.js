@@ -90,6 +90,15 @@ function timeoutFor(kind) {
   if (kind === 'write' || kind === 'insert') return new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   return new SafeError(ERROR_CODES.TIMEOUT);
 }
+// Every mutation the bridge dispatches is a pending mutation from the moment it is dispatched until
+// its ticket settles (a success, or uncertain-until-callback after a timeout or abort; a refusal is
+// never dispatched and so is never pending). Design §8.4 requires that no mutation is dispatched
+// while a previous one is unsettled, and the panel's write lock (controller.writeLocked) is what
+// enforces it, so this predicate must cover the insert path as well as the selection replacement,
+// not only `kind === 'write'`.
+function pendingMutation(slot) {
+  return slot !== null && (slot.kind === 'write' || slot.kind === 'insert') && slot.dispatched;
+}
 function applyData(raw) {
   if (!raw || ![Object.prototype, null].includes(Object.getPrototypeOf(raw))) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const descriptors = Object.getOwnPropertyDescriptors(raw);
@@ -382,7 +391,7 @@ export function createR7Bridge(plugin, {
       return start('write', signal, { replacement, beforeDispatch });
     },
     subscribe(listener) { listeners.add(listener); return function () { listeners.delete(listener); }; },
-    getState() { return Object.freeze({ editorType: editor, busy: slot !== null, uncertain: slot?.uncertain ?? false, disposed, writePending: slot?.kind === 'write' && slot.dispatched }); },
+    getState() { return Object.freeze({ editorType: editor, busy: slot !== null, uncertain: slot?.uncertain ?? false, disposed, writePending: pendingMutation(slot) }); },
     invalidate() { contextOwner = Object.freeze({}); slot?.cancel(); },
     dispose() { disposed = true; contextOwner = Object.freeze({}); slot?.cancel(); }
   });
