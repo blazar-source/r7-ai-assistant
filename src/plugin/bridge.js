@@ -35,6 +35,11 @@ function ownFunction(object, name) {
 // `'context'` for the document-identity read). Both are static: they read `Api` and nothing else, and
 // each returns the closed tuple shape the bridge's own decoder validates (6 booleans, or 4 slots), so
 // the two protocols cannot blur into one.
+//
+// These module-level literals exist ONLY for the `executeCommand` transport below, which carries their
+// `String(...)` as text. They must NEVER be referenced from inside a function handed to `callCommand`:
+// that native does not call the function, it stringifies it and evaluates the text in the editor, where
+// this module does not exist (see `createCommandDispatch`).
 const capabilityBody = () => {
   try {
     var present = typeof Api !== 'undefined' && Api !== null;
@@ -77,9 +82,44 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
   if (hasCommand) {
     return Object.freeze({ present: true, method: 'callCommand',
       probe(which, callback) {
+        // The value handed to `callCommand` must be a FULL inline literal, never a closure over one.
+        // This native does not CALL the function: it stringifies it and evaluates the text inside the
+        // editor, where bridge.js's module bindings do not exist. `() => contextBody()` therefore died
+        // on the live Windows R7-Office 2026.3.1 with `ReferenceError: contextBody is not defined` out
+        // of its own sdk-all-min.js evaluator, before the model was ever called — the call shape was
+        // right and the value was unevaluable. The two literals below are the SAME authored bodies
+        // `commandTransport` composes for the fallback (duplicated deliberately: a module-level function
+        // object cannot be handed to this native at all), and they are the shape the reviewed
+        // `commands.js` probes passed on the measured build. Each stays a synchronous, authored,
+        // non-generator literal, so the static audit's inline-function rule for `callCommand` is
+        // satisfied exactly as before and no dynamic code is involved.
         return which === 'context'
-          ? plugin.callCommand(() => contextBody(), false, false, callback)
-          : plugin.callCommand(() => capabilityBody(), false, false, callback);
+          ? plugin.callCommand(function () {
+            try {
+              var available = typeof Api !== 'undefined' && Api !== null;
+              var id = available && typeof Api.GetDocumentId === 'function' ? Api.GetDocumentId() : null;
+              var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+              var replace = available && typeof Api.ReplaceTextSmart === 'function';
+              var range = document !== null && document !== undefined && typeof document.GetRangeBySelect === 'function';
+              var tracking = document !== null && document !== undefined && typeof document.IsTrackRevisions === 'function' ? document.IsTrackRevisions() : null;
+              return [id, replace, range, tracking];
+            } catch { return [null, false, false, null]; }
+          }, false, false, callback)
+          : plugin.callCommand(function () {
+            try {
+              var present = typeof Api !== 'undefined' && Api !== null;
+              var getDocument = present && typeof Api.GetDocument === 'function';
+              var document = getDocument ? Api.GetDocument() : null;
+              return [
+                present,
+                getDocument,
+                present && typeof Api.GetDocumentId === 'function',
+                present && typeof Api.ReplaceTextSmart === 'function',
+                document !== null && document !== undefined && typeof document.GetRangeBySelect === 'function',
+                document !== null && document !== undefined && typeof document.IsTrackRevisions === 'function'
+              ];
+            } catch { return ['CAPABILITY_UNAVAILABLE']; }
+          }, false, false, callback);
       } });
   }
   if (hasTransport) {

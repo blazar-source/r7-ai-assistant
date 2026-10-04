@@ -208,3 +208,50 @@ wrong write.
   probe settles `TIMEOUT` and the insert refuses — the same honest refusal as before, never a false
   success and never a wrong write. The Windows path (`callCommand` present) is unchanged and keeps
   receiving the same inline static body and the same `false, false` arguments.
+
+## Regression repair — the `callCommand` body must be self-contained (measured natively, 2026.3.1)
+
+**What broke, and how it was found.** A real insert run on the live Windows R7-Office 2026.3.1 died
+**before the model was ever called**. The editor's own console showed
+
+```
+ReferenceError: contextBody is not defined
+    at eval (eval at <anonymous> (… editors/sdkjs/word/sdk-all-min.js …))
+```
+
+and the run's network capture was empty — the failure is local to the editor bridge, not the model call.
+
+**Cause.** `callCommand` does not *call* the function it is handed: it **stringifies** it and evaluates
+the text inside the editor, where none of `bridge.js`'s module bindings exist. Commit `273d70e` made the
+bridge carry its own static bodies and then passed **closures over those bodies**:
+
+```js
+plugin.callCommand(() => contextBody(), false, false, callback)      // and () => capabilityBody()
+```
+
+The arrow closes over a module-scope `const`, so the stringified text referenced an identifier the
+editor's evaluator has never heard of. The call shape was right; the *value* was unevaluable.
+
+**Why every gate was green.** The unit rigs invoked the carried body **in this module's own scope**, so
+`contextBody` resolved; and `tests/integration/package.test.js` asserted the body was an inline arrow
+whose only statement was a **forward to one of those names** — the regression itself was pinned as
+expected behaviour. A call-SHAPE assertion is not an evaluability assertion.
+
+**Repair.** Each command leg now passes a full **inline function literal** carrying its own authored
+statements — the same shape the reviewed `commands.js` probes passed on the measured build — and the
+`(fn, false, false, callback)` argument list, the `callCommand`-preferred dispatch rule and the
+`CAPABILITY_UNAVAILABLE`-before-any-dispatch refusal are untouched. The two module-level literals remain
+**only** as the source the `executeCommand` fallback composes as text; naming either from inside a
+`callCommand` body is now a tested failure. `String(...)` stays a data conversion of an authored literal,
+so the authored static audit is unchanged (`Authored-code audit PASS`, exit 0).
+
+**The test that would have caught it** (and now does) stringifies the value the bridge hands to
+`callCommand` and evaluates it where no module binding of `bridge.js` exists: on the old shape that raises
+exactly `ReferenceError: contextBody is not defined`; on the repaired shape both legs answer their
+authored tuples. A second test does the same for the `executeCommand` fallback's composed source.
+
+**Unverified natively:** the repaired shape was **not** re-run on the live 2026.3.1 editor in this
+change; what is proven here is evaluability in a module-free scope (the class of failure the native
+reported), host-side only. Final tree: `node --test` **653/653** (up from 651), the focused
+bridge/dispatch-API/handler/integration suites green, `Authored-code audit PASS` (exit 0), and the bundle
+build exit 0.

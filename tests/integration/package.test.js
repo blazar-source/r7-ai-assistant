@@ -27,27 +27,34 @@ test('generated authored browser bundle passes audit with literal synchronous st
   const built = await buildPlugin({ output: 'dist/task4-package-bundle' });
   const bundle = inventory(built.archive).find(e => e.name === 'panel.js'); assert.ok(bundle);
   const source = bundle.data.toString('utf8'); assert.deepEqual(auditSource(source, 'panel.js'), []);
-  // Every authored command in the bundle is the bridge adapter's own leg, whose body is an inline
-  // forward to one of the two reviewed static bodies (`capabilityBody`/`contextBody`). The bodies
-  // themselves are reached as function REFERENCES, so the bundle contains no second copy of them: the
-  // assertion below proves the boundary (an inline synchronous body, the documented close/recalculate
-  // arguments) and `auditSource` above proves the referenced bodies are static and read `Api` only.
-  let commands = 0; const forwarded = [];
+  // Every authored command in the bundle is the bridge adapter's own leg, and each body must be
+  // SELF-CONTAINED. The native does not call the function: it stringifies it and evaluates the text
+  // inside the editor, where none of the adapter's module bindings exist. A body that merely FORWARDS to
+  // a module-scope name (`() => contextBody()`) is therefore unevaluable there — measured on the live
+  // Windows R7-Office 2026.3.1 as `ReferenceError: contextBody is not defined` from its own sdk-all-min.js
+  // evaluator, with the insert dying before the model was ever called — so each body must carry its own
+  // authored statements and name neither reviewed body. The two module-level literals stay in the bundle
+  // because the `executeCommand` fallback composes their source as text, and `auditSource` above proves
+  // they are static and read `Api` only.
+  let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
       commands++;
       const body = node.arguments[0];
-      assert.equal(body.type, 'ArrowFunctionExpression', `the command body stays a literal inline function, got ${body.type}`);
+      assert.equal(body.type, 'FunctionExpression', `the command body stays a literal inline function, got ${body.type}`);
       assert.equal(body.async, false); assert.equal(body.generator, false);
       assert.equal(node.arguments[1].value, false); assert.equal(node.arguments[2].value, false);
-      assert.equal(body.body.type, 'CallExpression', 'the body is the adapter forward');
-      assert.match(body.body.callee.name, /^(capabilityBody|contextBody)$/);
-      assert.equal(body.body.arguments.length, 0, 'the reviewed body takes no arguments');
-      forwarded.push(body.body.callee.name);
+      const carried = source.slice(body.start, body.end);
+      assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(carried), false,
+        'the carried body must be self-contained, never a forward to a module-scope binding');
+      assert.match(carried, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
+      assert.match(carried, /GetRangeBySelect/, 'and carries the authored document probe');
+      legs.push(carried.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
     }
   });
-  assert.deepEqual(forwarded.sort(), ['capabilityBody', 'contextBody'],
-    'both reviewed static bodies remain reachable as the adapter commands');
+  assert.equal(commands, 2, 'the adapter dispatches exactly the two authored command legs');
+  assert.deepEqual(legs.sort(), ['capability', 'context'],
+    'both reviewed static bodies are carried INLINE by the adapter, each evaluable on its own');
   for (const forbidden of ['sourceMappingURL', 'sourcesContent', 'node:', 'https-mock', 'esbuild', 'acorn', 'synthetic', 'example.invalid', 'BEGIN PRIVATE KEY', 'window.parent', 'innerHTML']) assert.equal(source.includes(forbidden), false, forbidden);
 });
 test('HTML/CSS only local authored assets plus exact separate installed SDK with documented CSP and visible focus', async () => {

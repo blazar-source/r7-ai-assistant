@@ -267,3 +267,91 @@ test('the panel capability action reports presence on the executeCommand-only sh
   assert.equal(state.runtimeVerified, false, 'the panel still never promotes presence to runtime proof');
   controller.dispose();
 });
+
+// --- the carried function must survive STRINGIFICATION: the EDITOR evaluates it, not this module ----
+// A native `callCommand` never calls the function it is handed. It stringifies it and evaluates the
+// TEXT inside the editor, where none of bridge.js's module bindings exist. A wrapper that closes over
+// a module-scope const (`() => contextBody()`) therefore cannot run there at all: measured on the live
+// Windows R7-Office 2026.3.1 the editor raised `ReferenceError: contextBody is not defined` out of its
+// own `sdk-all-min.js` evaluator, the insert died before the model was ever called, and the run's
+// network capture was empty. Every rig above invokes the carried body IN this module's scope, so a
+// call-SHAPE assertion (a function was passed) could never see it — evaluability is the gate, and this
+// section reproduces the editor's own evaluation.
+//
+// `new Function` compiles the text in a fresh, module-free scope: the closest local stand-in for the
+// editor's evaluator. Dynamic code is legitimate HERE — the authored static audit scans src/, scripts
+// and shipped artifacts, never tests — and a test that proves evaluability needs the real evaluator.
+function evaluateCarried(sourceText, api) {
+  return new Function('Api', 'return (\n' + sourceText + '\n)();')(api);
+}
+// A recording facade for the `callCommand` shape: it captures the EXACT value the bridge hands the
+// native (never calling it as a closure) and answers the method legs the surrounding operation needs.
+function carriedRig(command = 'callCommand') {
+  const commands = [];
+  const api = commandApi();
+  const plugin = { info: { editorType: 'word' },
+    executeMethod(name, _params, callback) { if (name === 'GetSelectedText') callback('выделено'); return false; },
+    callCommand: (command === 'both' || command === 'callCommand')
+      ? function (body, _close, _recalculate, callback) {
+        commands.push({ by: 'callCommand', source: Function.prototype.toString.call(body) });
+        callback(runAuthored(body, api));
+        return false;
+      } : undefined,
+    executeCommand: (command === 'both' || command === 'executeCommand')
+      ? function (name, source, callback) {
+        commands.push({ by: 'executeCommand', source });
+        callback(commandAnswer(carriedWhich(source)));
+        return false;
+      } : undefined };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  return { bridge, commands };
+}
+
+test('what callCommand receives is evaluable in the editor scope: no module binding is referenced', async () => {
+  const r = carriedRig();
+  await r.bridge.probeCapabilities();  // the presence leg carries the capability body
+  await r.bridge.readSelection();      // the identity leg carries the context body
+  assert.equal(r.commands.length, 2, 'both author-written bodies were handed to the native');
+  const [capability, context] = r.commands;
+  assert.equal(r.commands.every(entry => entry.by === 'callCommand'), true, 'the measured Windows channel is the one measured here');
+  for (const [label, carried, expected] of [
+    ['capability', capability, [true, true, true, true, true, true]],
+    ['context', context, ['bounded-id', true, true, false]]
+  ]) {
+    // The editor's own evaluation, FIRST: this is the failure a native run reported. A free module
+    // identifier resolves to nothing here and the whole call dies, exactly as it did on 2026.3.1.
+    let value;
+    try { value = evaluateCarried(carried.source, commandApi()); }
+    catch (error) {
+      assert.fail(`the ${label} body stringified for callCommand must run in the editor's scope (no module bindings), but evaluating it raised: ${error}`);
+    }
+    assert.deepEqual(value, expected, `the ${label} body answers with its authored tuple in a fresh scope`);
+    // And structurally: the text that reaches the editor names no module-scope command body at all.
+    assert.equal(/\b(?:capability|context)Body\b/.test(carried.source), false,
+      `the stringified ${label} body must be self-contained, not a closure over bridge.js`);
+  }
+});
+
+test('the executeCommand fallback source is self-contained as well', async () => {
+  const r = carriedRig('executeCommand');
+  await r.bridge.probeCapabilities();
+  await r.bridge.readSelection();
+  assert.equal(r.commands.length, 2);
+  const [capability, context] = r.commands;
+  assert.equal(r.commands.every(entry => entry.by === 'executeCommand'), true);
+  for (const [label, carried, expected] of [
+    ['capability', capability, [true, true, true, true, true, true]],
+    ['context', context, ['bounded-id', true, true, false]]
+  ]) {
+    assertComposedSource(carried.source);
+    // The WHOLE composed statement list must run in a fresh scope without a ReferenceError...
+    assert.doesNotThrow(() => new Function('Api', carried.source)(commandApi()),
+      `the composed ${label} source must be evaluable in the editor's scope`);
+    // ...and the body inside it must answer with the authored tuple.
+    const body = carried.source.slice(
+      'var Asc = {}; \n  var scope = Asc.scope;\n  ('.length,
+      carried.source.length - ')();\n  '.length);
+    assert.equal(/\b(?:capability|context)Body\b/.test(body), false, `the composed ${label} body names no module binding`);
+    assert.deepEqual(evaluateCarried(body, commandApi()), expected, `the composed ${label} body is self-contained`);
+  }
+});
