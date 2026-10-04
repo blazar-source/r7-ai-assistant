@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createWordTools } from '../../src/tools/word.js';
 import { createRegistry } from '../../src/tools/registry.js';
+import { validateArguments } from '../../src/tools/schemas.js';
+import { validateBatch } from '../../src/agent/protocol.js';
+import { runAgent } from '../../src/agent/runtime.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { AGENT_CEILINGS, LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
@@ -15,6 +18,8 @@ function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...option
 function fakeBridge(overrides = {}) {
   const seen = [];
   return { seen, readSelection: async () => ({ text: 'привет', eligible: true, target: 1 }),
+    // The bridge's real document-read envelope: the decoded text and its whole character count.
+    readDocumentText: async () => ({ ok: true, text: 'привет', totalChars: 6 }),
     // The bridge's real insert envelope: the native acknowledgement is the only outcome it carries.
     insertParagraph: async (args) => { seen.push(args); return { ok: true, data: { sent: true } }; },
     canApply: () => true, ...overrides };
@@ -23,7 +28,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['insert_paragraph', 'read_context', 'read_selection', 'replace_selection']);
+  assert.deepEqual(names, ['insert_paragraph', 'read_context', 'read_document_text', 'read_selection', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
@@ -55,7 +60,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['insert_paragraph', 'read_selection', 'replace_selection'],
+    ['insert_paragraph', 'read_document_text', 'read_selection', 'replace_selection'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -95,10 +100,10 @@ test('registry accepts the word tools and filters them by mode', () => {
   const edit = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
   const ask = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'ASK' });
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
-  // the three confirmed tools and ASK exposes neither a mutation nor the unverified read.
+  // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['insert_paragraph', 'read_selection', 'replace_selection']);
-  assert.deepEqual(ask.map(tool => tool.name), ['read_selection']);
+    ['insert_paragraph', 'read_document_text', 'read_selection', 'replace_selection']);
+  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text']);
 });
 
 test('replace_selection advertises the argument ceiling its handler enforces', async () => {
@@ -798,3 +803,374 @@ test('a document baseline that cannot be read refuses the insert and dispatches 
   assert.equal(r.bridge.getState().busy, false, 'the undispatched ticket releases the slot, not a wedge');
   assert.equal(r.bridge.getState().uncertain, false, 'nothing reached the editor');
 });
+
+// --- Sprint 3, tool 1: `read_document_text` — the bounded, chunked document read -------------------
+// The mechanism is the ONE already measured on both builds and already used by the insert
+// confirmation: the public `GetFileHTML` export, decoded by the bridge's own helper. The tool slices
+// ONE bounded chunk out of that text. It adds no editor call, no new capability, no write path and no
+// model/transport call of its own — nothing here sends the whole document anywhere.
+const DOCUMENT = 'Первый абзац.\nВторой абзац.\nТретий абзац.';
+// A bridge that records every request the tool makes, so "the refusal never reached the bridge" and
+// "exactly one read, no write method" are observations rather than assumptions.
+function documentBridge(text, extras = {}) {
+  const requests = [];
+  return { requests, readDocumentText: async (request) => { requests.push(request); return { ok: true, text, totalChars: text.length }; }, ...extras };
+}
+function readDocument(bridge) { return createWordTools(bridge).find(entry => entry.name === 'read_document_text'); }
+
+test('read_document_text advertises the closed bounded schema the contract names', () => {
+  const tool = readDocument(documentBridge(DOCUMENT));
+  assert.equal(tool.kind, 'read');
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual(tool.editors, ['word']);
+  assert.deepEqual(tool.requires, ['document.read']);
+  assert.equal(tool.schema.type, 'object');
+  assert.equal(tool.schema.additionalProperties, false);
+  assert.deepEqual(tool.schema.required, []);
+  assert.deepEqual(Object.keys(tool.schema.properties).sort(), ['maxChars', 'offset']);
+  assert.equal(tool.schema.properties.offset.minimum, 0);
+  assert.equal(tool.schema.properties.offset.maximum, LIMITS.readDocumentOffsetMax);
+  assert.equal(tool.schema.properties.maxChars.minimum, 1);
+  assert.equal(tool.schema.properties.maxChars.maximum, LIMITS.readDocumentMaxChars);
+  // The hard cap is chosen on the product's realistic worst case: a Cyrillic character is TWO UTF-8
+  // bytes, so the largest advertised chunk is exactly the per-result ceiling.
+  assert.equal(LIMITS.readDocumentMaxChars * 2, LIMITS.editorResultBytes);
+  assert.equal(LIMITS.readDocumentChars, 12000, 'the documented default chunk');
+  assert.ok(LIMITS.readDocumentChars < LIMITS.readDocumentMaxChars);
+});
+
+test('read_document_text accepts its closed argument set and rejects everything else at the schema', () => {
+  const tool = readDocument(documentBridge(DOCUMENT));
+  for (const args of [{}, { offset: 0 }, { maxChars: 1 }, { offset: 0, maxChars: 1 },
+    { offset: LIMITS.readDocumentOffsetMax }, { maxChars: LIMITS.readDocumentMaxChars }]) {
+    assert.doesNotThrow(() => validateArguments(tool.schema, args), JSON.stringify(args));
+  }
+  // An unknown key, a non-integer, a value below `minimum` and a value above `maximum` are all closed
+  // TOOL_ERRORs raised by the schema itself: none of them can reach the handler.
+  for (const args of [{ extra: 1 }, { offset: 1.5 }, { offset: '0' }, { offset: -1 },
+    { offset: LIMITS.readDocumentOffsetMax + 1 }, { maxChars: 0 }, { maxChars: null },
+    { maxChars: LIMITS.readDocumentMaxChars + 1 }, []]) {
+    assert.throws(() => validateArguments(tool.schema, args), /TOOL_ERROR/, JSON.stringify(args));
+  }
+});
+
+test('read_document_text defaults an omitted offset and maxChars to the documented chunk', async () => {
+  const document = 'я'.repeat(LIMITS.readDocumentChars + 500);
+  const bridge = documentBridge(document);
+  const result = await readDocument(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(bridge.requests, [{}], 'the model arguments stay out of the bridge request');
+  assert.equal(result.data.text.length, LIMITS.readDocumentChars, 'the default chunk is readDocumentChars');
+  assert.equal(result.data.offset, 0);
+  assert.equal(result.data.totalChars, document.length);
+  assert.equal(result.data.truncated, true);
+  assert.equal(result.data.nextOffset, LIMITS.readDocumentChars);
+});
+
+test('read_document_text slices exactly the requested chunk and reports its resume point', async () => {
+  const tool = readDocument(documentBridge(DOCUMENT));
+  const total = DOCUMENT.length;
+  const first = await tool.execute({ offset: 0, maxChars: 5 }, { editor: 'word' });
+  assert.deepEqual(first.data, { text: DOCUMENT.slice(0, 5), offset: 0, totalChars: total, truncated: true, nextOffset: 5 });
+  const middle = await tool.execute({ offset: 5, maxChars: 5 }, { editor: 'word' });
+  assert.deepEqual(middle.data, { text: DOCUMENT.slice(5, 10), offset: 5, totalChars: total, truncated: true, nextOffset: 10 });
+  // A chunk that reaches EXACTLY the end is not truncated and has no resume point.
+  const tail = await tool.execute({ offset: total - 3, maxChars: 3 }, { editor: 'word' });
+  assert.deepEqual(tail.data, { text: DOCUMENT.slice(total - 3), offset: total - 3, totalChars: total, truncated: false, nextOffset: null });
+  // An offset at the exact end, and one beyond it, are both legitimate EMPTY reads of the tail — never
+  // a refusal: the address is inside the schema's bound, there is simply nothing left to read there.
+  const atEnd = await tool.execute({ offset: total, maxChars: 10 }, { editor: 'word' });
+  assert.deepEqual(atEnd.data, { text: '', offset: total, totalChars: total, truncated: false, nextOffset: null });
+  const beyond = await tool.execute({ offset: total + 100, maxChars: 10 }, { editor: 'word' });
+  assert.deepEqual(beyond.data, { text: '', offset: total + 100, totalChars: total, truncated: false, nextOffset: null });
+  // `maxChars` larger than what remains yields the remainder, not an error and not a padded chunk.
+  const oversized = await tool.execute({ offset: 0, maxChars: total * 10 }, { editor: 'word' });
+  assert.deepEqual(oversized.data, { text: DOCUMENT, offset: 0, totalChars: total, truncated: false, nextOffset: null });
+});
+
+test('read_document_text chunks walk the document with no gap, no overlap and no invented text', async () => {
+  const tool = readDocument(documentBridge(DOCUMENT));
+  const parts = [];
+  let offset = 0;
+  for (let step = 0; step < 100; step += 1) {
+    const result = await tool.execute({ offset, maxChars: 7 }, { editor: 'word' });
+    assert.equal(result.ok, true, `step ${step}`);
+    assert.equal(result.data.truncated, result.data.nextOffset !== null, 'the two flags are one fact');
+    parts.push(result.data.text);
+    if (!result.data.truncated) break;
+    assert.ok(result.data.nextOffset > offset, 'a resume point always advances');
+    offset = result.data.nextOffset;
+  }
+  assert.equal(parts.join(''), DOCUMENT, 'the chunks reconstruct the document exactly');
+});
+
+test('read_document_text reports an EMPTY document as a legitimate empty result', async () => {
+  // A document with no text is a real document, not a missing one: unlike a selection (where an empty
+  // read means there is nothing to reason about and `known()` is the honest answer), an empty read of
+  // the WHOLE document is the whole truth about it, so it is an `ok` with zero characters.
+  const result = await readDocument(documentBridge('')).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { text: '', offset: 0, totalChars: 0, truncated: false, nextOffset: null });
+  const offsetIntoEmpty = await readDocument(documentBridge('')).execute({ offset: 0, maxChars: 10 }, { editor: 'word' });
+  assert.deepEqual(offsetIntoEmpty.data, { text: '', offset: 0, totalChars: 0, truncated: false, nextOffset: null });
+});
+
+test('read_document_text refuses an editor that is not Word before any dispatch', async () => {
+  const bridge = documentBridge(DOCUMENT);
+  const tool = readDocument(bridge);
+  assert.equal(tool.precondition({}, { editor: 'word' }), null);
+  for (const ctx of [{ editor: 'cell' }, { editor: 'slide' }, {}, null]) {
+    const refusal = tool.precondition({}, ctx);
+    assert.equal(refusal.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(ctx));
+    assert.equal(refusal.message, 'отказ');
+  }
+  // The precondition is a pure check: the read never happened, so nothing was dispatched.
+  assert.deepEqual(bridge.requests, []);
+});
+
+test('read_document_text refuses a bridge that cannot serve the read instead of crashing', async () => {
+  for (const bridge of [null, {}, { readSelection: async () => ({}) }]) {
+    const result = await readDocument(bridge).execute({}, { editor: 'word' });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE');
+    assert.equal(result.message, 'отказ');
+  }
+});
+
+test('read_document_text republishes the closed class the bridge reported, never a raw failure', async () => {
+  // The bridge's own refusals (an export above the HTML ceiling, an unusable parse, a malformed native
+  // answer, a timeout) are KNOWN classes and cross unchanged; a code the closed vocabulary does not
+  // define, and a raw thrown failure, collapse to the tool-error class with no text from the failure.
+  for (const code of ['BYTE_LIMIT', 'CAPABILITY_UNAVAILABLE', 'INVALID_DATA', 'TIMEOUT', 'CANCELLED']) {
+    const result = await readDocument(documentBridge('', { readDocumentText: async () => ({ ok: false, code }) }))
+      .execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code, code);
+    assert.equal(result.message, 'отказ', code);
+  }
+  const privateCode = await readDocument(documentBridge('', { readDocumentText: async () => ({ ok: false, code: 'PRIVATE_DETAIL' }) }))
+    .execute({}, { editor: 'word' });
+  assert.equal(privateCode.code, 'TOOL_ERROR', 'a code outside the closed vocabulary is not republished');
+  const thrown = await readDocument(documentBridge('', { readDocumentText: async () => { throw new Error('private native detail'); } }))
+    .execute({}, { editor: 'word' });
+  assert.equal(thrown.ok, false);
+  assert.equal(thrown.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(thrown).includes('private native detail'), false);
+});
+
+test('read_document_text treats an unusable bridge answer as the module\u2019s unknown/uncertain convention', async () => {
+  // An envelope the tool cannot interpret is a KNOWN tool error — the convention every other read in
+  // this module uses — while the bridge's own UNCERTAIN class keeps stopping the run fail-safe.
+  for (const answer of [null, 'текст', 42, { ok: true }, { ok: true, text: 5, totalChars: 5 },
+    { ok: true, text: 'текст', totalChars: 3 }, { ok: false }]) {
+    const result = await readDocument(documentBridge('', { readDocumentText: async () => answer }))
+      .execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(answer));
+  }
+  for (const answer of [{ ok: false, code: 'APPLY_UNCERTAIN' }]) {
+    const result = await readDocument(documentBridge('', { readDocumentText: async () => answer }))
+      .execute({}, { editor: 'word' });
+    assert.equal(result.code, 'TOOL_UNCERTAIN', 'the uncertain bridge class is never laundered into a known error');
+    assert.equal(result.message, 'отказ');
+  }
+  const thrownUncertain = await readDocument(documentBridge('', {
+    readDocumentText: async () => { const error = new Error('APPLY_UNCERTAIN'); error.code = 'APPLY_UNCERTAIN'; throw error; }
+  })).execute({}, { editor: 'word' });
+  assert.equal(thrownUncertain.code, 'TOOL_UNCERTAIN', 'the same class on the thrown leg');
+});
+
+test('read_document_text refuses an out-of-range address that never crossed the schema', async () => {
+  const bridge = documentBridge(DOCUMENT);
+  const tool = readDocument(bridge);
+  for (const args of [{ offset: -1 }, { offset: LIMITS.readDocumentOffsetMax + 1 }, { maxChars: 0 },
+    { maxChars: LIMITS.readDocumentMaxChars + 1 }, { offset: 1.5 }, { maxChars: '4' }, { offset: '0' }]) {
+    const result = await tool.execute(args, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(args));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(args));
+  }
+  assert.deepEqual(bridge.requests, [], 'an uninterpretable address never reaches the bridge');
+});
+
+test('read_document_text keeps a Cyrillic chunk inside the per-result byte ceiling', async () => {
+  // Cyrillic is the product's realistic worst case at TWO bytes per character: the largest advertised
+  // chunk measures exactly the 65536-byte per-result ceiling and is therefore served whole.
+  const document = 'я'.repeat(LIMITS.readDocumentMaxChars + 5000);
+  const result = await readDocument(documentBridge(document)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.text.length, LIMITS.readDocumentMaxChars);
+  assert.equal(utf8ByteLength(result.data.text), LIMITS.editorResultBytes);
+  assert.ok(utf8ByteLength(result.data.text) <= LIMITS.editorResultBytes, 'the returned chunk is inside the ceiling');
+  assert.equal(result.data.truncated, true);
+  assert.equal(result.data.nextOffset, LIMITS.readDocumentMaxChars);
+});
+
+test('read_document_text refuses a slice above the per-result byte ceiling as BYTE_LIMIT', async () => {
+  // The advertised cap bounds the CHUNK's character count, and the widest encoding of one BMP
+  // character is THREE UTF-8 bytes (CJK text, typographic punctuation), so the largest advertised
+  // chunk can measure 1.5x the ceiling. The tool measures the slice it is about to return.
+  const wide = '漢'.repeat(LIMITS.readDocumentMaxChars + 100);
+  assert.equal(utf8ByteLength(wide.slice(0, LIMITS.readDocumentMaxChars)), LIMITS.readDocumentMaxChars * 3);
+  const refused = await readDocument(documentBridge(wide)).execute({ maxChars: LIMITS.readDocumentMaxChars }, { editor: 'word' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'BYTE_LIMIT');
+  assert.equal(refused.message, 'отказ');
+  assert.equal(JSON.stringify(refused).includes('漢'), false, 'no document text leaks into a refusal');
+  // The same document is served in a chunk that fits, so the refusal is the size and not the text.
+  const fitting = await readDocument(documentBridge(wide)).execute({ maxChars: 8000 }, { editor: 'word' });
+  assert.equal(fitting.ok, true);
+  assert.equal(utf8ByteLength(fitting.data.text), 24000);
+  assert.ok(utf8ByteLength(fitting.data.text) <= LIMITS.editorResultBytes);
+});
+
+test('read_document_text forwards the caller signal to its single bridge read', async () => {
+  const bridge = documentBridge(DOCUMENT);
+  const controller = new AbortController();
+  await readDocument(bridge).execute({}, { editor: 'word', signal: controller.signal });
+  assert.deepEqual(bridge.requests, [{ signal: controller.signal }]);
+});
+
+test('read_document_text touches exactly one bridge read and no write path at all', async () => {
+  const touched = [];
+  const bridge = {
+    readDocumentText: async (request) => { touched.push({ method: 'readDocumentText', request }); return { ok: true, text: DOCUMENT, totalChars: DOCUMENT.length }; },
+    readSelection: async () => { touched.push({ method: 'readSelection' }); return {}; },
+    readContext: async () => { touched.push({ method: 'readContext' }); return {}; },
+    insertParagraph: async () => { touched.push({ method: 'insertParagraph' }); return { ok: true, data: {} }; },
+    applySelection: async () => { touched.push({ method: 'applySelection' }); return {}; }
+  };
+  const result = await readDocument(bridge).execute({ offset: 2, maxChars: 3 }, { editor: 'word' });
+  assert.deepEqual(result.data, { text: DOCUMENT.slice(2, 5), offset: 2, totalChars: DOCUMENT.length, truncated: true, nextOffset: 5 });
+  assert.deepEqual(touched, [{ method: 'readDocumentText', request: {} }],
+    'one read, no mutation leg, and no model argument handed to a bridge that does not serve it');
+});
+
+// --- The bridge leg itself: one public document-HTML read, decoded by the existing helper ---------
+
+test('bridge readDocumentText reads the public document export once and reports its text and total', async () => {
+  const r = nativeRig();
+  assert.equal(Object.hasOwn(r.plugin, 'GetFileHTML'), false, 'the document read is reached by name, not as a facade property');
+  const pending = r.bridge.readDocumentText({});
+  assert.equal(r.calls.length, 1, 'the export read is the ONLY native dispatch of this leg');
+  assert.equal(r.calls[0].name, 'GetFileHTML');
+  assert.deepEqual(r.calls[0].params, {}, 'the plain public document read every native read uses');
+  assert.ok(Object.isFrozen(r.calls[0].params));
+  assert.equal(r.bridge.getState().busy, true, 'the slot stays owned until the native callback');
+  r.calls[0].callback('<p>привет</p>');
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.text.startsWith('привет'), true);
+  assert.equal(result.text.includes('<'), false, 'the decoded answer is text, never markup');
+  assert.equal(result.totalChars, result.text.length, 'the total is the decoded text\u2019s own character count');
+  assert.equal(r.bridge.getState().busy, false);
+  assert.equal(r.calls.some(call => call.name === 'GetSelectedText' || call.name === 'GetDocumentStructure'), false,
+    'no other read primitive is dispatched');
+});
+
+test('the bridge document read serves an empty document as a legitimate empty result', async () => {
+  const r = nativeRig();
+  const tool = readDocument(r.bridge);
+  const pending = tool.execute({}, { editor: 'word' });
+  assert.equal(await untilDispatches(r.calls, 1), 1);
+  assert.equal(r.calls[0].name, 'GetFileHTML');
+  r.calls[0].callback('');
+  const result = await pending;
+  assert.equal(result.ok, true, 'an empty document is a result, never a refusal');
+  assert.equal(result.data.totalChars, result.data.text.length);
+  assert.equal(result.data.offset, 0);
+  assert.equal(result.data.truncated, false);
+  assert.equal(result.data.nextOffset, null);
+});
+
+test('bridge readDocumentText refuses an export above the ceiling instead of truncating it', async () => {
+  // The whole-document export has its OWN ceiling and a result above it is NOT truncated into a
+  // prefix: a clipped export would publish a false `totalChars` and a slice of a document that was
+  // never fully read. The refusal keeps the closed BYTE_LIMIT class, and no native text leaks.
+  const r = nativeRig();
+  const pending = r.bridge.readDocumentText({});
+  r.calls[0].callback('x'.repeat(LIMITS.documentHtmlBytes + 1));
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'BYTE_LIMIT');
+  assert.equal(JSON.stringify(result).includes('x'), false);
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('bridge readDocumentText classifies a malformed answer and an unusable parse', async () => {
+  for (const answer of [null, 42, undefined]) {
+    const r = nativeRig();
+    const pending = r.bridge.readDocumentText({});
+    r.calls[0].callback(answer);
+    const result = await pending;
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'INVALID_DATA', JSON.stringify(answer));
+    assert.equal(r.bridge.getState().busy, false);
+  }
+  // The injected platform boundary carries no `DOMParser`: the text cannot be built, so the read is
+  // unusable — a closed CAPABILITY_UNAVAILABLE, never a raw TypeError and never an empty document.
+  const calls = [];
+  const plugin = { info: { editorType: 'word' }, executeMethod(name, params, callback) { calls.push({ name, params, callback }); return false; } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', platform: {},
+    clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
+  const pending = bridge.readDocumentText({});
+  assert.equal(calls.length, 1);
+  calls[0].callback('<p>текст</p>');
+  assert.deepEqual(await pending, { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(bridge.getState().busy, false);
+});
+
+test('bridge readDocumentText refuses a dispatch channel that is not an own data descriptor', async () => {
+  const r = nativeRig({ dispatchChannel: false });
+  assert.equal(typeof r.plugin.executeMethod, 'function', 'a plain typeof would accept the inherited method');
+  const result = await r.bridge.readDocumentText({});
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'CAPABILITY_UNAVAILABLE');
+  assert.deepEqual(r.calls, [], 'nothing is dispatched by name');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('bridge readDocumentText refuses a pre-aborted signal without any dispatch', async () => {
+  const r = nativeRig();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await r.bridge.readDocumentText({ signal: controller.signal });
+  assert.deepEqual(result, { ok: false, code: 'CANCELLED' });
+  assert.deepEqual(r.calls, []);
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+// --- The catalogue and the runtime: existing alone is what offers the tool -------------------------
+
+test('read_document_text is offered with policy auto and a model call dispatches exactly one read', async () => {
+  const r = nativeRig();
+  // The runtime builds its catalogue from the registry, and the registry from the descriptors: the
+  // tool becomes available by EXISTING, with no runtime change at all.
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'read_document_text');
+  assert.ok(offered, 'the offered catalogue contains read_document_text');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'read');
+  assert.equal(offered.requires.includes('document.read'), true);
+  // A model-emitted call validates against that same catalogue...
+  const batch = validateBatch(catalogue, [{ tool: 'read_document_text', arguments: { maxChars: 8 } }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'read_document_text');
+  // ...and the runtime dispatches it through the real bridge: ONE native export read for the whole
+  // run, and not one write method anywhere in it.
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"read_document_text","arguments":{"maxChars":8}}]}',
+    '{"type":"final","message":"прочитано"}'];
+  let step = 0;
+  const pending = runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '11111111-1111-4111-8111-111111111111', request: 'прочитай документ',
+    transport: async () => ({ content: responses[step++] ?? responses[responses.length - 1] }) });
+  assert.equal(await untilDispatches(r.calls, 1), 1, 'the document export is dispatched by the real handler');
+  assert.equal(r.calls[0].name, 'GetFileHTML');
+  r.calls[0].callback('<p>привет мир</p>');
+  const run = await pending;
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['read_document_text', 'ok']]);
+  assert.deepEqual(r.calls.map(call => call.name), ['GetFileHTML'], 'one read, no write path touched');
+  assert.equal(r.bridge.getState().busy, false);
+});
+

@@ -679,6 +679,16 @@ export function createR7Bridge(plugin, {
           } else if (kind === 'read') result = decodeText(value, LIMITS.selectionBytes);
           else if (kind === 'context') result = decodeContext(value);
           else if (kind === 'contextread') result = decodeText(value, readBound);
+          // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
+          // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
+          // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
+          // decode rule exists, and the fail-closed direction is unchanged — an export above the
+          // ceiling, or one the injected platform cannot parse, is REFUSED by those helpers (closed
+          // `BYTE_LIMIT` / `CAPABILITY_UNAVAILABLE`) and never truncated into a prefix. This leg does
+          // NOT decode against `editorResultBytes`: it hands back the WHOLE decoded text plus its
+          // character count, because the tool's whole job is to slice ONE bounded chunk out of it and
+          // to say honestly where the document ends.
+          else if (kind === 'documentread') result = documentText(platform, decodeDocumentText(value));
           else if (kind === 'probe') result = capabilities(decodePresence(value));
           else {
             if (typeof value !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
@@ -745,6 +755,18 @@ export function createR7Bridge(plugin, {
           if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
           owned.dispatched = true;
           plugin.executeMethod('GetDocumentStructure', params, callback);
+        } else if (kind === 'documentread') {
+          // The whole-document READ: the SAME public method the insert's pre-dispatch baseline already
+          // dispatches, reached BY NAME through the one owned dispatch channel, with the same empty
+          // params object. The guard is the channel check every leg applies (an own data descriptor on
+          // the facade, which is all a build's method channel can be verified to be from here); it is
+          // NOT a claim that the installed build implements `GetFileHTML` — that is PENDING NATIVE
+          // VERIFICATION, and an editor without it never calls back, so this read settles TIMEOUT, a
+          // known class, never a success. Nothing here writes: this leg's only native effect is one
+          // read, and `pendingMutation` stays false for it.
+          if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          plugin.executeMethod('GetFileHTML', Object.freeze({}), callback);
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -824,6 +846,44 @@ export function createR7Bridge(plugin, {
         const text = await start('contextread', signal, { maxBytes }, Object.freeze([Object.freeze([scope, index, maxBytes])]));
         if (text === '') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
         return Object.freeze({ ok: true, text });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded WHOLE-DOCUMENT text read behind `read_document_text`, and it is deliberately the
+    // SMALLEST possible new leg: it adds NO editor primitive and no capability at all. The mechanism
+    // is the one already measured on both builds and already used by the insert confirmation — the
+    // public `GetFileHTML` export through the ONE owned dispatch channel, decoded by the SAME
+    // `decodeDocumentText` + `documentText` helpers (one decode rule, not two) — and what this leg
+    // adds is the document's own CHARACTER COUNT, which is the only thing a chunked reader needs to
+    // slice a bounded chunk and to report `totalChars`/`truncated`/`nextOffset` without trusting a
+    // model-supplied offset.
+    //
+    // ONE leg, not two. It carries no document-identity probe: unlike a selection read, this read
+    // returns no OWNED TARGET a later write could be applied to, so there is no handle whose
+    // ownership would have to be proven, and the insert's own pre-dispatch document read has always
+    // taken exactly this shape. `ensureIdle` plus the editor check still keep the read on the ONE
+    // owned callback slot that every other SDK operation shares.
+    //
+    // ONE dispatch, and it is a READ: the ticket's kind is `documentread`, which no write class
+    // matches, so `pendingMutation` is false throughout and no `PasteText`/`ReplaceTextSmart` call
+    // exists anywhere on this path. Every outcome is classified — an unavailable dispatch channel, a
+    // malformed native answer and an export above the ceiling are closed classes, never a raw
+    // exception — and the caller's `signal` cancels exactly as it does in `readContext`: an abort
+    // before dispatch prevents it, an abort after dispatch invalidates the caller while the queued
+    // SDK work owns the slot until its own callback.
+    // Whether the installed R7 build exposes `GetFileHTML` is PENDING NATIVE VERIFICATION (it is the
+    // same open question the insert's baseline read carries): an editor that does not implement it
+    // never calls back, and the ticket settles TIMEOUT — never as a document.
+    async readDocumentText(raw) {
+      const signal = raw?.signal;
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !adapter.executeMethod) { slot = null; throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); }
+        const text = await start('documentread', signal);
+        if (typeof text !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+        return Object.freeze({ ok: true, text, totalChars: text.length });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

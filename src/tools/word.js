@@ -6,7 +6,7 @@
 // `bridge`, which is the only component that owns an R7 callback slot.
 import { defineTool } from './registry.js';
 import { ERROR_CODES } from '../shared/errors.js';
-import { AGENT_CEILINGS } from '../shared/limits.js';
+import { AGENT_CEILINGS, LIMITS } from '../shared/limits.js';
 import { utf8ByteLength } from '../shared/bytes.js';
 
 // Every refusal this module writes carries a closed class, never a raw exception message.
@@ -89,6 +89,81 @@ export function createWordTools(bridge) {
         const bytes = utf8ByteLength(selection.text);
         if (bytes > AGENT_CEILINGS.contextReadBytes.selection) return known(ERROR_CODES.BYTE_LIMIT);
         return ok({ text: selection.text, bytes });
+      }
+    }),
+    defineTool({
+      // The bounded, CHUNKED read of the document's own text — the first Sprint 3 Word tool. It is a
+      // READ, so it needs no delta and no readback: a string is an unambiguous result and there is no
+      // mutation whose effect would have to be established. The mechanism is the document-export path
+      // the insert confirmation already uses (`GetFileHTML` → `decodeDocumentText` → `documentText`
+      // inside the bridge), reused verbatim: this tool adds NO editor call and NO new capability.
+      // It answers with exactly ONE bounded chunk; nothing in this module sends the whole document
+      // anywhere, and no model or transport call exists on this path at all.
+      name: 'read_document_text', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      // Closed and bounded. Both keys are OPTIONAL and each is bounded by the named LIMITS entry it
+      // advertises: an omitted `offset` is 0 and an omitted `maxChars` is the documented default chunk.
+      // `offset` may address anything inside `readDocumentOffsetMax` — past the end of the document that
+      // is the legitimate empty tail below — and `maxChars` is capped by `readDocumentMaxChars`.
+      schema: { type: 'object', additionalProperties: false, required: [],
+        properties: { offset: { type: 'integer', minimum: 0, maximum: LIMITS.readDocumentOffsetMax },
+          maxChars: { type: 'integer', minimum: 1, maximum: LIMITS.readDocumentMaxChars } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'readDocumentText')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The address is re-checked HERE and not only by the schema: a descriptor is also executable
+        // when it is held directly, and an address this read cannot interpret must be a closed refusal
+        // with NOTHING dispatched, never a silent slice of whatever a coercion produced.
+        const offset = args.offset ?? 0;
+        const maxChars = args.maxChars ?? LIMITS.readDocumentChars;
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > LIMITS.readDocumentOffsetMax) return known();
+        if (!Number.isSafeInteger(maxChars) || maxChars < 1 || maxChars > LIMITS.readDocumentMaxChars) return known();
+        // The caller's signal is forwarded so a Stop can cancel the in-flight read: an abort before the
+        // read is dispatched prevents it, while an abort after dispatch invalidates the caller and
+        // leaves the queued SDK work owning the bridge slot until its own callback. The bounds do NOT
+        // cross: the ONE request this tool makes is the document read itself, which serves the whole
+        // decoded text and its character count, and the slicing happens here.
+        const request = { ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let document;
+        try { document = await bridge.readDocumentText(request); }
+        catch (error) {
+          // A bridge that reports its own UNCERTAIN class means the read's outcome is unknown: that is
+          // the one case which stops the run, and it is classified before any ordinary refusal path.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // An answer this tool cannot interpret — no envelope, no literal `ok:true`, a `text` that is
+        // not a string, or a `totalChars` that disagrees with that text's own length — is the module's
+        // unknown convention (`known()`, the closed tool-error class), while the bridge's own UNCERTAIN
+        // class stops the run. A bridge REFUSAL in between keeps the closed class it reported.
+        if (!document || typeof document !== 'object') return known();
+        const uncertain = uncertainResult(document);
+        if (uncertain) return uncertain;
+        if (document.ok !== true) return known(refusalCode(document.code, ERROR_CODES.TOOL_ERROR));
+        if (typeof document.text !== 'string' || document.totalChars !== document.text.length) return known();
+        const totalChars = document.totalChars;
+        // An EMPTY document is a legitimate RESULT, not a refusal: the text of a document nobody has
+        // typed into yet is '' with length 0, so `ok` with `text:''`, `totalChars:0`,
+        // `truncated:false`, `nextOffset:null` is the whole truth about it. That is deliberately NOT
+        // the `read_selection` convention of treating an empty read as `known()`: there an empty
+        // SELECTION means there is nothing to reason about, while here the empty answer IS the complete
+        // answer to "what does this document say".
+        // The chunk. An offset at or past the end yields '' and the nil resume point below reports it
+        // as a finished read: "read from here" honestly has nothing left, so it is an `ok`, not a
+        // refusal. Nothing is trimmed, normalised or re-encoded: the slice is the document's own text.
+        const text = document.text.slice(offset, offset + maxChars);
+        // The ENFORCED bound: the returned chunk is measured in UTF-8 bytes, because the per-result
+        // ceiling the runtime applies is a BYTE ceiling and the advertised character cap cannot imply
+        // it (three bytes per character is reachable, so the largest advertised chunk can exceed the
+        // ceiling). An over-ceiling chunk is refused WHOLE as the closed BYTE_LIMIT class, never
+        // clipped — a clipped chunk would publish a resume point that skips text the model never saw.
+        if (utf8ByteLength(text) > LIMITS.editorResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        // `truncated` and `nextOffset` are ONE fact: a successor exists exactly when the chunk did not
+        // reach the end of the document, and a chunk that ends exactly at the end — or an offset at or
+        // past it — has none. Everything is counted in the string's own code units, the same unit
+        // `offset`/`maxChars`/`totalChars` use, so a resumed read is contiguous and cannot skip.
+        const nextOffset = offset + text.length < totalChars ? offset + text.length : null;
+        return ok({ text, offset, totalChars, truncated: nextOffset !== null, nextOffset });
       }
     }),
     defineTool({

@@ -492,3 +492,80 @@ inline boundary (the sentinel turns any unlisted one into a false UNCERTAIN, nev
 whether a real export ever carries a NUL in its text (it must not, or the refusal above fires) — and
 whether a real document's extracted text matches this model. The programmatic injection is a real page's
 own `DOMParser`; the fixture is not a browser.
+
+## 8. Sprint 3, tool 1 — `read_document_text`, the bounded chunked document read
+
+The first tool of the §10 catalogue. It is a **read**, so it needs no delta, no readback and no
+uncertainty class: a string is an unambiguous result and there is no mutation whose effect would have to
+be established. Its mechanism is the one Phase 0 measured on **both** builds and the insert confirmation
+already uses — the public `GetFileHTML` export, decoded by the bridge's own
+`decodeDocumentText` + `documentText` helpers. It adds **no editor call, no new capability and no write
+path**, and nothing in it sends the whole document anywhere: the tool has no model or transport call at
+all. `src/agent/*` is untouched; the tool becomes available by existing, because the runtime builds its
+catalogue from the registry.
+
+**One new bridge leg** (`readDocumentText`, ticket kind `documentread`): one `GetFileHTML` dispatch on
+the single owned callback slot, decoded by the SAME two helpers (one decode rule, not two), answering
+`{ok:true, text, totalChars}`. It carries **no document-identity probe**, deliberately: unlike a
+selection read it hands back no OWNED TARGET a later write could be applied to, so there is no handle
+whose ownership would need proving, and the insert's own pre-dispatch document read has always had
+exactly this shape. The fail-closed rule is unchanged — an export above `LIMITS.documentHtmlBytes` is
+**refused** (`BYTE_LIMIT`) and never truncated into a prefix, because a clipped export would publish a
+false `totalChars`; a platform the text cannot be built with is `CAPABILITY_UNAVAILABLE`; a non-string
+answer is `INVALID_DATA`.
+
+**Limits** (`src/shared/limits.js`): `readDocumentChars = 12000` (the default chunk),
+`readDocumentMaxChars = 32768` (the advertised hard cap — exactly `editorResultBytes / 2`, the largest
+chunk whose **Cyrillic** encoding fits, and Cyrillic is this product's realistic worst case), and
+`readDocumentOffsetMax = 262144` (no readable document's text can be longer than `documentHtmlBytes`
+characters, since every character costs at least one UTF-8 byte).
+
+**Result shape:** `ok({ text, offset, totalChars, truncated, nextOffset })`, where `text` is the
+requested slice, `totalChars` is the whole document's own character count, `truncated`/`nextOffset` are
+**one fact** (`nextOffset` is `null` exactly when the chunk reached the end), and an offset at or past
+the end is an `ok` with empty text — never a refusal. A chunk that ends exactly at the end reports
+`truncated:false, nextOffset:null`. All four positions are counted in the same unit (the string's own
+code units), so a resumed read is contiguous.
+
+**The enforced bound is a byte measure, not the advertised character cap.** The schema's cap bounds
+CHARS; the per-result ceiling is BYTES, and the widest encoding of one BMP character in this byte counter
+is three bytes (CJK text, typographic punctuation; a lone surrogate counts as U+FFFD, also three), so the
+largest advertised chunk measures 98304 bytes. The handler therefore measures the slice it is about to
+return and refuses an over-ceiling one **whole** as `BYTE_LIMIT` — never clipped, because a clipped chunk
+would publish a resume point that skips text the model never saw.
+
+**Failure classes:** a non-Word editor and a bridge that cannot serve the read →
+`CAPABILITY_UNAVAILABLE`; a bridge refusal → its own closed class through `refusalCode`
+(`BYTE_LIMIT`/`CAPABILITY_UNAVAILABLE`/`INVALID_DATA`/`TIMEOUT`/`CANCELLED`), while a code outside the
+closed vocabulary collapses to `TOOL_ERROR`; an envelope the tool cannot interpret (no `ok:true`, a
+non-string `text`, a `totalChars` that disagrees with it) → the module's unknown convention `known()`;
+the bridge's own uncertain class → `TOOL_UNCERTAIN`, which stops the run. An **empty document** is a
+legitimate `ok` (`text:''`, `totalChars:0`, `truncated:false`, `nextOffset:null`) — deliberately NOT the
+`read_selection` convention, because an empty SELECTION means there is nothing to reason about while the
+empty answer here IS the complete answer to "what does this document say".
+
+**Tests.** RED first: 25 new/extended cases failed on the tree before the implementation (the tool did
+not exist — `TypeError: Cannot read properties of undefined (reading 'execute')` — and the three exact
+descriptor-list assertions did not carry the new name), then all passed. Coverage: schema acceptance and
+rejection (unknown key, non-integer, below `minimum`, above `maximum`, the exact bounds, the omitted-key
+defaults), the non-Word precondition, first/middle/exact-end/past-end/oversized slice boundaries,
+`totalChars`, the `truncated`/`nextOffset` pair, a full chunk walk that reconstructs the document with no
+gap or overlap, the empty document, every refusal class, the over-ceiling slice
+(`BYTE_LIMIT`), a Cyrillic chunk measuring exactly `editorResultBytes` (2 bytes/char), the caller signal,
+"exactly one bridge read and no write method", the real bridge leg (one `GetFileHTML`, an over-ceiling
+export, a malformed answer, a missing `DOMParser`, an inherited dispatch channel, a pre-aborted signal),
+and the offered catalogue + a model-emitted call dispatched through the real runtime. No existing test
+was weakened or deleted; the only edits to existing ones are the three exact descriptor lists, which now
+name the new tool. Final tree: `node --test` **688/688** (666 before this tool + 22 new cases —
+three of the 25 RED failures were the extended existing assertions), the focused word suite green,
+`Authored-code audit PASS` (exit 0) and the bundle build exit 0
+(`Plugin build: 8 allowlisted files; ZIP STORE SHA-256 e7672feb…`).
+
+**Unverified natively:** as everywhere above, this ran host-side only. What only a native run on the
+target can show is that the installed build's `GetFileHTML` really answers for a real document, how large
+a real document's export is against the 256 KiB ceiling, whether the decoded text of a real export
+matches this model (the element vocabulary question of §5–§7, now also the substance this tool hands the
+model), and how a real R7 document's text behaves around an offset that lands inside a surrogate pair or
+a paragraph-boundary separator. An editor that does not implement `GetFileHTML` gets no document read at
+all: the ticket settles `TIMEOUT`, a known class, never a document.
+
