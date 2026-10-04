@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { auditSource, auditPaths } from '../../scripts/static-audit.mjs';
 
 // ALL adversarial fixtures are parser inputs only. Never execute/evaluate/import them.
@@ -158,4 +159,70 @@ test('explicit bundle paths are audited and missing explicit input fails closed'
     assert.ok((await auditPaths(root, ['other.js'])).some(f => f.code === 'DYNAMIC_EXECUTION'));
     assert.equal((await auditPaths(root, ['missing.js']))[0]?.code, 'READ_ERROR');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+// Literal dispatch is the ONLY tool-dispatch shape the runtime uses: the model's name is a
+// data key resolved against the catalogue, and the handler is the descriptor's own static
+// `execute` (src/tools/registry.js) — there is no name-keyed switch and no computed callee.
+// These pin that a computed callee stays rejected while the authored literal forms stay allowed.
+const computedDispatch = [
+  ['name-keyed table call', 'const table = { read_selection: () => 1 }; export const run = name => table[name]();'],
+  ['globalThis computed lookup call', 'export const run = name => globalThis[name]();'],
+  ['inline object literal indexed by a variable', 'export const run = name => ({ read_selection: () => 1 })[name]();'],
+  ['identifier assigned from a computed read then called', 'const table = { read_selection: () => 1 }; const run = table[name]; run(source);']
+];
+for (const [name, source] of computedDispatch) {
+  test(`literal dispatch rejects computed callee: ${name}`, () => {
+    const findings = auditSource(source, 'dispatch-fixture.js');
+    assert.ok(findings.some(finding => finding.code === 'DYNAMIC_PROPERTY'), `missing DYNAMIC_PROPERTY; got ${JSON.stringify(findings)}`);
+    assert.ok(findings.every(finding => finding.label === 'dispatch-fixture.js' && Number.isInteger(finding.line) && finding.line >= 1));
+  });
+}
+for (const [name, source] of [
+  ['switch over literal tool names', 'export function run(name) { switch (name) { case "read_selection": return 1; case "insert_paragraph": return 2; case "replace_selection": return 3; default: return null; } }'],
+  ['literal property call on the descriptor', 'export function dispatch(descriptor, args) { return descriptor.execute(args); }'],
+  ['computed DATA read that is never called', 'export function lookup(table, name) { const entry = table[name]; return entry; }']
+]) {
+  test(`literal dispatch allows authored static form: ${name}`, () => assert.deepEqual(auditSource(source, 'dispatch-safe.js'), []));
+}
+
+// The SECOND audit surface: scripts/build-plugin.mjs runs this same scope-insensitive taint
+// analysis over the CONCATENATED esbuild bundle of panel.js. Two modules whose locals share a
+// name therefore collide after concatenation even though each module is clean on its own — this
+// is exactly what happened when src/tools/registry.js first entered the production bundle, and
+// it was fixed by renaming the colliding local, never by weakening the audit.
+test('bundle concatenation collides same-named module locals into a computed-callee finding', () => {
+  const registryModule = [
+    '// the shape of src/tools/registry.js: a literal method call on a local',
+    'export function createRegistry(descriptors) {',
+    '  const defined = descriptors.map(defineTool);',
+    '  return Object.freeze(defined);',
+    '}'
+  ].join('\n');
+  const bridgeModule = [
+    '// the shape of src/plugin/bridge.js: a computed DATA read taints the same local name',
+    'export function readMembers(raw, name) {',
+    '  const descriptors = Object.getOwnPropertyDescriptors(raw);',
+    '  const descriptor = descriptors[name];',
+    '  return !!descriptor && Object.hasOwn(descriptor, "value");',
+    '}'
+  ].join('\n');
+  // Each module alone is clean...
+  assert.deepEqual(auditSource(registryModule, 'registry.js'), []);
+  assert.deepEqual(auditSource(bridgeModule, 'bridge.js'), []);
+  // ...but the concatenated bundle is not: the taint from one module reaches the other's
+  // same-named local, so a literal `descriptors.map(...)` reads as a computed callee.
+  const bundle = auditSource(`${registryModule}\n${bridgeModule}`, 'panel.js');
+  assert.ok(bundle.some(finding => finding.code === 'DYNAMIC_PROPERTY'), `missing collision finding; got ${JSON.stringify(bundle)}`);
+  assert.ok(bundle.every(finding => finding.label === 'panel.js'));
+  // The documented remedy is a RENAME in the colliding module, not loosening the audit.
+  const renamed = registryModule.replaceAll('descriptors', 'entries');
+  assert.deepEqual(auditSource(`${renamed}\n${bridgeModule}`, 'panel.js'), []);
+});
+
+// The repository's own production sources must stay clean, so a future computed call anywhere
+// in the agent/tools modules fails a test rather than only the CLI gate.
+test('the repository authored src/ tree is clean', async () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url));
+  assert.deepEqual(await auditPaths(root, ['src']), []);
 });
