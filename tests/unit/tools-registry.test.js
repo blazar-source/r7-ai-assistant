@@ -51,6 +51,26 @@ test('catalogue always omits deny tools while keeping their non-deny counterpart
   assert.deepEqual(ask, ['read_selection']);
 });
 
+test('registry.tools publishes no withheld descriptor, so no consumer can reach one', () => {
+  const denyRead = { ...readTool, name: 'read_secret', policy: 'deny' };
+  const denyMutate = { ...insertTool, name: 'delete_all', policy: 'deny' };
+  const registry = createRegistry([readTool, insertTool, denyRead, denyMutate]);
+  const published = registry.tools.map(tool => tool.name).sort();
+  assert.deepEqual(published, ['insert_paragraph', 'read_selection'],
+    'the published descriptor list is the non-denied set itself, not a filtered view of another list');
+  assert.equal(published.includes('read_secret'), false);
+  assert.equal(published.includes('delete_all'), false);
+  assert.equal(Object.isFrozen(registry.tools), true);
+  // The withheld handlers are still DEFINED (the probe-driven switch back is one policy value), they
+  // are simply not reachable through the registry object's own public surface.
+  assert.equal(registry.tools.some(tool => tool.policy === 'deny'), false);
+  for (const mode of ['EDIT', 'ASK']) {
+    const offered = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode });
+    assert.equal(offered.some(tool => tool.name === 'read_secret'), false);
+    assert.equal(offered.some(tool => tool.name === 'delete_all'), false);
+  }
+});
+
 test('registry rejects duplicate names', () => {
   assert.throws(() => createRegistry([readTool, { ...readTool }]), /INVALID_DATA/);
 });

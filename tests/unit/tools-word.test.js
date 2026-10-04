@@ -44,6 +44,14 @@ test('read_context is withheld from every catalogue until a public document read
     const offered = registry.catalogue({ editor: 'word', capabilities: full, mode });
     assert.equal(offered.some(tool => tool.name === 'read_context'), false, `${mode} must not offer read_context`);
   }
+  // The registry object's own public descriptor list is a second door to the same withheld native
+  // primitive. It is closed as well: `read_context` appears in neither `tools` nor any catalogue, so an
+  // iterate-and-dispatch consumer cannot reach the handler the source module still keeps.
+  assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
+    'the published descriptor list must not hand out a withheld tool');
+  assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
+    ['insert_paragraph', 'read_selection', 'replace_selection'],
+    'every non-denied Word descriptor is still published');
 });
 
 test('read_selection returns bounded data and marks refusals as known errors', async () => {
@@ -534,6 +542,24 @@ test('insert_paragraph stops the run for an uncertain insert instead of reportin
   assert.equal(closed.ok, false);
   assert.equal(typeof closed.code, 'string');
   assert.equal(JSON.stringify(closed).includes('private native detail'), false);
+});
+
+// The bridge does NOT throw its uncertain class: `insertParagraph` catches its own ticket settlement
+// and RETURNS `{ok:false, code:'APPLY_UNCERTAIN'}` (src/plugin/bridge.js, pinned by
+// tests/unit/bridge.test.js and tests/unit/tools-word.test.js above). The handler therefore meets the
+// uncertain mutation class on BOTH legs — a throw and a returned envelope — and must classify them
+// identically, or a genuinely unknown mutation outcome falls through as an ordinary known error and
+// the run keeps going as if nothing uncertain had happened.
+test('insert_paragraph classifies a RETURNED uncertain insert exactly like a thrown one', async () => {
+  const returned = createWordTools(fakeBridge({ insertParagraph: async () => ({ ok: false, code: 'APPLY_UNCERTAIN' }) }))
+    .find(entry => entry.name === 'insert_paragraph');
+  const result = await returned.execute({ text: 'Абзац' }, { editor: 'word' });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'TOOL_UNCERTAIN', 'the returned uncertain class is the runtime-stopping class');
+  // The authored caption is a UI concern; the descriptor publishes the closed class only, never a raw
+  // bridge code or a raw exception text.
+  assert.equal(result.message, 'отказ');
+  assert.equal(JSON.stringify(result).includes('APPLY_UNCERTAIN'), false);
 });
 
 test('a word tool refuses a bridge that does not expose the entry point instead of crashing', async () => {

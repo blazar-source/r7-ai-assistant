@@ -189,3 +189,80 @@ test('the controller drives a real read tool through the owned bridge and render
   assert.equal(tree.root.textContent.includes('текст выделения'), false, 'the tool result never reaches the DOM');
   panel.dispose(); controller.dispose();
 });
+
+// --- Final review, R2: the ONLY auto-mutation end to end through the real bridge ----------------
+// `insert_paragraph` is the single `policy:'auto'` mutation the model can dispatch, and its native
+// acknowledgement (`PasteText`) is the only evidence the bridge accepts. The bridge does NOT throw its
+// uncertain class: a dispatched insert whose callback never arrives settles into a RETURNED
+// `{ok:false, code:'APPLY_UNCERTAIN'}` envelope. This drives that exact shape through
+// controller -> runAgent -> registry -> the real bridge and pins the terminal behaviour the R1 mapping
+// exists for: an unknown mutation outcome stops the run (never COMPLETE), dispatches nothing further,
+// and keeps the write lock. Without the `word.js` mapping this test sees COMPLETE/FINAL, a second
+// model step and a second tool call — so it cannot pass on the reverted code.
+test('an insert whose native PasteText callback never arrives stops the run as uncertain and keeps the write lock', async () => {
+  let time = 0; const tasks = new Map(); const selections = []; const identity = []; const inserts = []; let calls = 0;
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    // The document identity leg is the bridge's own synchronous callCommand probe: it stays native
+    // until its callback is delivered, exactly like the selection read and the insert below.
+    callCommand(_body, _close, _recalculate, callback) { identity.push(callback); return false; },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push(callback); return false; }
+      // The dispatched mutation: the callback is RECORDED and deliberately never delivered, so the
+      // ticket settles APPLY_UNCERTAIN rather than a success claim.
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const queue = [JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_paragraph', arguments: { text: 'Новый абзац' } }] }),
+    JSON.stringify({ type: 'final', message: 'Готово' })];
+  const tree = dom();
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { calls += 1; return { content: queue.shift() }; } });
+  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  controller.setMode('EDIT');
+  const panel = mountPanel(tree.root, controller);
+  const operation = controller.analyze('добавь абзац');
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  // (1) the controller's own context capture: one selection read and one identity probe.
+  assert.equal(selections.length, 1); assert.equal(identity.length, 0);
+  selections[0]('контекст запроса'); await tick();
+  assert.equal(identity.length, 1);
+  identity[0](['bounded-id', true, true, false]); await tick();
+  // (2) the model's mutation dispatch: the tool's own identity probe, then the insert itself. The
+  // native insert acknowledgement is NEVER delivered.
+  assert.equal(inserts.length, 0);
+  assert.equal(identity.length, 2, 'the insert runs under its own document identity proof');
+  identity[1](['bounded-id', true, true, false]); await tick();
+  assert.equal(inserts.length, 1, 'exactly one mutation reached the native editor');
+  assert.deepEqual(inserts[0].args, ['Новый абзац'], 'the validated payload crosses unchanged');
+  assert.equal(bridge.getState().writePending, true, 'the dispatched mutation is pending');
+  // The bridge's own callback deadline is the only thing that can settle a dispatched insert whose
+  // native acknowledgement never arrives. The fake clock is advanced past that deadline but stays far
+  // inside the controller's operation deadline, so the write settles APPLY_UNCERTAIN by itself.
+  time += 5100;
+  for (const [key, task] of [...tasks]) if (task.at <= time) { tasks.delete(key); task.fn(); }
+  await operation;
+  const state = controller.getState();
+  // (a) the terminal status is the authored uncertain outcome, never COMPLETE.
+  assert.equal(state.status, 'APPLY_UNCERTAIN');
+  assert.notEqual(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'UNCERTAIN');
+  assert.match(tree.id('status').textContent, /Исход команды неизвестен/);
+  // (b) no second mutation was dispatched, and the loop spent no further step producing refusals.
+  assert.equal(calls, 1, 'the run stops on the uncertain action; the second envelope is never requested');
+  assert.equal(inserts.length, 1, 'a second native mutation is never dispatched');
+  assert.equal(identity.length, 2, 'no further identity probe is made for a stopped run');
+  assert.deepEqual(state.agent.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['insert_paragraph', 'uncertain', 'TOOL_UNCERTAIN']]);
+  assert.equal(state.agent.steps, 1);
+  assert.equal(tree.id('actions').textContent, 'insert_paragraph: uncertain (TOOL_UNCERTAIN)');
+  // (c) the write lock holds: an unresolved dispatched write keeps the panel write-locked.
+  assert.equal(bridge.getState().writePending, true);
+  assert.equal(state.writeLocked, true);
+  assert.equal(await controller.analyze('второй'), false, 'a write-locked panel refuses a new run');
+  assert.equal(inserts.length, 1);
+  panel.dispose(); controller.dispose();
+});

@@ -30,6 +30,22 @@ function refusalCode(code, fallback) {
 function wrongEditor(ctx, fallback) {
   return ctx?.editor === 'word' ? null : { code: fallback, message: REFUSAL };
 }
+// The ONE bridge class that means "this mutation may already have applied". The bridge expresses it in
+// two shapes — a thrown SafeError and, because `insertParagraph` catches its own ticket settlement, a
+// RETURNED `{ok:false, code:'APPLY_UNCERTAIN'}` envelope — and both legs must classify it identically:
+// the handler publishes the runtime's own uncertain class, so the run stops fail-safe instead of
+// treating a mutation whose outcome is unknown as an ordinary known error.
+// Membership-certified, never compared against a caller-supplied string: only a `code` that
+// ERROR_CODES itself defines can be classified, so an arbitrary bridge code keeps its closed fallback.
+// `APPLY_UNCERTAIN` is the only uncertain class this run's ERROR_CODES defines for a bridge result;
+// CANCELLED (an aborted read, and an insert aborted BEFORE dispatch) and TIMEOUT (the non-write legs)
+// are KNOWN outcomes and stay ordinary classified errors. `TOOL_UNCERTAIN` is deliberately not
+// remapped — it is the runtime-facing class this handler already produces, so republishing it would
+// only launder a handler that illegally returned its own output class.
+function uncertainResult(result) {
+  if (!result || typeof result !== 'object' || result.code !== ERROR_CODES.APPLY_UNCERTAIN) return null;
+  return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_UNCERTAIN, message: REFUSAL });
+}
 
 // A byte bound is a static literal per scope, never a computed read of a caller-controlled key:
 // the schema advertises the largest bound, and the per-scope ceiling is applied where the read is
@@ -87,14 +103,14 @@ export function createWordTools(bridge) {
       // schema, its precondition and its handler are deliberately kept, so the switch back is this one
       // value.
       // What `deny` actually guarantees (stated exactly, so this comment cannot over-claim): the
-      // registry's `catalogue` skips a denied entry, and that catalogue is the only place the PRODUCT
-      // turns a model tool name into an executable descriptor — `runAgent` builds its catalogue through
-      // that call and `validateBatch` resolves against it — so a model-emitted `read_context` is a
-      // closed TOOL_ERROR with no dispatch. That is NOT a property of the registry as a whole:
-      // `registry.tools` still hands out this descriptor, and a caller that bypasses the catalogue and
-      // invokes `descriptor.execute` directly still reaches the handler kept below. The product never
-      // does that, so the catalogue-scoped `resolve`/`validateBatch` path is what makes the tool
-      // unexecutable in the product — no more and no less. PENDING NATIVE VERIFICATION.
+      // registry skips a denied entry in BOTH of its public collections — `catalogue`, the only place
+      // the PRODUCT turns a model tool name into an executable descriptor (`runAgent` builds its
+      // catalogue through that call and `validateBatch` resolves against it), and `registry.tools`,
+      // which publishes only the non-denied descriptors — so no consumer reaches this descriptor, and
+      // a model-emitted `read_context` is a closed TOOL_ERROR with no dispatch. The descriptor, its
+      // schema, its precondition and its handler are kept in this module (the registry's `deny` policy
+      // is what withholds them; the descriptor itself is still executable if held directly), which is
+      // what makes the probe-driven switch back a one-value change. PENDING NATIVE VERIFICATION.
       name: 'read_context', kind: 'read', editors: ['word'], policy: 'deny', requires: ['document.read'],
       schema: { type: 'object', additionalProperties: false, required: ['scope', 'index'],
         properties: { scope: { type: 'string', enum: ['paragraph', 'section', 'structure'] },
@@ -161,11 +177,16 @@ export function createWordTools(bridge) {
         catch (error) {
           // A write whose callback never settled may already have applied: that is the one case
           // which stops the run. Every other bridge throw is a closed local failure.
-          if (error?.code === ERROR_CODES.APPLY_UNCERTAIN) {
-            return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_UNCERTAIN, message: REFUSAL });
-          }
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
           return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
         }
+        // The bridge answers its own uncertain settlement by RETURNING this envelope rather than
+        // throwing it, so the same class is classified here before any ordinary-refusal path can treat
+        // it as a known error. A returned `APPLY_UNCERTAIN` is the same unknown mutation outcome as a
+        // thrown one and stops the run identically.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
         if (!result || typeof result !== 'object') return known();
         if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
         // The native acknowledgement is the only insert evidence there is: the bridge envelope carries

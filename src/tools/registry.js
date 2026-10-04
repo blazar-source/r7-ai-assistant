@@ -45,6 +45,13 @@ export function createRegistry(list) {
   // computed function lookup exists (defineTool rejects a non-function execute, so a
   // catalogue entry always carries a static handler). Adding a tool therefore touches
   // only its descriptor — never the runtime and never a name-keyed switch.
+  // `defined` stays the closed internal list (the identity/name check and the catalogue both read it);
+  // what this object PUBLISHES as `tools` is only the descriptors a consumer may reach. A `deny` entry
+  // is withheld from the catalogue, so publishing its descriptor here would keep a native primitive
+  // alive that no public read backs — a future module iterating `tools` could reach it by name. The
+  // withheld descriptor itself is not deleted from the source module: flipping its `policy` back is
+  // still the one-value switch.
+  const publishable = defined.filter(entry => entry.policy !== 'deny');
   function catalogue(request) {
     // Fail closed on anything not exactly interpretable: an unrecognised mode must never
     // silently promote a session to EDIT (design §9 makes "ASK exposes no mutation tool" a
@@ -70,5 +77,5 @@ export function createRegistry(list) {
     if (typeof name !== 'string') return null;
     return list.find(entry => entry.name === name) ?? null;
   }
-  return Object.freeze({ tools: Object.freeze(defined), catalogue, resolve });
+  return Object.freeze({ tools: Object.freeze(publishable), catalogue, resolve });
 }
