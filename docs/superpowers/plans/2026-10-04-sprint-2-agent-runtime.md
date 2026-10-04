@@ -346,6 +346,8 @@ git commit -m "feat(agent): hard ceilings and configurable task guardrails"
 - Consumes: `AGENT_CEILINGS`, `ERROR_CODES`, `SafeError`, `utf8ByteLength`
 - Produces: `validateToolSchema(schema) → true | throws SafeError(INVALID_DATA)`; `validateArguments(schema, args, limitBytes) → frozen normalized args | throws SafeError(TOOL_ERROR)`
 
+> **Note (Task 13):** the snippet below is the original non-recursive validator and is superseded — the code is the authority, and `src/tools/schemas.js` supersedes this snippet.
+
 - [ ] **Step 1: Write the failing test**
 
 ```js
@@ -774,6 +776,8 @@ git commit -m "feat(agent): closed envelope parsing, whole-batch validation and 
 **Interfaces:**
 - Consumes: `AGENT_CEILINGS`, `utf8ByteLength`
 - Produces: `createContextWindow({ ceilingBytes }) → frozen { append(message), messages(), dropped() }`; `append` evicts oldest tool-result messages first, then oldest complete assistant/user pairs, never the system message or the first user request, and inserts one marker
+
+> **Note (Task 13):** the snippet below is the original eviction logic the implementation had to replace and is superseded — the code is the authority, and `src/agent/context.js` supersedes this snippet.
 
 - [ ] **Step 1: Write the failing test**
 

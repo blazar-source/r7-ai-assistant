@@ -333,6 +333,14 @@ architecture must accept far larger values without a runtime change. When a guar
 run stops with a clear "задача превысила текущий лимит" outcome, completed changes stay (native Undo
 is the user's rollback), and nothing is silently truncated.
 
+> **Calibration status (recorded by Task 13, 2026-10-04): the §15.2 pilot calibration was NOT RUN, so
+> the values above are still the INITIAL ENGINEERING DEFAULTS, not measured pilot guardrails.** The
+> development endpoint key lives in the DSH credential store and is unreadable from the implementation
+> environment, so no real Qwen workload was executed; mock harness records are explicitly **not**
+> calibration data (the fixed envelope yields one model step, zero tool calls and loop-overhead
+> latency). The measurements listed in §15.2 remain PENDING, and the gap with its dependencies is
+> recorded in [Sprint 2 progress](../../sprint-2-progress.md).
+
 All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `applyObservationMs`
 (15000 ms) stay and apply to `confirm` tools only.
 
