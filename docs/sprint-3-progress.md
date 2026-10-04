@@ -35,18 +35,22 @@ reported as a plain known error).
      `baselineCount + 1` — exactly one NEW occurrence is the evidence that THIS paste added the payload.
 4. **The counting form is the dispatched payload counted in the document's DECODED TEXT.** The export
    is parsed with `DOMParser` (`new DOMParser().parseFromString(html, 'text/html')`, the reference handed
-   to the bridge through the same injected `platform` object as the DOM one) and the text nodes are
-   collected with a single `"\n"` after **every element boundary except the named inline set**
-   (`INLINE_TAGS`), so **markup and attribute values never enter the count**, a paragraph break is a real
-   separator, and text inside the RAWTEXT elements (`style`, `script`, `title`, `textarea`, `noscript`) is
-   never counted at all. The needle is the **exact dispatched payload** — `text` for
-   `position:'cursor'`, `text + "\n"` for `position:'end'` — and no escaping is applied anywhere: once
-   the markup is parsed away, a payload holding `&`, `<`, `>`, `"` or Cyrillic matches by its real
-   characters, and the raw and entity spellings of the same character are the same evidence. The count
-   is non-overlapping, and an empty needle is refused before any read. (The earlier **minimally
-   HTML-escaped** counting form is **retired** — see §5: it was fail-open. §6 replaces the block
-   white list this rule first used with the inline blacklist described there; the failure direction is
-   the safe one.)
+   to the bridge through the injected `platform` object) and the text nodes are collected with a
+   **three-way separator** after every element boundary — **one `"\n"`** after a known block element
+   (`BLOCK_TAGS`), **nothing** after a known inline element (`INLINE_TAGS`), and the
+   `SEPARATOR_SENTINEL` (`"\u0000"`) after an element in neither list — so **markup and attribute values
+   never enter the count**, a paragraph break is a real separator, an unknown element can never
+   **complete** the `end` form's needle, and text inside the RAWTEXT elements (`style`, `script`,
+   `title`, `textarea`, `noscript`, `iframe`, `noembed`, `noframes`) is never counted at all. The needle
+   is the **exact dispatched payload** — `text` for `position:'cursor'`, `text + "\n"` for
+   `position:'end'` — and no escaping is applied anywhere: once the markup is parsed away, a payload
+   holding `&`, `<`, `>`, `"` or Cyrillic matches by its real characters, and the raw and entity
+   spellings of the same character are the same evidence. The count is non-overlapping, an empty needle
+   is refused before any read, and a payload holding the sentinel is refused before any dispatch. (The
+   earlier **minimally HTML-escaped** counting form is **retired** — see §5: it was fail-open. §6
+   replaces the block white list this rule first used with an inline blacklist, and **§7 retracts §6's
+   claim that an unknown element can only cause a false UNCERTAIN**: it can complete the `end` needle,
+   so the unknown case now gets a sentinel instead of a newline.)
 5. **Every other outcome is "not confirmed".** No new occurrence, two or more new occurrences, a
    payload that is simply absent, a missing/malformed/non-string answer, a read that threw, a post read
    above the byte ceiling, an observation delivered past the ticket deadline — all of them settle
@@ -341,12 +345,16 @@ bridge with pre `<p>стар</p>`, post `<p>стар</p><center>01</center><cent
 **Repair.** The principle is **inverted**: the separator is inserted after **every element boundary
 except an explicitly listed inline set** (`INLINE_TAGS` in `src/plugin/bridge.js`: `a, abbr, b, bdi, bdo,
 br, cite, code, data, dfn, em, i, kbd, mark, q, rp, rt, ruby, s, samp, small, span, strong, sub, sup,
-time, u, var, wbr`). The failure direction is now the **safe** one and is accepted and documented: an
-**unknown element — or an unlisted element that is genuinely inline — now gets an EXTRA separator**, so a
-payload spanning it will NOT match the extracted text and the insert settles **UNCERTAIN (a false
-negative, fail-safe)** instead of being reported as a verified success over a paste that never happened.
-That is the deliberate trade: a false UNCERTAIN stops the run for the user to re-check, a false VERIFIED
-publishes an insert that never happened.
+time, u, var, wbr`). An **unknown element — or an unlisted element that is genuinely inline — gets an
+EXTRA separator** instead of joining its neighbours. That is the deliberate trade: a false UNCERTAIN
+stops the run for the user to re-check, a false VERIFIED publishes an insert that never happened.
+
+**RETRACTED IN §7.** §6 stated that an unknown element "can only SPLIT text rather than join it — a
+payload spanning it settles UNCERTAIN instead of matching", i.e. that **an unknown element can only cause
+a false UNCERTAIN, never a false success**. **That sentence was FALSE** and §7 corrects it: the extra
+separator §6 inserted was a `"\n"`, and for `position:'end'` the needle is `text + "\n"`, so an unlisted
+**inline** element supplied exactly the newline that COMPLETED the needle and a no-op paste was reported
+VERIFIED. The extra separator is now a sentinel that cannot complete a needle.
 
 **D-B — rawtext was counted as document text (low-medium, fail-open, demonstrated).** `style`, `script`,
 `title`, `textarea` and `noscript` content is markup-level content, not document text, but it entered the
@@ -360,11 +368,11 @@ its forbidden-strings list to allow it. A detached container is not fully inert 
 `load`/`error` handlers remain possible, with only the page CSP in the way. The parse is now
 `new DOMParser().parseFromString(html, 'text/html')` walking `documentElement`: a parsed document has **no
 browsing context**, so no subresource is loaded and no handler can run. The `DOMParser` reference is read
-off the **same injected platform object** the DOM reference already used — the option is now
-`platform: { document, DOMParser }`, supplied by `src/ui/entry.js` and injected by tests (the fixture
-stands in for both) — and the pin is restored with the same string plus `outerHTML`,
-`insertAdjacentHTML`, `createContextualFragment` and `document.write(`, which now guard the whole
-string-into-markup sink family.
+off the **injected platform object** — the option was `platform: { document, DOMParser }`, supplied by
+`src/ui/entry.js` and injected by tests (the fixture stands in for both); **§7 removes the `document`
+member, which the bridge never read again**, leaving `platform: { DOMParser }` — and the pin is restored
+with the same string plus `outerHTML`, `insertAdjacentHTML`, `createContextualFragment` and
+`document.write(`, which now guard the whole string-into-markup sink family.
 
 **The rationale for that injection was WRONG in §5 and is corrected here:** `scripts/static-audit.mjs`
 does **not** require it. A member read such as `globalThis.document` passes the audit; only a bare
@@ -398,3 +406,83 @@ the real `GetFileHTML` element vocabulary — in particular whether an export re
 an element outside `INLINE_TAGS` (which would now split text that belongs together, a false UNCERTAIN) —
 and whether a real document's extracted text matches this model. The programmatic injection is a real
 page's own `DOMParser`; the fixture is not a browser.
+
+## 7. The separator gets a third class, so it can never COMPLETE an `end` needle, and rawtext covers the whole class
+
+A fifth independent review reproduced a **HIGH fail-open** through the real bridge, plus a narrow rawtext
+gap and three low findings. All of it was host-side reproducible; none of it ran on a live editor.
+
+**D-1 — an unknown element could COMPLETE the `end` needle (HIGH, fail-open, reproduced).** §6's stated
+invariant — "an unknown element can only cause a false UNCERTAIN, never a false success" — was **FALSE**.
+The `end` form's needle is `text + "\n"` (the exact dispatched payload), and the extraction inserted a
+`"\n"` after every boundary that was not named inline, so a genuinely inline element missing from
+`INLINE_TAGS` supplied exactly the newline that completed the needle. R7 emits `<img>` for an inline
+picture and `<ins>`/`<del>` for tracked changes, so this was realistic, not theoretical. Reproduced (real
+bridge, exit 0), no-op paste:
+
+| post export | payload | measured then | measured now |
+| --- | --- | --- | --- |
+| `<p>start</p><p><label>delta</label>tail</p>` | `delta`, `position:'end'` | `effectVerified:true` | `APPLY_UNCERTAIN` |
+| `<p>start</p><p>delta<img src="a"></p>` | `delta`, `position:'end'` | `effectVerified:true` | `APPLY_UNCERTAIN` |
+| `<p>start</p><p><ins>delta</ins>tail</p>` | `delta`, `position:'end'` | `effectVerified:true` | `APPLY_UNCERTAIN` |
+
+**Repair — the separator classifies THREE ways** (the rule and its record are in `src/plugin/bridge.js`):
+1. a **known block** element (`BLOCK_TAGS`: `html`, `body`, `head`, `p`, `div`, `li`, the table cells,
+   `h1`–`h6`, `pre`, the section containers, `hr`, …) → exactly one `"\n"`, the only thing that may
+   complete the `end` form's needle;
+2. a **known inline** element (`INLINE_TAGS`, unchanged) → **nothing**;
+3. **neither** → `SEPARATOR_SENTINEL = "\u0000"`, never a newline.
+
+The sentinel is safe **by construction**, not by hope: the needle IS the dispatched payload, and
+`insertParagraph` now **refuses a payload containing the sentinel before any dispatch** (closed known
+class, nothing read, nothing written, no slot held), so no needle can end with the sentinel either. Every
+other needle tail is either a payload character the document must really hold or the authored `"\n"` of
+the `end` form, which only class 1 supplies. U+0000 is also not a character an HTML text node carries (a
+literal NUL in the source is replaced with U+FFFD), so the sentinel in the counted text can only come
+from this rule. Consequence, stated plainly: an unknown element can now only SPLIT text (a payload
+spanning it settles UNCERTAIN — fail-safe for the cursor form) or inject a sentinel no needle holds
+(fail-safe for the `end` form).
+
+**Corrected invariant sentence.** Where §6 (and the bridge comment it mirrored) said *"an unknown element
+— or an element that is genuinely inline but unnamed — now gets an EXTRA separator, so a payload spanning
+it will NOT match the extracted text and the insert settles UNCERTAIN (a false negative, fail-safe)
+instead of being reported as a verified success"*, the corrected statement is: **an unknown element gets
+the sentinel separator, so it can only split text (a false UNCERTAIN for the cursor form) or inject a
+character no needle can hold (a false UNCERTAIN for the `end` form) — it can never complete a needle, and
+only a known block boundary can supply the `end` form's newline.** §6's claim is marked retracted in
+place.
+
+**D-2 — the rawtext set was incomplete (MEDIUM, narrow).** `iframe`, `noembed` and `noframes` are
+RAWTEXT elements of the real parser exactly like `style`: their content is markup-level, not document
+text. Measured then: post `<p><iframe>delta</iframe></p>` with payload `delta` → VERIFIED; now
+UNCERTAIN, with a regression test for each of the three plus the nested shape.
+
+**D-3 — vestigial field, fixture divergence (LOW).** (a) `platform.document` was never read after the
+parse moved to `DOMParser`, so it is **removed** from the bridge option, from `src/ui/entry.js` and from
+the fixture: the injected boundary now names exactly the ONE platform capability this path uses, and the
+fixture no longer offers a `createElement` helper either, so a fallback to the retired detached-container
+parse fails on a missing capability. (b) The fixture parser diverged from the real HTML parser in two
+ways a test could pin as if it were real: it read `<?…?>` as an **element** (the real parser makes it a
+bogus comment) and it **walked `<template>` content** (the real parser puts those children in
+`template.content`, never in the element's own `childNodes`). Both are fixed, and a fixture-fidelity test
+pins them. **No pre-existing test depended on the divergence** — neither shape appeared anywhere in the
+suite — so the pins are new coverage, not a rewrite of an existing expectation.
+
+**Tests.** RED first, through the real bridge, on the tree of §6: all six reproductions above settled
+`effectVerified:true`/`VERIFIED` before the change and `APPLY_UNCERTAIN` after it; the fixture-fidelity
+test failed on the invented `?XML` element before the fixture fix. Controls kept green: a genuine
+known-block boundary after the payload still lets the `end` form VERIFY (`<p>…<p>01</p>` and
+`<p>…<span>01</span>`), a payload spanning an unknown element still settles UNCERTAIN, and the boundary
+between two known blocks still does not create a false match. No other test was weakened or deleted; the
+only edits to existing tests are **comments** (the bridge test file's header statement of the retracted
+invariant, the `<center>` test's explanation of what an unknown boundary now is, and the fixture's doc
+comments) plus the new `RAWTEXT_TAGS` membership pin. Final tree: `node --test` **666/666** (661 before
+this change + 5 new cases), the focused bridge/dispatch-API/word/integration suites green,
+`Authored-code audit PASS` (exit 0) and the bundle build exit 0.
+
+**Unverified natively:** as in §5 and §6, none of this ran on a live editor. What only a native run can
+show is the real `GetFileHTML` element vocabulary — in particular which elements R7 actually emits at an
+inline boundary (the sentinel turns any unlisted one into a false UNCERTAIN, never a false success), and
+whether a real export ever carries a NUL in its text (it must not, or the refusal above fires) — and
+whether a real document's extracted text matches this model. The programmatic injection is a real page's
+own `DOMParser`; the fixture is not a browser.

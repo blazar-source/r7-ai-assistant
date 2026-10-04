@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { LIMITS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
-import { htmlPlatform } from '../fixtures/html-document.js';
+import { htmlPlatform, parseHtml, RAWTEXT_TAGS } from '../fixtures/html-document.js';
 
 // The confirmation reads the document's DECODED TEXT, so the bridge needs the platform's own parser. Every
 // rig below injects the fixture boundary through the bridge's own `platform` option: the boundary is
@@ -384,26 +384,34 @@ test('Apply rejects caller-forged serializable target certificates without any S
 // THE COUNTING FORM. The confirmation counts in the document's DECODED TEXT, not in the markup: the
 // export is parsed with `DOMParser` (`parseFromString(html, 'text/html')`), supplied through the same
 // injected platform object as the DOM reference — a parsed document has NO browsing context, so no
-// subresource is loaded and no handler can run — and the text nodes are collected with ONE `"\n"` after
-// EVERY element boundary EXCEPT the explicitly listed INLINE names, so a paragraph break is a real
-// separator and markup/attributes never enter the stream. The needle is the EXACT dispatched
-// payload — `text` for `position:'cursor'`, `text + "\n"` for `position:'end'` — with no escaping at
-// all: once markup is parsed away there is nothing left to escape, and a payload holding `&`, `<`, `>`
-// or `"` matches by its real characters. (An independent review found the old markup counting
-// fail-open: payload `amp` over a baseline holding `&amp;` counted TWO occurrences of "amp" — the
-// literal `amp` in the text plus the one inside the decoded entity — so an unrelated `&` added by the
-// user moved the count by one and a no-op paste was reported VERIFIED.) The fixture at
-// `../fixtures/html-document.js` stands in for that platform boundary here and names its own inline set.
+// subresource is loaded and no handler can run — and the text nodes are collected with the THREE-WAY
+// separator rule below, so a real block boundary is a separator and markup/attributes never enter the
+// stream. The needle is the EXACT dispatched payload — `text` for `position:'cursor'`, `text + "\n"` for
+// `position:'end'` — with no escaping at all: once markup is parsed away there is nothing left to escape,
+// and a payload holding `&`, `<`, `>` or `"` matches by its real characters. (An independent review found
+// the old markup counting fail-open: payload `amp` over a baseline holding `&amp;` counted TWO
+// occurrences of "amp" — the literal `amp` in the text plus the one inside the decoded entity — so an
+// unrelated `&` added by the user moved the count by one and a no-op paste was reported VERIFIED.) The
+// fixture at `../fixtures/html-document.js` stands in for that platform boundary here and names its own
+// sets.
 //
-// THE FAIL-SAFE DIRECTION OF THE SEPARATOR RULE. The separator is inserted after every element boundary
-// EXCEPT the named inline set (`INLINE_TAGS` in the bridge): the failure direction is the safe one. An
-// unknown element — or an element that is genuinely inline but unnamed — gets an EXTRA separator, so a
-// payload spanning it does NOT match and the insert settles UNCERTAIN (a false negative) instead of a
-// false VERIFIED. The unlisted-block white list this replaced did the opposite: an export that rendered
-// blocks with an element outside `BLOCK_TAGS` concatenated its neighbours and a no-op paste was reported
-// VERIFIED (the reviewer's `<center>` reproduction, pinned below). Text inside RAWTEXT elements
-// (`style`, `script`, `title`, `textarea`, `noscript`) is never document text at all: their subtrees are
-// skipped whole, so their content cannot move a count (pinned below).
+// THE SEPARATOR CANNOT COMPLETE A NEEDLE. Every element boundary is classified three ways: a KNOWN BLOCK
+// element (`BLOCK_TAGS` in the bridge: `p`, `div`, `li`, the table cells, `h1`–`h6`, `pre`, the section
+// containers, …) gets ONE `"\n"`; a KNOWN INLINE element (`INLINE_TAGS`) gets NOTHING; an element in
+// NEITHER list gets the `SEPARATOR_SENTINEL` (`"\u0000"`), never a newline. So an unknown element can only
+// SPLIT text — a payload spanning it does NOT match, and the insert settles UNCERTAIN (a false negative)
+// — or inject a sentinel no needle holds, and the `end` needle's trailing `"\n"` can only be completed by
+// a real class-1 block boundary. THIS CORRECTS A FALSE CLAIM: the two-way rule that gave every unlisted
+// element a `"\n"` was documented as "an unknown element can only cause a false UNCERTAIN, never a false
+// success", and that was WRONG for `position:'end'` — a genuinely inline element nobody had listed (R7
+// emits `<img>` for an inline picture and `<ins>`/`<del>` for tracked changes) supplied the newline that
+// COMPLETED the needle. The reviewer's three reproductions are pinned below. The unlisted-block white
+// list before that did the opposite: an export that rendered blocks with an element outside `BLOCK_TAGS`
+// concatenated its neighbours and a no-op paste was reported VERIFIED (the reviewer's `<center>`
+// reproduction, pinned below). The sentinel is refused inside a payload before any dispatch, so the
+// needle can never end with it either (pinned below). Text inside RAWTEXT elements (`style`, `script`,
+// `title`, `textarea`, `noscript`, `iframe`, `noembed`, `noframes`) is never document text at all: their
+// subtrees are skipped whole, so their content cannot move a count (pinned below).
 //
 // THE CEILING. The HTML read is bounded by `LIMITS.documentHtmlBytes` (256 KiB) and a result above it
 // is refused rather than truncated: counting inside a prefix could miss an occurrence or count a
@@ -699,10 +707,11 @@ test('D-A: a no-op paste is never verified because an UNLISTED block element con
   // fake paste inserts NOTHING, and the unrelated change turns the post export into
   // `<p>стар</p><center>01</center><center>23</center>`. `center` is not in the retired `BLOCK_TAGS`
   // white list, so the old extraction concatenated `01` and `23` into `0123` and the no-op insert was
-  // reported `{"ok":true,"data":{"sent":true,"effectVerified":true}}`. The separator is now inserted
-  // after every boundary except the named inline set, so the extracted text is `стар\n01\n23\n`, the
+  // reported `{"ok":true,"data":{"sent":true,"effectVerified":true}}`. An element in neither known list
+  // is now a SEPARATOR_SENTINEL boundary, so the extracted text is `стар\n01\u000023\u0000\n`, the
   // payload `0123` is not in it, and the insert settles UNCERTAIN — the false negative this change
-  // deliberately accepts instead of a false success.
+  // deliberately accepts instead of a false success. (The boundary could not be a `"\n"` either: an
+  // unknown element must not be able to complete the `end` form's needle.)
   const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><center>01</center><center>23</center>' });
   const result = await r.bridge.insertParagraph({ text: '0123' });
   assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' },
@@ -740,6 +749,110 @@ test('D-B: text inside a RAWTEXT element is never counted as document text', asy
   const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><style>delta</style><p>Абзац</p>' });
   assert.deepEqual(await r.bridge.insertParagraph({ text: 'Абзац' }), VERIFIED,
     'a real insert next to a rawtext block is still confirmed');
+});
+
+// D-C: THE SEPARATOR MUST BE UNABLE TO COMPLETE A NEEDLE. The two-way rule gave EVERY element boundary
+// that was not named inline a `"\n"`, so a genuinely inline element nobody had listed — R7 emits `<img>`
+// for an inline picture and `<ins>`/`<del>` for tracked changes — supplied exactly the newline the
+// `position:'end'` counting form ends with (`text + "\n"`) and a NO-OP paste was reported
+// `{"ok":true,"data":{"sent":true,"effectVerified":true}}`. An independent review reproduced that through
+// the real bridge for all three shapes below; each must settle UNCERTAIN now.
+test('D-C: an unlisted inline element can never COMPLETE the `end` needle', async () => {
+  for (const [label, post] of [
+    ['label', '<p>start</p><p><label>delta</label>tail</p>'],
+    ['img', '<p>start</p><p>delta<img src="a"></p>'],
+    ['ins', '<p>start</p><p><ins>delta</ins>tail</p>']
+  ]) {
+    const r = markupRig({ pre: '<p>start</p>', post });
+    assert.deepEqual(await r.bridge.insertParagraph({ text: 'delta', position: 'end' }),
+      { ok: false, code: 'APPLY_UNCERTAIN' },
+      `${label}: the unknown element's separator cannot complete the dispatched newline`);
+    assert.equal(r.named('PasteText').length, 1, `${label}: the mutation is dispatched exactly once`);
+    assert.equal(r.named('GetFileHTML').length, 2, `${label}: exactly one baseline and one confirmation read`);
+    assert.equal(r.bridge.getState().writePending, true, `${label}: the unknown outcome keeps the slot`);
+  }
+});
+
+test('D-C: the sentinel separator is not a newline, and a real block boundary still is', async () => {
+  // The neighbours-concatenation shape of the same defect: under the two-way rule the unknown element
+  // between `01` and `23` inserted a REAL newline, so the `end` needle `01\n` was present once more and a
+  // no-op paste verified. An unknown boundary is now a sentinel no needle can end with.
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><label>01</label><label>23</label>' });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: '01', position: 'end' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' }, 'an unknown boundary is not a paragraph break');
+  assert.equal(r.named('PasteText').length, 1, 'the mutation is dispatched exactly once');
+  assert.equal(r.named('GetFileHTML').length, 2);
+  // A payload spanning the unknown element is still not a match either (the split direction is kept).
+  const split = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><label>01</label><label>23</label>' });
+  assert.deepEqual(await split.bridge.insertParagraph({ text: '0123' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a payload spanning an unknown element is not in the document text');
+  assert.equal(split.named('GetFileHTML').length, 2);
+  // CONTROL: a GENUINE known-block boundary after the payload still completes the dispatched newline.
+  const landed = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><p>01</p>' });
+  assert.deepEqual(await landed.bridge.insertParagraph({ text: '01', position: 'end' }), VERIFIED,
+    'a real block boundary still carries the dispatched newline');
+  assert.equal(landed.named('PasteText').length, 1);
+  assert.equal(landed.named('GetFileHTML').length, 2);
+  // The reviewer's own shape with a KNOWN inline element around the payload: the listed inline element
+  // adds nothing of its own, so the block boundary after it still completes the needle.
+  const known = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><span>01</span>' });
+  assert.deepEqual(await known.bridge.insertParagraph({ text: '01', position: 'end' }), VERIFIED,
+    'a listed inline element adds no separator, so the boundary that ends the payload is still the block');
+  assert.equal(known.named('GetFileHTML').length, 2);
+});
+
+test('D-C: a payload holding the separator sentinel is refused before any dispatch', async () => {
+  // The sentinel is what makes "the separator cannot complete a needle" STRUCTURAL rather than a hope:
+  // the needle is the dispatched payload, and a payload holding the sentinel never reaches the editor.
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p>' });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'a\u0000b' }), { ok: false, code: 'TOOL_ERROR' },
+    'the counting form can never hold the separator it counts over');
+  assert.equal(r.named('GetFileHTML').length, 0, 'nothing is read and nothing is dispatched');
+  assert.equal(r.named('PasteText').length, 0);
+  assert.equal(r.bridge.getState().writePending, false);
+});
+
+test('D-B: the rawtext skip covers iframe, noembed and noframes too', async () => {
+  // `iframe`, `noembed` and `noframes` are RAWTEXT elements of the real parser exactly like `style` and
+  // `script`: their content is markup-level, not document text. Without the skip the reviewer's no-op was
+  // verified — post `<p><iframe>delta</iframe></p>` with payload `delta` moved the count by one.
+  for (const [label, element] of [
+    ['iframe', '<iframe>delta</iframe>'],
+    ['noembed', '<noembed>delta</noembed>'],
+    ['noframes', '<noframes>delta</noframes>']
+  ]) {
+    const r = markupRig({ pre: '<p>стар</p>', post: `<p>стар</p>${element}` });
+    assert.deepEqual(await r.bridge.insertParagraph({ text: 'delta' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+      `${label}: rawtext is never document text`);
+    assert.equal(r.named('PasteText').length, 1, `${label}: the mutation is never retried`);
+    assert.equal(r.named('GetFileHTML').length, 2, `${label}: exactly two reads`);
+    assert.ok(RAWTEXT_TAGS.has(label), `${label} is named rawtext in the fixture's own list`);
+  }
+  // The reviewer's exact shape, with the rawtext element nested inside the paragraph.
+  const nested = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><p><iframe>delta</iframe></p>' });
+  assert.deepEqual(await nested.bridge.insertParagraph({ text: 'delta' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'nested rawtext is never document text');
+  assert.equal(nested.named('GetFileHTML').length, 2);
+});
+
+test('D-C: the fixture parser cannot invent nodes the platform parser never yields', async () => {
+  // `<?…?>` is a BOGUS COMMENT for the real HTML parser: it starts no element and its body is no text.
+  // The fixture read it as an element, so a test could pin separator behaviour on a node the platform
+  // never produces. The text after it stays document text.
+  const nodes = parseHtml('<p>стар</p><?xml version="1.0"?>хвост');
+  assert.deepEqual(nodes.filter(node => node.nodeType === 1).map(node => node.tagName), ['P']);
+  assert.equal(nodes.some(node => String(node.nodeName).includes('?')), false, 'no `?`-named element is invented');
+  assert.equal(nodes.at(-1).nodeType, 3, 'the text after the bogus comment is still a text node');
+  assert.equal(nodes.at(-1).nodeValue, 'хвост');
+  // `<template>` content lives in `template.content`, NEVER in `childNodes`, so the tree the confirmation
+  // walks cannot see it: the platform yields no template text for the count to reach.
+  const [template] = parseHtml('<template>delta</template>');
+  assert.equal(template.tagName, 'TEMPLATE');
+  assert.deepEqual(Array.from(template.childNodes), [], 'the parsed tree carries no template children');
+  const r = markupRig({ pre: '<p>стар</p>', post: '<p>стар</p><template>delta</template>' });
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'delta' }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'templated text is not document text, so it can never be a document delta');
+  assert.equal(r.named('GetFileHTML').length, 2);
 });
 
 test('the `end` needle is discriminating: an end payload is never a `trimEnd()`ed delta', async () => {

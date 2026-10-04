@@ -62,11 +62,13 @@ if (typeof globalThis.document !== 'undefined') {
   const plugin = globalThis.Asc?.plugin;
   if (root && plugin) {
     // The platform boundary the confirmation parses the export with is handed to the bridge HERE, at the
-    // one place that already holds the real page objects: `document` and the `DOMParser` constructor. The
-    // bridge itself never reaches for a global. This is for the explicit boundary and for testability,
-    // NOT because `scripts/static-audit.mjs` requires it: `globalThis.document` is a member read and
-    // passes the audit, and only a bare `globalThis` VALUE (aliasing or destructuring) is reported.
-    const binding = bindPanel(plugin, root, { platform: Object.freeze({ document: globalThis.document, DOMParser: globalThis.DOMParser }) });
+    // one place that already holds the real page object: the page's own `DOMParser`. The bridge itself
+    // never reaches for a global, and the option names exactly the ONE platform capability that path uses
+    // — it no longer carries the page's `document`, which the bridge stopped reading when the parse moved
+    // to `DOMParser`. This is for the explicit boundary and for testability, NOT because
+    // `scripts/static-audit.mjs` requires it: `globalThis.document` is a member read and passes the audit,
+    // and only a bare `globalThis` VALUE (aliasing or destructuring) is reported.
+    const binding = bindPanel(plugin, root, { platform: Object.freeze({ DOMParser: globalThis.DOMParser }) });
     globalThis.addEventListener('pagehide', function () { binding.dispose(); });
   } else if (root) root.textContent = 'Локальный SDK Р7 недоступен. Проверьте установленный ../v1/plugins.js; удалённой загрузки нет.';
 }

@@ -9,20 +9,32 @@
 // The parser is small and explicit: elements, attributes, self-closing and void tags, comments and the
 // common named entities plus numeric references. Unknown named entities are left verbatim, like the
 // platform leaves an unrecognised reference. Attribute VALUES are decoded but never enter the text
-// stream, which is what makes "markup never counts" testable.
+// stream, which is what makes "markup never counts" testable. It follows the real parser on the two
+// shapes that are easy to get wrong and that a test could otherwise pin as if they were real: `<?…?>`
+// (and a stray `<!…>`) is a BOGUS COMMENT that starts no element, and a `<template>`'s children live in
+// `template.content`, never in the element's own `childNodes`.
 const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const NAMED_ENTITIES = new Map([['amp', '&'], ['lt', '<'], ['gt', '>'], ['quot', '"'], ['apos', "'"], ['nbsp', '\u00a0']]);
-// The inline set the bridge's separator rule names, written independently here so the fixture and the
-// implementation cannot drift apart silently. The rule is a BLACKLIST: a separator goes after every
-// element boundary EXCEPT a name in this set, so an unknown element is a boundary (the fail-safe
-// direction). `br` is a line break rather than a block, and it is inline for the same reason: the break
-// belongs to the line it sits in.
+// The element names the bridge's separator rule classifies, written independently here so the fixture and
+// the implementation cannot drift apart silently. The rule is THREE-way: a known block element
+// (`BLOCK_TAGS` in the bridge: `p`, `div`, `li`, the table cells, `h1`–`h6`, `pre`, the section
+// containers, …) gets one `"\n"`, a known inline element (the set below) gets nothing, and an element in
+// NEITHER set gets the bridge's `SEPARATOR_SENTINEL` (never a newline) — an unknown element must not be
+// able to COMPLETE the `end` form's needle (`text + "\n"`), which is what a two-way rule let an unlisted
+// inline element do. The block set is deliberately NOT mirrored here: a missing block name only ever
+// costs a fail-safe false UNCERTAIN, and the behavioural tests are what prove the classification. `br` is
+// a line break rather than a block, and it is inline for the same reason: the break belongs to the line it
+// sits in.
 export const INLINE_TAGS = Object.freeze(new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn',
   'em', 'i', 'kbd', 'mark', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u',
   'var', 'wbr']));
 // The rawtext element names whose subtrees hold no document text at all, named independently of the
-// implementation for the same reason.
-export const RAWTEXT_TAGS = Object.freeze(new Set(['noscript', 'script', 'style', 'textarea', 'title']));
+// implementation for the same reason, and CHECKED against the names the bridge's tests rely on (the
+// regression test asserts every one of them is here), so this list cannot drift silently. `iframe`,
+// `noembed` and `noframes` are RAWTEXT in the real parser exactly like `style`: this is the
+// RAWTEXT/RCDATA class of the HTML parser, not a list of "element names we happen to have seen".
+export const RAWTEXT_TAGS = Object.freeze(new Set(['iframe', 'noembed', 'noframes', 'noscript', 'script', 'style',
+  'textarea', 'title']));
 
 export class HtmlElement {
   constructor(tag) { this.nodeType = 1; this.tagName = String(tag).toUpperCase(); this.attributes = {}; this.children = []; this.text = null; }
@@ -78,7 +90,16 @@ export function parseHtml(html, owner = null) {
       i = close < 0 ? source.length : close + 1;
       continue;
     }
-    if (source[i] === '<' && /[a-z!?]/i.test(source[i + 1] ?? '')) {
+    // A `<?…?>` processing instruction and a stray `<!…>` declaration are a BOGUS COMMENT for the real
+    // HTML parser: it starts NO element and its body is not text. Reading them as elements would let a
+    // test pin separator behaviour on a node the platform never produces, so they are consumed to the
+    // closing `>` (or to the end of input) and append nothing.
+    if (source.startsWith('<?', i) || source.startsWith('<!', i)) {
+      const close = source.indexOf('>', i);
+      i = close < 0 ? source.length : close + 1;
+      continue;
+    }
+    if (source[i] === '<' && /[a-z]/i.test(source[i + 1] ?? '')) {
       let cursor = i + 1;
       while (cursor < source.length && !/[\s/>]/.test(source[cursor])) cursor++;
       const name = source.slice(i + 1, cursor).toLowerCase();
@@ -117,7 +138,15 @@ export function parseHtml(html, owner = null) {
       i = hitEnd ? source.length : cursor + 1;
       // An unclosed tag at the end of the document still owns any text the platform would have put in
       // it, so the element is pushed even then; only the `i` advance differs.
-      if (!selfClosing && !VOID_TAGS.has(name)) stack.push(element);
+      if (!selfClosing && !VOID_TAGS.has(name)) {
+        if (name === 'template') {
+          // The real parser puts a template's children in `template.content`, a DocumentFragment the
+          // element's OWN `childNodes` list never holds, so the tree the confirmation walks cannot see
+          // templated text. Keeping them here would let a test count text the platform never yields.
+          element.content = { nodeType: 11, childNodes: [] };
+          stack.push({ tagName: 'template', children: element.content.childNodes });
+        } else stack.push(element);
+      }
       continue;
     }
     const next = source.indexOf('<', i);
@@ -145,9 +174,10 @@ class HtmlDocument {
     this.documentElement.children = parseHtml(html, this.documentElement);
   }
 }
-// The injected platform boundary as the bridge takes it: the page's own `document` and the `DOMParser`
-// constructor, both explicit arguments.
-export function htmlPlatform() { return Object.freeze({ document: htmlDocument(), DOMParser: HtmlDOMParser }); }
-export function htmlDocument() {
-  return { createElement(tag) { return new HtmlElement(tag); } };
-}
+// The injected platform boundary as the bridge takes it: the page's own `DOMParser` constructor, and
+// nothing else. The `document` member this used to carry was never read after the parse moved to
+// `DOMParser`, so it is gone: the boundary names exactly the ONE platform capability the confirmation
+// uses. There is deliberately no `createElement` helper either — the fixture is the `DOMParser` boundary
+// and nothing else, so a bridge that fell back to the retired detached-container parse
+// (`createElement('div')` + `innerHTML`) fails here on a missing capability rather than silently passing.
+export function htmlPlatform() { return Object.freeze({ DOMParser: HtmlDOMParser }); }

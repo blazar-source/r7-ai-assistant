@@ -184,35 +184,64 @@ function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
   return assertByteLimit(value, bound);
 }
-// The element names the text extraction treats as INLINE, i.e. the only boundaries that add NO separator.
-// The principle is a BLACKLIST on purpose, and the failure direction is the safe one: the separator is
-// inserted after EVERY element boundary except a name listed here, so an element the list does not know —
-// a new block name, a vendor-specific block, or a genuinely inline element nobody named — gets an EXTRA
-// "\n". A payload that spans such a boundary then does NOT match the extracted text and the insert settles
-// UNCERTAIN (a false negative, fail-safe) instead of being reported as a verified success over a paste
-// that never happened. The retired form of this rule was a `BLOCK_TAGS` white list, and an export that
-// rendered blocks with an element outside it concatenated its neighbours: an independent review drove a
-// no-op paste to `{"ok":true,"data":{"sent":true,"effectVerified":true}}` with two `<center>` elements.
-// `br` is a line break rather than a block, and it is inline for the same reason: the break belongs to
-// the line it sits in. A block element (`p`, `div`, `li`, `table` cells, …) is simply not listed, which
-// is also the default for anything unknown.
+// THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
+// three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
+//   1. a KNOWN BLOCK element (BLOCK_TAGS)  → exactly one `"\n"`, the real paragraph/line boundary the
+//      `position:'end'` counting form (`text + "\n"`) is allowed to match;
+//   2. a KNOWN INLINE element (INLINE_TAGS) → NOTHING; its text belongs to the line it sits in;
+//   3. an element in NEITHER list          → `SEPARATOR_SENTINEL`, a character no needle can end with.
+// The third class is the correction. The two-way rule this replaced gave EVERY element that was not
+// named inline a `"\n"`, and its stated invariant — "an unknown element can only cause a false
+// UNCERTAIN, never a false success" — was FALSE: a genuinely inline element nobody had listed supplied
+// exactly the newline the `end` needle ends with. R7 emits `<img>` for an inline picture and
+// `<ins>`/`<del>` for tracked changes, so this was realistic, and an independent review reproduced the
+// false success through the real bridge in three shapes: post `<p><label>delta</label>tail</p>`,
+// `<p>delta<img src="a"></p>` and `<p><ins>delta</ins>tail</p>` over pre `<p>start</p>`, payload
+// `delta` with `position:'end'`, no-op paste → `{"ok":true,"data":{"sent":true,"effectVerified":true}}`.
+// With the sentinel an unknown element can only SPLIT text (a payload spanning it does not match:
+// fail-safe for the cursor form) or inject a character no needle holds (fail-safe for the `end` form),
+// and the `end` needle can only be completed by a real class-1 block boundary.
+//
+// The sentinel is `"\u0000"`. It is safe because the needle is the EXACT dispatched payload and
+// `insertParagraph` refuses a payload that holds the sentinel BEFORE anything is dispatched, so no
+// needle can end with it either: every other needle tail is either a payload character the document
+// must really hold or the authored `"\n"` of the `end` form, which only class 1 supplies. U+0000 is
+// also not a character an HTML text node carries (the parser replaces a literal NUL in the source with
+// U+FFFD), so the sentinel in the counted text can only come from this rule.
+//
+// The retired form of this rule was a `BLOCK_TAGS` white list, and an export that rendered blocks with
+// an element outside it concatenated its neighbours: an independent review drove a no-op paste to
+// `{"ok":true,"data":{"sent":true,"effectVerified":true}}` with two `<center>` elements. That is why
+// the UNKNOWN class exists at all: a block name missing from `BLOCK_TAGS` costs a false UNCERTAIN (a
+// fail-safe false negative), never a false success. `br` is a line break rather than a block, and it is
+// inline for the same reason: the break belongs to the line it sits in.
+const BLOCK_TAGS = Object.freeze(new Set(['address', 'article', 'aside', 'blockquote', 'body', 'caption', 'dd',
+  'details', 'dialog', 'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4',
+  'h5', 'h6', 'head', 'header', 'hgroup', 'hr', 'html', 'li', 'main', 'nav', 'ol', 'p', 'pre', 'section', 'summary',
+  'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'ul']));
 const INLINE_TAGS = Object.freeze(new Set(['a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data', 'dfn', 'em',
   'i', 'kbd', 'mark', 'q', 'rp', 'rt', 'ruby', 's', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'time', 'u', 'var',
   'wbr']));
 // Elements whose content is RAWTEXT: it is markup-level content of the export, never document text, so
 // their whole subtree is skipped. Without the skip a `<style>` (or `script`, `title`, `textarea`,
 // `noscript`) body was counted as document text: an independent review verified a no-op paste over the
-// post export `<p>стар</p><style>delta</style>` with payload `delta`.
-const RAWTEXT_TAGS = Object.freeze(new Set(['noscript', 'script', 'style', 'textarea', 'title']));
+// post export `<p>стар</p><style>delta</style>` with payload `delta`. `iframe`, `noembed` and `noframes`
+// are the same RAWTEXT class in the real parser and were missing: the same review measured
+// `<p><iframe>delta</iframe></p>` with payload `delta` as VERIFIED without this entry.
+const RAWTEXT_TAGS = Object.freeze(new Set(['iframe', 'noembed', 'noframes', 'noscript', 'script', 'style',
+  'textarea', 'title']));
+// Class 3's separator. Never `"\n"`: a newline here is exactly what let an unknown inline element complete
+// the `end` needle (see the rule above).
+const SEPARATOR_SENTINEL = '\u0000';
 // The document's DECODED TEXT, built with explicit element separators. The export is parsed by the
 // platform's own `DOMParser` — an explicit, INJECTED reference, never reached for through a global from
-// inside the bridge — and the text nodes are then collected in tree order with a single "\n" after every
-// element boundary that is NOT named inline, so the count runs over the document's text and never over
-// its markup. Plain `textContent` would be WRONG here: it concatenates blocks with no separator, so a
-// payload that happens to span a paragraph boundary would match spuriously, and no entity spelling
-// (`&amp;`, `&lt;`, …) can reach the count at all — markup and attribute values never enter the text
-// stream. The separator goes out AFTER the recursion, so an inline child never cuts its parent's text in
-// two and a block boundary is the only thing that separates, wherever the boundary sits in the tree.
+// inside the bridge — and the text nodes are then collected in tree order with the three-way separator
+// above, so the count runs over the document's text and never over its markup. Plain `textContent`
+// would be WRONG here: it concatenates blocks with no separator, so a payload that happens to span a
+// paragraph boundary would match spuriously, and no entity spelling (`&amp;`, `&lt;`, …) can reach the
+// count at all — markup and attribute values never enter the text stream. The separator goes out AFTER
+// the recursion, so an inline child never cuts its parent's text in two and a block boundary is the only
+// thing that separates, wherever the boundary sits in the tree.
 function collectText(element, out = []) {
   const name = String(element.nodeName ?? '').toLowerCase();
   if (RAWTEXT_TAGS.has(name)) return out;
@@ -220,8 +249,16 @@ function collectText(element, out = []) {
     if (child.nodeType === 1) collectText(child, out);
     else if (child.nodeType === 3) out.push(child.nodeValue ?? '');
   }
-  if (!INLINE_TAGS.has(name)) out.push('\n');
+  if (BLOCK_TAGS.has(name)) out.push('\n');
+  else if (!INLINE_TAGS.has(name)) out.push(SEPARATOR_SENTINEL);
   return out;
+}
+// A payload that would make the sentinel part of the needle is refused here, before ANY dispatch, so the
+// counting form can never hold the very character the separator injects. The check is on the payload the
+// caller handed the bridge, which is the string the needle is built from (`text`, or `text + "\n"` for
+// `position:'end'`, and neither carries a sentinel the payload did not already hold).
+function payloadHoldsSentinel(text) {
+  return text.includes(SEPARATOR_SENTINEL);
 }
 function documentText(platform, html) {
   // The one platform capability this path needs is a `DOMParser`. It is read from the INJECTED platform
@@ -323,15 +360,17 @@ function applyData(raw) {
 // on context/generation changes and dispose on teardown; neither retracts work.
 export function createR7Bridge(plugin, {
   editorType,
-  // The platform object the confirmation parses the document export with: `{ document, DOMParser }`. It
-  // is an EXPLICIT option, never a lookup reached for through a global from inside the bridge: the
-  // boundary is declared where the bridge is created (the plugin page passes the page's own `document`
-  // and `DOMParser`, a test injects its own) and the authored source touches no global at all. NOTE the
+  // The platform object the confirmation parses the document export with: `{ DOMParser }` — the parser
+  // alone. It is an EXPLICIT option, never a lookup reached for through a global from inside the bridge:
+  // the boundary is declared where the bridge is created (the plugin page passes the page's own
+  // `DOMParser`, a test injects its own) and the authored source touches no global at all. NOTE the
   // rationale: this injection is NOT required by `scripts/static-audit.mjs` — a member read such as
   // `globalThis.document` passes the audit; only a bare `globalThis` VALUE (aliasing or destructuring)
-  // is reported. It is kept for the explicit boundary and for testability. Absent or unusable, the text
-  // cannot be built, which makes the read unusable — the fail-closed direction: no usable baseline means
-  // no evidence means no write.
+  // is reported. It is kept for the explicit boundary and for testability. The option carried a
+  // `document` member until the parse moved to `DOMParser`; the bridge never read it again, so it is
+  // REMOVED rather than left vestigial: the injected boundary names exactly the one platform capability
+  // this path uses. Absent or unusable, the text cannot be built, which makes the read unusable — the
+  // fail-closed direction: no usable baseline means no evidence means no write.
   platform = null,
   clock = { now: () => Date.now() },
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
@@ -807,6 +846,12 @@ export function createR7Bridge(plugin, {
       const text = raw?.text, position = raw?.position ?? 'cursor', signal = raw?.signal;
       if (typeof text !== 'string' || text === '') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       if (position !== 'cursor' && position !== 'end') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      // A payload holding the extraction's separator sentinel is refused HERE, before the identity leg and
+      // before any read: this is what makes "the separator cannot complete a needle" structural — the
+      // needle IS the dispatched payload, so a payload that cannot carry the sentinel yields a needle
+      // that cannot end with one either. Nothing reached the editor, so the refusal is the closed
+      // known class with no slot held and no uncertainty about a mutation that never happened.
+      if (payloadHoldsSentinel(text)) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       try {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
