@@ -50,6 +50,32 @@ argument-parse time, exit `2`, before any transport exists.
 The **effective** values are recorded in every run (`guardrails`, `httpTimeoutSeconds`), so a record
 always states the limits it ran under.
 
+## `--frozen-now <ms>` — testing aid (mock mode only)
+
+`--frozen-now` injects a **constant synthetic clock** in place of `Date.now` for the run's deadline
+arithmetic. It is an offline testing aid, not a calibration option: it is refused without `--mock`
+(exit `2`, before any transport exists), must be a positive integer of at most 9 digits, and is not a
+real timestamp. When it is used, the injected reading is published in the record as `frozenNow`, so a
+reader can never mistake a frozen-clock run for a real-timed one; `ms` and `perStep[].ms` are still
+measured with the host clock, because they report the run and not the deadline.
+
+Why it exists: the `--deadline-ms 1` case is the one refusal a wall clock cannot reproduce reliably.
+Two independent checks can fire it — the runtime's own pre-step check (which returns `LIMIT` and sends
+nothing) and the transport's check at entry (which returns `ERROR`/`code: "TIMEOUT"` before the body is
+built). Which one wins depends only on how many milliseconds the host spent between those two reads, so
+on a slower run the same command legitimately reports `LIMIT` instead. With `--frozen-now` the runtime
+and the transport read the SAME constant, so `1` is exactly expired at the transport and the refusal is
+deterministic:
+
+```powershell
+node tests/acceptance/agent/dev-qwen-workloads.mjs word --mock --deadline-ms 1 --frozen-now 1000000
+# → {"status":"ERROR","code":"TIMEOUT","frozenNow":1000000,...,"mock":{"requests":0,...}}
+```
+
+`tests/acceptance/agent/dev-qwen-workloads.test.js` uses exactly this form, so the
+"refuses before a request body is even built" property is asserted on the refusal itself rather than on
+how long the process took.
+
 ## Real mode (development endpoint — controller-owned step)
 
 ```powershell
@@ -143,6 +169,7 @@ One line of JSON per run, built in a single `buildRecord` function:
 | `code` | present only when the run ended with a classified code (a closed `ERROR_CODES` constant, e.g. `TIMEOUT`, `BYTE_LIMIT`) |
 | `limit` | present only when `status` is `LIMIT`: `{guardrail, steps, toolCalls, ms}` naming **which** guardrail was reached (`maxSteps`, `maxToolCalls` or `operationDeadlineMs`) |
 | `mock` | mock mode only: the mock's bounded integer counters |
+| `frozenNow` | present only when `--frozen-now` was used: the injected synthetic clock reading, so a frozen-clock run is never mistaken for a real-timed one |
 
 `--steps-report <path>` writes the same count-only record to a file (useful for collecting the three
 records of a calibration run). Choose a path outside Git or an ignored temporary location.

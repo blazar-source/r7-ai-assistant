@@ -60,7 +60,7 @@ const DEFAULT_GUARDRAILS = createGuardrails({});
 // per-request budget; `oversize` answers a response larger than the transport's envelope ceiling.
 const MOCK_PROFILES = Object.freeze(['final', 'proposal', 'timeout', 'oversize']);
 const WORKLOADS = Object.freeze(['word', 'excel', 'powerpoint']);
-const OPTION_NAMES = Object.freeze(['--workload', '--mock-profile', '--steps-report',
+const OPTION_NAMES = Object.freeze(['--workload', '--mock-profile', '--steps-report', '--frozen-now',
   '--max-steps', '--max-tool-calls', '--deadline-ms', '--http-timeout-seconds']);
 const STUB_SELECTION = 'synthetic stub selection';
 
@@ -83,6 +83,8 @@ const USAGE = [
   `  --deadline-ms <n>          guardrail override (default ${DEFAULT_GUARDRAILS.operationDeadlineMs})`,
   `  --http-timeout-seconds <n> settings-governed per-request HTTP timeout, ${LIMITS.httpTimeoutMinSeconds}..${LIMITS.httpTimeoutMaxSeconds} (default ${DEFAULT_HTTP_TIMEOUT_SECONDS})`,
   '  --steps-report <path>      also write the same count-only record to this file',
+  '  --frozen-now <ms>          TESTING AID: inject a frozen synthetic clock (see README) so a',
+  '                             deadline is reached exactly instead of raced; refused for a real run',
   '  --help                     print this help',
   '',
   'real mode  requires AGENT_DEV_ENDPOINT and AGENT_DEV_KEY in the environment;',
@@ -145,9 +147,10 @@ function httpTimeoutFor(parsed) {
 }
 
 function parseArguments(argv) {
-  const parsed = { workload: 'word', mock: false, mockProfile: 'final', stepsReport: null, help: false,
+  const parsed = { workload: 'word', mock: false, mockProfile: 'final', stepsReport: null, frozenNow: null, help: false,
     maxSteps: null, maxToolCalls: null, deadlineMs: null, httpTimeoutSeconds: null };
   const positional = [];
+  let frozenNowGiven = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const option = splitOption(argument);
@@ -165,10 +168,17 @@ function parseArguments(argv) {
     if (option.name === '--workload') parsed.workload = value;
     else if (option.name === '--mock-profile') parsed.mockProfile = value;
     else if (option.name === '--steps-report') parsed.stepsReport = value;
+    else if (option.name === '--frozen-now') { parsed.frozenNow = integerOption(value); frozenNowGiven = true; }
     else if (option.name === '--max-steps') parsed.maxSteps = integerOption(value);
     else if (option.name === '--max-tool-calls') parsed.maxToolCalls = integerOption(value);
     else if (option.name === '--deadline-ms') parsed.deadlineMs = integerOption(value);
     else parsed.httpTimeoutSeconds = integerOption(value);
+  }
+  // The injected clock is a TESTING AID, so it is accepted in mock mode only: a real development run
+  // must observe the host clock, and a frozen one would otherwise be able to mask a real deadline.
+  if (frozenNowGiven) {
+    if (!parsed.mock) throw new ConfigError('--frozen-now is a testing aid for --mock mode only: a real development run must observe the host clock');
+    if (!Number.isSafeInteger(parsed.frozenNow) || parsed.frozenNow <= 0) throw new ConfigError('--frozen-now must be a positive integer of at most 9 digits (a synthetic clock reading, not a real timestamp)');
   }
   if (positional.length > 1) throw new ConfigError('at most one workload name may be given');
   let workload = parsed.workload;
@@ -338,8 +348,18 @@ function createTransport({ settings, uuid, fetchImpl, stepSamples }) {
 // whether the DEADLINE — rather than the maxSteps or maxToolCalls counter — produced the LIMIT, so the
 // record can name the guardrail instead of guessing from the counts. `now` is the same Date.now the
 // runtime uses by default.
-function createDeadlineWatch(operationDeadlineMs) {
+//
+// `frozenNow` (the `--frozen-now` testing aid) replaces that clock with a constant synthetic reading, so
+// a test can reach a deadline EXACTLY instead of racing the wall clock: `now` then returns the SAME
+// value on the runtime's pre-step check and on the transport's own `start = clock.now()`, which makes
+// the transport's `start >= deadline` outcome — not the host's speed — decide the run. The elapsed and
+// per-step `ms` values are still measured with Date.now, because they report the run, not the deadline.
+function createDeadlineWatch(operationDeadlineMs, frozenNow = null) {
   const watch = { calls: 0, deadline: null, fired: false };
+  if (frozenNow !== null) {
+    watch.now = () => frozenNow;
+    return watch;
+  }
   watch.now = () => {
     const value = Date.now();
     if (watch.calls === 0) watch.deadline = value + operationDeadlineMs;
@@ -379,7 +399,7 @@ function createRecordingBridge() {
 
 // The whole published record, built in one place so the count-only contract is auditable by reading
 // a single function: no message, no content, no endpoint, no key, no session UUID.
-function buildRecord({ workload, model, result, elapsedMs, guardrails, httpTimeoutSeconds, stepSamples, watch, mockStats }) {
+function buildRecord({ workload, model, result, elapsedMs, guardrails, httpTimeoutSeconds, stepSamples, watch, mockStats, frozenNow }) {
   const record = {
     workload,
     model,
@@ -393,6 +413,9 @@ function buildRecord({ workload, model, result, elapsedMs, guardrails, httpTimeo
     perStep: stepSamples.map(sample => ({ ms: sample.ms, bytes: sample.bytes, actions: sample.actions })),
     actionBytes: result.actions.map(action => action.bytes)
   };
+  // The injected synthetic clock reading, published whenever the testing aid was used, so a reader can
+  // never mistake a frozen-clock run for a real-timed one.
+  if (frozenNow !== null) record.frozenNow = frozenNow;
   // The terminal classified code (a closed ERROR_CODES constant, never a message) — this is where a
   // BYTE_LIMIT refusal, a timeout or a classified HTTP failure is stated.
   if (result.code !== null) record.code = result.code;
@@ -446,7 +469,7 @@ async function main() {
     const stepSamples = [];
     const fetchImpl = measuringClient(provider.client, stepSamples);
     const transport = createTransport({ settings, uuid: sessionId, fetchImpl, stepSamples });
-    const watch = createDeadlineWatch(guardrails.operationDeadlineMs);
+    const watch = createDeadlineWatch(guardrails.operationDeadlineMs, options.frozenNow);
     const bridge = createRecordingBridge();
     const registry = createRegistry(createWordTools(bridge));
     const started = Date.now();
@@ -471,7 +494,8 @@ async function main() {
       httpTimeoutSeconds,
       stepSamples,
       watch,
-      mockStats: provider.stats ? provider.stats() : null
+      mockStats: provider.stats ? provider.stats() : null,
+      frozenNow: options.frozenNow
     });
     process.stdout.write(`${JSON.stringify(record)}\n`);
     if (options.stepsReport !== null) {

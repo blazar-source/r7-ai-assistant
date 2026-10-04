@@ -403,7 +403,9 @@ Registry descriptor validation; closed-schema validator (every keyword, multibyt
 unknown fields); catalogue filtering by editor/capability/mode; policy `deny` rejection by name; batch
 sequential execution order and per-action results; `confirm`-must-be-alone rule; known error returned
 and the loop continues; precondition failure is a known error; uncertain stops the run and prevents
-further dispatch; hard ceilings enforced on every path (response, batch, arguments, one result, totals);
+further dispatch (verified in Sprint 2 for a RETURNED `APPLY_UNCERTAIN` insert as well as a thrown one —
+the final review found the returned form unhandled and it is fixed in `f0781d8`, per the
+[Sprint 2 progress](../../sprint-2-progress.md) document); hard ceilings enforced on every path (response, batch, arguments, one result, totals);
 configured `maxSteps`/`maxToolCalls`/deadline guardrails enforced and independently raisable in tests;
 repair once then fail; malformed JSON and prose rejected; Stop cancels network and prevents future
 actions; late callback releases only; no-eval/static-dispatch audit extended to the new modules;

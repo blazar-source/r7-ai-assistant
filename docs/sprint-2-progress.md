@@ -4,34 +4,27 @@
 
 Sprint 2 delivered the generic bounded **Agent Runtime**, the extensible **Tool Registry** and the
 per-tool execution policy (`auto` / `confirm` / `deny`). The engine is verified **host-side only**:
-full suite `591/591`, source static audit PASS, bundle build PASS (both quoted below).
+full suite `603/603`, source static audit PASS, bundle build PASS (all quoted below, measured on the
+final tree).
 
-**Three things are NOT proven, and nothing in this document claims otherwise:**
+**Two things are NOT proven, and nothing in this document claims otherwise:**
 
-1. **The uncertain-mutation outcome was NOT enforced on the insert path, so the bounded runtime's
-   three-case error model was NOT proven for the one auto-mutation.** Found by the **final
-   whole-branch review**, not by any per-task review: [src/plugin/bridge.js](<../src/plugin/bridge.js>)
-   RETURNS `{ok:false, code:'APPLY_UNCERTAIN'}` when a dispatched insert times out, while
-   [src/tools/word.js](<../src/tools/word.js>) only mapped the **thrown** form (`APPLY_UNCERTAIN` on the
-   bridge's `insertParagraph` rejection). The returned form therefore fell through to the ordinary
-   `ok:false` branch as a known tool error, which does not stop the run — so a genuinely unknown
-   mutation outcome could be reported as `COMPLETE`. What the design requires instead (§8.3, the only
-   case that stops the run) is that such an outcome stop the run fail-safe. The fix — map the RETURNED
-   `APPLY_UNCERTAIN` to `TOOL_UNCERTAIN` exactly as the thrown form already is, with a regression test
-   for a timed-out insert that resolves with the returned shape — is applied in the same closing round
-   as this correction pass and is not yet committed when this document is written; its evidence is the
-   final review's finding and the task-13 report section that records it. Until that commit exists and
-   is re-verified, this document does not claim the three-case model.
-2. **Pilot workload calibration (§15.2) is NOT RUN.** The values in
+1. **Pilot workload calibration (§15.2) is NOT RUN.** The values in
    [design §12.2](<superpowers/specs/2026-10-04-sprint-2-agent-runtime-design.md#L320-L342>) remain
    the **initial engineering defaults** (`maxSteps` 12, `maxToolCalls` 32, operation deadline
    150000 ms). No real-workload measurement exists.
-3. **The minimal native R7 end-to-end smoke (§15.3, plan Task 12) is NOT RUN — BLOCKED.** No live R7
+2. **The minimal native R7 end-to-end smoke (§15.3, plan Task 12) is NOT RUN — BLOCKED.** No live R7
    plugin session is available on this host, and no host-side mock can substitute for a live editor.
 
-The Sprint 2 implementation range this document verifies is **35 commits**, `a9784e4..adeae0f` — the
-state the three verification commands below were run against. This status document is a docs-only
-commit on top of that range, on branch `stage-b`.
+The final-review defect that was item 1 here — the uncertain-mutation outcome on the insert path — is
+**fixed and re-verified**; it is recorded under [What was proven after the final review](#what-was-proven-after-the-final-review)
+and is no longer an open defect.
+
+Sprint 2's implementation range is **39 commits**, `a9784e4..HEAD` on branch `stage-b`, of which the
+final-review fix `f0781d8` and the closing correction commits (`c324d09`, plus this round's
+tests/documents commit) are the last few. **No `src/` file changed after `f0781d8`**, so the tree this
+document records and the tree the three verification commands below were run on have the same product
+code and the same bundle input.
 
 ## What Sprint 2 delivered
 
@@ -43,7 +36,7 @@ commit on top of that range, on branch `stage-b`.
 | Tool registry | `1f8e7d6` (+ `993f80b`, `80aea36`) | [src/tools/registry.js](<../src/tools/registry.js>): frozen descriptors, `ASK`/`EDIT` catalogue filtering, per-tool policy, static `descriptor.execute` dispatch (no name-keyed switch) |
 | Agent protocol | `86ac6a9` (+ `4bc261b`) | [src/agent/protocol.js](<../src/agent/protocol.js>): closed envelope parsing, whole-batch validation before execution, per-entry byte-bounded tool-result messages, one protocol repair |
 | Active context window | `23b061d` (+ `e952688`, `816aa95`, `9e88be9`) | [src/agent/context.js](<../src/agent/context.js>): bounded window, oldest-first eviction, single drop marker, pinned system rules and original request never evicted |
-| Bounded runtime loop | `d05307a` (+ `8bc2857`, `e34e460`, `06048b0`) | [src/agent/runtime.js](<../src/agent/runtime.js>): multi-step loop, batch execution, `auto`/`confirm`/`deny`, the three-case per-action error model — whose **uncertain-mutation leg was NOT enforced on the insert path** until the final-review fix in NOT proven item 1 — Stop, deadline |
+| Bounded runtime loop | `d05307a` (+ `8bc2857`, `e34e460`, `06048b0`) | [src/agent/runtime.js](<../src/agent/runtime.js>): multi-step loop, batch execution, `auto`/`confirm`/`deny`, the three-case per-action error model — whose **uncertain-mutation leg was not enforced on the insert path** until the final-review fix `f0781d8`, after which it is proven (see below) — Stop, deadline |
 | Representative Word tools | `94a1dcc` (+ `349865c`, `b7ea7a7`, `41a0ffd`) | [src/tools/word.js](<../src/tools/word.js>) and the [src/plugin/bridge.js](<../src/plugin/bridge.js>) read/insert handlers |
 | UI run lifecycle | `c3f63ab` (+ `9d3e00a`) | [src/ui/controller.js](<../src/ui/controller.js>) + [src/ui/view.js](<../src/ui/view.js>): run lifecycle, live step status, actions summary, Stop, write lock |
 | Static-audit regressions | `d045913` (+ `c0e6fd2`) | [tests/security/audit.test.js](<../tests/security/audit.test.js>): literal-dispatch pins and the bundle-collision hazard |
@@ -60,25 +53,82 @@ native method names, result shapes and the **document-identity legs** of the bri
 
 ## Verification actually performed
 
-All three commands were run on the state this document records. Exact result lines:
+All three commands were re-run on the FINAL tree — commit `f0781d8` plus this round's test/doc-only
+commit — and the numbers below were measured on that tree. Only test and documentation files changed
+after `f0781d8`, so the bundle input is byte-identical and the bundle hash is `f0781d8`'s own. Exact
+result lines:
 
-- **Full host suite** — `node --test`:
-  `ℹ tests 591` / `ℹ pass 591` / `ℹ fail 0` / `ℹ cancelled 0` / `ℹ skipped 0` / `ℹ todo 0`.
+- **Full host suite** — `node --test` (three consecutive runs, every one identical):
+  `ℹ tests 603` / `ℹ pass 603` / `ℹ fail 0` / `ℹ cancelled 0` / `ℹ skipped 0` / `ℹ todo 0`.
 - **Source static audit** — `node scripts/static-audit.mjs`:
   `Authored-code audit PASS` (exit 0).
 - **Bundle audit** — `node scripts/build-plugin.mjs`:
-  `Plugin build: 8 allowlisted files; ZIP STORE SHA-256 e963c93a9731b29d10994d335eb4bd672ec70e340277233ddbda8e62e7c1528b`
+  `Plugin build: 8 allowlisted files; ZIP STORE SHA-256 05b75be9fa5b9367d2bf40dbfba9c74711ba6ebb4a666b3dad880e55175c6386`
   (exit 0).
 
 The per-source audit passing does not imply the concatenated `panel.js` passes, which is why the
 **bundle** build is a separate gate.
 
-These three result lines describe the committed range `a9784e4..adeae0f`. The final-review fix
-(NOT proven item 1) is applied in the same closing round as this document, in the working tree; because
-it adds tests, the current working tree reports a larger suite count and a different bundle hash. That
-is expected at this point and is **not** a re-verification: the numbers above stand as the verified
-state of the closed range, and all three commands must be re-run on the committed fix before Sprint 2 is
-accepted.
+The superseded pair of numbers is kept here for the record: the earlier state `a9784e4..adeae0f`
+reported `591/591` and bundle SHA-256 `e963c93a…`. That state is no longer the accepted one — `f0781d8`
+changed `src/` (and added tests), so its numbers may not be quoted for the current tree.
+
+## What was proven after the final review
+
+The **whole-branch final review** over `a9784e4..HEAD` found, not by any per-task review, that the
+runtime's three-case error model was **not enforced on the insert path**: the bridge
+[src/plugin/bridge.js](<../src/plugin/bridge.js>) RETURNS `{ok:false, code:'APPLY_UNCERTAIN'}` when a
+dispatched insert times out, while [src/tools/word.js](<../src/tools/word.js>) mapped only the
+**thrown** form, so the returned form fell through to the ordinary `ok:false` branch as a known tool
+error that does not stop the run — a genuinely unknown mutation outcome could have been reported as
+`COMPLETE`. Design §8.3 requires the opposite: such an outcome stops the run fail-safe.
+
+The fix is committed as **`f0781d8`** — *fix(tools): treat a returned uncertain insert as uncertain and
+stop exporting withheld tools*. It:
+
+- classifies **both** the thrown and the RETURNED `{ok:false, code:'APPLY_UNCERTAIN'}` insert outcome as
+  `TOOL_UNCERTAIN`, so the runtime halts on a genuinely unknown mutation outcome;
+- stops exporting the withheld `read_context` descriptor through `registry.tools`, so it appears in
+  neither `tools` nor any catalogue and no iterate-and-dispatch consumer can reach it;
+- adds the controller→`runAgent`→real-bridge mutation integration test and the registry/word
+  regression tests for both legs.
+
+**Independently re-verified in this round** (not merely re-run by the author of the fix):
+
+- `tests/integration/controller-bridge.test.js` — *"an insert whose native PasteText callback never
+  arrives stops the run as uncertain and keeps the write lock"*: the controller terminal status is
+  `APPLY_UNCERTAIN`, `state.agent.status` is `UNCERTAIN` (never `COMPLETE`), exactly one model step and
+  one native mutation were dispatched, the action is `insert_paragraph`/`uncertain`/`TOOL_UNCERTAIN`,
+  and the write lock holds. PASS.
+- The control leg: an acknowledged insert (`{ok:true, data:{sent:true}}`) still reaches `COMPLETE` /
+  `FINAL` with the second model step — verified by driving the controller directly in this round, so
+  the new mapping cannot have turned every insert into an uncertain outcome.
+- `tests/unit/tools-word.test.js` — *"insert_paragraph classifies a RETURNED uncertain insert exactly
+  like a thrown one"* and the pre-existing thrown-form pin both PASS;
+  `tests/unit/tools-registry.test.js` — *"registry.tools publishes no withheld descriptor"* PASS;
+  `tests/unit/tools-word.test.js` — *"read_context is withheld from every catalogue until a public
+  document read is confirmed"* (which now also asserts `registry.tools`) PASS.
+- The three commands above (603/603, audit PASS, bundle PASS) were run on the final tree.
+
+The **uncertain-mutation leg therefore belongs in the PROVEN list** and the three-case per-action model
+is claimed for the insert path, the one auto-mutation this sprint ships.
+
+### A wall-clock-flaky acceptance test, found and fixed in the same round
+
+The focused acceptance file [tests/acceptance/agent/dev-qwen-workloads.test.js](<../tests/acceptance/agent/dev-qwen-workloads.test.js>)
+contained a case that depended on wall-clock timing: with `--deadline-ms 1`, either the runtime's own
+pre-step check fires (`LIMIT`, nothing sent) or the transport's entry check fires (`ERROR`/`TIMEOUT`,
+no body built) depending only on how many milliseconds the host spent between the two reads. Across
+runs it produced both outcomes, so a suite that contained it could not support any stable `x/x` claim.
+
+The harness now takes a dev-only **`--frozen-now <ms>`** clock injection (mock mode only, refused
+otherwise; documented in the [harness README](<../tests/acceptance/agent/README.md#L53-L77>) as a
+testing aid), and the test uses it: the runtime and the transport read the SAME constant clock, so the
+`1 ms` deadline is exactly expired and the refusal is deterministic. The assertion is **not** a weaker
+one — it still requires `status: ERROR`, `code: TIMEOUT`, `mock.requests: 0` (no request was made) and
+`perStep[0].bytes: null` (no body was built); it simply no longer depends on how long the process took.
+`frozenNow` is published in the record so a frozen-clock run can never be mistaken for a real-timed one.
+Evidence: the focused file passed **10/10** consecutive runs, and the full suite **3/3** runs.
 
 **Per-task independent review.** Tasks 3–11 were each dispatched to a fresh reviewer session that read
 the committed diff read-only and reproduced its findings, rather than trusting the implementer's report.
@@ -98,20 +148,12 @@ is corroborated by the execution ledger at
 reports in the same directory); the reader should know that this path is **deliberately untracked**
 (`.superpowers/sdd/.gitignore` contains `*`), so it does **not** travel with a clone and is not part of
 the reviewed commit range. The **whole-branch final review** over `a9784e4..HEAD` has since been
-performed; it is the review that found **NOT proven item 1**, and this correction pass applies its
-documentation findings.
+performed; it is the review that found the uncertain-mutation defect fixed in `f0781d8`, and this
+correction pass applies its documentation findings.
 
 ## What is NOT proven
 
-### 1. The uncertain-mutation outcome on the insert path — DEFECT FOUND BY THE FINAL REVIEW
-
-The full statement, the exact shapes and the status of the fix are **Status at a glance, item 1** above:
-the bridge RETURNS `{ok:false, code:'APPLY_UNCERTAIN'}` for a timed-out insert while the Word handler
-mapped only the thrown form, so a genuinely unknown mutation outcome did not stop the run. The fix is
-applied in the same closing round as this document and pending re-verification; the three-case model is
-not claimed until it is committed and re-verified.
-
-### 2. Pilot workload calibration — NOT RUN
+### 1. Pilot workload calibration — NOT RUN
 
 **Status:** the harness is built and reviewed; the **real run never happened.** The development endpoint
 key lives in the DSH credential store (`OPENCUST_API_KEY`) and is **unreadable from this environment**,
@@ -121,23 +163,22 @@ so the harness cannot authenticate a real Qwen workload.
   JSON-discipline and guardrail-reached counts) **do not exist**.
 - **Mock records are not calibration data.** In `--mock` mode the fixed envelope yields exactly **one
   model step and zero tool calls** for all three workloads, and the elapsed ms is loop **overhead**, not
-  model latency. The [harness README](<../tests/acceptance/agent/README.md#L110-L117>) states this, and
+  model latency. The [harness README](<../tests/acceptance/agent/README.md#L136-L143>) states this, and
   mock mode proves the harness/transport/registry wiring only.
 - What mock mode *does* demonstrate: the multi-step and repair accounting (`proposal` profile),
   a `LIMIT` with the named guardrail (`--max-steps 1`), a bounded per-request `TIMEOUT`, and an
   over-ceiling `BYTE_LIMIT` — all through the product's own `createRequest`/`requestCompletion`.
-  **This bullet's evidence is the documented commands with their expected outcomes in the
-  [harness README](<../tests/acceptance/agent/README.md#L80-L117>), not a committed test artifact.**
-  A `node --test` test covering the mock profiles is being added in the same closing round as this
-  correction pass; once it lands it becomes the path-citable evidence for this bullet, and until it
-  does the README commands are the whole evidence.
+  The evidence is now a committed `node --test` artifact:
+  [tests/acceptance/agent/dev-qwen-workloads.test.js](<../tests/acceptance/agent/dev-qwen-workloads.test.js>)
+  drives each profile as a child process (9/9 in the full suite), beside the documented commands in the
+  [harness README](<../tests/acceptance/agent/README.md#L126-L134>).
 - **What would close it:** a real run of the three workloads
   (`node tests/acceptance/agent/dev-qwen-workloads.mjs word|excel|powerpoint` with
   `AGENT_DEV_ENDPOINT`/`AGENT_DEV_KEY` from a readable development credential) and setting §12.2 from
   the measured maxima plus margin. Until then the initial engineering defaults stand and are labelled as
   such in §12.2.
 
-### 3. Minimal native R7 end-to-end smoke — NOT RUN / BLOCKED
+### 2. Minimal native R7 end-to-end smoke — NOT RUN / BLOCKED
 
 **Status:** unproven. The plan's [Task 12](<superpowers/plans/2026-10-04-sprint-2-agent-runtime.md#L1555-L1590>)
 chain — user request → development Qwen → Agent Runtime → Tool Registry → read tool → a real
@@ -199,9 +240,9 @@ These are recorded, deliberate, and none is a hidden success claim:
   **appears to be unreachable dead code**. Harmless, but it is not evidence of a reachable state.
 - **An indefinite UI write-lock after a native callback never arrives is INTENTIONAL** (design §8.4: a
   timed-out mutation stays busy/uncertain until it settles or the plugin is reinitialised). The UI maps
-  the uncertain outcome to an authored caption. On the insert path that outcome reached the UI only for
-  the THROWN bridge form: the RETURNED form is mapped by the final-review fix in **NOT proven item 1**
-  above, without any change to the UI behaviour itself.
+  the uncertain outcome to an authored caption. On the insert path that outcome reached the UI for the
+  THROWN bridge form, and the final-review fix `f0781d8` extended it to the RETURNED form, without any
+  change to the UI behaviour itself. An acknowledged insert still reaches `COMPLETE`/`FINAL`.
 - **Constraint discovered — the audit is scope-insensitive.** After esbuild concatenation, two modules
   with same-named locals can produce a **spurious `DYNAMIC_PROPERTY`**. The remedy is **renaming in the
   colliding module, never weakening the audit**; a regression test now documents this. A security gate
@@ -240,14 +281,16 @@ Sprint 3+ grows the **catalogue**, not the runtime:
 - **PROVEN (host-side):** the bounded runtime's loop, batch dispatch, guardrails, Stop and deadline, the
   closed protocol, the bounded context window, the registry and policy, the representative Word tool
   descriptors/handlers behind the injected bridge, the UI lifecycle, and the static/bundle security
-  audits — `591/591`, both audits PASS, per-task independent reviews with rework where needed. The
-  runtime's **uncertain-mutation leg is NOT in this list** (NOT proven item 1): the three-case model is
-  only claimed once the final-review fix is committed and re-verified.
-- **NOT PROVEN — defect found by the final review:** the uncertain-mutation outcome on the insert path
-  (NOT proven item 1); the fix is applied in the same closing round and pending re-verification.
+  audits — `603/603`, both audits PASS, per-task independent reviews with rework where needed. The
+  runtime's **uncertain-mutation leg is in this list as of `f0781d8`**: the returned
+  `APPLY_UNCERTAIN` insert outcome stops the run as `TOOL_UNCERTAIN`, and an acknowledged insert still
+  reaches `FINAL` (re-verified in this round; see "What was proven after the final review").
+- **FIXED AND RE-VERIFIED (was the final review's defect):** the uncertain-mutation outcome on the insert
+  path — commit `f0781d8`; the withheld `read_context` is also no longer exported through
+  `registry.tools`. No host-side defect from the final review remains open.
 - **NOT RUN:** pilot workload calibration (§15.2) — no readable development key.
 - **NOT RUN / BLOCKED:** the native R7 smoke (§15.3 / Task 12) — needs the user's authorization to use
   the local R7 install, the plugin installed, a disposable document, and the dev key or a trusted mock;
   the install itself is present.
-- **DONE:** the whole-branch final review of `a9784e4..HEAD` has run; it found NOT proven item 1 and its
-  documentation findings are applied by this correction pass.
+- **DONE:** the whole-branch final review of `a9784e4..HEAD` has run; it found the uncertain-mutation
+  defect now fixed by `f0781d8`, and its documentation findings are applied by this correction pass.

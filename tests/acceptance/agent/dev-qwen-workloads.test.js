@@ -48,7 +48,7 @@ function recordOf(run) {
   // Count-only shape: the published fields are the closed set below. A message, a prompt, a request or
   // response body, a document excerpt or an identifier would have to appear as a NEW key here.
   const allowed = ['workload', 'model', 'status', 'steps', 'toolCalls', 'repairs', 'ms', 'guardrails',
-    'httpTimeoutSeconds', 'perStep', 'actionBytes', 'mock', 'code', 'limit'];
+    'httpTimeoutSeconds', 'perStep', 'actionBytes', 'mock', 'code', 'limit', 'frozenNow'];
   for (const key of Object.keys(record)) {
     assert.ok(allowed.includes(key), `unexpected record field "${key}"`);
   }
@@ -150,13 +150,36 @@ test('a missing real-development environment exits 2 before any transport exists
   // have been attempted; the harness's own end-to-end mock runs in the tests above prove it can run.
 });
 
+// The terminal refusal a deadline produces is the one outcome a wall clock cannot be trusted to
+// reproduce: whether the runtime's own pre-step deadline check fires first (LIMIT, no request) or the
+// transport's check fires first (ERROR/TIMEOUT, body never built) depends only on how many milliseconds
+// the host spent between those two reads. `--frozen-now` removes the race entirely: the runtime and the
+// transport read the SAME constant clock, so `1 ms` is exactly expired by the time the transport
+// computes `start + 1` — every run, on every host. The elapsed `ms` values stay real by design.
+const FROZEN_NOW = '1000000';
 test('a 1 ms operation deadline refuses before a request body is even built', () => {
-  const run = runHarness(['word', '--mock', '--deadline-ms', '1']);
+  const run = runHarness(['word', '--mock', '--deadline-ms', '1', '--frozen-now', FROZEN_NOW]);
   assert.equal(run.status, 1);
   const record = recordOf(run);
   assert.equal(record.status, 'ERROR');
   assert.equal(record.code, 'TIMEOUT');
+  assert.equal(record.frozenNow, Number(FROZEN_NOW), 'the record names the injected clock it ran under');
   assert.equal(record.mock.requests, 0, 'the mock saw zero requests: the product deadline fired first');
   assert.equal(record.perStep.length, 1);
   assert.equal(record.perStep[0].bytes, null, 'no request body was produced');
+});
+test('a run without --frozen-now publishes no synthetic clock reading', () => {
+  const run = runHarness(['word', '--mock']);
+  assert.equal(run.status, 0, `exit code (stderr: ${run.stderr})`);
+  const record = recordOf(run);
+  assert.equal(Object.hasOwn(record, 'frozenNow'), false, 'a real-timed run must not look frozen');
+});
+test('--frozen-now is an offline testing aid: refused without --mock and rejected when malformed', () => {
+  for (const args of [['word', '--frozen-now', FROZEN_NOW], ['word', '--mock', '--frozen-now', 'abc'],
+    ['word', '--mock', '--frozen-now', '0']]) {
+    const run = runHarness(args, { env: withoutExternalVariables() });
+    assert.equal(run.status, 2, `${args.join(' ')} must be refused at argument-parse time`);
+    assert.equal(run.stdout, '', 'a refused invocation prints no record');
+    assert.match(run.stderr, /--frozen-now/);
+  }
 });
