@@ -18,7 +18,7 @@ export function defineTool(descriptor) {
   if (!Array.isArray(descriptor.requires)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (typeof descriptor.precondition !== 'function' || typeof descriptor.execute !== 'function') throw new SafeError(ERROR_CODES.INVALID_DATA);
   validateToolSchema(descriptor.schema);
-  return Object.freeze({ requires: Object.freeze([...descriptor.requires]), editors: Object.freeze([...descriptor.editors]), ...descriptor });
+  return Object.freeze({ ...descriptor, requires: Object.freeze([...descriptor.requires]), editors: Object.freeze([...descriptor.editors]) });
 }
 
 export function createRegistry(descriptors) {

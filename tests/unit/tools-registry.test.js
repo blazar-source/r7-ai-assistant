@@ -20,6 +20,37 @@ test('descriptor validation rejects malformed descriptors', () => {
   assert.equal(Object.isFrozen(defineTool(readTool)), true);
 });
 
+test('defineTool freezes its own copies of editors and requires', () => {
+  const input = { ...readTool, editors: ['word'], requires: ['document.read'] };
+  const tool = defineTool(input);
+  assert.equal(Object.isFrozen(tool.editors), true);
+  assert.equal(Object.isFrozen(tool.requires), true);
+  assert.notEqual(tool.editors, input.editors);
+  assert.notEqual(tool.requires, input.requires);
+});
+
+test('mutating a descriptor after defineTool cannot change the catalogue', () => {
+  const input = { ...readTool, editors: ['word'], requires: ['document.read'] };
+  const registry = createRegistry([input]);
+  input.editors.push('cell');
+  input.requires.push('document.write');
+  const cell = registry.catalogue({ editor: 'cell', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const word = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  assert.deepEqual(cell.map(tool => tool.name), []);
+  assert.deepEqual(word.map(tool => tool.name), ['read_selection']);
+});
+
+test('catalogue always omits deny tools while keeping their non-deny counterparts', () => {
+  const denyRead = { ...readTool, name: 'read_secret', policy: 'deny' };
+  const denyMutate = { ...insertTool, name: 'delete_all', policy: 'deny' };
+  const registry = createRegistry([readTool, insertTool, denyRead, denyMutate]);
+  const full = ['document.read', 'document.write'];
+  const edit = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' }).map(tool => tool.name).sort();
+  assert.deepEqual(edit, ['insert_paragraph', 'read_selection']);
+  const ask = registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' }).map(tool => tool.name).sort();
+  assert.deepEqual(ask, ['read_selection']);
+});
+
 test('registry rejects duplicate names', () => {
   assert.throws(() => createRegistry([readTool, { ...readTool }]), /INVALID_DATA/);
 });
