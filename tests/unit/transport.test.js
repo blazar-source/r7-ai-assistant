@@ -173,3 +173,41 @@ test('clock checks during reading enforce deadline without scheduling dependence
   await tick(); env.advance(150001); held.resolve({ done: true });
   await assert.rejects(pending, code('TIMEOUT')); assert.equal(env.pending.size, 0);
 });
+
+test('raw mode returns the bounded model content itself, never a parsed proposal', async () => {
+  const env = environment();
+  const prose = 'не JSON, просто текст';
+  const result = await requestCompletion(settings(), messages(), uuid, options(env, async () => response(envelope(prose)), { parse: 'raw' }));
+  assert.deepEqual(result, { content: prose });
+  assert.ok(Object.isFrozen(result));
+  // The very same content is a protocol error on the default, parsing path.
+  await assert.rejects(requestCompletion(settings(), messages(), uuid, options(env, async () => response(envelope(prose)))), code('PROTOCOL_ERROR'));
+});
+
+test('raw mode keeps the strict-bank request shape and the model-content ceiling', async () => {
+  const env = environment(); let captured; let calls = 0;
+  const content = '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}';
+  const result = await requestCompletion(settings(), messages(), uuid, options(env, async (url, init) => { calls++; captured = { url, init }; return response(envelope(content)); }, { parse: 'raw' }));
+  assert.deepEqual(result, { content });
+  assert.equal(calls, 1);
+  assert.equal(captured.url, 'https://example.invalid/prefix/v1/chat/completions');
+  assert.deepEqual(Object.keys(captured.init).sort(), ['body', 'cache', 'credentials', 'headers', 'method', 'redirect', 'signal']);
+  assert.deepEqual(JSON.parse(captured.init.body), { model: 'qwen/qwen3.8-max-0902', messages: messages(), max_tokens: 1024, temperature: 0.2 });
+  await assert.rejects(requestCompletion(settings(), messages(), uuid, options(env, async () => response(envelope('я'.repeat(32769)), 200, 131072), { parse: 'raw' })), code('BYTE_LIMIT'));
+});
+
+test('raw mode releases the reader and its timer after one bounded read', async () => {
+  const env = environment();
+  const reply = response(envelope('{"type":"final","message":"ok"}'));
+  const result = await requestCompletion(settings(), messages(), uuid, options(env, async () => reply, { parse: 'raw' }));
+  assert.deepEqual(result, { content: '{"type":"final","message":"ok"}' });
+  assert.equal(reply.stats().released, 1);
+  assert.equal(env.pending.size, 0);
+});
+
+test('raw mode rejects a pre-aborted signal before any request', async () => {
+  const env = environment(); const external = new AbortController(); external.abort(); let calls = 0;
+  await assert.rejects(requestCompletion(settings(), messages(), uuid, options(env, async () => { calls++; return response(); }, { parse: 'raw', signal: external.signal })), code('CANCELLED'));
+  assert.equal(calls, 0);
+  assert.equal(env.delays.length, 0);
+});

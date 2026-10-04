@@ -1,6 +1,7 @@
 import { createRequest, parseModelContent } from './protocol.js';
 import { LIMITS } from '../shared/limits.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
+import { assertByteLimit } from '../shared/bytes.js';
 
 // Injection uses schedule/clear so the authored audit sees literal synchronous timer bodies.
 const defaultTimers = Object.freeze({
@@ -113,6 +114,13 @@ export async function requestCompletion(settings, messages, uuid, options = {}) 
     catch { throw safe(ERROR_CODES.PROTOCOL_ERROR); }
     check();
     if (!Array.isArray(envelope?.choices) || envelope.choices.length !== 1 || typeof envelope.choices[0]?.message?.content !== 'string') throw safe(ERROR_CODES.PROTOCOL_ERROR);
+    // 'raw' keeps the strict-bank transport as the only network path while the agent
+    // loop parses its own closed envelope. The model-content ceiling still applies.
+    if (options.parse === 'raw') {
+      assertByteLimit(envelope.choices[0].message.content, LIMITS.modelContentBytes);
+      finished = true;
+      return Object.freeze({ content: envelope.choices[0].message.content });
+    }
     const result = parseModelContent(envelope.choices[0].message.content, mode);
     check();
     finished = true;
