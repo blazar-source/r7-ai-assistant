@@ -1299,7 +1299,7 @@ export function createWordTools(bridge) {
       execute: async (args) => {
         const result = await bridge.insertParagraph({ text: args.text, position: args.position ?? 'cursor' });
         if (!result) return known();
-        if (result.code === ERROR_CODES.EDITOR_UNCERTAIN) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_UNCERTAIN, message: 'unknown' });
+        if (result.code === ERROR_CODES.APPLY_UNCERTAIN) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_UNCERTAIN, message: 'unknown' });
         if (result.ok !== true) return known();
         return ok({ inserted: utf8ByteLength(args.text) });
       }
