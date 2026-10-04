@@ -7,7 +7,7 @@ Only **Sprint 1 is authorized**. Task 1 is done, Task 2 measured DEV probe gives
 | Sprint | Accepted product scope | Execution status |
 | --- | --- | --- |
 | 1 | Practical B selection: Preview, explicit Apply, same current document/editor check, current nonempty selection reread and exact original-text comparison, public native replacement, measured formatting and native Undo; close remaining small B checks | Task 1 done / Task 2 prerequisite GO / Task 3 implementation reviewed; Task 4 IN PROGRESS / scoped R10–R17 candidate native measured / remaining gates explicit / whole Stage B NOT PASS |
-| 2 | Bounded agent runtime + Qwen development validation | NOT AUTHORIZED / NOT RUN |
+| 2 | Generic bounded Agent Runtime + extensible Tool Registry + per-tool execution policy (`auto`/`confirm`/`deny`), calibrated on Word/Excel/PowerPoint pilot workloads, with real development Qwen calls; see the [Sprint 2 design](<superpowers/specs/2026-10-04-sprint-2-agent-runtime-design.md>) | AUTHORIZED / IN PROGRESS |
 | 3 | Word tools | NOT AUTHORIZED / NOT RUN |
 | 4 | Cell tools | NOT AUTHORIZED / NOT RUN |
 | 5 | Slide tools | NOT AUTHORIZED / NOT RUN |

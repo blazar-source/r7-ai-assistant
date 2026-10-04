@@ -4,7 +4,7 @@
 
 POST to configured HTTPS endpoint ending in `/v1/chat/completions`; settings must define unambiguous full completion URL. Headers: Authorization Bearer session key, Content-Type application/json, X-Session-ID random UUID stable per chat and rotated for new chat. Test connection uses a newly generated temporary UUID isolated from the current chat/session and does not append to its conversation.
 
-Request fields only: `model`, `messages`, `max_tokens`, `temperature`. Default bank model setting `qwen`. No tools, tool_choice, streaming, response_format/structured output API or native tool_calls processing. Read only `choices[].message.content`; require text. OpenRouter is a development transport, not a production dependency.
+Request fields only: `model`, `messages`, `max_tokens`, `temperature`. Default bank model setting `qwen`. No **native** OpenAI tool fields (`tools`, `tool_choice`, `tool_calls`), no streaming, no `response_format`/structured-output API. Our own tool protocol is carried as ordinary JSON text inside `message.content`; read only `choices[].message.content` and require text. See the [Sprint 2 design](<superpowers/specs/2026-10-04-sprint-2-agent-runtime-design.md>). OpenRouter is a development transport, not a production dependency.
 
 ## Model targets
 
