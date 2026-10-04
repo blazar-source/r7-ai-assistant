@@ -537,7 +537,7 @@ test('catalogue filters by editor, capability and ASK mode', () => {
 
 test('resolve is an allowlist lookup and never returns an unlisted handler', () => {
   const registry = createRegistry([readTool, insertTool]);
-  const catalogue = registry.catalogue({ editor: 'word', capabilities: [], mode: 'EDIT' });
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
   assert.equal(registry.resolve(catalogue, 'insert_paragraph').name, 'insert_paragraph');
   assert.equal(registry.resolve(catalogue, 'read_selection').kind, 'read');
   assert.equal(registry.resolve(catalogue, 'nothing_here'), null);
@@ -584,32 +584,23 @@ export function createRegistry(descriptors) {
     if (names.has(tool.name)) throw new SafeError(ERROR_CODES.INVALID_DATA);
     names.add(tool.name);
   }
-  const byName = new Map(tools.map(tool => [tool.name, tool]));
-  // Literal dispatch table: the model's name is only a key. No computed function lookup exists here.
-  function handlerFor(name) {
-    switch (name) {
-      case 'read_selection': return byName.get('read_selection')?.execute ?? null;
-      case 'read_context': return byName.get('read_context')?.execute ?? null;
-      case 'insert_paragraph': return byName.get('insert_paragraph')?.execute ?? null;
-      case 'replace_selection': return byName.get('replace_selection')?.execute ?? null;
-      default: return null;
-    }
-  }
+  // Dispatch is the descriptor's own static execute function: the catalogue is a closed
+  // allowlist of validated descriptors, the model's name is only a data key, and no
+  // computed function lookup exists (defineTool rejects a non-function execute, so a
+  // catalogue entry always carries a static handler). Adding a tool therefore touches
+  // only its descriptor — never the runtime and never a name-keyed switch.
   function catalogue({ editor, capabilities, mode }) {
     const granted = new Set(capabilities);
     return Object.freeze(tools.filter(tool => tool.editors.includes(editor) &&
       (mode !== 'ASK' || tool.kind !== 'mutate') &&
       tool.policy !== 'deny' &&
-      granted.has(capabilityFor[tool.kind]) &&
-      handlerFor(tool.name) !== null));
+      granted.has(capabilityFor[tool.kind])));
   }
   function resolve(list, name) {
     if (typeof name !== 'string') return null;
-    const tool = list.find(entry => entry.name === name);
-    if (!tool || handlerFor(tool.name) === null) return null;
-    return tool;
+    return list.find(entry => entry.name === name) ?? null;
   }
-  return Object.freeze({ tools: Object.freeze(tools), catalogue, resolve, handlerFor });
+  return Object.freeze({ tools: Object.freeze(tools), catalogue, resolve });
 }
 ```
 
@@ -1626,5 +1617,5 @@ git commit -m "docs(sprint2): calibrate guardrails from pilot workloads and reco
 
 - **Spec coverage:** §1–§3 → Task 1 (docs) and the overall task order; §4 → Tasks 2–9 (module map matches); §5 → Task 3 + descriptor shape in Task 4; §6 → Task 7 (policy branch) + Task 8 (confirm tool); §7 → Task 5; §8 → Tasks 6–7; §9 → Task 4 (filtering) + Task 9; §10 → Task 8; §11 → Task 7 step 3; §12 → Task 2; §13 → Task 10; §14 → Tasks 4, 8; §15.1 → Tasks 2–10; §15.2 → Task 11 and Task 13; §15.3 → Task 12; §16 → Task 1 (doc alignment first).
 - **Placeholder scan:** no TBD/TODO; every task carries its own code and commands.
-- **Type consistency:** `createRegistry`/`catalogue`/`resolve`/`handlerFor`, `validateArguments`, `parseEnvelope`/`validateBatch`/`toolResultMessages`/`repairMessage`, `createContextWindow`, `runAgent`, `createWordTools`, `AGENT_CEILINGS`, `createGuardrails` are used with the same names and shapes in every task that touches them.
+- **Type consistency:** `createRegistry`/`catalogue`/`resolve`, `validateArguments`, `parseEnvelope`/`validateBatch`/`toolResultMessages`/`repairMessage`, `createContextWindow`, `runAgent`, `createWordTools`, `AGENT_CEILINGS`, `createGuardrails` are used with the same names and shapes in every task that touches them. Tool dispatch is `descriptor.execute` — a static function the descriptor carries — so adding a tool never edits the runtime or a name-keyed switch.
 - **Review Focus:** each of the five listed risks has an owning test — (1) Task 4 filtering + Task 8 precondition, (2) Task 7 duplicate actions in a batch, (3) Task 6 oversized result, (4) Task 7 Stop mid-batch, (5) Task 5 whole-batch validation before execution.
