@@ -1,0 +1,249 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createR7Bridge } from '../../src/plugin/bridge.js';
+import { createController } from '../../src/ui/controller.js';
+import { SettingsStore } from '../../src/config/storage.js';
+
+// --- the target build's dispatch API: `executeCommand` vs `callCommand` ---------------------------
+// Measured on the exact target (Astra Linux + R7-Office 2026.1.2.1942): the plugin object exposes
+// `executeCommand` and `executeMethod` but NOT `callCommand`; on Windows R7-Office 2026.3.1 both
+// exist. `adapter.commandDispatch` used to resolve ONLY `callCommand`, so on the target the runtime was
+// never verified, the panel fell back to the legacy flow, and the write path refused with the authored
+// CAPABILITY_UNAVAILABLE instead of dispatching.
+//
+// The rule this file pins is EXPLICIT, because the two natives are NOT interchangeable in general:
+//   * `executeMethod` is the METHOD channel (`{type:'method', methodName, data}`); it is what the
+//     insert's irreversible `PasteText` dispatch actually needs, and BOTH builds expose it.
+//   * `callCommand` and `executeCommand` are the COMMAND channel. `callCommand` wraps an author-written
+//     function body into the command message; `executeCommand` sends that message (the installed
+//     2026.1.2 vendor SDK composes exactly the one out of the other). The bridge keeps using
+//     `callCommand` whenever the build exposes it — the measured-working Windows path, called with
+//     exactly the arguments it receives today — and falls back to `executeCommand` only when it does
+//     not.
+//   * A build exposing NEITHER command method still refuses honestly (CAPABILITY_UNAVAILABLE) before
+//     any native dispatch. Nothing here invents an API that is not on the facade.
+// So `adapter.commandDispatch` is true when EITHER command entry point is an own function, and the
+// command dispatch selects `callCommand` first and `executeCommand` second.
+//
+// The fixture below is the pure transport: it records which native carried the command and the exact
+// value it was handed, and it answers by executing the AUTHORED body it received (never source text,
+// never a string-to-code conversion). The `executeCommand` shape is answered with the same public
+// `Api` facade results, because the composed source it carries is the statement form of that body.
+
+function commandApi() {
+  return {
+    GetDocumentId() { return 'bounded-id'; },
+    GetDocument() { return { GetRangeBySelect() {}, IsTrackRevisions() { return false; } }; },
+    ReplaceTextSmart() {}
+  };
+}
+function runAuthored(body, api) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api');
+  globalThis.Api = api;
+  try { return body(); }
+  finally { if (previous) Object.defineProperty(globalThis, 'Api', previous); else delete globalThis.Api; }
+}
+// Which authored body a carried value is. The `callCommand` shape receives a fresh wrapper whose own
+// name is the body it forwards to; the `executeCommand` shape receives the composed source text.
+function carriedWhich(value) {
+  const text = typeof value === 'function' ? (value.name || Function.prototype.toString.call(value)) : String(value);
+  return text.includes('capabilityBody') || text.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context';
+}
+// The composed command source carries the author-written body as text in the form the vendor
+// `callCommand` builds: `var Asc = {}; var scope = Asc.scope; (<body>)();`.
+function assertComposedSource(source) {
+  assert.equal(typeof source, 'string', 'executeCommand carries the composed command source, never a function object');
+  assert.ok(source.startsWith('var Asc = {}; \n  var scope = Asc.scope;\n  ('), 'the vendor command wrapper is reproduced');
+  assert.ok(source.endsWith(')();\n  '), 'the body is invoked exactly as callCommand invokes it');
+}
+// The native's own answer for a carried body: the four-slot identity tuple for the context body, the
+// six presence booleans for the capability body the reviewed static probe returns.
+function commandAnswer(which) {
+  return which === 'capability' ? [true, true, true, true, true, true] : ['bounded-id', true, true, false];
+}
+
+// A plugin fixture whose command channel can be switched to the measured build shapes:
+//   'both'           — callCommand AND executeCommand (Windows 2026.3.1)
+//   'callCommand'    — only the wrapper
+//   'executeCommand' — only the transport (the target Astra build)
+//   'neither'        — no command channel at all
+function dispatchRig(command) {
+  const calls = []; const commands = [];
+  const api = commandApi();
+  const plugin = {
+    info: { editorType: 'word' },
+    executeMethod(name, params, callback) { calls.push([name, params, callback]); return false; },
+    callCommand: (command === 'both' || command === 'callCommand')
+      ? function (body, close, recalculate, callback) {
+        commands.push({ by: 'callCommand', body, close, recalculate, which: carriedWhich(body) });
+        callback(runAuthored(body, api));
+        return false;
+      } : undefined,
+    executeCommand: (command === 'both' || command === 'executeCommand')
+      ? function (commandName, source, callback) {
+        const which = carriedWhich(source);
+        commands.push({ by: 'executeCommand', commandName, source, which });
+        callback(commandAnswer(which));
+        return false;
+      } : undefined
+  };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  return { bridge, commands, calls,
+    pastes: () => calls.filter(call => call[0] === 'PasteText') };
+}
+const presence = expected => ({ api: true, getDocument: true, getDocumentId: expected, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: expected });
+
+test('a plugin exposing only executeCommand verifies the runtime through its own command transport', async () => {
+  const r = dispatchRig('executeCommand');
+  const capabilities = await r.bridge.probeCapabilities();
+  assert.equal(r.commands.length, 1, 'exactly one presence command is dispatched');
+  assert.equal(r.commands[0].by, 'executeCommand', 'the only command entry point the build has is used');
+  assert.equal(r.commands[0].commandName, 'command', 'the command channel is addressed by its own name');
+  assert.equal(r.commands[0].which, 'capability', 'the presence body is the one carried');
+  assertComposedSource(r.commands[0].source);
+  assert.deepEqual(capabilities.methodPresence, presence(true), 'the build native presence signal is decoded, not fabricated');
+  assert.equal(capabilities.runtimeVerified, false, 'presence is never promoted to runtime proof');
+  assert.equal(capabilities.mutation.available, false);
+  assert.equal(capabilities.adapter.executeMethod, true);
+  assert.equal(capabilities.adapter.commandDispatch, true);
+  assert.equal(capabilities.adapter.commandMethod, 'executeCommand');
+});
+
+test('a plugin exposing only callCommand keeps the measured Windows path unchanged', async () => {
+  const r = dispatchRig('callCommand');
+  const capabilities = await r.bridge.probeCapabilities();
+  assert.equal(r.commands.length, 1);
+  assert.equal(r.commands[0].by, 'callCommand', 'the wrapper is preferred exactly as before');
+  assert.equal(r.commands[0].close, false, 'its documented close/recalculate arguments are unchanged');
+  assert.equal(r.commands[0].recalculate, false);
+  assert.equal(typeof r.commands[0].body, 'function', 'the wrapper still receives the author-written function itself');
+  const authored = Function.prototype.toString.call(r.commands[0].body);
+  assert.equal(/^(async\s|function\s*\*)/.test(authored), false, 'the body stays synchronous and is not a generator');
+  assert.deepEqual(capabilities.methodPresence, presence(true));
+  assert.equal(capabilities.adapter.commandMethod, 'callCommand');
+});
+
+test('a plugin exposing both keeps using callCommand: the Windows behaviour does not change', async () => {
+  const r = dispatchRig('both');
+  const capabilities = await r.bridge.probeCapabilities();
+  assert.equal(r.commands.length, 1);
+  assert.equal(r.commands[0].by, 'callCommand', 'an added executeCommand never displaces the working wrapper');
+  assert.equal(r.commands.some(entry => entry.by === 'executeCommand'), false);
+  assert.deepEqual(capabilities.methodPresence, presence(true));
+  assert.equal(capabilities.adapter.commandMethod, 'callCommand');
+});
+
+test('a plugin exposing neither command method still refuses honestly without dispatching', async () => {
+  const r = dispatchRig('neither');
+  const capabilities = await r.bridge.probeCapabilities();
+  assert.equal(r.commands.length, 0, 'no command is dispatched on a build that cannot carry one');
+  assert.equal(r.calls.length, 0, 'and no method either');
+  assert.equal(capabilities.methodPresence, null, 'no presence is claimed, so no capability is fabricated');
+  assert.equal(capabilities.runtimeVerified, false);
+  assert.equal(capabilities.adapter.commandDispatch, false);
+  assert.equal(capabilities.adapter.commandMethod, null);
+  assert.equal(capabilities.mutation.available, false, 'and the mutation stays unavailable');
+});
+
+test('the presence body observes presence only: no identity call, no selection read, no write', async () => {
+  const calls = [];
+  // Every `Api` member the presence body must NOT invoke is a tripwire. The body may INSPECT these
+  // members (`typeof Api.GetDocumentId === 'function`), so even one invocation fails this test.
+  const forbidden = name => () => { calls.push(name); throw new Error('private'); };
+  const api = { GetDocument: () => ({ GetRangeBySelect: forbidden('range'), IsTrackRevisions: forbidden('tracking') }),
+    GetDocumentId: forbidden('id'), ReplaceTextSmart: forbidden('replace') };
+  let carried = null;
+  const plugin = { info: { editorType: 'word' },
+    executeMethod(name) { calls.push(name); return false; },
+    callCommand(body, _close, _recalculate, callback) {
+      carried = body;
+      const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api');
+      globalThis.Api = api;
+      try { callback(body()); } finally { if (previous) Object.defineProperty(globalThis, 'Api', previous); else delete globalThis.Api; }
+      return false;
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const result = await bridge.probeCapabilities();
+  assert.deepEqual(result.methodPresence, presence(true), 'the facade is inspected as an object of methods, never invoked');
+  assert.equal(carriedWhich(carried), 'capability', 'the presence body is the one dispatched by the capability probe');
+  assert.deepEqual(calls, [], 'the presence body invokes no identity/selection/write method');
+});
+
+// --- the target shape through the PRODUCT path, not only through one bridge method ----------------
+// The insert's irreversible dispatch has always been `executeMethod('PasteText', …)` and it stays that
+// way on both builds; what the command channel carries is the document-identity leg and the presence
+// gate. The tests below pin that every command shape reaches that dispatch, and that a build with no
+// command channel never reaches a write at all.
+function productRig(command) {
+  let time = 0; const tasks = new Map();
+  const selections = []; const sentences = []; const inserts = []; const commands = [];
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const api = commandApi();
+  const plugin = { info: { editorType: 'word' },
+    executeMethod(name, args, callback) {
+      if (name === 'GetSelectedText') { selections.push({ args, callback }); return false; }
+      if (name === 'GetCurrentSentence') { sentences.push({ args, callback }); return false; }
+      if (name === 'PasteText') { inserts.push({ args, callback }); return false; }
+      throw new Error(`unexpected native method ${name}`);
+    },
+    callCommand: (command === 'both' || command === 'callCommand')
+      ? function (body, _close, _recalculate, callback) {
+        commands.push(carriedWhich(body));
+        callback(runAuthored(body, api));
+        return false;
+      } : undefined,
+    executeCommand: (command === 'both' || command === 'executeCommand')
+      ? function (name, source, callback) {
+        const which = carriedWhich(source);
+        commands.push(`${name}:${which}`);
+        callback(commandAnswer(which));
+        return false;
+      } : undefined };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  return { bridge, commands, selections, sentences, inserts };
+}
+const tick = () => new Promise(resolve => setImmediate(resolve));
+
+for (const command of ['executeCommand', 'callCommand', 'both']) {
+  test(`the ${command} build shape reaches the insert: identity on the command channel, paste still on executeMethod`, async () => {
+    const r = productRig(command);
+    const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+    await tick();
+    assert.deepEqual(r.commands, [command === 'executeCommand' ? 'command:context' : 'context'],
+      'the document identity leg ran on the command channel the build has');
+    assert.equal(r.selections.length, 1, 'and the selection baseline followed');
+    r.selections[0].callback('');
+    r.sentences[0].callback('');
+    assert.equal(r.inserts.length, 1, 'the irreversible paste is dispatched exactly once, through executeMethod');
+    assert.deepEqual(r.inserts[0].args, ['Абзац']);
+    r.inserts[0].callback(true);
+    assert.deepEqual(await pending, { ok: true, data: { sent: true } });
+  });
+}
+
+test('a build with no command channel refuses the insert before any write', async () => {
+  const r = productRig('neither');
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'Абзац' }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(r.inserts.length, 0, 'a build that cannot dispatch must not be handed a write');
+  assert.equal(r.bridge.getState().busy, false, 'and its slot is released');
+});
+
+test('the panel capability action reports presence on the executeCommand-only shape', async () => {
+  let time = 0; const tasks = new Map();
+  const timers = { schedule(fn, ms) { const key = {}; tasks.set(key, { fn, at: time + ms }); return key; }, clear(key) { tasks.delete(key); } };
+  const clock = { now() { return time; } };
+  const plugin = { info: { editorType: 'word' },
+    executeMethod() { throw new Error('the presence probe must not read selection'); },
+    executeCommand(_name, source, callback) { callback(commandAnswer(carriedWhich(source))); return false; } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', timers, clock });
+  const controller = createController({ bridge, timers, clock, store: new SettingsStore(null),
+    crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+    transport: async () => { throw new Error('no HTTP for a capability probe'); } });
+  assert.equal(await controller.checkR7(), true, 'the read-only action completes on the target shape');
+  const state = controller.getState();
+  assert.equal(state.status, 'R7_PRESENCE_READY');
+  assert.equal(state.capabilityCount, 6);
+  assert.equal(state.runtimeVerified, false, 'the panel still never promotes presence to runtime proof');
+  controller.dispose();
+});

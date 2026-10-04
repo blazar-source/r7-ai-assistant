@@ -59,8 +59,9 @@ reported as a plain known error).
      answered or failed, so a baseline observation is pre-paste **by construction** and never by an
      assumption about the editor's callback ordering — the same reason `PasteText` itself is not
      trusted. Consequence: the ticket's single `callbackTimeoutMs` window now also covers the baseline
-     reads, and a baseline that never answers settles the ticket (uncertain) **before** anything is
-     dispatched.
+     reads, and a baseline that never answers settles the ticket **before** anything is dispatched.
+     That settlement is a **KNOWN** outcome, not a false uncertainty, and it **releases the slot** —
+     see §4a.
 5. **Why a ladder, and why it stops at two legs.** The first fix used `GetSelectedText` alone; measured
    natively on R7-Office 2026.3.1 it answers `""` (immediately and after +400 ms) because the paste does
    **not** leave the inserted text selected, so every insert settled uncertain and the run always
@@ -87,8 +88,77 @@ reported as a plain known error).
 build whose `PasteText` does return a value goes through exactly the same door (the code is
 contract-driven, not fitted to one build).
 
-## Accepted consequences of the baseline (conservative direction, never a false success)
+## 4a. One logical insert dispatches the paste exactly once (independent-review repair)
 
+An independent review reproduced a **second `PasteText` for one logical insert**: a leg's baseline
+`plugin.executeMethod` delivered its callback **synchronously and then threw**. The `catch` re-entered
+the SAME leg, its baseline was dispatched twice, both answers each advanced the ladder, and the
+mutation was dispatched twice — a violation of design §8.4 ("no mutation while one is unsettled") and
+of the owner's "no automatic retry of the mutation". Measured host-side: 2 `GetCurrentSentence`
+baselines → 2 `PasteText` dispatches → `{sent:true,effectVerified:true}`.
+
+The repair is **structural**, never an assumption about native callback ordering:
+
+- `owned.legDispatched[index]` is set before a leg's baseline is dispatched and checked on entry, so a
+  baseline is dispatched **once per leg** even when the callback already ran and the dispatch then threw.
+- `dispatchPaste` checks `owned.dispatched` on entry and sets it before the irreversible call, so the
+  paste is dispatched **once per ticket**: `dispatchPaste` is idempotent and no ladder leg, duplicate
+  callback or re-entrant `catch` can reach the mutation twice.
+- The RED reproduction (one baseline per leg, one `PasteText`) is a test, and it failed before the
+  change with `GetCurrentSentence: 2` and `PasteText: 2`.
+
+## 4b. An insert that dispatched NOTHING is a KNOWN outcome and releases the slot
+
+A baseline that never answers used to settle the ticket `APPLY_UNCERTAIN` while **nothing had been
+dispatched** — a false uncertainty about a mutation that never happened — and, worse, the slot stayed
+held forever: `getState()` reported `busy:true` with `writePending:false`, and `dispose()` could not
+free it because the ticket was already settled, so `slot?.cancel()` early-returned. The panel reported
+an unlocked state while the bridge refused every later operation.
+
+The rule now follows the `owned.dispatched` distinction the write/insert classes already used:
+
+- **Nothing dispatched** (a pre-dispatch baseline that never answered, or an abort that lands before
+  the paste): the ticket settles its own **known** class (`TIMEOUT` on the deadline, `CANCELLED` on an
+  abort or `dispose`) and **releases the slot**, so a later operation proceeds. `pendingMutation` stays
+  false and the panel's write lock is not held.
+- **Paste dispatched** (the control leg): behaviour is unchanged — `APPLY_UNCERTAIN`, the slot held, no
+  retry, released only by the mutation's own matching native callback.
+- The same release now applies to any undispatched ticket (a read/probe whose dispatch was never
+  reached); a dispatched read/probe keeps the existing uncertain-until-callback behaviour.
+
+## 4c. The target build's dispatch API (`executeCommand` vs `callCommand`)
+
+Measured on the exact target (Astra Linux + R7-Office 2026.1.2.1942): the plugin facade exposes
+`executeCommand` and `executeMethod` but **not** `callCommand`; on Windows R7-Office 2026.3.1 both
+exist. `adapter.commandDispatch` resolved only `callCommand`, so on the target the runtime was never
+verified, the panel fell back to the legacy flow, and every run ended in the authored
+`CAPABILITY_UNAVAILABLE` caption without dispatching a write.
+
+The rule now in force, stated exactly:
+
+- `executeMethod` is the **METHOD** channel (`{type:'method', methodName, data}`). It is what the
+  insert's irreversible `PasteText` dispatch needs, on **both** builds, and its use is unchanged.
+- `callCommand` and `executeCommand` are the **COMMAND** channel, and they are **not interchangeable in
+  general**. `callCommand` wraps an author-written function body into the command message; the installed
+  2026.1.2 vendor SDK composes exactly that one out of `executeCommand`. The bridge therefore prefers
+  `callCommand` whenever the facade exposes it — the measured-working Windows path, which now keeps
+  receiving the same inline static body and the same `false, false` arguments — and falls back to
+  `executeCommand` only when `callCommand` is absent.
+- On the fallback the composed command source is built from the SAME authored body
+  (`String(body)` of a static function literal, the statement form the vendor wrapper produces) and a
+  static audit still passes.
+- `adapter.commandDispatch` is true when **either** command entry point is an own function;
+  `adapter.commandMethod` records which one carried the work. A build exposing **neither** still refuses
+  honestly with `CAPABILITY_UNAVAILABLE` before any native dispatch (the read path and the insert's own
+  gate both refuse, the slot is released, and no write is dispatched).
+
+**Unverified, and stated as such:** the `executeCommand` fallback's framing is inferred from the
+installed 2026.1.2 vendor SDK (where `callCommand` is exactly `executeCommand('command', composedSource,
+callback)`); it was **not** run natively. If a target native rejects it, the command leg never answers,
+the presence probe settles `TIMEOUT` and the insert refuses — the same honest refusal as before, never
+a false success and never a wrong write.
+
+## Accepted consequences of the baseline (conservative direction, never a false success)
 - **A genuinely applied insert whose baseline already equalled the payload now settles
   `APPLY_UNCERTAIN` instead of verified.** This is intended. An observation that did not CHANGE cannot
   be distinguished from a paste that did nothing, and the whole point of this repair is that "the scope
@@ -103,8 +173,8 @@ contract-driven, not fitted to one build).
   truncated baseline against a full payload.
 - **The baseline phase gates the mutation.** The paste is dispatched only after every baseline leg has
   answered or failed, so an editor that never answers a baseline read gets no insert at all: the ticket
-  settles `APPLY_UNCERTAIN` with nothing dispatched, instead of dispatching an insert whose observation
-  was queued but never taken. That is deliberate. Awaiting the read is what makes the baseline genuinely
+  settles the known `TIMEOUT` class with nothing dispatched, and (since §4b) releases the slot instead of
+  wedging the bridge. That is deliberate. Awaiting the read is what makes the baseline genuinely
   pre-paste rather than relying on an unmeasured ordering guarantee between a queued read and the paste;
   a guessed ordering could cost the confirmation exactly where it is needed (the target build) and would
   reintroduce the false-failure shape this repair removes. The cost is bounded: every baseline that
@@ -125,6 +195,14 @@ contract-driven, not fitted to one build).
   returns BEFORE the paste, and the baseline's byte budget can refuse a long pre-existing sentence.
   Either case only ever removes a confirmation; it never creates one.
 - The ladder and its baselines were **not** measured natively. This document claims host-side tests
-  only: the focused bridge/handler/integration suites, the full `node --test` suite (633/633 on the
-  final tree, up from 626), the static audit and the bundle build, all run on the final tree.
+  only: the focused bridge/dispatch-API/handler/integration suites, the full `node --test` suite
+  (649/649 on the final tree, up from 633: six D-B/D-C tests in `tests/unit/bridge.test.js` and ten
+  dispatch-API tests in `tests/unit/bridge-dispatch-api.test.js`), the static audit and the bundle
+  build, all run on the final tree.
+- The **`executeCommand` fallback framing is unverified natively** (§4c). It is inferred from the
+  installed 2026.1.2 vendor SDK, where `callCommand` is exactly `executeCommand('command', composed,
+  callback)`. A native that rejects the composed source leaves the command leg unanswered: the presence
+  probe settles `TIMEOUT` and the insert refuses — the same honest refusal as before, never a false
+  success and never a wrong write. The Windows path (`callCommand` present) is unchanged and keeps
+  receiving the same inline static body and the same `false, false` arguments.
 

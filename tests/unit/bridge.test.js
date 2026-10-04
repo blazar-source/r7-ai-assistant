@@ -908,6 +908,164 @@ test('an oversized baseline leaves its own leg incapable while the other leg sti
   assert.deepEqual(await pending, VERIFIED);
 });
 
+// --- D-B: one logical insert dispatches the paste EXACTLY ONCE, structurally ----------------------
+// An independent review reproduced a second `PasteText` for ONE logical insert: a leg's baseline
+// `plugin.executeMethod` called its callback SYNCHRONOUSLY and THEN threw, so the catch re-entered the
+// SAME leg, its baseline was dispatched twice, each answer advanced to `dispatchPaste`, and the
+// mutation was dispatched twice — a violation of design §8.4 and of the owner's "no automatic retry of
+// the mutation". The guard that closes it is structural (an `owned.dispatched` check that makes the
+// paste a once-per-ticket boundary, plus a per-leg `dispatched` mark that makes a baseline
+// once-per-leg), never an assumption about native callback ordering.
+function callbackThenThrowScaffold({ selectionSynchronously = true } = {}) {
+  const calls = [];
+  const seen = new Map();
+  const plugin = {
+    info: { editorType: 'word' },
+    executeMethod(name, params, callback) {
+      calls.push({ name, params, callback });
+      if (name === 'PasteText') return false; // the mutation is held for the test to answer
+      const nth = (seen.get(name) ?? 0) + 1;
+      seen.set(name, nth);
+      // The reviewer's shape: the native delivers THIS leg's baseline callback synchronously and then
+      // throws out of the same call. A second baseline dispatch would be the defect.
+      if (selectionSynchronously) callback('');
+      throw new Error('private native detail');
+    },
+    callCommand(body, _close, _recalculate, callback) {
+      const result = runContext(body);
+      if (result.identity) callback(result.value);
+      else calls.push({ name: 'presence', callback });
+      return false;
+    }
+  };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  return { bridge, calls };
+}
+
+test('a baseline that answers synchronously and then throws still dispatches one baseline per leg and one paste', async () => {
+  const r = callbackThenThrowScaffold();
+  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  const baselines = name => r.calls.filter(call => call.name === name);
+  assert.equal(baselines('GetSelectedText').length, 1, 'the selection baseline is dispatched exactly once');
+  assert.equal(baselines('GetCurrentSentence').length, 1, 'the sentence baseline is dispatched exactly once');
+  const pastes = r.calls.filter(call => call.name === 'PasteText');
+  assert.equal(pastes.length, 1, 'ONE logical insert dispatches the paste exactly once');
+  assert.deepEqual(pastes[0].params, ['Абзац'], 'the single dispatch carries the unchanged payload');
+  assert.equal(r.calls.some(call => call.name === 'GetFileHTML'), false);
+  pastes[0].callback(true);
+  const result = await pending;
+  assert.deepEqual(result, { ok: true, data: { sent: true } }, 'the single dispatch still settles the ticket');
+  assert.equal(JSON.stringify(result).includes('private native detail'), false, 'no native detail escapes');
+});
+
+test('a callback then a throw cannot dispatch a second paste even when no baseline answered', async () => {
+  // The same shape for the OTHER leg: `GetSelectedText` throws without ever calling back, while
+  // `GetCurrentSentence` calls back and then throws. The paste must still be dispatched once.
+  const calls = [];
+  let selectionThrew = false;
+  const plugin = {
+    info: { editorType: 'word' },
+    executeMethod(name, params, callback) {
+      calls.push({ name, params, callback });
+      if (name === 'PasteText') return false;
+      if (name === 'GetSelectedText') { selectionThrew = true; throw new Error('private'); }
+      callback('');
+      throw new Error('private');
+    },
+    callCommand(body, _close, _recalculate, callback) {
+      const result = runContext(body);
+      if (result.identity) callback(result.value);
+      return false;
+    }
+  };
+  const bridge = createR7Bridge(plugin, { editorType: 'word' });
+  const pending = bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.equal(selectionThrew, true, 'the selection baseline threw instead of answering');
+  assert.equal(calls.filter(call => call.name === 'PasteText').length, 1, 'the paste is dispatched once');
+  calls.find(call => call.name === 'PasteText').callback(true);
+  assert.deepEqual(await pending, { ok: true, data: { sent: true } });
+});
+
+// --- D-C: an insert whose paste was NEVER dispatched is a KNOWN outcome, and releases the slot -----
+// Nothing reached the mutation, so the honest class is not the uncertain one, and the slot must not
+// stay held: a hung baseline used to wedge the bridge permanently (busy with writePending false),
+// leaving the panel reporting an unlocked state while the bridge refused every later operation.
+test('a baseline that never answers settles a known timeout, releases the slot and admits the next insert', async () => {
+  const r = rig();
+  const stalled = r.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.equal(r.bridge.getState().busy, true, 'the baseline phase owns the slot');
+  assert.equal(r.bridge.getState().writePending, false, 'nothing was dispatched');
+  assert.deepEqual(r.calls.map(call => call.name), ['GetSelectedText']);
+  r.advance(5000);
+  assert.deepEqual(await stalled, { ok: false, code: 'TIMEOUT' },
+    'an insert that dispatched NOTHING is a known failure, never a false uncertainty');
+  assert.equal(r.bridge.getState().busy, false, 'the undispatched ticket releases its slot');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+  assert.equal(inserts(r).length, 0, 'nothing was dispatched');
+  // The released slot admits the next operation: the bridge is not wedged.
+  const next = r.bridge.insertParagraph({ text: 'Второй' });
+  await tick();
+  assert.equal(r.calls.filter(call => call.name === 'GetSelectedText').length, 2, 'a later insert reaches its own baseline phase');
+  r.calls.at(-1).callback('');
+  r.calls.at(-1).callback('');
+  assert.equal(inserts(r).length, 1, 'the later insert dispatches its own single paste');
+  inserts(r)[0].callback(true);
+  assert.deepEqual(await next, { ok: true, data: { sent: true } });
+});
+
+test('an insert aborted before its paste is dispatched releases the slot as the known cancellation', async () => {
+  const r = rig();
+  const controller = new AbortController();
+  const pending = r.bridge.insertParagraph({ text: 'Абзац', signal: controller.signal });
+  await tick();
+  assert.equal(r.bridge.getState().busy, true);
+  assert.equal(inserts(r).length, 0);
+  controller.abort();
+  assert.deepEqual(await pending, { ok: false, code: 'CANCELLED' }, 'nothing was dispatched: a known cancellation');
+  assert.equal(r.bridge.getState().busy, false, 'the aborted undispatched ticket releases its slot');
+  assert.equal(inserts(r).length, 0, 'an abort that lands before the paste prevents the mutation entirely');
+  const next = r.bridge.insertParagraph({ text: 'Второй' });
+  await tick();
+  assert.equal(r.calls.filter(call => call.name === 'GetSelectedText').length, 2, 'the next insert is dispatchable');
+  r.calls.at(-1).callback('');
+  r.calls.at(-1).callback('');
+  inserts(r)[0].callback(true);
+  assert.deepEqual(await next, { ok: true, data: { sent: true } });
+});
+
+test('an insert whose paste WAS dispatched keeps the uncertain class and the held slot on its deadline', async () => {
+  // The control leg: once `PasteText` has been dispatched, the deadline keeps today's behaviour —
+  // the uncertain class, the slot held, and no retry.
+  const r = rig();
+  const { pending, insert } = await dispatchInsert(r);
+  assert.equal(inserts(r).length, 1);
+  r.advance(5000);
+  assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' }, 'a dispatched paste keeps the uncertain class');
+  assert.equal(r.bridge.getState().busy, true, 'the unknown outcome keeps the slot');
+  assert.equal(r.bridge.getState().writePending, true);
+  assert.equal(r.bridge.getState().uncertain, true);
+  assert.deepEqual(await r.bridge.insertParagraph({ text: 'Второй' }), { ok: false, code: 'EDITOR_BUSY' });
+  assert.equal(inserts(r).length, 1, 'the mutation is never retried');
+  insert.callback(true);
+  assert.equal(r.bridge.getState().busy, false, 'the late callback releases the owner');
+});
+
+test('a hung baseline no longer makes dispose() a no-op that leaves the bridge permanently busy', async () => {
+  const r = rig();
+  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
+  await tick();
+  assert.equal(inserts(r).length, 0);
+  r.bridge.dispose();
+  assert.deepEqual(await pending, { ok: false, code: 'CANCELLED' }, 'dispose settles the undispatched ticket');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is freed, not wedged behind a settled ticket');
+  assert.equal(r.bridge.getState().disposed, true);
+  assert.equal(inserts(r).length, 0, 'dispose certainly never dispatches a paste');
+});
+
 test('a ladder whose every baseline is unusable asks nothing and settles the uncertain class', async () => {
   const fail = () => { throw new Error('private native detail'); };
   const r = baselineScaffold({ GetSelectedText: fail, GetCurrentSentence: fail });
