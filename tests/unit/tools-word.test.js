@@ -1875,6 +1875,158 @@ test('read_document_text tiles the document exactly when the shrink moves the bo
   assert.equal(parts[1].startsWith('😀'), true, 'the pair at the shrunk boundary is served whole by the next chunk');
 });
 
+// --- The search's REAL restriction: monotonicity on character-boundary ends -----------------------
+// The bisection above it replaces an earlier justification that has since been FALSIFIED, and these
+// tests pin the true statement. For the text `'x👍яé'` at `offset = 3`, the end `3` serializes to 125
+// bytes while the LONGER end `4` serializes to 123: entry bytes genuinely DECREASE with the end, so
+// `fits` is not downward-closed on every integer end and a bisection over all of them would be
+// unsound. The reason is precise — every probed unit of a VALID astral pair is 4 UTF-8 bytes, but a
+// pair truncated at its high unit is emitted by `JSON.stringify` as the six-byte `\uXXXX` escape (one
+// per unit), so dropping one unit from a slice that ends MID-pair can save MORE than the envelope
+// grows. The handler never searches that zone: the floor and every probe are `characterEnd(...)`
+// results, so each end is a whole-character boundary strictly greater than `offset`.
+const PROBE_ENTRY = (text) => ({
+  tool: 'read_document_text', ok: true,
+  data: { text, offset: 0, totalChars: 1, truncated: false, nextOffset: null },
+});
+const DECREASE_TEXT = 'x\u{1F44D}\u044F\u00E9';
+
+test('read_document_text serializes an entry per END, and entry bytes DECREASE with a longer end', async () => {
+  // The reviewer's own falsification, re-measured: `offset = 3` here only changes the `offset` field,
+  // which is constant ACROSS the two entries, so the comparison isolates what the end does to the
+  // entry. End `3` is the end that EQUALS the offset, so it can publish no resume point and spells
+  // `"nextOffset":null`; end `4` is one whole character later and spells the one-digit `"nextOffset":4`.
+  // The longer slice is TWO bytes SMALLER in the entry — 123 against 125. The two spellings the end
+  // moves are measured below (`null` against `4`, `false` against `true`); the exact byte arithmetic
+  // is read off `at(...)`, not assumed.
+  const at = (end, offset) => {
+    const text = DECREASE_TEXT.slice(0, end);
+    const nextOffset = end > offset && end < DECREASE_TEXT.length ? end : null;
+    return utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+      data: { text, offset, totalChars: DECREASE_TEXT.length, truncated: nextOffset !== null, nextOffset } }));
+  };
+  assert.equal(JSON.stringify(DECREASE_TEXT), '"x\u{1F44D}\u044F\u00E9"',
+    'the FALSIFYING text, written out: one ASCII unit, one astral PAIR, two two-byte characters');
+  assert.equal(at(3, 3), 125, 'the end equal to the offset publishes the nil resume point');
+  assert.equal(at(4, 3), 123, 'the longer, whole-character end is TWO bytes smaller');
+  assert.ok(at(4, 3) < at(3, 3), 'bytes(e\') <= bytes(e) for e\' < e is FALSE as written');
+  // The proposal is true only for ends that are CHARACTER boundaries — the ends the loop can probe.
+  // TWO different mechanisms shrink the entry as the end grows, and both are measured here. First, a
+  // slice ending on a pair's high unit alone escapes that one unit as six bytes, so completing the
+  // pair makes the escaped text TWO bytes narrower (9 against 7); that moves the entry from 127 to 125
+  // at end 3. Second, the end that EQUALS the offset can publish no resume point and spells the wider
+  // `"nextOffset":null`, so the whole-character end 4 publishes the one-digit `4` and the entry drops
+  // again, to 123. The searches' ends are whole characters strictly ABOVE the offset, where neither
+  // mechanism can act.
+  assert.equal(utf8ByteLength(JSON.stringify('x\uD83D')), 9, 'the bare high unit: 6 escaped + 2 quotes + 1');
+  assert.equal(utf8ByteLength(JSON.stringify('x\u{1F44D}')), 7, 'the completed pair is TWO bytes NARROWER');
+  assert.equal(at(2, 3), 127, 'the mid-pair slice');
+  assert.equal(at(3, 3), 125, 'the same slice with the pair completed is two bytes smaller');
+  assert.equal(at(4, 3), 123, 'and the nil resume point costs two more than the digit it becomes');
+  assert.ok(at(2, 3) > at(3, 3), 'even appending the unit that COMPLETES the pair can shrink the entry');
+  assert.ok(at(4, 3) < at(3, 3), 'bytes(e\') <= bytes(e) for e\' < e is FALSE as written');
+  // For the ends the loop CAN probe — whole-character boundaries strictly above the offset — the entry
+  // is non-decreasing, which is what makes `fits` downward-closed on the searched interval. It is not
+  // strictly increasing everywhere: a boundary can gain two text bytes while the envelope gains none,
+  // or gain two while the envelope gives them back. Equality is enough for a bisection.
+  let previous = null;
+  for (let cut = 3 + 1; cut <= DECREASE_TEXT.length; cut += 1) {
+    const boundaryEnd = cut < DECREASE_TEXT.length
+      && DECREASE_TEXT.charCodeAt(cut - 1) >= 0xd800 && DECREASE_TEXT.charCodeAt(cut - 1) <= 0xdbff
+      && DECREASE_TEXT.charCodeAt(cut) >= 0xdc00 && DECREASE_TEXT.charCodeAt(cut) <= 0xdfff ? cut + 1 : cut;
+    const bytes = at(boundaryEnd, 3);
+    if (previous !== null) assert.ok(bytes >= previous, `end ${boundaryEnd}: ${bytes} >= ${previous}`);
+    previous = bytes;
+  }
+  // The handler therefore serves the whole character at `offset = 3` — the probe it makes is a
+  // whole-character end above both the offset and the end that would have fooled a raw comparison.
+  const served = await readDocument(documentBridge(DECREASE_TEXT)).execute({ offset: 3, maxChars: 1 }, { editor: 'word' });
+  assert.equal(served.ok, true);
+  assert.equal(served.data.text, '\u044F', 'the whole character at the address, never half a pair');
+  assert.equal(served.data.nextOffset, 4);
+  assert.equal(served.data.truncated, true);
+  assert.ok(entryBytes(served) <= AGENT_CEILINGS.toolResultBytes);
+});
+
+test('read_document_text serves a document with a lone surrogate inside the ceiling and still serializes', async () => {
+  // The residual the reviewer named, measured rather than assumed: the text ALREADY holds a lone
+  // surrogate (`'\uD83D'.repeat(6000)`), so `JSON.stringify` escapes each unit as six bytes and the
+  // entry is far over the ceiling for the whole document. The tool must still fit the ceiling, publish
+  // a whole-character prefix with a resume point, and produce an entry the runtime's own serializer
+  // ACCEPTS. It republishes the units the document holds — a lone surrogate is a property of the
+  // supplied text, not something the tool repairs, and the DOMParser/UTF-8 decode path cannot produce
+  // one because a lone surrogate encodes as U+FFFD. This test DOCUMENTS that behaviour; it asserts no
+  // repair, so a future change that repaired the text would have to update this comment and test.
+  const text = '\uD83D'.repeat(6000);
+  const tool = readDocument(documentBridge(text));
+  const result = await tool.execute({ offset: 0, maxChars: 8000 }, { editor: 'word' });
+  assert.equal(result.ok, true, 'a document holding a lone surrogate is still readable');
+  const served = result.data.text.length;
+  assert.ok(served > 0 && served < 8000, `${served}: inside the request, and shrunk by the ceiling`);
+  assert.equal(result.data.text, text.slice(0, served), 'the served chunk is the document\u2019s own units');
+  assert.equal(result.data.nextOffset, served);
+  assert.equal(result.data.truncated, true);
+  assert.ok(entryBytes(result) <= AGENT_CEILINGS.toolResultBytes,
+    `${entryBytes(result)} <= ${AGENT_CEILINGS.toolResultBytes}`);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_document_text', result }]),
+    'the runtime serializer accepts an entry whose text holds lone surrogates');
+  // The six-byte escape of a lone unit IS the width that binds here: the ceiling is reached by the
+  // ESCAPED text, so the fitting length is what `JSON.stringify` of those units leaves room for, and
+  // one unit more is over it. `utf8ByteLength` on the RAW text counts a lone surrogate as the three
+  // bytes it would encode to (U+FFFD), so the escaped figure is the one to compare.
+  assert.equal(utf8ByteLength(JSON.stringify(result.data.text)), 16262,
+    'the escaped text of the served prefix: 2710 units at six bytes of escape each');
+  // The published entry for that prefix plus ONE more unit, in the exact shape the handler publishes
+  // it (the longer slice still leaves the document unfinished, so it carries a resume point). It is
+  // over the ceiling: the served prefix really is the largest that fits.
+  const oneMore = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+    data: { text: text.slice(0, served + 1), offset: 0, totalChars: text.length, truncated: true, nextOffset: served + 1 } }));
+  assert.equal(oneMore, 16388);
+  assert.ok(oneMore > AGENT_CEILINGS.toolResultBytes,
+    `${oneMore} > ${AGENT_CEILINGS.toolResultBytes}: one unit more is over the ceiling`);
+  assert.equal(result.data.text.includes('\uD83D'), true, 'what the document holds is republished, not repaired');
+});
+
+test('read_document_text never searches below four digits, because no shorter entry reaches the ceiling', async () => {
+  // The envelope's one shrink — a nil resume point instead of a `nextOffset` — needs `end <= offset`,
+  // and its one growth inside the search interval is the digit width of `nextOffset`. This test pins
+  // both facts to the actual constants: a sub-4-digit end cannot reach `AGENT_CEILINGS.toolResultBytes`
+  // at all, so the bisection can never run where the envelope's width matters at 1-3 digits, and the
+  // smallest digit width it CAN search is 4. The measurement is the tool's own: the largest entry a
+  // 999-unit end can produce, in the worst shape available to it (six-byte escapes), is 6116 bytes.
+  const tip = utf8ByteLength(JSON.stringify(PROBE_ENTRY('x'.repeat(999))));
+  const worst = utf8ByteLength(JSON.stringify({ tool: 'read_document_text', ok: true,
+    data: { text: '\uD83D'.repeat(999), offset: 0, totalChars: 20000, truncated: true, nextOffset: 999 } }));
+  assert.ok(worst < AGENT_CEILINGS.toolResultBytes,
+    `${worst} < ${AGENT_CEILINGS.toolResultBytes}: the most expensive sub-4-digit end is still under the ceiling`);
+  assert.ok(worst > tip, 'the six-byte escapes are the expensive shape, not plain ASCII');
+  // The tool answers a small document whole, with no shrink and no publication of a digit width it
+  // never had to search in: the whole 999-unit document is served, the end IS the document's own end,
+  // and a chunk that consumed the document publishes no resume point at all.
+  const small = '\uD83D'.repeat(999);
+  const whole = await readDocument(documentBridge(small)).execute({ offset: 0, maxChars: 8000 }, { editor: 'word' });
+  assert.equal(whole.ok, true);
+  assert.equal(whole.data.text.length, 999, 'a request that fits is served whole');
+  assert.equal(whole.data.nextOffset, null, 'a chunk that reached the document\u2019s end publishes no resume point');
+  assert.equal(whole.data.truncated, false);
+  assert.equal(entryBytes(whole), 6116, 'the whole 999-unit document, escaped: 5994 text + 122 envelope');
+  assert.ok(entryBytes(whole) < AGENT_CEILINGS.toolResultBytes, 'a 3-digit end is nowhere near the ceiling');
+  // A document long enough to bind the ceiling really binds it, and its end is in the 4-digit zone:
+  // 2710 units at six bytes of escape each plus the envelope is the largest entry the ceiling admits
+  // here, and `LIMITS.readDocumentOffsetMax` (524305, six digits) is the constant that keeps the
+  // envelope from ever growing by more than the one byte a digit boundary can add inside the search.
+  const binding = '\uD83D'.repeat(20000);
+  const fitted = await readDocument(documentBridge(binding)).execute({ offset: 0, maxChars: 8000 }, { editor: 'word' });
+  assert.equal(fitted.ok, true);
+  const served = fitted.data.text.length;
+  assert.equal(served, 2710, 'the measured fitting length at the ceiling for six-byte units');
+  assert.equal(String(served).length, 4, 'the searched end is 4 digits, the smallest width this ceiling admits');
+  assert.equal(entryBytes(fitted), 16383, 'the fitted entry, one byte under the ceiling');
+  assert.ok(entryBytesForLength(binding, 0, served + 1) > AGENT_CEILINGS.toolResultBytes);
+  assert.equal(String(LIMITS.readDocumentOffsetMax).length, 6, 'the address bound that bounds the envelope\u2019s growth');
+  assert.equal(AGENT_CEILINGS.toolResultBytes, 16384, 'the result ceiling the whole argument depends on');
+});
+
 test('read_document_text refuses closed when not even ONE whole character can be served', async () => {
   // The FLOOR of the shrink is ONE whole character, never zero: a chunk that consumed nothing would
   // publish no resume point and stop the walk while text remained — exactly the skipped range the

@@ -706,18 +706,30 @@ The tool stays fail-closed: the entry is still measured **exactly** on the value
 a closed `BYTE_LIMIT` refusal. Clipping is still forbidden: the served chunk is always a whole-character
 **prefix** of the request, so its resume point cannot skip text.
 
-**The search.** Bisection over the cut, because the handler can **prove** the predicate is monotone:
-for two ends `e' < e`, `bytes(e') <= bytes(e)`. The slice from the same start is a **prefix** of the
-larger one, every removed UTF-16 code unit costs **at least one** UTF-8 byte of the serialized entry
-(cheapest: one ASCII byte; dearest: a six-byte `\uXXXX` escape), while the published envelope can grow by
-**at most one** byte as the end falls (a nil resume point becoming a six-digit one: `"truncated":false` +
-`"nextOffset":null` is 35 characters, `"truncated":true` + six digits is 36). So text bytes fall by at
-least one and the envelope rises by at most one — `bytes` is non-decreasing in the end and `fits` is
-downward-closed, which is exactly what bisection needs. Every probed cut is re-stepped over a surrogate
-pair with `characterEnd`, so each probed end is a whole character and a pair is never split. **Work
-bound:** one measurement for the request, one for the floor, and `ceil(log2(maxChars)) <= 13` probes —
-at most **15 exact measurements of one entry**, all through the same `documentEntryBytes`, so no second,
-competing measurement exists.
+**The search.** Bisection over the cut, because the handler can **prove** the predicate is monotone —
+but **only on the interval it actually probes**, and the review of this round showed why that restriction
+has to be written down. The unrestricted proposition "for two ends `e' < e`, `bytes(e') <= bytes(e)`" is
+**FALSE**: on `'x👍яé'` with `offset = 3` the end `3` publishes **125** bytes and the longer end `4`
+publishes **123**. Two mechanisms make a longer slice cheaper — completing a surrogate pair replaces two
+six-byte `\uXXXX` escapes with the character's own four bytes (the end-2 entry is 127, wider than the
+end-3 entry's 125), and the first end above `offset` replaces `"truncated":false` + `"nextOffset":null`
+with `"truncated":true` + a one-digit address, three bytes narrower (125 → 123). The loop never searches
+either zone: `floor = characterEnd(start + 1)` is strictly greater than `offset` (an equality would mean
+`offset` sat inside a pair, which `characterStart` has already excluded), every probe is a
+`characterEnd(midCut)` with `midCut >= start + 2`, and inside that interval every probed end is a
+whole-character boundary strictly above `offset` — so no probed end can carry a nil resume point, and the
+envelope's only moving field is the **digit count of `nextOffset`**. Two constants carry the margin:
+`LIMITS.readDocumentOffsetMax` (524305, **six** digits) clamps every probed end and holds the envelope's
+digit growth inside the interval to **one** byte, and `AGENT_CEILINGS.toolResultBytes` (16384) keeps the
+failing ends in the 4–6 digit zone (the most expensive sub-4-digit entry any shape can produce measures
+**6116** bytes, so the loop cannot run there at all). A **seventh** digit on the offset bound would let
+one probed step add two envelope bytes against the one byte a removed character saves — the monotonicity
+would fail on ends the loop really probes and the bisection would silently return a non-maximal slice;
+a ceiling small enough to push the search into the 1–3 digit zone would do the same. Every probed cut is
+re-stepped over a surrogate pair with `characterEnd`, so each probed end is a whole character and a pair
+is never split. **Work bound:** one measurement for the request, one for the floor, and
+`ceil(log2(maxChars)) <= 13` probes — at most **15 exact measurements of one entry**, all through the
+same `documentEntryBytes`, so no second, competing measurement exists.
 
 **The reproduction, before and after** (document `99998 × 'x' + 5397 × '漢' + 1 × 'я' + 63 × 'x'`,
 105459 characters, `maxChars: 5460`):
@@ -735,15 +747,31 @@ The CJK case at the advertised maximum: `'漢'.repeat(8100)` with `maxChars: 800
 — the shrink is exactly as far as needed and no further.
 
 **Tests.** RED first: **10** focused cases failed on the pre-change tree (`63/73 pass, 10 fail`) — the
-seven tests that encoded the hard refusal, and the three new ones. GREEN: the focused word suite is
+seven tests that encoded the hard refusal, and the three new ones. GREEN: the focused word suite was
 **73/73**, and the full suite grew **699 → 702** with `fail 0`; `node scripts/static-audit.mjs` →
-`Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` → exit 0 (`Plugin build: 8
-allowlisted files; ZIP STORE SHA-256 0e3e1065…`). New coverage: the reviewer's ten
+`Authored-code audit PASS` (exit 0). New coverage: the reviewer's ten
 offset/`maxChars` cases through the **real** `runAgent` (every one an `ok` the model receives, entry
 `<=` the ceiling, never the runtime's substitution string), a three-byte sweep showing the served length
 is the **largest** that fits (one character more is over the ceiling), a walk whose shrunk boundary lands
 exactly on an astral surrogate **pair** (chunks still tile the document with no skipped or duplicated
 character, and the pair is served whole by the next chunk), and the one-whole-character floor.
+
+**The follow-up round closed the review's two non-blocking conditions.** The false monotonicity
+proposition above is **replaced** by the true, restricted one (in the handler's own comment and in the
+paragraph above), and three boundary tests pin it: the falsifying `'x👍яé'` case re-measured (end 3 =
+125, end 4 = 123) with the loop's own interval shown non-decreasing; a document that already **holds** a
+lone surrogate (`'\uD83D'.repeat(6000)`, six escaped bytes per unit) served at **2710** units with an
+entry of **16382** bytes that the runtime's serializer accepts — measured, not repaired, and documented
+as a residual the DOMParser path cannot itself produce; and the measurement that no sub-4-digit entry can
+reach the ceiling (**6116** bytes at a 999-unit end), so the loop can never search in the 1–3 digit zone.
+This round the focused word suite is **76/76** and the full suite grew **702 → 705** with `fail 0`;
+`node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` →
+exit 0 (`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+c1c116f8f47f9d7d08f14f8711332762a0b0814a2601b7390107d8938c5d0cbd`). **That SHA is pinned to the bundle
+built from the tree at commit `3d12d39`** — measured twice, from this worktree, and not from the main
+checkout, which sits on the older `bde9080`; the earlier `0e3e1065…` recorded here was stale. The bundled
+files are byte-identical across the tool/tests change, so the value is stable, but a later commit that
+touches an allowlisted plugin file must re-measure it and re-pin it to its own commit.
 
 **Which existing assertions moved, and why the replacements are stronger.** Seven tests encoded the
 old hard refusal and were **moved**, not deleted:

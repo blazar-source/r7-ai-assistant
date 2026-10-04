@@ -277,17 +277,63 @@ export function createWordTools(bridge) {
         // The SHRINK is the bounded bisection below. It finds the LARGEST slice that fits, not merely
         // one that fits, because "largest" is the whole point of the contract: a smaller slice than the
         // ceiling allows makes the caller spend another step to learn what this one could have carried.
-        // The search rests on a monotonicity this handler can PROVE, so it needs no heuristic step size:
-        // for two ends e' < e, `bytes(e') <= bytes(e)`, because the slice from the same start is a
-        // PREFIX (each removed UTF-16 code unit costs at least one UTF-8 byte of the serialized entry —
-        // the cheapest is one ASCII byte, the dearest a six-byte `\uXXXX` escape — so text bytes fall by
-        // at least one) while the published envelope can grow by at most one byte (a nil resume point
-        // becoming a six-digit one). `fits` is therefore downward-closed in the end, so bisection over
-        // the cut finds the exact boundary. `characterEnd` re-steps every probed cut over a surrogate
-        // pair, so each probed end is a whole character and a pair is never split. The worst case is
-        // ONE measurement for the request, ONE for the floor, and ceil(log2(maxChars)) <= 13 probes of
-        // the same exact `documentEntryBytes` measurement — at most 15 measurements of one entry, and
-        // never a second, competing measurement.
+        // The search needs no heuristic step size because `fits` is downward-closed ON THE INTERVAL THE
+        // LOOP ACTUALLY PROBES — and the restriction is load-bearing, so it is stated exactly.
+        //
+        // The naive proposition "for ANY two ends e' < e, `bytes(e') <= bytes(e)`" is FALSE, and a
+        // future reader must not restore it: `bytes` is NOT monotone in the end over every integer end.
+        // Measured on `'x👍яé'` with `offset = 3`: the end 3 publishes 125 bytes and the LONGER end 4
+        // publishes 123. Two separate mechanisms make a longer slice cheaper. (a) A slice ending on a
+        // surrogate pair's high unit alone serializes that unit as a six-byte `\uXXXX` escape, while
+        // the same slice with the pair completed serializes the pair as the character's own four bytes
+        // — completing a pair makes the escaped text two bytes narrower, so the end 2 entry (127) is
+        // WIDER than the end 3 entry (125). (b) An end at or below `offset` can publish no resume point
+        // and spells the wider `"nextOffset":null` plus `"truncated":false`; the first end above
+        // `offset` spells a digit plus `"truncated":true`, which at a one-digit address is three bytes
+        // narrower, so the end 3 entry (125) is WIDER than the end 4 entry (123).
+        //
+        // What the loop actually probes is `[floor, requestedEnd]` with `floor = characterEnd(start + 1)`,
+        // and in that interval BOTH mechanisms are out of reach, so `bytes` is non-decreasing there:
+        //   * every probed end is a whole-character boundary (`characterEnd` re-steps each cut over a
+        //     surrogate pair), so mechanism (a) cannot fire — a probed end never leaves the slice on
+        //     half a pair;
+        //   * every probed end is STRICTLY GREATER THAN `offset`, so mechanism (b) cannot fire and no
+        //     probed end can carry a null resume point. This is where `floor` earns its place: `start`
+        //     steps back to the high unit of a pair and `characterEnd(start + 1)` then steps forward
+        //     past the low one, so `floor > offset` always — an equality here would mean `offset` sat
+        //     inside a pair, which `characterStart` has already excluded. The bisection's own lower
+        //     bound `start + 1` is inside `[offset, floor]`, but the loop stops at `highCut - lowCut > 1`
+        //     and every probe it makes is `characterEnd(midCut)` with `midCut >= start + 2`, hence at
+        //     least `offset + 2`; the boundary the loop returns is a `chunk` it already measured.
+        // Inside that interval the entry's envelope can also not shrink, and can grow by at most ONE
+        // byte: `text` and `offset` are fixed for the call, `nextOffset` is non-null, so the only field
+        // that moves is the DIGIT COUNT of `nextOffset`, which adds one byte at 999→1000, 9999→10000,
+        // 99999→100000 and never more. Each removed character costs the slice at least one UTF-8 byte
+        // (the cheapest unit is one ASCII byte), so a one-byte envelope gain can never outweigh the
+        // text the shorter end loses: `bytes(e') <= bytes(e)` holds on the probed interval, `fits` is
+        // downward-closed there, and bisection over the cut finds the exact boundary.
+        //
+        // THE CONSTANTS THE LOOP'S CORRECTNESS DEPENDS ON, so a change to either is a change to this
+        // proof and not a local tweak:
+        //   * `LIMITS.readDocumentOffsetMax` = 524305 (SIX digits, and the clamp on `requestedCut`).
+        //     It bounds every probed end from above and therefore caps the envelope's digit growth
+        //     inside the interval at one byte, which is the whole margin. A SEVENTH digit (>= 1000000)
+        //     would let one probed step add MORE than the one byte a removed character can save at the
+        //     999999→1000000 boundary, the monotonicity would fail on ends the loop really does probe
+        //     (1-byte text against a 2-byte envelope step), and this bisection would silently return a
+        //     non-maximal slice — it must then be re-derived, not merely re-bounded.
+        //   * `AGENT_CEILINGS.toolResultBytes` = 16384 (the result ceiling this doc comment measures
+        //     against). It must stay large enough that failing ends stay in the 4-6 digit zone: the
+        //     most expensive sub-4-digit entry any shape can produce is well under it (measured: 6116
+        //     bytes for a 999-unit end of six-byte escapes), so today the loop can never run in the
+        //     1-3 digit zone at all. A ceiling small enough to push the search down there would put
+        //     failing ends where the envelope's width is a large fraction of the budget and the
+        //     one-byte margin no longer covers it.
+        // `characterEnd` re-steps every probed cut over a surrogate pair, so each probed end is a whole
+        // character and a pair is never split. The worst case is ONE measurement for the request, ONE
+        // for the floor, and ceil(log2(maxChars)) <= 13 probes of the same exact
+        // `documentEntryBytes` measurement — at most 15 measurements of one entry, and never a second,
+        // competing measurement.
         let chunk = publishedChunk(document.text, start, end, offset, totalChars);
         if (chunk.bytes === null || chunk.bytes > AGENT_CEILINGS.toolResultBytes) {
           // The floor is the smallest chunk this read can serve; if even that does not fit, there is no
