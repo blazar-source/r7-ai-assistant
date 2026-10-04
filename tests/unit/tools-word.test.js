@@ -129,6 +129,41 @@ test('insert_paragraph advertises the argument ceiling its handler enforces', as
   assert.deepEqual(bridge.seen, [], 'an over-ceiling argument never reaches the bridge');
 });
 
+test('insert_paragraph bounds the DISPATCHED payload, so the end position cannot overshoot the ceiling', async () => {
+  // Finding 1 (fix round 3): the handler's check measured `args.text` only, while
+  // bridge.insertParagraph appends ONE authored newline for `position:'end'` AFTER that check, so a
+  // text of exactly argumentsBytes dispatched argumentsBytes+1 bytes. The advertised/enforced bound is
+  // ONE value — the per-action argument ceiling — applied to the exact payload that goes out.
+  const ceiling = AGENT_CEILINGS.argumentsBytes;
+  assert.equal(ceiling, 8192, 'the per-action argument ceiling the runtime applies');
+  const bridge = fakeBridge();
+  const tool = createWordTools(bridge).find(entry => entry.name === 'insert_paragraph');
+  const full = 'a'.repeat(ceiling);
+  assert.equal(utf8ByteLength(full), ceiling, 'the fixture is exactly the advertised size');
+  // `cursor` dispatches the text itself, so exactly the advertised size fits...
+  const cursor = await tool.execute({ text: full, position: 'cursor' }, { editor: 'word' });
+  assert.equal(cursor.ok, true, 'cursor dispatches the text itself, so the advertised size fits');
+  assert.equal(cursor.data.bytes, ceiling);
+  // ...and an omitted position is the bridge's own `cursor` default, never a newline.
+  const omitted = await tool.execute({ text: full }, { editor: 'word' });
+  assert.equal(omitted.ok, true, 'an omitted position keeps the bridge default (cursor)');
+  assert.deepEqual(bridge.seen, [{ text: full, position: 'cursor' }, { text: full }]);
+  bridge.seen.length = 0;
+  // `end` adds one newline to the dispatched payload, so exactly the advertised size of text cannot
+  // fit: it is refused as the same closed class and never reaches the bridge.
+  const overshoot = await tool.execute({ text: full, position: 'end' }, { editor: 'word' });
+  assert.equal(overshoot.ok, false);
+  assert.equal(overshoot.code, 'BYTE_LIMIT', 'the newline makes the dispatched payload exceed the bound');
+  assert.deepEqual(bridge.seen, [], 'the newline-overflow insert never reaches the bridge');
+  // One byte less is the largest end-position text whose dispatched form still fits the ceiling; the
+  // accepted result reports the dispatched byte count, newline included.
+  const largest = 'a'.repeat(ceiling - 1);
+  const accepted = await tool.execute({ text: largest, position: 'end' }, { editor: 'word' });
+  assert.equal(accepted.ok, true, 'the largest end-position text whose dispatched form fits is accepted');
+  assert.equal(accepted.data.bytes, ceiling);
+  assert.deepEqual(bridge.seen, [{ text: largest, position: 'end' }], 'the bridge still owns the newline');
+});
+
 test('read_context requests each scope from its own ceiling', async () => {
   const seen = [];
   const bridge = fakeBridge({ readContext: async (args) => { seen.push(args); return { ok: true, text: 'текст' }; } });
@@ -357,6 +392,25 @@ test('bridge insertParagraph dispatches the public insert once and reports a cla
   const result = await pending;
   assert.deepEqual(result, { ok: true, data: { sent: true } });
   assert.equal(r.bridge.getState().busy, false);
+});
+
+test('the handler and the real bridge agree on one ceiling for the dispatched insert', async () => {
+  // Finding 1 (fix round 3) pins the handler's own measure against the bridge's real transformation:
+  // the handler counts the newline from its own rule, the bridge appends the newline it owns, and the
+  // payload that actually crosses must still be exactly inside the advertised bound.
+  const r = nativeRig();
+  const tool = createWordTools(r.bridge).find(entry => entry.name === 'insert_paragraph');
+  const largest = 'a'.repeat(AGENT_CEILINGS.argumentsBytes - 1);
+  const pending = tool.execute({ text: largest, position: 'end' }, { editor: 'word' });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the accepted insert is dispatched');
+  assert.equal(r.calls[1].name, 'PasteText');
+  const dispatched = r.calls[1].params[0];
+  assert.equal(utf8ByteLength(dispatched), AGENT_CEILINGS.argumentsBytes,
+    'the dispatched payload fills the advertised ceiling exactly, never past it');
+  assert.equal(dispatched.endsWith('\n'), true, 'the newline the handler counted is the one the bridge appends');
+  r.calls[1].callback(true);
+  assert.equal((await pending).ok, true);
 });
 
 test('bridge insertParagraph refuses malformed text or an unknown position without any SDK work', async () => {

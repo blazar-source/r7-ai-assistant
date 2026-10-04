@@ -96,6 +96,10 @@ function timeoutFor(kind) {
 // while a previous one is unsettled, and the panel's write lock (controller.writeLocked) is what
 // enforces it, so this predicate must cover the insert path as well as the selection replacement,
 // not only `kind === 'write'`.
+// The lock is INTENTIONALLY INDEFINITE while a native callback is unresolved: design §8.4 keeps a
+// timed-out mutation busy/uncertain until it settles or the plugin is reinitialised, and the UI maps
+// that uncertain outcome to an authored caption. An expired deadline must therefore never release it,
+// and "fixing" this into a timeout-driven unlock would be a defect, not a repair.
 function pendingMutation(slot) {
   return slot !== null && (slot.kind === 'write' || slot.kind === 'insert') && slot.dispatched;
 }
@@ -168,11 +172,15 @@ export function createR7Bridge(plugin, {
   // start() keeps its exact meaning.
   function start(kind, signal, { replacement, beforeDispatch, maxBytes } = {}, params) {
     if (signal?.aborted) return Promise.reject(new SafeError(ERROR_CODES.CANCELLED));
-    // Decode bound for THIS ticket: a context read is decoded against the byte budget its caller
-    // requested, still capped by the editor-result ceiling that applies to any native read, while
-    // every other kind keeps its own window (the selection read stays at LIMITS.selectionBytes).
-    const readBound = kind === 'contextread' && Number.isSafeInteger(maxBytes) && maxBytes > 0
-      ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
+    // Decode bound for THIS ticket. A `contextread` ticket has exactly one creator, `readContext`,
+    // which refuses a non-safe-integer or `< 1` `maxBytes` as CAPABILITY_UNAVAILABLE BEFORE it
+    // dispatches, so this leg always carries its budget and there is no second window it can fall back
+    // to — `LIMITS.selectionBytes` is not consulted on this branch at all, and a fallback here would be
+    // dead code whose only effect was to hide a future caller that forgot the budget behind an 8 KiB
+    // decode. Without one, such a caller gets `assertByteLimit`'s closed INVALID_DATA instead of a
+    // silent under-bound decode. Every other kind keeps its own window (the selection read stays at
+    // LIMITS.selectionBytes).
+    const readBound = kind === 'contextread' ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
     return new Promise((resolve, reject) => {
       const owned = { kind, dispatched: false, uncertain: false, settled: false, timer: null, deadline: readClock() + LIMITS.callbackTimeoutMs, cancel: null };
       slot = owned;

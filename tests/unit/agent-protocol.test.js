@@ -5,6 +5,7 @@ import { ERROR_CODES, SafeError } from '../../src/shared/errors.js';
 import { AGENT_CEILINGS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
 import { createRegistry } from '../../src/tools/registry.js';
+import { createWordTools } from '../../src/tools/word.js';
 
 const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
   schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
@@ -65,6 +66,31 @@ test('validateBatch resolves the whole batch before any execution', () => {
 test('validateBatch reports a repeated confirm tool as a known tool error', () => {
   const call = { tool: 'replace_selection', arguments: {} };
   assert.throws(() => validateBatch(catalogue, [call, { ...call }]), /TOOL_ERROR/);
+});
+
+// --- Fix round 3, finding 2: the read_context withholding is pinned IN THE REPO -------------------
+// Ruling A (src/tools/word.js) withholds `read_context` with policy `deny`. The registry's catalogue
+// drops a denied entry, and `validateBatch` resolves a model-emitted tool name AGAINST that catalogue,
+// so the action is a closed TOOL_ERROR with no descriptor to execute. Measured against the real word
+// descriptors and the real registry — no UI, no test double for the catalogue and no external probe.
+test('a model-emitted read_context action is a known tool error in EDIT and ASK while read_selection resolves in ASK', () => {
+  const fakeBridge = { readSelection: async () => ({ text: 'текст', eligible: true, target: 1 }) };
+  const wordRegistry = createRegistry(createWordTools(fakeBridge));
+  const wordCatalogue = mode => wordRegistry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode });
+  for (const mode of ['EDIT', 'ASK']) {
+    const offered = wordCatalogue(mode);
+    assert.equal(offered.some(entry => entry.name === 'read_context'), false, `${mode} must not offer read_context`);
+    // A model-emitted name that is not in the catalogue is a KNOWN tool error (§6.2), never a protocol
+    // error: the run's single repair slot is not consumed, and no descriptor is handed to the executor.
+    assert.throws(() => validateBatch(offered, [{ tool: 'read_context', arguments: { scope: 'paragraph', index: 0 } }]),
+      /TOOL_ERROR/, `${mode}: a model-emitted read_context is refused as a known tool error`);
+  }
+  // The refusal comes from the withholding, not from the batch path: the read that IS offered in ASK
+  // still resolves there, so this pins the withheld tool rather than a broken resolve.
+  const resolved = validateBatch(wordCatalogue('ASK'), [{ tool: 'read_selection', arguments: {} }]);
+  assert.equal(resolved.length, 1);
+  assert.equal(resolved[0].descriptor.name, 'read_selection');
+  assert.equal(resolved[0].descriptor.kind, 'read');
 });
 
 test('validateBatch bounds the whole serialized arguments payload of one action', () => {

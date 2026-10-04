@@ -76,17 +76,25 @@ export function createWordTools(bridge) {
       }
     }),
     defineTool({
-      // Ruling A — WITHHELD FROM EVERY CATALOGUE, NEVER EXECUTED. `read_context` rests on a public
-      // document read primitive that is NOT verified: the installed build's word SDK source copy
-      // (dev-only evidence, `.local/stage-b-runtime/vendor-word-sdk-all.js`) contains
+      // Ruling A — WITHHELD FROM EVERY OFFERED CATALOGUE. `read_context` rests on a public document
+      // read primitive that is NOT verified: the installed build's word SDK source copy (dev-only
+      // evidence, `.local/stage-b-runtime/vendor-word-sdk-all.js`) contains
       // `GetDocumentStructure` 0 times and `pluginMethod_GetDocumentStructure` 0 times, while
       // `GetSelectedText` occurs 101 times and `pluginMethod_PasteText` exists. The dispatch resolves
       // methods BY NAME, so this is evidence AGAINST the primitive rather than conclusive proof, and
       // no positive evidence exists because the native target is unreachable from here. A native probe
       // must confirm a public document read before this becomes `auto` again. The descriptor, its
       // schema, its precondition and its handler are deliberately kept, so the switch back is this one
-      // value; `deny` is the registry's existing "never offered, never executable" policy (the
-      // catalogue drops it before the runtime can resolve it). PENDING NATIVE VERIFICATION.
+      // value.
+      // What `deny` actually guarantees (stated exactly, so this comment cannot over-claim): the
+      // registry's `catalogue` skips a denied entry, and that catalogue is the only place the PRODUCT
+      // turns a model tool name into an executable descriptor — `runAgent` builds its catalogue through
+      // that call and `validateBatch` resolves against it — so a model-emitted `read_context` is a
+      // closed TOOL_ERROR with no dispatch. That is NOT a property of the registry as a whole:
+      // `registry.tools` still hands out this descriptor, and a caller that bypasses the catalogue and
+      // invokes `descriptor.execute` directly still reaches the handler kept below. The product never
+      // does that, so the catalogue-scoped `resolve`/`validateBatch` path is what makes the tool
+      // unexecutable in the product — no more and no less. PENDING NATIVE VERIFICATION.
       name: 'read_context', kind: 'read', editors: ['word'], policy: 'deny', requires: ['document.read'],
       schema: { type: 'object', additionalProperties: false, required: ['scope', 'index'],
         properties: { scope: { type: 'string', enum: ['paragraph', 'section', 'structure'] },
@@ -121,18 +129,31 @@ export function createWordTools(bridge) {
     }),
     defineTool({
       name: 'insert_paragraph', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      // The schema advertises the per-action argument ceiling on `text`; the handler applies that same
+      // ceiling to the payload the bridge actually dispatches, so the advertised and the enforced bound
+      // are one value on both sides. The handler's note below states the `end` consequence: the appended
+      // newline is part of the dispatched payload, so `end` carries at most `argumentsBytes - 1` of text.
       schema: { type: 'object', additionalProperties: false, required: ['text'],
         properties: { text: { type: 'string', maxBytes: AGENT_CEILINGS.argumentsBytes, minBytes: 1 },
           position: { type: 'string', enum: ['cursor', 'end'] } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async (args, ctx) => {
         if (missingBridgeMethod(bridge, 'insertParagraph')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-        // The advertised bound is the bound this handler applies: the per-action argument ceiling is
-        // hard, so a text the runtime can never deliver is refused here rather than advertised.
-        if (utf8ByteLength(args.text) > AGENT_CEILINGS.argumentsBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        // The advertised bound is the bound this handler applies, and it is applied to the payload the
+        // bridge actually dispatches — never to a prefix of it. `bridge.insertParagraph` expresses
+        // `position:'end'` by appending ONE authored newline AFTER this call, so measuring `args.text`
+        // alone let a text of exactly argumentsBytes dispatch argumentsBytes+1 bytes. Both sides name
+        // the same ceiling and this handler's subject is the dispatched form:
+        //   `cursor` (and an omitted position, the bridge's own default) → at most argumentsBytes of text;
+        //   `end`                                                       → at most argumentsBytes-1 of text.
+        // A text that passes the schema but overflows only once that newline is counted is refused here
+        // as the same closed BYTE_LIMIT class, so the dispatched bytes can never exceed the bound.
+        const dispatched = args.position === 'end' ? `${args.text}\n` : args.text;
+        if (utf8ByteLength(dispatched) > AGENT_CEILINGS.argumentsBytes) return known(ERROR_CODES.BYTE_LIMIT);
         // The validated arguments cross to the bridge unchanged; an omitted position stays omitted so
-        // the bridge's own default is the single place that decides it. The caller's signal crosses
-        // with them so a Stop can cancel before dispatch and marks a dispatched insert uncertain.
+        // the bridge's own default is the single place that decides it (the measure above assumes that
+        // same default). The caller's signal crosses with them so a Stop can cancel before dispatch and
+        // marks a dispatched insert uncertain.
         const forwarded = { text: args.text, ...(args.position === undefined ? {} : { position: args.position }),
           ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
         let result;
@@ -155,7 +176,9 @@ export function createWordTools(bridge) {
         const data = result.data;
         const acknowledged = data !== null && typeof data === 'object' && Object.hasOwn(data, 'sent') ? data.sent : undefined;
         if (acknowledged !== true) return known(ERROR_CODES.TOOL_ERROR);
-        return ok({ acknowledged: true, bytes: utf8ByteLength(args.text) });
+        // `bytes` is the dispatched payload's own size, the same value the bound above measured (so an
+        // `end` insert reports the newline too, exactly like the bytes that crossed to the editor).
+        return ok({ acknowledged: true, bytes: utf8ByteLength(dispatched) });
       }
     }),
     defineTool({
