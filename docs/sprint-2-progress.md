@@ -60,6 +60,18 @@ result lines:
 
 - **Full host suite** — `node --test` (three consecutive runs, every one identical):
   `ℹ tests 604` / `ℹ pass 604` / `ℹ fail 0` / `ℹ cancelled 0` / `ℹ skipped 0` / `ℹ todo 0`.
+
+  **Known pre-existing flake — NOT introduced by Sprint 2.** The Sprint 1 acceptance-infrastructure test
+  `` `${corsMode} CORS on controlled ${profile} response (host only)` `` in
+  [tests/acceptance/infrastructure/https-mock.test.js:217](<../tests/acceptance/infrastructure/https-mock.test.js#L217>)
+  is wall-clock sensitive (the test client's 2000 ms default timeout under load). While verifying this
+  document the controller observed it fire **once in five consecutive full-suite runs** (`603/604`) and
+  **once in six isolated runs of that file** (`47/48`), the failing case taking ~11.9 s. Sprint 2 touched
+  nothing under `tests/acceptance/infrastructure/` — `git log a9784e4..HEAD --
+  tests/acceptance/infrastructure/` is empty — so this is a Sprint 1 infrastructure defect that Sprint 2
+  deliberately did **not** repair at the end of its own scope. Until it is hardened, a single failure of
+  that one test is this known flake and never a Sprint 2 defect, and the quoted `604/604` is the measured
+  result of the runs above, **not** a stability guarantee.
 - **Source static audit** — `node scripts/static-audit.mjs`:
   `Authored-code audit PASS` (exit 0).
 - **Bundle audit** — `node scripts/build-plugin.mjs`:
