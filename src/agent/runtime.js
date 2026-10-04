@@ -27,12 +27,27 @@ function actionCode(result) {
   const candidate = result?.code;
   return typeof candidate === 'string' && ERROR_CODES[candidate] === candidate ? candidate : ERROR_CODES.TOOL_ERROR;
 }
-// §8.3 for a handler that THROWS. A closed code — from a SafeError, or from any error carrying one — is
-// a KNOWN local failure: it becomes this action's result, is recorded as an error and the batch
-// continues, so the model sees it and may replan. Anything else is unknown: a mutation that threw may
-// already have applied a change, so its outcome is genuinely uncertain and the run stops fail-safe
-// without a retry, while a read that threw is an ordinary tool error and the batch continues. Only the
-// closed code is published: the raw exception is never read for text and never returned or logged.
+// §8.3 for a THROWN PRECONDITION. A precondition is a pure, pre-dispatch check: if it throws, nothing
+// was dispatched, so whether the mutation happened is definitely KNOWN — it did not. The throw is
+// therefore always a KNOWN error for this action and the batch continues; the descriptor's kind is
+// deliberately ignored, because TOOL_UNCERTAIN would be false information about a document that was
+// never touched. The published class is the thrown SafeError's own closed code (a SafeError always
+// carries one — its constructor coerces anything else to INTERNAL_ERROR); any other thrown value, and
+// the inapplicable TOOL_UNCERTAIN class, become the tool-error class. The raw exception is never read
+// for text and never published.
+function preconditionThrowResult(error) {
+  const code = error instanceof SafeError && error.code !== ERROR_CODES.TOOL_UNCERTAIN
+    ? error.code
+    : ERROR_CODES.TOOL_ERROR;
+  return { ok: false, code, message: code };
+}
+// §8.3 for a HANDLER that THROWS, i.e. only for a throw from the awaited execute. A closed code — from
+// a SafeError, or from any error carrying one — is a KNOWN local failure: it becomes this action's
+// result, is recorded as an error and the batch continues, so the model sees it and may replan.
+// Anything else is unknown: a mutation that threw may already have applied a change, so its outcome is
+// genuinely uncertain and the run stops fail-safe without a retry, while a read that threw is an
+// ordinary tool error and the batch continues. Only the closed code is published: the raw exception is
+// never read for text and never returned or logged.
 function thrownActionResult(error, descriptor) {
   const code = error instanceof SafeError
     ? error.code
@@ -130,18 +145,25 @@ export async function runAgent(options) {
         if (toolCalls >= guardrails.maxToolCalls) return finish('LIMIT');
         // §8.3: one action's failure is confined to that action. Both the precondition and the awaited
         // execute are guarded here, so a throw can never reach the outer catch and end the whole run as
-        // a generic ERROR. The counter moves first: the action WAS dispatched and is recorded as such.
+        // a generic ERROR. The two throws are NOT the same class, though: the precondition is a pure,
+        // pre-dispatch check, so a throw from it means nothing ran and is a KNOWN error that continues
+        // the batch; only a throw from the awaited execute can be genuinely uncertain. The counter moves
+        // first, so an action whose guard throws is still accounted for in the log.
         toolCalls += 1;
         let result;
+        let dispatched = false;
         try {
           const refusal = entry.descriptor.precondition(entry.arguments, { editor, capabilities, mode });
-          // Sequential dispatch (§8.1/§8.4): the handler is awaited to settle before the next action
-          // is even considered, so at most one editor callback is outstanding at any moment.
-          result = refusal
-            ? { ok: false, code: refusal.code ?? ERROR_CODES.TOOL_ERROR, message: refusal.message ?? 'precondition' }
-            : await entry.descriptor.execute(entry.arguments, { editor, capabilities, mode });
+          if (refusal) {
+            result = { ok: false, code: refusal.code ?? ERROR_CODES.TOOL_ERROR, message: refusal.message ?? 'precondition' };
+          } else {
+            // Sequential dispatch (§8.1/§8.4): the handler is awaited to settle before the next action
+            // is even considered, so at most one editor callback is outstanding at any moment.
+            dispatched = true;
+            result = await entry.descriptor.execute(entry.arguments, { editor, capabilities, mode });
+          }
         } catch (error) {
-          result = thrownActionResult(error, entry.descriptor);
+          result = dispatched ? thrownActionResult(error, entry.descriptor) : preconditionThrowResult(error);
         }
         const outcome = actionOutcome(result);
         const bytes = payloadBytes(result);

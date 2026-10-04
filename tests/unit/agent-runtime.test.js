@@ -434,6 +434,76 @@ test('a thrown non-SafeError from a read is TOOL_ERROR and the batch continues',
   assert.ok(!wire[1].includes('SECRET-DOCUMENT-TEXT'));
 });
 
+// --- Fix round 3: a throwing precondition is a known error, never an uncertain mutation ----------
+// §8.3 makes a mutation uncertain "only when it is genuinely unknown whether a mutation executed".
+// A precondition is a pure, pre-dispatch check, so a throw from it means nothing was dispatched and
+// the outcome is definitely "not applied" — a known error of that action, whatever the kind.
+
+test('a thrown non-SafeError from a mutate precondition is a known TOOL_ERROR and the batch continues', async () => {
+  const broken = createRegistry([
+    { ...base, name: 'insert_paragraph', kind: 'mutate', precondition: () => { throw new Error('SECRET-DOCUMENT-TEXT'); },
+      execute: () => { calls.push('must-not-run'); return { ok: true, data: {} }; } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  const result = await runAgent({ ...baseArgs, registry: broken, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"insert_paragraph","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ]) });
+  // Nothing was dispatched by the guarded action, so an UNCERTAIN here would tell the user to check
+  // a document that was never touched: the run must reach its final answer.
+  assert.equal(result.status, 'FINAL', 'a throwing precondition must never make the run uncertain');
+  assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok']);
+  assert.equal(result.actions[0].tool, 'insert_paragraph');
+  assert.equal(result.actions[0].code, 'TOOL_ERROR');
+  assert.deepEqual(calls, ['after'], 'the batch continues and the guarded action itself never executes');
+  assert.ok(!JSON.stringify(result.actions).includes('SECRET-DOCUMENT-TEXT'), 'no raw exception text is published');
+});
+
+test('a thrown SafeError from a mutate precondition publishes its closed code and the batch continues', async () => {
+  const failing = createRegistry([
+    { ...base, name: 'insert_paragraph', kind: 'mutate', precondition: () => { throw new SafeError(ERROR_CODES.SELECTION_CHANGED); },
+      execute: () => { calls.push('must-not-run'); return { ok: true, data: {} }; } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  const wire = [];
+  let index = 0;
+  const sequence = [
+    '{"type":"tool_calls","calls":[{"tool":"insert_paragraph","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ];
+  const result = await runAgent({ ...baseArgs, registry: failing, transport: async (messages) => {
+    wire.push(messages.map(message => message.content).join('\n'));
+    return { content: sequence[Math.min(index++, sequence.length - 1)] };
+  } });
+  assert.equal(result.status, 'FINAL');
+  assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok']);
+  assert.equal(result.actions[0].code, 'SELECTION_CHANGED');
+  assert.deepEqual(calls, ['after']);
+  assert.ok(wire[1].includes('"code":"SELECTION_CHANGED"'), 'the model sees the closed code as the action result');
+});
+
+test('a precondition throw can never be UNCERTAIN, even when the thrown SafeError claims that class', async () => {
+  // TOOL_UNCERTAIN means "genuinely unknown whether a mutation executed". Nothing is dispatched before
+  // the precondition returns, so no thrown class can make that true: the run must still record a known
+  // error and continue rather than tell the user to check an untouched document.
+  const impossible = createRegistry([
+    { ...base, name: 'insert_paragraph', kind: 'mutate', precondition: () => { throw new SafeError(ERROR_CODES.TOOL_UNCERTAIN); },
+      execute: () => { calls.push('must-not-run'); return { ok: true, data: {} }; } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  const result = await runAgent({ ...baseArgs, registry: impossible, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"insert_paragraph","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ]) });
+  assert.equal(result.status, 'FINAL');
+  assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok']);
+  assert.equal(result.actions[0].code, 'TOOL_ERROR');
+  assert.deepEqual(calls, ['after']);
+});
+
 // --- Fix round 2, finding 2: the injectable clock's frame is the transport's frame --------------
 
 test('an injected clock and the default transport measure the same frame', async () => {
