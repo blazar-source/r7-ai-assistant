@@ -27,6 +27,20 @@ function actionCode(result) {
   const candidate = result?.code;
   return typeof candidate === 'string' && ERROR_CODES[candidate] === candidate ? candidate : ERROR_CODES.TOOL_ERROR;
 }
+// §8.3 for a handler that THROWS. A closed code — from a SafeError, or from any error carrying one — is
+// a KNOWN local failure: it becomes this action's result, is recorded as an error and the batch
+// continues, so the model sees it and may replan. Anything else is unknown: a mutation that threw may
+// already have applied a change, so its outcome is genuinely uncertain and the run stops fail-safe
+// without a retry, while a read that threw is an ordinary tool error and the batch continues. Only the
+// closed code is published: the raw exception is never read for text and never returned or logged.
+function thrownActionResult(error, descriptor) {
+  const code = error instanceof SafeError
+    ? error.code
+    : (typeof error?.code === 'string' && ERROR_CODES[error.code] === error.code ? error.code : null);
+  if (code !== null) return { ok: false, code, message: code };
+  const failure = descriptor.kind === 'mutate' ? ERROR_CODES.TOOL_UNCERTAIN : ERROR_CODES.TOOL_ERROR;
+  return { ok: false, code: failure, message: failure };
+}
 // Technical size of one result for the actions log: content is measured, never retained, and a
 // value that cannot be serialized must not turn a technical metric into a run-ending exception.
 function payloadBytes(result) {
@@ -52,7 +66,10 @@ export async function runAgent(options) {
     const context = createContextWindow();
     // Deterministic deadline on the injected clock, checked before every step and every action.
     const deadline = now() + guardrails.operationDeadlineMs;
-    const send = transport ?? (messages => requestCompletion(settings, messages, uuid, { parse: 'raw', agent: true, signal, deadline }));
+    // The transport compares an absolute deadline against its own clock, so it must be given the SAME
+    // clock the deadline was computed on: with an injected `now` and the default transport, its
+    // `Date.now` frame would put `start` past the deadline and every request would fail as a TIMEOUT.
+    const send = transport ?? (messages => requestCompletion(settings, messages, uuid, { parse: 'raw', agent: true, signal, deadline, clock: { now } }));
     context.append({ role: 'system', content: systemRules(catalogue, mode) });
     context.append({ role: 'user', content: request });
     while (steps < guardrails.maxSteps) {
@@ -111,13 +128,21 @@ export async function runAgent(options) {
           return finish('PREVIEW_READY', null, Object.freeze({ descriptor: entry.descriptor, arguments: entry.arguments }));
         }
         if (toolCalls >= guardrails.maxToolCalls) return finish('LIMIT');
-        const refusal = entry.descriptor.precondition(entry.arguments, { editor, capabilities, mode });
+        // §8.3: one action's failure is confined to that action. Both the precondition and the awaited
+        // execute are guarded here, so a throw can never reach the outer catch and end the whole run as
+        // a generic ERROR. The counter moves first: the action WAS dispatched and is recorded as such.
         toolCalls += 1;
-        // Sequential dispatch (§8.1/§8.4): the handler is awaited to settle before the next action
-        // is even considered, so at most one editor callback is outstanding at any moment.
-        const result = refusal
-          ? { ok: false, code: refusal.code ?? ERROR_CODES.TOOL_ERROR, message: refusal.message ?? 'precondition' }
-          : await entry.descriptor.execute(entry.arguments, { editor, capabilities, mode });
+        let result;
+        try {
+          const refusal = entry.descriptor.precondition(entry.arguments, { editor, capabilities, mode });
+          // Sequential dispatch (§8.1/§8.4): the handler is awaited to settle before the next action
+          // is even considered, so at most one editor callback is outstanding at any moment.
+          result = refusal
+            ? { ok: false, code: refusal.code ?? ERROR_CODES.TOOL_ERROR, message: refusal.message ?? 'precondition' }
+            : await entry.descriptor.execute(entry.arguments, { editor, capabilities, mode });
+        } catch (error) {
+          result = thrownActionResult(error, entry.descriptor);
+        }
         const outcome = actionOutcome(result);
         const bytes = payloadBytes(result);
         actions.push(Object.freeze(outcome === 'ok'

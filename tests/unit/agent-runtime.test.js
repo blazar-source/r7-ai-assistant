@@ -340,3 +340,117 @@ test('without an injected transport the default send is the strict-bank request 
   assert.equal(result.repairs, 0);
   assert.deepEqual(result.actions, []);
 });
+
+// --- Fix round 2, finding 1: a throwing handler is confined to its own action -------------------
+// §8.3: one local known failure must not abort the user's task, and a mutation that threw after it
+// may have applied a change must stop the run as an uncertain outcome, never as a generic error.
+
+test('a thrown SafeError from a read becomes that action\'s error and the batch continues', async () => {
+  // The raw exception message is a leak witness: a thrown error is published as its closed code only.
+  const leaked = new SafeError(ERROR_CODES.EDITOR_BUSY);
+  leaked.message = 'SECRET-DOCUMENT-TEXT';
+  const failing = createRegistry([
+    { ...base, name: 'read_selection', precondition: () => null, execute: () => { throw leaked; } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  const wire = [];
+  let index = 0;
+  const sequence = [
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ];
+  const result = await runAgent({ ...baseArgs, registry: failing, transport: async (messages) => {
+    wire.push(messages.map(message => message.content).join('\n'));
+    return { content: sequence[Math.min(index++, sequence.length - 1)] };
+  } });
+  assert.equal(result.status, 'FINAL');
+  assert.equal(result.toolCalls, 2, 'the throwing action still counts as a dispatched tool call');
+  assert.deepEqual(calls, ['after'], 'the rest of the batch still runs');
+  assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok']);
+  assert.equal(result.actions[0].code, 'EDITOR_BUSY');
+  assert.ok(wire[1].includes('"code":"EDITOR_BUSY"'), 'the model sees the closed code as the action result');
+  assert.ok(!wire[1].includes('SECRET-DOCUMENT-TEXT'), 'no raw exception message reaches the model');
+  assert.ok(!JSON.stringify(result.actions).includes('SECRET-DOCUMENT-TEXT'));
+});
+
+test('a thrown SafeError from a mutate is recorded and the batch continues', async () => {
+  const failing = createRegistry([
+    { ...base, name: 'insert_paragraph', kind: 'mutate', precondition: () => null, execute: () => { throw new SafeError(ERROR_CODES.EDITOR_BUSY); } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  const result = await runAgent({ ...baseArgs, registry: failing, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"insert_paragraph","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"обошёл"}'
+  ]) });
+  assert.equal(result.status, 'FINAL', 'a known failure is confined to its action, never the run');
+  assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok']);
+  assert.equal(result.actions[0].code, 'EDITOR_BUSY');
+  assert.deepEqual(calls, ['after']);
+});
+
+test('a thrown non-SafeError from a mutate is UNCERTAIN, stops the run and is never retried', async () => {
+  const boom = createRegistry([
+    { ...base, name: 'insert_paragraph', kind: 'mutate', precondition: () => null, execute: () => { throw new Error('SECRET-DOCUMENT-TEXT'); } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('late'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  let sent = 0;
+  const result = await runAgent({ ...baseArgs, registry: boom, transport: async () => {
+    sent += 1;
+    return { content: '{"type":"tool_calls","calls":[{"tool":"insert_paragraph","arguments":{}},{"tool":"read_context","arguments":{}}]}' };
+  } });
+  assert.equal(result.status, 'UNCERTAIN');
+  assert.equal(sent, 1, 'an uncertain mutation must not be answered with another model call');
+  assert.equal(result.toolCalls, 1);
+  assert.deepEqual(result.actions.map(action => action.outcome), ['uncertain']);
+  assert.deepEqual(result.actions.map(action => action.code), ['TOOL_UNCERTAIN']);
+  assert.deepEqual(calls, [], 'the rest of the batch must not run');
+  assert.ok(!JSON.stringify(result.actions).includes('SECRET-DOCUMENT-TEXT'));
+});
+
+test('a thrown non-SafeError from a read is TOOL_ERROR and the batch continues', async () => {
+  const broken = createRegistry([
+    { ...base, name: 'read_selection', precondition: () => null, execute: () => { throw new Error('SECRET-DOCUMENT-TEXT'); } },
+    { ...base, name: 'read_context', precondition: () => null, execute: () => { calls.push('after'); return { ok: true, data: {} }; } }
+  ]);
+  calls.length = 0;
+  const wire = [];
+  let index = 0;
+  const sequence = [
+    '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}},{"tool":"read_context","arguments":{}}]}',
+    '{"type":"final","message":"ок"}'
+  ];
+  const result = await runAgent({ ...baseArgs, registry: broken, transport: async (messages) => {
+    wire.push(messages.map(message => message.content).join('\n'));
+    return { content: sequence[Math.min(index++, sequence.length - 1)] };
+  } });
+  assert.equal(result.status, 'FINAL');
+  assert.deepEqual(result.actions.map(action => action.outcome), ['error', 'ok']);
+  assert.equal(result.actions[0].code, 'TOOL_ERROR');
+  assert.deepEqual(calls, ['after']);
+  assert.ok(wire[1].includes('"code":"TOOL_ERROR"'));
+  assert.ok(!wire[1].includes('SECRET-DOCUMENT-TEXT'));
+});
+
+// --- Fix round 2, finding 2: the injectable clock's frame is the transport's frame --------------
+
+test('an injected clock and the default transport measure the same frame', async () => {
+  // The runtime deadline is computed on the injectable clock, so the default transport must compare
+  // it on the SAME clock. This synthetic frame is decades behind `Date.now`, so a transport that
+  // measured the deadline with its own clock would reject every request as a bogus TIMEOUT.
+  const original = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (url, init) => { bodies.push(JSON.parse(init.body)); return modelResponse('{"type":"final","message":"ок"}'); };
+  let result;
+  try {
+    result = await runAgent({ ...baseArgs,
+      settings: { endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic-key' },
+      now: () => 12345 });
+  } finally { globalThis.fetch = original; }
+  assert.equal(result.code, null, 'a synthetic clock must not produce a bogus transport TIMEOUT');
+  assert.equal(result.status, 'FINAL');
+  assert.equal(result.message, 'ок');
+  assert.equal(bodies.length, 1);
+});

@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseEnvelope, validateBatch, toolResultMessages, repairMessage } from '../../src/agent/protocol.js';
 import { ERROR_CODES, SafeError } from '../../src/shared/errors.js';
+import { AGENT_CEILINGS } from '../../src/shared/limits.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 import { createRegistry } from '../../src/tools/registry.js';
 
 const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
@@ -92,10 +94,30 @@ test('toolResultMessages bounds every single result, not only the batch total', 
   const ok = (tool, characters) => [{ tool, result: { ok: true, data: { text: 'я'.repeat(characters) } } }];
   // Each entry is bounded on its own (§12.1: 16 KiB per result), independently of the batch total.
   assert.throws(() => toolResultMessages(ok('read_selection', 9000)), /TOOL_ERROR/);
-  // The aggregate ceiling is the outer limit, so several small entries that together exceed 16 KiB are
-  // accepted — a per-result rule must not turn the whole batch into a failure.
+  // Finding 3 changed the aggregate semantics: a batch no longer travels as one batch-sized message,
+  // so several small entries are ACCEPTED as one message per entry, each under the per-result
+  // ceiling — never as a single message that the 64 KiB window would have to truncate or refuse.
   const twoSmall = [...ok('read_selection', 3000), ...ok('read_selection', 3000)];
-  assert.equal(toolResultMessages(twoSmall).length, 1);
+  const messages = toolResultMessages(twoSmall);
+  assert.equal(messages.length, 2);
+  for (const message of messages) assert.ok(utf8ByteLength(message.content) <= AGENT_CEILINGS.toolResultBytes);
+});
+
+test('one message per result keeps every tool_results message inside the per-result ceiling', () => {
+  const entry = index => ({ tool: 'read_selection', result: { ok: true, data: { index } } });
+  // The published value keeps the protocol's existing flattened shape: { tool, ...result }.
+  const published = index => ({ tool: 'read_selection', ok: true, data: { index } });
+  const results = [0, 1, 2, 3, 4].map(entry);
+  const messages = toolResultMessages(results);
+  assert.equal(messages.length, 5, 'one message per result, not one message per batch');
+  assert.ok(Object.isFrozen(messages) && messages.every(Object.isFrozen));
+  for (const [index, message] of messages.entries()) {
+    assert.equal(message.role, 'user');
+    assert.ok(utf8ByteLength(message.content) <= AGENT_CEILINGS.toolResultBytes);
+    assert.deepEqual(JSON.parse(message.content), { type: 'tool_results', results: [published(index)] });
+  }
+  // A single oversized entry is refused whatever the rest of the batch looks like.
+  assert.throws(() => toolResultMessages([...results.slice(0, 4), { tool: 'read_selection', result: { ok: true, data: { text: 'я'.repeat(9000) } } }]), /TOOL_ERROR/);
 });
 
 test('toolResultMessages converts every malformed batch into a classified tool error', () => {

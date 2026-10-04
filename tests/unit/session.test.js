@@ -94,8 +94,27 @@ test('the agent snapshot refuses a second system, an unknown role, a getter and 
   Object.defineProperty(getter, 'content', { enumerable: true, get: () => 'x' });
   assert.throws(() => snapshotAgentMessages([system, getter]), code('INVALID_DATA'));
   // 32769 UTF-8 two-byte characters = 65538 bytes, one byte pair past the active-context ceiling.
-  assert.throws(() => snapshotAgentMessages([system, { role: 'user', content: 'я'.repeat(32769) }]), code('BYTE_LIMIT'));
-  assert.throws(() => snapshotAgentMessages([system, { role: 'user', content: 'a'.repeat(40000) }, { role: 'assistant', content: 'b'.repeat(30000) }]), code('BYTE_LIMIT'));
+  // Finding 4 pins position 1 (the original request) to the user-input bound, so the window ceiling is
+  // exercised on a later, runtime-authored message.
+  const request = { role: 'user', content: 'сделай' };
+  assert.throws(() => snapshotAgentMessages([system, request, { role: 'assistant', content: 'я'.repeat(32769) }]), code('BYTE_LIMIT'));
+  // Every message inside the ceiling, but the total content past it: the aggregate bound still holds.
+  assert.throws(() => snapshotAgentMessages([system, request, { role: 'assistant', content: 'a'.repeat(40000) }, { role: 'assistant', content: 'b'.repeat(40000) }]), code('BYTE_LIMIT'));
+});
+
+test('the agent snapshot bounds the pinned request by the user-input limit, not the window ceiling', () => {
+  const system = { role: 'system', content: 'rules' };
+  const request = { role: 'user', content: 'сделай' };
+  // 4097 two-byte characters = 8194 bytes: one byte pair past LIMITS.userInputBytes (8192), yet far
+  // inside the active-context window, so only the pinned-request bound can refuse it.
+  assert.throws(() => snapshotAgentMessages([system, { role: 'user', content: 'я'.repeat(4097) }]), code('BYTE_LIMIT'));
+  assert.equal(snapshotAgentMessages([system, { role: 'user', content: 'я'.repeat(4096) }]).length, 2);
+  // A runtime-authored tool-result message keeps the much larger active-context bound.
+  const large = `{"type":"tool_results","results":[{"tool":"read_selection","result":{"ok":true,"data":{"text":"${'a'.repeat(60000)}"}}}]}`;
+  const snapshot = snapshotAgentMessages([system, request,
+    { role: 'assistant', content: '{"type":"tool_calls","calls":[{"tool":"read_selection","arguments":{}}]}' },
+    { role: 'user', content: large }]);
+  assert.equal(snapshot.at(-1).content, large);
 });
 
 test('createRequest takes the agent snapshot only when the option asks for it', () => {

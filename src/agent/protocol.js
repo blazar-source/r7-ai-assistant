@@ -75,8 +75,8 @@ function stringifyToolResults(results) {
     let serialized;
     try { serialized = JSON.stringify(value); } catch { throw new SafeError(ERROR_CODES.TOOL_ERROR); }
     if (typeof serialized !== 'string') throw new SafeError(ERROR_CODES.TOOL_ERROR);
-    // §12.1 bounds ONE result; the caller bounds the whole message. Per result first, so the reported
-    // code names the real breach instead of the batch total by accident.
+    // §12.1 bounds ONE result; the caller bounds ONE message around it. Per result first, so the
+    // reported code names the real breach instead of the message total by accident.
     if (utf8ByteLength(serialized) > AGENT_CEILINGS.toolResultBytes) throw new SafeError(ERROR_CODES.TOOL_ERROR);
     return value;
   });
@@ -85,12 +85,21 @@ function stringifyToolResults(results) {
   return payload;
 }
 export function toolResultMessages(results) {
-  let payload;
-  try { payload = stringifyToolResults(results); } catch (error) {
-    if (error instanceof SafeError) throw error;
-    throw new SafeError(ERROR_CODES.TOOL_ERROR);
-  }
-  return Object.freeze([Object.freeze({ role: 'user', content: payload })]);
+  if (!Array.isArray(results)) throw new SafeError(ERROR_CODES.TOOL_ERROR);
+  // ONE message per result. A single batch-sized message was bounded only by
+  // toolResultBytes * results.length (up to ~128 KiB) — larger than the 64 KiB active-context window,
+  // which evicts whole messages only, so a large read batch degraded into a truncation or a BYTE_LIMIT
+  // before send. One entry per message keeps every message inside the per-result ceiling and lets the
+  // window evict an individual tool result: its scan matches the "type":"tool_results" substring, which
+  // each message still carries.
+  return Object.freeze(results.map(entry => {
+    let payload;
+    try { payload = stringifyToolResults([entry]); } catch (error) {
+      if (error instanceof SafeError) throw error;
+      throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    }
+    return Object.freeze({ role: 'user', content: payload });
+  }));
 }
 export function repairMessage(error) {
   const code = error instanceof SafeError ? error.code : ERROR_CODES.PROTOCOL_ERROR;

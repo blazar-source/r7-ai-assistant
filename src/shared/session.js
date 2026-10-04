@@ -75,7 +75,13 @@ function agentMessage(raw, maximum) {
 export function snapshotAgentMessages(messages) {
   if (!Array.isArray(messages) || messages.length < 2) invalid();
   const maximum = AGENT_CEILINGS.activeContextBytes;
-  const result = [message(messages[0], 'system', maximum), ...messages.slice(1).map(raw => agentMessage(raw, maximum))];
+  // Position 1 is the pinned ORIGINAL user request, and it is the user's own input: it keeps the
+  // LIMITS.userInputBytes bound the Sprint 1 chat path applies to the same data, so the wider agent
+  // ceiling cannot quietly turn a bounded input into a 64 KiB one. Every later message is
+  // runtime-authored (tool results, envelopes, repair notes) and keeps the active-context bound.
+  const result = [message(messages[0], 'system', maximum),
+    message(messages[1], 'user', LIMITS.userInputBytes),
+    ...messages.slice(2).map(raw => agentMessage(raw, maximum))];
   if (contentBytes(result) > maximum) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
   return Object.freeze(result);
 }
