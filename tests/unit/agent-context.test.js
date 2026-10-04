@@ -38,9 +38,12 @@ test('keeps everything while it fits and reports nothing dropped', () => {
 });
 
 test('evicts oldest tool results first, never the system message or the original request', () => {
-  // Ceiling 500 leaves room for the 91-byte marker, so evicting A keeps C whole AND records the
-  // drop. The pinned prefix is untouched.
-  const context = window(500);
+  // The brief's own fixture, RESTORED: the helper default of 400 bytes, with A/B/C at 150 bytes.
+  // The pins are 66 accounted bytes, so evicting A alone lands on 398 <= 400 and the 91-byte marker
+  // then raises the total to 489; the marker's cost must be paid by evicting B too, never out of the
+  // newest message. Moving this window to 500 made the restored assertion pass without fixing
+  // anything, which is exactly the kind of fixture fitting the brief forbids.
+  const context = window();
   context.append({ role: 'user', content: 'A'.repeat(150) });
   context.append({ role: 'user', content: 'B'.repeat(150) });
   context.append({ role: 'user', content: 'C'.repeat(150) });
@@ -53,6 +56,24 @@ test('evicts oldest tool results first, never the system message or the original
   // The brief's assertion, restored: evicting A leaves room for C whole, so C must survive
   // WHOLE. Truncating the newest message while an evictable older one remains is the bug.
   assert.ok(messages.some(message => message.content.startsWith('C'.repeat(150))));
+  assert.ok(context.totalBytes() <= 400);
+});
+
+test('an additional window (ceiling 500) keeps the marker and the newest message whole', () => {
+  // Kept as an EXTRA case, not as the regression: 500 holds the pins, the marker, B and C at once,
+  // so it can never discriminate the ordering bug the 400 window proves.
+  const context = window(500);
+  context.append({ role: 'user', content: 'A'.repeat(150) });
+  context.append({ role: 'user', content: 'B'.repeat(150) });
+  context.append({ role: 'user', content: 'C'.repeat(150) });
+  const messages = context.messages();
+  assert.equal(messages[0].role, 'system');
+  assert.equal(messages[1].content, 'исходная задача');
+  assert.ok(context.dropped() >= 1);
+  assert.ok(messages.some(message => message.content === CONTEXT_DROP_MARKER));
+  assert.ok(!messages.some(message => message.content === 'A'.repeat(150)));
+  assert.ok(messages.some(message => message.content.startsWith('C'.repeat(150))));
+  assert.ok(context.totalBytes() <= 500);
 });
 
 test('inserts the drop marker once, and cumulative bytes far above the ceiling still fit each request', () => {
@@ -331,30 +352,54 @@ test('FINDING 5: a caller-supplied dropMarker is protected in both eviction scan
 test('FINDING 6: the tool-result scan drops the oldest result, not the oldest message', () => {
   const toolResult = '{"type":"tool_results","results":[]}';
   // §12.3 names "completed tool-result messages, then the oldest complete assistant/tool-result
-  // pairs". The tool-result scan is tried first, and this test holds it to that priority: the older
-  // tool result must go while the OLDER plain message A survives. Plain oldest-first eviction would
-  // drop A instead, so this assertion is exactly what makes the tool-result scan observable.
+  // pairs". The tool-result scan is tried first, and this window is chosen so that eviction STOPS
+  // after exactly ONE message: the older plain message A survives only if the scan picked the tool
+  // result rather than A. Plain oldest-first eviction would drop A (36 accounted bytes, enough to get
+  // back under 170) and stop, leaving the tool result present — so "the tool result is gone AND A is
+  // still here" is exactly what makes the scan observable. The ceiling is also below pins + A + the
+  // 91-byte marker (193), so the marker cannot be inserted and no second eviction round can blur the
+  // choice.
   //
   // The design's separate pair branch is deliberately NOT implemented: a non-newest tool result is
   // always found by the tool-result scan first and a newest tool result is never evicted, so a pair
   // branch would be unreachable dead code. That reachability argument is recorded in the module and
   // in the Task 6 fix-round report.
-  const context = window(290);
+  const context = window(170);
   context.append({ role: 'user', content: 'A'.repeat(20) });
   context.append({ role: 'user', content: toolResult });
-  context.append({ role: 'user', content: 'B'.repeat(20) });
-  context.append({ role: 'user', content: 'C'.repeat(20) });
-  context.append({ role: 'user', content: 'D'.repeat(60) });
+  context.append({ role: 'user', content: 'D'.repeat(20) });
   const messages = context.messages();
-  assert.ok(context.totalBytes() <= 290);
+  assert.ok(context.totalBytes() <= 170);
   assert.ok(!messages.some(message => message.content === toolResult), 'the tool result was dropped first');
   assert.ok(messages.some(message => message.content === 'A'.repeat(20)), 'the older plain message survived, proving the scan ran');
-  assert.ok(messages.some(message => message.content === CONTEXT_DROP_MARKER), 'the drop was recorded');
+  assert.equal(messages.length, 4, 'exactly one message was evicted — the tool result');
+  assert.equal(context.dropped(), 1);
   assert.equal(messages[0].content, 'rules');
   assert.equal(messages[1].content, 'исходная задача');
-  assert.ok(messages.at(-1).content.startsWith('D'));
-  assert.equal(context.totalBytes(), totalOf(context));
-  assert.ok(messages.at(-1).content.length > 0, 'the newest message was not emptied');
+  assert.equal(messages.at(-1).content, 'D'.repeat(20), 'the newest message was not touched');
+  assert.ok(!messages.some(message => message.content === CONTEXT_DROP_MARKER), 'no marker fits in this window');
+
+  // A second window where the marker DOES fit records the drop. The tool result still goes first, but
+  // the marker it pays for is now bought by EVICTION: A and B are evicted and the newest message is
+  // never truncated, so the 60-byte newest message survives WHOLE. Under the reviewed ordering the
+  // marker was instead paid out of that newest message (60 -> 9) while A and B were kept.
+  const wide = window(290);
+  wide.append({ role: 'user', content: 'A'.repeat(20) });
+  wide.append({ role: 'user', content: toolResult });
+  wide.append({ role: 'user', content: 'B'.repeat(20) });
+  wide.append({ role: 'user', content: 'C'.repeat(20) });
+  wide.append({ role: 'user', content: 'D'.repeat(60) });
+  const wideMessages = wide.messages();
+  assert.ok(!wideMessages.some(message => message.content === toolResult), 'the tool result was dropped first');
+  assert.equal(wideMessages.filter(message => message.content === CONTEXT_DROP_MARKER).length, 1, 'the drop was recorded once');
+  assert.ok(!wideMessages.some(message => message.content === 'A'.repeat(20)), 'the marker was paid for by eviction, not by the newest message');
+  assert.ok(!wideMessages.some(message => message.content === 'B'.repeat(20)), 'eviction resumed after the marker');
+  assert.equal(wideMessages.at(-1).content, 'D'.repeat(60), 'the newest message survives whole');
+  assert.equal(wide.dropped(), 3, 'three messages were evicted and none was truncated');
+  assert.ok(wide.totalBytes() <= 290);
+  assert.equal(wide.totalBytes(), totalOf(wide));
+  assert.equal(wideMessages[0].content, 'rules');
+  assert.equal(wideMessages[1].content, 'исходная задача');
 });
 
 test('FINDING 1: the invariant holds for every ceiling from 1 to 700 with mixed content', () => {
@@ -389,4 +434,67 @@ test('FINDING 1: the invariant holds for every ceiling from 1 to 700 with mixed 
     }
   }
   assert.ok(refusals > 0, 'the sweep must cover at least one refused append');
+});
+
+// ---------------------------------------------------------------------------
+// Fix round 2 — truncation may only be applied when no further eviction is possible.
+// ---------------------------------------------------------------------------
+
+test('FIX ROUND 2: at ceiling 400 the marker never costs the newest message its bytes', () => {
+  // The controller's exact reproduction, in the brief's window: pins of 66 accounted bytes
+  // (system 5 + request 29 UTF-8 bytes, plus 16 each) and A/B/C of 150 bytes each. Phase 1 evicts A
+  // and stops at 398; the 91-byte marker raises the total to 489; the reviewed code then paid for
+  // the marker out of C (150 -> 61) even though B was still evictable. Evicting B as well leaves
+  // 66 + 91 + 166 = 323 <= 400 with C WHOLE, so no truncation was legal here.
+  const context = window();
+  context.append({ role: 'user', content: 'A'.repeat(150) });
+  context.append({ role: 'user', content: 'B'.repeat(150) });
+  context.append({ role: 'user', content: 'C'.repeat(150) });
+  const messages = context.messages();
+  assert.equal(messages.length, 4, 'exactly the pins, the marker and the newest message remain');
+  assert.equal(messages[2].content, CONTEXT_DROP_MARKER, 'the marker is present and at its slot');
+  assert.equal(messages.at(-1).content, 'C'.repeat(150), 'the newest message survives whole');
+  assert.ok(!messages.some(message => message.content === 'B'.repeat(150)), 'B paid for the marker');
+  assert.ok(!messages.some(message => message.content === 'A'.repeat(150)), 'A was evicted first');
+  assert.equal(context.dropped(), 2, 'A and B were both evicted, C was not truncated');
+  assert.ok(context.totalBytes() <= 400, `the window stayed inside the ceiling (${context.totalBytes()})`);
+});
+
+test('FIX ROUND 2: the marker insertion never truncates the newest while an older message is evictable', () => {
+  // A distinct shape from the ceiling-400 case: here the newest message is SMALLER (100 bytes) than
+  // the older message that survives it (150). Ceiling 430 is 66 (pins) + 166 (B) + 116 (newest) + 82
+  // of slack, so phase 1 evicts only A and stops at 348; the 91-byte marker takes the total to 439,
+  // and B is STILL evictable. Evicting B leaves 273 with the newest whole, so cutting it is illegal —
+  // under the reviewed code the older 150-byte message kept its bytes while the 100-byte newest was
+  // shortened to 91. dropped() === 2 is the observable proof that eviction resumed after the marker.
+  const context = window(430);
+  context.append({ role: 'user', content: 'A'.repeat(150) });
+  context.append({ role: 'user', content: 'B'.repeat(150) });
+  context.append({ role: 'user', content: 'C'.repeat(100) });
+  const messages = context.messages();
+  assert.equal(messages[2].content, CONTEXT_DROP_MARKER, 'the marker was inserted at index 2');
+  assert.equal(messages.at(-1).content, 'C'.repeat(100), 'the smaller newest message is still whole');
+  assert.ok(!messages.some(message => message.content === 'B'.repeat(150)), 'B was evicted to pay for the marker');
+  assert.equal(context.dropped(), 2, 'the eviction scan ran again after the marker');
+  assert.ok(context.totalBytes() <= 430);
+});
+
+test('FIX ROUND 2: a newest message that cannot fit even after full eviction is refused atomically', () => {
+  // Ceiling 160 holds the pins (66 accounted) and the marker (91) — 157 — but no further message,
+  // which needs at least 17 more (160 < 157 + 17). With the marker present nothing else is
+  // evictable, so the newest message has no legal size and the append must be refused, leaving the
+  // PUBLISHED window byte-identical and the drop counter untouched.
+  const context = createContextWindow({ ceilingBytes: 160 });
+  context.append({ role: 'system', content: 'rules' });
+  context.append({ role: 'user', content: 'исходная задача' });
+  context.append({ role: 'user', content: 'A'.repeat(150) });
+  const beforeMessages = context.messages().map(message => ({ role: message.role, content: message.content }));
+  const beforeBytes = context.totalBytes();
+  const beforeDropped = context.dropped();
+  assert.ok(beforeBytes <= 160);
+  assert.throws(() => context.append({ role: 'user', content: 'B'.repeat(150) }), /AGENT_LIMIT/);
+  assert.deepEqual(context.messages().map(message => ({ role: message.role, content: message.content })), beforeMessages, 'the refused append published nothing');
+  assert.equal(context.totalBytes(), beforeBytes, 'the published total is unchanged');
+  assert.equal(context.dropped(), beforeDropped, 'a refusal does not count as a drop');
+  assert.ok(context.totalBytes() <= 160);
 });

@@ -106,6 +106,10 @@ export function createContextWindow({ ceilingBytes = AGENT_CEILINGS.activeContex
   // follows it, the last element is some later message, `evict` never scans index <= 1, and no code
   // path reaches position 0 at all — so an append that cannot fit is refused (AGENT_LIMIT) instead of
   // the request being shortened.
+  //
+  // The drop is counted by the CALLER, once the append is known to publish: counting it here would
+  // move dropped() on an append that then throws AGENT_LIMIT, breaking the atomicity guarantee for
+  // every observable, not just messages() and totalBytes().
   function truncateNewest(array) {
     const newest = array.length - 1;
     const last = array[newest];
@@ -114,7 +118,6 @@ export function createContextWindow({ ceilingBytes = AGENT_CEILINGS.activeContex
     const content = prefixWithin(last.content, cutBudget);
     if (content.length === last.content.length) return false;
     array[newest] = Object.freeze({ role: last.role, content });
-    dropped += 1;
     return true;
   }
   function append(message) {
@@ -125,34 +128,45 @@ export function createContextWindow({ ceilingBytes = AGENT_CEILINGS.activeContex
     // over-budget husk — and the marker flag is recomputed from the published window each time.
     const working = [...messages, frozen];
     marker = messages.some(candidate => candidate.content === dropMarker);
-    // Phase 1 — evict first, until nothing older is evictable. Truncation is never allowed while an
-    // evictable message remains, so an older message always pays before the newest one is cut. Every
-    // round removes a message, so this always terminates.
     let evicted = 0;
-    while (arrayTotal(working) > ceilingBytes) {
-      const count = evict(working);
-      if (count === 0) break;
-      evicted += count;
+    // Evict until the ceiling holds or nothing older is evictable. Every round removes one message,
+    // so this always terminates.
+    function drain() {
+      while (arrayTotal(working) > ceilingBytes) {
+        const count = evict(working);
+        if (count === 0) break;
+        evicted += count;
+      }
     }
+    // Phase 1 — evict first. Truncation is never allowed while an evictable message remains, so an
+    // older message always pays before the newest one is cut.
+    drain();
     // Phase 2 — the marker, placed only into room that already exists. The window without the newest
-    // message must still fit with the marker added; the newest message is then fitted into whatever
-    // remains. The marker is never allowed to shrink the newest message — it is a bookkeeping note,
-    // and the message the caller is waiting to send keeps its bytes.
+    // message must still fit with the marker added. The marker is a bookkeeping note, so it never
+    // buys itself room out of the newest message: if it does not fit without the newest, it is not
+    // inserted at all.
     if (evicted > 0 && !marker && working.length > 2) {
       const withoutNewest = arrayTotal(working) - sizeOf(working[working.length - 1]);
       if (withoutNewest + markerBytes <= ceilingBytes) {
         working.splice(2, 0, markerMessage);
         marker = true;
+        // Phase 3 — the marker RAISED the total, so the eviction scan resumes. Its cost is paid by
+        // eviction while anything is evictable; only once the scan reports that nothing older can be
+        // evicted may the newest message be shortened. Paying for the marker out of the newest
+        // message while an older one was still evictable was the defect this resumes for.
+        drain();
       }
     }
-    // Phase 3 — truncate last. Reduce the newest message into what is left. If it cannot be shortened
-    // any further the ceiling cannot hold even one message and its framing: an impossible budget is
-    // refused, never silently violated.
+    // Phase 4 — truncate last, and only now that eviction is exhausted. Reduce the newest message
+    // into what is left. If it cannot be shortened any further the ceiling cannot hold even one
+    // message and its framing: an impossible budget is refused, never silently violated.
+    let truncated = false;
     if (arrayTotal(working) > ceilingBytes) {
       if (!truncateNewest(working)) throw new SafeError(ERROR_CODES.AGENT_LIMIT);
       if (arrayTotal(working) > ceilingBytes) throw new SafeError(ERROR_CODES.AGENT_LIMIT);
+      truncated = true;
     }
-    dropped += evicted;
+    dropped += evicted + (truncated ? 1 : 0);
     messages = working;
     return messages.length;
   }
