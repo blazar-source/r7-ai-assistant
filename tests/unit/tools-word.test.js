@@ -1,13 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createWordTools } from '../../src/tools/word.js';
 import { createRegistry } from '../../src/tools/registry.js';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
+import { AGENT_CEILINGS } from '../../src/shared/limits.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 function fakeBridge(overrides = {}) {
   const seen = [];
   return { seen, readSelection: async () => ({ text: 'привет', eligible: true, target: 1 }),
-    insertParagraph: async (args) => { seen.push(args); return { ok: true, data: { inserted: args.text.length } }; },
+    // The bridge's real insert envelope: the native acknowledgement is the only outcome it carries.
+    insertParagraph: async (args) => { seen.push(args); return { ok: true, data: { sent: true } }; },
     canApply: () => true, ...overrides };
 }
 
@@ -59,6 +63,68 @@ test('registry accepts the word tools and filters them by mode', () => {
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_context']);
 });
 
+test('insert_paragraph reports the native acknowledgement instead of a plain success', async () => {
+  const done = await createWordTools(fakeBridge()).find(entry => entry.name === 'insert_paragraph')
+    .execute({ text: 'Абзац' }, { editor: 'word' });
+  assert.equal(done.ok, true);
+  assert.deepEqual(done.data, { acknowledged: true, bytes: 10 }, 'Абзац is 10 UTF-8 bytes');
+  // The bridge's shape is {ok:true, data:{sent:<boolean>}}; an explicit false, an absent flag and a
+  // non-boolean are all known errors, never a success claim about an insert the editor did not send.
+  for (const data of [{ sent: false }, {}, { sent: 'true' }, null]) {
+    const refused = await createWordTools(fakeBridge({ insertParagraph: async () => ({ ok: true, data }) }))
+      .find(entry => entry.name === 'insert_paragraph').execute({ text: 'Абзац' }, { editor: 'word' });
+    assert.equal(refused.ok, false, JSON.stringify(data));
+    assert.equal(refused.code, 'TOOL_ERROR', JSON.stringify(data));
+  }
+  const noEnvelope = await createWordTools(fakeBridge({ insertParagraph: async () => ({ ok: true }) }))
+    .find(entry => entry.name === 'insert_paragraph').execute({ text: 'Абзац' }, { editor: 'word' });
+  assert.equal(noEnvelope.code, 'TOOL_ERROR');
+});
+
+test('insert_paragraph advertises the argument ceiling its handler enforces', async () => {
+  const tool = createWordTools(fakeBridge()).find(entry => entry.name === 'insert_paragraph');
+  assert.equal(tool.schema.properties.text.maxBytes, AGENT_CEILINGS.argumentsBytes);
+  assert.equal(AGENT_CEILINGS.argumentsBytes, 8192, 'the per-action argument ceiling the runtime applies');
+  const bridge = fakeBridge();
+  const over = await createWordTools(bridge).find(entry => entry.name === 'insert_paragraph')
+    .execute({ text: 'я'.repeat(4097) }, { editor: 'word' });
+  assert.equal(over.code, 'BYTE_LIMIT', 'a text above the advertised bound is a known error');
+  assert.deepEqual(bridge.seen, [], 'an over-ceiling argument never reaches the bridge');
+});
+
+test('read_context requests each scope from its own ceiling', async () => {
+  const seen = [];
+  const bridge = fakeBridge({ readContext: async (args) => { seen.push(args); return { ok: true, text: 'текст' }; } });
+  const tool = createWordTools(bridge).find(entry => entry.name === 'read_context');
+  for (const scope of ['paragraph', 'section', 'structure']) {
+    assert.equal((await tool.execute({ scope, index: 0 }, { editor: 'word' })).ok, true, scope);
+  }
+  // Each scope carries its OWN AGENT_CEILINGS entry: no scope is served from another scope's budget,
+  // so a future divergence between paragraph/section/structure cannot silently re-map a read.
+  assert.deepEqual(seen.map(request => request.maxBytes),
+    ['paragraph', 'section', 'structure'].map(scope => AGENT_CEILINGS.contextReadBytes[scope]));
+  // The three ceilings are equal today, so no runtime observation can tell a per-scope lookup from an
+  // alias of one scope to another. Pin the mapping in the authored source as well: the budget may not
+  // be a comparison chain that serves `structure` (or any scope) from another scope's entry.
+  const source = await readFile(new URL('../../src/tools/word.js', import.meta.url), 'utf8');
+  assert.equal(source.includes("scope === 'structure'"), false, 'structure must not alias another scope');
+  assert.equal(source.includes("scope === 'section'"), false, 'section must not alias another scope');
+});
+
+test('read_context and insert_paragraph forward the caller signal to the bridge', async () => {
+  const seen = [];
+  const bridge = fakeBridge({
+    readContext: async (args) => { seen.push(args); return { ok: true, text: 'текст' }; },
+    insertParagraph: async (args) => { seen.push(args); return { ok: true, data: { sent: true } }; }
+  });
+  const tools = createWordTools(bridge);
+  const controller = new AbortController();
+  const ctx = { editor: 'word', signal: controller.signal };
+  await tools.find(entry => entry.name === 'read_context').execute({ scope: 'paragraph', index: 0 }, ctx);
+  await tools.find(entry => entry.name === 'insert_paragraph').execute({ text: 'Абзац' }, ctx);
+  assert.deepEqual(seen.map(request => request.signal), [controller.signal, controller.signal]);
+});
+
 // --- Bridge integration: the same owned callback slot the Sprint 1 read/apply paths use. ---
 // Fake native surface only; no SDK, DOM or localStorage is imported by src/tools/word.js.
 
@@ -76,15 +142,20 @@ async function untilDispatches(calls, count) {
   return calls.length;
 }
 
-function nativeRig({ scopeText = 'текст', methods = { PasteText() {}, GetDocumentStructure() {} } } = {}) {
+// The real plugin facade exposes the editor methods ONLY through its single public dispatch
+// channel: `executeMethod(name, params, callback)` queues {methodName, params} to the editor, which
+// resolves it to its own `pluginMethod_<name>`. `GetDocumentStructure`/`PasteText` are therefore NOT
+// own properties of the facade, and this rig deliberately carries none: only the dispatch channel and
+// the command channel exist. `dispatchChannel:false` puts the channel on the prototype: a plain
+// `typeof` still sees it, the bridge's ownFunction (OWN data-descriptor) check must not.
+function nativeRig({ scopeText = 'текст', dispatchChannel = true } = {}) {
   const calls = [];
-  const plugin = {
+  function dispatch(name, params, callback) {
+    calls.push({ name, params, callback });
+    return false;
+  }
+  const base = {
     info: { editorType: 'word' },
-    ...methods,
-    executeMethod(name, params, callback) {
-      calls.push({ name, params, callback });
-      return false;
-    },
     callCommand(body, _close, _recalculate, callback) {
       const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api');
       globalThis.Api = {
@@ -98,16 +169,20 @@ function nativeRig({ scopeText = 'текст', methods = { PasteText() {}, GetDo
       return false;
     }
   };
+  const plugin = dispatchChannel
+    ? { ...base, executeMethod: dispatch }
+    : Object.assign(Object.create({ executeMethod: dispatch }), base);
   const bridge = createR7Bridge(plugin, { editorType: 'word', clock: { now: () => 0 },
     timers: { schedule() { return {}; }, clear() {} } });
   // The identity probe reports a bounded document ID with every capability present and tracking off;
   // the SDK callback itself stays held until the test releases it.
-  return { bridge, calls, scopeText,
+  return { bridge, plugin, calls, scopeText,
     releaseIdentity() { calls[0].callback(['bounded-id', true, true, false]); } };
 }
 
 test('bridge readContext serves a bounded public read through the owned slot', async () => {
   const r = nativeRig();
+  assert.equal(Object.hasOwn(r.plugin, 'GetDocumentStructure'), false, 'the read is reached by name, not as a facade property');
   const pending = r.bridge.readContext({ scope: 'paragraph', index: 2, maxBytes: 1024 });
   assert.equal(typeof pending.then, 'function');
   assert.equal(r.calls.length, 1);
@@ -140,15 +215,80 @@ test('bridge readContext refuses a byte-oversized native read and never returns 
   assert.equal(r.bridge.getState().busy, false);
 });
 
-test('bridge readContext without the public read method is a classified refusal, never a throw', async () => {
-  const r = nativeRig({ methods: { PasteText() {} } });
-  const pending = r.bridge.readContext({ scope: 'paragraph', index: 0, maxBytes: 1024 });
-  r.releaseIdentity();
-  const result = await pending;
-  assert.equal(result.ok, false);
-  assert.equal(result.code, 'CAPABILITY_UNAVAILABLE');
-  assert.equal(r.calls.length, 1, 'the absent read method is detected before any read dispatch');
-  assert.equal(r.bridge.getState().busy, false);
+test('bridge readContext decodes a paragraph or section read against the requested budget', async () => {
+  // 6000 two-byte characters = 12000 UTF-8 bytes: above LIMITS.selectionBytes (8192) and below the
+  // 16384 the paragraph/section descriptors request, so a legitimate read of this size must decode
+  // rather than be refused by the selection read's 8 KiB window.
+  const payload = 'я'.repeat(6000);
+  assert.equal(utf8ByteLength(payload), 12000);
+  for (const scope of ['paragraph', 'section']) {
+    const r = nativeRig();
+    const pending = r.bridge.readContext({ scope, index: 0, maxBytes: AGENT_CEILINGS.contextReadBytes[scope] });
+    r.releaseIdentity();
+    assert.equal(await untilDispatches(r.calls, 2), 2, scope);
+    r.calls[1].callback(payload);
+    assert.deepEqual(await pending, { ok: true, text: payload }, `${scope} read above the selection bound`);
+    assert.equal(r.bridge.getState().busy, false, scope);
+  }
+});
+
+test('bridge readContext refuses a payload above the requested budget or the editor-result ceiling', async () => {
+  // 16384/20000: above the budget this ticket requested. 131072/70000: the requested budget is
+  // larger than the 65536 editor-result ceiling that applies to any native read, so the ceiling
+  // still bounds the decode.
+  for (const [maxBytes, size] of [[16384, 20000], [131072, 70000]]) {
+    const r = nativeRig();
+    const pending = r.bridge.readContext({ scope: 'paragraph', index: 0, maxBytes });
+    r.releaseIdentity();
+    assert.equal(await untilDispatches(r.calls, 2), 2);
+    r.calls[1].callback('x'.repeat(size));
+    const result = await pending;
+    assert.equal(result.ok, false, `maxBytes ${maxBytes} / ${size} bytes`);
+    assert.equal(result.code, 'BYTE_LIMIT', `maxBytes ${maxBytes} / ${size} bytes`);
+    assert.equal(JSON.stringify(result).includes('x'), false, 'no native content leaks into a refusal');
+    assert.equal(r.bridge.getState().busy, false);
+  }
+});
+
+test('bridge readContext and insertParagraph dispatch when the facade carries only the dispatch channel', async () => {
+  // The real facade has no own GetDocumentStructure/PasteText property: the editor method is reached
+  // by NAME through executeMethod. A rig without those properties must therefore still dispatch, and
+  // a guard that consults a same-named facade property would refuse both legs here.
+  const readRig = nativeRig();
+  assert.equal(Object.hasOwn(readRig.plugin, 'GetDocumentStructure'), false, 'no same-named facade property');
+  const read = readRig.bridge.readContext({ scope: 'paragraph', index: 0, maxBytes: 1024 });
+  readRig.releaseIdentity();
+  assert.equal(await untilDispatches(readRig.calls, 2), 2, 'the read is dispatched by name');
+  assert.equal(readRig.calls[1].name, 'GetDocumentStructure');
+  readRig.calls[1].callback('текст');
+  assert.deepEqual(await read, { ok: true, text: 'текст' });
+
+  const insertRig = nativeRig();
+  assert.equal(Object.hasOwn(insertRig.plugin, 'PasteText'), false, 'no same-named facade property');
+  const insert = insertRig.bridge.insertParagraph({ text: 'Абзац' });
+  insertRig.releaseIdentity();
+  assert.equal(await untilDispatches(insertRig.calls, 2), 2, 'the insert is dispatched by name');
+  assert.equal(insertRig.calls[1].name, 'PasteText');
+  insertRig.calls[1].callback(true);
+  assert.deepEqual(await insert, { ok: true, data: { sent: true } });
+});
+
+test('bridge readContext and insertParagraph refuse a dispatch channel that is not an own data descriptor', async () => {
+  // Same primitive as every other adapter leg: ownFunction inspects OWN data descriptors, so an
+  // executeMethod a plain `typeof` sees through the prototype is not a capability the bridge owns.
+  for (const kind of ['read', 'insert']) {
+    const r = nativeRig({ dispatchChannel: false });
+    assert.equal(typeof r.plugin.executeMethod, 'function', 'a plain typeof would accept the inherited method');
+    const pending = kind === 'read'
+      ? r.bridge.readContext({ scope: 'paragraph', index: 0, maxBytes: 1024 })
+      : r.bridge.insertParagraph({ text: 'Абзац' });
+    r.releaseIdentity();
+    const result = await pending;
+    assert.equal(result.ok, false, kind);
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', kind);
+    assert.deepEqual(r.calls.map(call => call.name), ['presence'], `${kind}: nothing is dispatched by name`);
+    assert.equal(r.bridge.getState().busy, false, kind);
+  }
 });
 
 test('bridge readContext refuses a scope or an address it cannot interpret without any SDK work', async () => {
@@ -164,6 +304,7 @@ test('bridge readContext refuses a scope or an address it cannot interpret witho
 
 test('bridge insertParagraph dispatches the public insert once and reports a classified outcome', async () => {
   const r = nativeRig();
+  assert.equal(Object.hasOwn(r.plugin, 'PasteText'), false, 'the insert is reached by name, not as a facade property');
   const pending = r.bridge.insertParagraph({ text: 'Абзац', position: 'end' });
   assert.equal(r.calls.length, 1);
   assert.equal(r.calls[0].name, 'presence');
@@ -181,17 +322,6 @@ test('bridge insertParagraph dispatches the public insert once and reports a cla
   assert.equal(r.bridge.getState().busy, false);
 });
 
-test('bridge insertParagraph without the public insert method is CAPABILITY_UNAVAILABLE, never a throw', async () => {
-  const r = nativeRig({ methods: { GetDocumentStructure() {} } });
-  const pending = r.bridge.insertParagraph({ text: 'Абзац' });
-  r.releaseIdentity();
-  const result = await pending;
-  assert.equal(result.ok, false);
-  assert.equal(result.code, 'CAPABILITY_UNAVAILABLE');
-  assert.equal(r.calls.length, 1, 'the absent insert method is detected before any insert dispatch');
-  assert.equal(r.bridge.getState().busy, false);
-});
-
 test('bridge insertParagraph refuses malformed text or an unknown position without any SDK work', async () => {
   const r = nativeRig();
   for (const request of [{}, { text: '' }, { text: 'a', position: 'after_section' }]) {
@@ -202,13 +332,55 @@ test('bridge insertParagraph refuses malformed text or an unknown position witho
   assert.equal(r.calls.length, 0);
 });
 
+test('bridge readContext and insertParagraph refuse a pre-aborted signal without any dispatch', async () => {
+  const r = nativeRig();
+  const controller = new AbortController();
+  controller.abort();
+  const read = await r.bridge.readContext({ scope: 'paragraph', index: 0, maxBytes: 1024, signal: controller.signal });
+  assert.deepEqual(read, { ok: false, code: 'CANCELLED' });
+  const insert = await r.bridge.insertParagraph({ text: 'Абзац', signal: controller.signal });
+  assert.deepEqual(insert, { ok: false, code: 'CANCELLED' });
+  assert.equal(r.calls.length, 0, 'a pre-aborted ticket never reaches the SDK');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('an abort after the read was dispatched invalidates the caller and leaves the slot owned', async () => {
+  const r = nativeRig();
+  const controller = new AbortController();
+  const pending = r.bridge.readContext({ scope: 'paragraph', index: 0, maxBytes: 1024, signal: controller.signal });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the read is dispatched before the abort');
+  controller.abort();
+  assert.deepEqual(await pending, { ok: false, code: 'CANCELLED' });
+  // Queued SDK work is not retractable: it keeps the slot (and the uncertain flag) until its own
+  // callback releases it, exactly like a cancelled selection read.
+  assert.equal(r.bridge.getState().busy, true);
+  assert.equal(r.bridge.getState().uncertain, true);
+  r.calls[1].callback('поздний');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('an abort after the insert was dispatched is the uncertain class, never an acknowledgement', async () => {
+  const r = nativeRig();
+  const controller = new AbortController();
+  const pending = r.bridge.insertParagraph({ text: 'Абзац', signal: controller.signal });
+  r.releaseIdentity();
+  assert.equal(await untilDispatches(r.calls, 2), 2, 'the insert is dispatched before the abort');
+  controller.abort();
+  assert.deepEqual(await pending, { ok: false, code: 'APPLY_UNCERTAIN' });
+  // A dispatched write whose acknowledgement never arrived may have applied: it keeps the slot and
+  // the uncertain flag until its own callback, never a success claim.
+  assert.equal(r.bridge.getState().busy, true);
+  assert.equal(r.bridge.getState().uncertain, true);
+  r.calls[1].callback(true);
+  assert.equal(r.bridge.getState().busy, false);
+});
+
 test('an insert whose native dispatch threw is the uncertain class and keeps its callback slot owned', async () => {
   const calls = [];
   let inserts = 0;
   const plugin = {
     info: { editorType: 'word' },
-    PasteText() {},
-    GetDocumentStructure() {},
     executeMethod(name, params, callback) {
       calls.push({ name, params, callback });
       // Only the FIRST insert refuses at dispatch; the follow-up below must be able to succeed, so

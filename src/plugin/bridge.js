@@ -63,9 +63,13 @@ function decodeContext(value) {
   if (id === null || id === '' || !replace || !range || tracking !== false) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
   return id;
 }
-function decodeText(value) {
+// A native read string is bounded twice: first by the editor-result ceiling that applies to ANY
+// native read, then by the byte budget THIS ticket actually requested. The selection read passes its
+// own 8 KiB window explicitly, so its behaviour is unchanged; a paragraph/section/structure read
+// passes the budget its tool asked the bridge for.
+function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
-  return assertByteLimit(value, LIMITS.selectionBytes);
+  return assertByteLimit(value, bound);
 }
 // A native insert acknowledgement. Anything that is not a boolean is a malformed native result and
 // never a success claim: the effect of an insert is not verified by the callback's own return value.
@@ -153,8 +157,13 @@ export function createR7Bridge(plugin, {
   }
   // The insert parameters are optional and last so every pre-existing three-argument caller of
   // start() keeps its exact meaning.
-  function start(kind, signal, { replacement, beforeDispatch } = {}, params) {
+  function start(kind, signal, { replacement, beforeDispatch, maxBytes } = {}, params) {
     if (signal?.aborted) return Promise.reject(new SafeError(ERROR_CODES.CANCELLED));
+    // Decode bound for THIS ticket: a context read is decoded against the byte budget its caller
+    // requested, still capped by the editor-result ceiling that applies to any native read, while
+    // every other kind keeps its own window (the selection read stays at LIMITS.selectionBytes).
+    const readBound = kind === 'contextread' && Number.isSafeInteger(maxBytes) && maxBytes > 0
+      ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
     return new Promise((resolve, reject) => {
       const owned = { kind, dispatched: false, uncertain: false, settled: false, timer: null, deadline: readClock() + LIMITS.callbackTimeoutMs, cancel: null };
       slot = owned;
@@ -185,9 +194,9 @@ export function createR7Bridge(plugin, {
           if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
           if (readClock() >= owned.deadline) throw new SafeError(ERROR_CODES.TIMEOUT);
           let result;
-          if (kind === 'read') result = decodeText(value);
+          if (kind === 'read') result = decodeText(value, LIMITS.selectionBytes);
           else if (kind === 'context') result = decodeContext(value);
-          else if (kind === 'contextread') result = decodeText(value);
+          else if (kind === 'contextread') result = decodeText(value, readBound);
           else if (kind === 'insert') result = insertAcknowledgement(value);
           else if (kind === 'probe') result = capabilities(decodePresence(value));
           else {
@@ -224,24 +233,26 @@ export function createR7Bridge(plugin, {
         } else if (kind === 'read') plugin.executeMethod('GetSelectedText', Object.freeze([]), callback);
         else if (kind === 'context') dispatchContextProbe(plugin, callback);
         else if (kind === 'contextread') {
-          // The public document-read method is checked before the read is attempted; a plugin object
-          // without it gets a classified capability refusal instead of a TypeError or a silent no-op.
-          // Whether the installed R7 build exposes this public read at all is PENDING NATIVE
-          // VERIFICATION; nothing here claims the method exists.
-          if (disposed) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
-          if (!adapter.executeMethod || typeof plugin.GetDocumentStructure !== 'function') {
-            slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return;
-          }
+          // The editor method is reached BY NAME through the ONE public dispatch channel this bridge
+          // owns, and that channel is verified with ownFunction (an OWN data-descriptor check on the
+          // facade) exactly like every other public method the read/write paths use. The facade exposes
+          // no editor method as its own property — `executeMethod` queues {methodName, params} and the
+          // editor resolves it — so a `plugin.GetDocumentStructure` property check would prove nothing
+          // about the installed build and is NOT consulted here. What this guard proves is the dispatch
+          // channel plus the Api-surface presence signal the identity leg above already required; it
+          // does NOT prove that the installed R7 build implements `GetDocumentStructure`. That remains
+          // PENDING NATIVE VERIFICATION: an editor without the method never calls back, and the ticket
+          // then settles by its own read class (TIMEOUT), never as a success.
+          if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
           plugin.executeMethod('GetDocumentStructure', params, callback);
         } else if (kind === 'insert') {
-          // The public insert is verified present BEFORE it is dispatched, exactly like every other
-          // capability in this bridge. Whether the installed R7 build exposes this public entry
-          // point under this name is PENDING NATIVE VERIFICATION; an absent one is a classified
-          // refusal here, never a private API reached by guessing.
-          if (disposed) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
-          if (!adapter.executeMethod || typeof plugin.PasteText !== 'function') {
-            slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return;
-          }
+          // The same guard, the same primitive, and the same limit on what is proven: the dispatch
+          // channel is verified, the editor-side `PasteText` name is not. An editor that does not
+          // implement the name never calls back, so the insert settles APPLY_UNCERTAIN (a write whose
+          // acknowledgement never arrived may have applied) instead of claiming success. Whether the
+          // installed R7 build exposes this public entry point under this name is PENDING NATIVE
+          // VERIFICATION; nothing here reaches a private API or invents a second channel.
+          if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
           owned.dispatched = true;
           plugin.executeMethod('PasteText', params, callback);
         } else dispatchCapabilityProbe(plugin, callback);
@@ -276,11 +287,16 @@ export function createR7Bridge(plugin, {
     // Bounded public read of one addressed document region, served through the SAME single owned
     // callback slot as every other SDK operation. Every leg is classified: an unavailable public
     // read, a malformed native result and a byte-oversized read are closed classes, never a raw
-    // exception. Whether the installed R7 build exposes this public read method at all is
-    // PENDING NATIVE VERIFICATION — until it is measured on the real editor an absent method
-    // returns CAPABILITY_UNAVAILABLE and no scope is ever described as verified.
+    // exception. The read is decoded against the `maxBytes` budget the caller requested (capped by
+    // the editor-result ceiling), so a paragraph/section read is not silently held to the selection
+    // read's 8 KiB window. The caller's `signal` cancels both legs exactly as it does in
+    // readSelection: an abort before a leg prevents that dispatch, an abort after one invalidates
+    // the caller while the queued SDK work keeps the slot until its own callback. Whether the
+    // installed R7 build exposes this public read method at all is PENDING NATIVE VERIFICATION —
+    // until it is measured on the real editor the name is unproven and an editor that does not
+    // implement it never calls back, which settles as TIMEOUT, never as a verified scope.
     async readContext(raw) {
-      const scope = raw?.scope, index = raw?.index, maxBytes = raw?.maxBytes;
+      const scope = raw?.scope, index = raw?.index, maxBytes = raw?.maxBytes, signal = raw?.signal;
       // The scope is a closed descriptor enum, but the bridge is a public entry point: a caller that
       // is not this descriptor gets a refusal rather than an SDK call with an uninterpretable triple.
       if (!['paragraph', 'section', 'structure'].includes(scope)) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
@@ -290,31 +306,36 @@ export function createR7Bridge(plugin, {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // One action, two legs on the same slot: the document identity check, then the bounded read.
-        await start('context');
+        await start('context', signal);
+        if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
         if (disposed) throw new SafeError(ERROR_CODES.CANCELLED);
-        const text = await start('contextread', undefined, {}, Object.freeze([Object.freeze([scope, index, maxBytes])]));
+        const text = await start('contextread', signal, { maxBytes }, Object.freeze([Object.freeze([scope, index, maxBytes])]));
         if (text === '') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
         return Object.freeze({ ok: true, text });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }
     },
-    // Automatic insert through the public paste entry point, verified present BEFORE the
-    // irreversible call and served through the SAME owned callback slot. Whether the installed R7
-    // build exposes this method is PENDING NATIVE VERIFICATION; when it is absent the caller gets a
-    // classified CAPABILITY_UNAVAILABLE and nothing is dispatched.
+    // Automatic insert through the public paste entry point, served through the SAME owned callback
+    // slot and under the same document-identity proof as every other dispatched operation. The
+    // dispatch channel is verified with ownFunction before the irreversible call; whether the
+    // installed R7 build implements `PasteText` is PENDING NATIVE VERIFICATION — an editor that does
+    // not implement it never calls back, so the ticket settles APPLY_UNCERTAIN rather than success.
+    // The caller's `signal` is honoured the same way: an abort before dispatch prevents it, an abort
+    // after dispatch keeps the write-class uncertain-until-callback behaviour.
     async insertParagraph(raw) {
-      const text = raw?.text, position = raw?.position ?? 'cursor';
+      const text = raw?.text, position = raw?.position ?? 'cursor', signal = raw?.signal;
       if (typeof text !== 'string' || text === '') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       if (position !== 'cursor' && position !== 'end') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       try {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The document identity leg keeps this insert under the same ownership proof as every other
-        // dispatched operation, and the presence probe runs before the insert is dispatched.
-        await start('context');
+        // dispatched operation, and the Api-surface presence probe runs before the insert is dispatched.
+        await start('context', signal);
+        if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
         if (disposed) throw new SafeError(ERROR_CODES.CANCELLED);
-        const acknowledgement = await start('insert', undefined, {}, Object.freeze([position === 'end' ? `${text}\n` : text]));
+        const acknowledgement = await start('insert', signal, {}, Object.freeze([position === 'end' ? `${text}\n` : text]));
         return Object.freeze({ ok: true, data: Object.freeze({ sent: acknowledgement.acknowledged }) });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });

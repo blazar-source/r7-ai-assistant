@@ -34,6 +34,9 @@ function wrongEditor(ctx, fallback) {
 // A byte bound is a static literal per scope, never a computed read of a caller-controlled key:
 // the schema advertises the largest bound, and the per-scope ceiling is applied where the read is
 // requested. The bridge decodes the returned text under its own editor-result ceiling too.
+// Each scope names its OWN AGENT_CEILINGS entry. The three ceilings are equal today, so an alias
+// (serving `structure` from `section`) would be invisible at runtime and would become silently wrong
+// the moment they diverge, so no scope may be mapped through another scope's entry.
 const CONTEXT_READ_BYTES = Object.freeze({
   paragraph: AGENT_CEILINGS.contextReadBytes.paragraph,
   section: AGENT_CEILINGS.contextReadBytes.section,
@@ -42,8 +45,11 @@ const CONTEXT_READ_BYTES = Object.freeze({
 // The advertised scopes are also the ones the preconditions serve: a scope this closed set does not
 // name is refused before any dispatch, so the schema never advertises one the code cannot serve.
 const SCOPES = Object.freeze({ paragraph: true, section: true, structure: true });
+// A pure per-scope lookup of the closed table above: no comparison chain and no scope served from
+// another scope's budget. The closed SCOPES set is checked before this is called; the fallback only
+// keeps an unexpected key on the smallest budget.
 function scopeLimit(scope) {
-  return scope === 'section' || scope === 'structure' ? CONTEXT_READ_BYTES.section : CONTEXT_READ_BYTES.paragraph;
+  return Object.hasOwn(CONTEXT_READ_BYTES, scope) ? CONTEXT_READ_BYTES[scope] : CONTEXT_READ_BYTES.paragraph;
 }
 
 // The read_context index is 0-based and bounded by the schema. The runtime publishes no structure
@@ -82,12 +88,17 @@ export function createWordTools(bridge) {
         }
         return null;
       },
-      execute: async (args) => {
+      execute: async (args, ctx) => {
         if (!Object.hasOwn(SCOPES, args.scope)) return known();
         if (missingBridgeMethod(bridge, 'readContext')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         const maxBytes = scopeLimit(args.scope);
+        // The caller's signal is forwarded so a Stop can cancel the in-flight read: an abort before
+        // the read is dispatched prevents it, while an abort after dispatch invalidates the caller
+        // and leaves the queued SDK work owning the bridge slot until its own callback.
+        const request = { scope: args.scope, index: args.index, maxBytes,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
         let response;
-        try { response = await bridge.readContext({ scope: args.scope, index: args.index, maxBytes }); }
+        try { response = await bridge.readContext(request); }
         catch (error) { return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR)); }
         if (!response || typeof response !== 'object') return known();
         if (response.ok !== true) return known(refusalCode(response.code, ERROR_CODES.TOOL_ERROR));
@@ -100,14 +111,19 @@ export function createWordTools(bridge) {
     defineTool({
       name: 'insert_paragraph', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
       schema: { type: 'object', additionalProperties: false, required: ['text'],
-        properties: { text: { type: 'string', maxBytes: AGENT_CEILINGS.resultDataBytes, minBytes: 1 },
+        properties: { text: { type: 'string', maxBytes: AGENT_CEILINGS.argumentsBytes, minBytes: 1 },
           position: { type: 'string', enum: ['cursor', 'end'] } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
-      execute: async (args) => {
+      execute: async (args, ctx) => {
         if (missingBridgeMethod(bridge, 'insertParagraph')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The advertised bound is the bound this handler applies: the per-action argument ceiling is
+        // hard, so a text the runtime can never deliver is refused here rather than advertised.
+        if (utf8ByteLength(args.text) > AGENT_CEILINGS.argumentsBytes) return known(ERROR_CODES.BYTE_LIMIT);
         // The validated arguments cross to the bridge unchanged; an omitted position stays omitted so
-        // the bridge's own default is the single place that decides it.
-        const forwarded = { text: args.text, ...(args.position === undefined ? {} : { position: args.position }) };
+        // the bridge's own default is the single place that decides it. The caller's signal crosses
+        // with them so a Stop can cancel before dispatch and marks a dispatched insert uncertain.
+        const forwarded = { text: args.text, ...(args.position === undefined ? {} : { position: args.position }),
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
         let result;
         try { result = await bridge.insertParagraph(forwarded); }
         catch (error) {
@@ -120,7 +136,15 @@ export function createWordTools(bridge) {
         }
         if (!result || typeof result !== 'object') return known();
         if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
-        return ok({ inserted: utf8ByteLength(args.text) });
+        // The native acknowledgement is the only insert evidence there is: the bridge envelope carries
+        // {ok:true, data:{sent:<boolean>}} and the native return value is never effect proof. Only a
+        // literal own `true` is reported as an acknowledged insert; an explicit false, an absent flag
+        // and a non-boolean are known errors, so the model is never told that an insert the editor did
+        // not acknowledge succeeded.
+        const data = result.data;
+        const acknowledged = data !== null && typeof data === 'object' && Object.hasOwn(data, 'sent') ? data.sent : undefined;
+        if (acknowledged !== true) return known(ERROR_CODES.TOOL_ERROR);
+        return ok({ acknowledged: true, bytes: utf8ByteLength(args.text) });
       }
     }),
     defineTool({
