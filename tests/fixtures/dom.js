@@ -3,9 +3,6 @@ export class Element {
   constructor(tag, document) { this.tagName = tag.toUpperCase(); this.ownerDocument = document; this.children = []; this.attributes = {}; this.listeners = {}; this.text = ''; this.value = ''; this.checked = false; this.disabled = false; this.hidden = false; }
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
-  // Read-only mirror of the rendered text: this fixture has no HTML parser, so the getter reports
-  // exactly the text a browser would show and never invents markup.
-  get innerHTML() { return this.textContent; }
   set innerHTML(_) { throw Error('HTML must never be used'); }
   setAttribute(key,value) { this.attributes[key] = String(value); }
   getAttribute(key) { return this.attributes[key] ?? null; }

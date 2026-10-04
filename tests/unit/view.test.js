@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mountPanel, statusText } from '../../src/ui/view.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
+import { SafeError } from '../../src/shared/errors.js';
 import { dom } from '../fixtures/dom.js';
 
 const final = (message) => JSON.stringify({ type: 'final', message });
@@ -12,7 +13,7 @@ const injected = (reply) => ({ content: typeof reply === 'string' ? reply : JSON
 // The controller's transport receives (settings, messages, uuid, options); the Agent Runtime's own
 // raw envelope is a string in `content`. A bare string is passed through untouched and anything else
 // is wrapped, so both the raw and the parsed Sprint 1 style of fixture work here.
-function fixture(response = final('<img src=x onerror=alert(1)> **not markdown**')) {
+function fixture(response = final('<img src=x onerror=alert(1)> **not markdown**'), options = {}) {
   const tree = dom(); const target = Object.freeze({}); const replies = [];
   const scripted = Array.isArray(response) ? response : () => response;
   const transport = async (...args) => {
@@ -20,11 +21,11 @@ function fixture(response = final('<img src=x onerror=alert(1)> **not markdown**
     const reply = typeof scripted === 'function' ? scripted(...args) : scripted.shift();
     return typeof reply === 'string' ? injected(reply) : reply;
   };
+  const bridge = { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, canApply(value) { return value === target; },
+    async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: true, target }; },
+    async insertParagraph() { return { ok: true, data: { sent: true } }; }, ...options.bridge };
   const controller = createController({ store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
-    bridge: { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, canApply(value) { return value === target; },
-      async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: true, target }; },
-      async insertParagraph() { return { ok: true, data: { sent: true } }; } },
-    transport });
+    bridge, transport });
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   const panel = mountPanel(tree.root, controller);
   assert.ok(tree.id('prompt'), 'mounted composer');
@@ -144,14 +145,42 @@ test('the live step status and the actions summary are rendered as text, never a
 });
 
 test('a failed action line renders its closed code and no raw error text', async () => {
-  const f = fixture([
-    toolCalls(['read_selection', {}]),
-    final('Готово')
-  ]);
+  const f = fixture([toolCalls(['read_selection', {}]), final('Готово')],
+    { bridge: { async readSelection() { throw new SafeError('EDITOR_ERROR'); } } });
+  f.controller.setIncludeContext(false);
   f.controller.setMode('EDIT');
   await f.controller.analyze('сделай');
+  // The renderer's error branch: the closed code, in the authored `tool: outcome (CODE)` form. The
+  // bridge's thrown exception object never reaches the DOM.
+  assert.equal(f.id('actions').textContent, 'read_selection: error (EDITOR_ERROR)');
+  assert.equal(f.id('actions').hidden, false);
   f.panel.dispose(); f.controller.dispose();
-  assert.equal(f.id('actions').textContent.includes('read_selection: ok'), true);
+});
+
+test('a successful action line renders the outcome without a code', async () => {
+  const f = fixture([toolCalls(['read_selection', {}]), final('Готово')]);
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('сделай');
+  assert.equal(f.id('actions').textContent, 'read_selection: ok');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('markup in a model final message stays verbatim text and never becomes an element', async () => {
+  const markup = '<img src=x onerror=alert(1)> **not markdown**';
+  const f = fixture(final(markup));
+  await f.controller.analyze('вопрос');
+  const history = f.id('history');
+  const reply = history.children[1];
+  // (a) the model's text is present VERBATIM: not parsed, escaped, stripped or shortened.
+  assert.equal(reply.children[1].textContent, markup);
+  assert.ok(history.textContent.includes(markup));
+  // (b) the history is built only from the authored element types — no element was created from the
+  // content, because the renderer sets textContent and never markup.
+  assert.deepEqual(history.children.map(child => child.tagName), ['ARTICLE', 'ARTICLE']);
+  assert.deepEqual(history.children[0].children.map(child => child.tagName), ['H2', 'PRE']);
+  assert.deepEqual(reply.children.map(child => child.tagName), ['H2', 'PRE']);
+  assert.equal(f.all().some(node => ['IMG', 'SCRIPT'].includes(node.tagName)), false);
+  f.panel.dispose(); f.controller.dispose();
 });
 
 test('the actions block renders one line per action and stays empty for a run with none', async () => {

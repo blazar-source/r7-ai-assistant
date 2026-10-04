@@ -123,6 +123,45 @@ test('connection test owns temporary UUID, ASK schema and no selection/chat/hist
   assert.equal(c.getState().status, 'CONNECTION_OK');
   assert.equal(c.getState().agent.status, 'FINAL');
 });
+test('a connection run ending FINAL publishes the verified caption', async () => {
+  const f = setup();
+  assert.equal(await f.controller.testConnection(), true);
+  assert.equal(f.controller.getState().status, 'CONNECTION_OK');
+});
+test('a connection run ending PROTOCOL_ERROR never publishes the verified caption', async () => {
+  const f = setup({ transport: async () => ({ content: 'not json' }) });
+  assert.equal(await f.controller.testConnection(), true);
+  assert.equal(f.controller.getState().status, 'PROTOCOL_ERROR');
+});
+test('a connection run ending ERROR publishes the closed code the runtime classified', async () => {
+  const f = setup({ transport: function () { throw new SafeError('HTTP_UNAUTHORIZED'); } });
+  assert.equal(await f.controller.testConnection(), true);
+  assert.equal(f.controller.getState().status, 'HTTP_UNAUTHORIZED');
+});
+test('an async transport rejection publishes the classified status and reports false', async () => {
+  const f = setup({ transport: async () => { throw new SafeError('NETWORK_ERROR'); } });
+  assert.equal(await f.controller.analyze('q'), false);
+  assert.equal(f.controller.getState().status, 'NETWORK_ERROR');
+});
+test('an unvalidated code from a forged error cannot become the published status', async () => {
+  const forged = function () {
+    const error = Object.create(SafeError.prototype);
+    Object.defineProperty(error, 'code', { value: 'FORGED_SECRET' });
+    return error;
+  };
+  // The synchronous throw reaches the controller through the runtime's classified ERROR outcome.
+  const sync = setup({ dependencies: { transport: function () { throw forged(); } } });
+  sync.controller.setIncludeContext(false);
+  assert.equal(await sync.controller.analyze('q'), true);
+  assert.equal(sync.controller.getState().status, 'INTERNAL_ERROR');
+  assert.equal(JSON.stringify(sync.controller.getState()).includes('FORGED'), false);
+  // The asynchronous rejection settles the dispatch promise instead, so it must pass the same gate.
+  const asyncThrow = setup({ dependencies: { transport: async () => { throw forged(); } } });
+  asyncThrow.controller.setIncludeContext(false);
+  await asyncThrow.controller.analyze('q');
+  assert.equal(asyncThrow.controller.getState().status, 'INTERNAL_ERROR');
+  assert.equal(JSON.stringify(asyncThrow.controller.getState()).includes('FORGED'), false);
+});
 for (const change of ['stop', 'newChat', 'reset', 'settings', 'editor', 'document', 'selection', 'mode', 'context']) {
   test(`${change} invalidates late HTTP result and uncommitted preview/status/history`, async () => {
     const waiting = pending();
@@ -353,6 +392,104 @@ test('Stop aborts the running request and keeps the completed actions recorded',
   assert.equal(abortSignals.length, 2);
   assert.equal(abortSignals[0].aborted, true, 'Stop aborts the owned request of every step');
   assert.equal(state.active, false);
+});
+
+test('Stop publishes the actions completed before the abort in the CANCELLED record', async () => {
+  const secondStep = pending();
+  let delivered = 0;
+  const hanging = function (settings, messages, uuid, options) {
+    delivered += 1;
+    if (delivered === 1) return Promise.resolve(toolCalls(['read_selection', {}]));
+    secondStep.resolve();
+    return new Promise(function (_resolve, reject) {
+      if (options.signal.aborted) { reject(new SafeError('CANCELLED')); return; }
+      options.signal.addEventListener('abort', function () { reject(new SafeError('CANCELLED')); }, { once: true });
+    });
+  };
+  const f = setup({ transport: hanging });
+  f.controller.setMode('EDIT');
+  const running = f.controller.analyze('сделай');
+  await secondStep.promise;
+  f.controller.stop();
+  // The record emitted BY Stop must carry the completed action, not an emptied counter set.
+  const stopped = f.controller.getState();
+  assert.equal(stopped.status, 'STOPPED');
+  assert.equal(stopped.agent.status, 'CANCELLED');
+  assert.equal(stopped.agent.steps, 1);
+  assert.equal(stopped.agent.toolCalls, 1);
+  assert.deepEqual(stopped.agent.actions.map(action => [action.tool, action.outcome]), [['read_selection', 'ok']]);
+  assert.equal(await running, false);
+});
+
+test('an invalidated run settling after a newer run cannot replace the newer record', async () => {
+  const late = pending();
+  let calls = 0;
+  const f = setup({ transport: async () => {
+    calls += 1;
+    if (calls === 1) return late.promise;
+    return { content: JSON.stringify(final('новый ответ')) };
+  } });
+  f.controller.setIncludeContext(false);
+  const first = f.controller.analyze('старый');
+  await new Promise(resolve => setImmediate(resolve));
+  f.controller.stop();
+  const second = f.controller.analyze('новый');
+  assert.equal(await second, true);
+  assert.equal(f.controller.getState().agent.status, 'FINAL');
+  // The superseded run's request settles LAST: it may not replace the newer run's record.
+  late.resolve({ content: JSON.stringify(toolCalls(['read_selection', {}])) });
+  assert.equal(await first, false);
+  const state = f.controller.getState();
+  assert.equal(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'FINAL', 'the superseded run cannot overwrite the newer record');
+  assert.deepEqual(state.agent.actions, []);
+  assert.deepEqual(state.chat.history.map(m => m.content), ['новый', 'новый ответ']);
+});
+
+test('the newer run publishes its own terminal record unchanged', async () => {
+  const late = pending();
+  let calls = 0;
+  const f = setup({ transport: async () => {
+    calls += 1;
+    if (calls === 1) return late.promise;
+    return { content: JSON.stringify(calls === 2 ? toolCalls(['read_selection', {}]) : final('новый ответ')) };
+  } });
+  f.controller.setIncludeContext(false);
+  const first = f.controller.analyze('старый');
+  await new Promise(resolve => setImmediate(resolve));
+  f.controller.stop();
+  const second = f.controller.analyze('новый');
+  assert.equal(await second, true);
+  const published = f.controller.getState().agent;
+  assert.equal(published.status, 'FINAL');
+  assert.equal(published.steps, 2);
+  assert.equal(published.toolCalls, 1);
+  assert.deepEqual(published.actions.map(action => [action.tool, action.outcome]), [['read_selection', 'ok']]);
+  late.resolve({ content: JSON.stringify(final('поздний')) });
+  assert.equal(await first, false);
+  assert.deepEqual(f.controller.getState().agent, published, 'the newer terminal record is untouched by the late run');
+});
+
+test('a late action event after Stop cannot resurrect a running record', async () => {
+  const insert = pending();
+  let reached = 0;
+  const f = setup({ response: [toolCalls(['insert_paragraph', { text: 'абзац' }]), final('поздно')],
+    bridge: { async insertParagraph() { reached += 1; return insert.promise; } } });
+  f.controller.setMode('EDIT');
+  const observed = [];
+  const unsubscribe = f.controller.subscribe(state => observed.push(state.agent?.status ?? null));
+  const running = f.controller.analyze('сделай');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reached, 1, 'the mutation is in flight when Stop lands');
+  f.controller.stop();
+  assert.equal(f.controller.getState().agent.status, 'CANCELLED');
+  const afterStop = observed.length;
+  insert.resolve({ ok: true, data: { sent: true } });
+  assert.equal(await running, false);
+  unsubscribe();
+  assert.equal(observed.slice(afterStop).includes('RUNNING'), false, 'a late action event never republishes a running record');
+  assert.equal(f.controller.getState().agent.status, 'CANCELLED');
+  assert.equal(f.controller.getState().status, 'STOPPED');
 });
 
 test('Stop before the first step cancels the run without inventing actions', async () => {

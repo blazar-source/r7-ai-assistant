@@ -10,7 +10,12 @@ import { createRegistry } from '../tools/registry.js';
 import { createWordTools } from '../tools/word.js';
 
 const noContext = () => Object.freeze({ kind: 'UNKNOWN', text: '', bytes: 0, ownershipVerified: false });
-function safeCode(error) { return error instanceof SafeError ? error.code : ERROR_CODES.INTERNAL_ERROR; }
+// A published status is certified by MEMBERSHIP in the closed vocabulary, never by the error's
+// prototype: `instanceof SafeError` is forgeable (`Object.create(SafeError.prototype)` with its own
+// `code`), and an injected transport's forged error must not publish an arbitrary string as the
+// status. Anything that is not a closed class falls back to the internal-error class.
+function closedCode(value) { return typeof value === 'string' && ERROR_CODES[value] === value ? value : ERROR_CODES.INTERNAL_ERROR; }
+function safeCode(error) { return error instanceof SafeError ? closedCode(error.code) : ERROR_CODES.INTERNAL_ERROR; }
 // The catalogue is filtered by capability keys, and the only capability this controller can honestly
 // state without guessing about the installed SDK is what §6/§9 make structural: a Word editor the
 // controller already reads and (under its own owned-target proof) applies to. Every action is still
@@ -63,8 +68,9 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   function dropPreview() { clear(previewTimer); previewTimer = null; preview = null; previewTarget = null; previewOwner = null; }
   // One content-free technical record of the last run. It never carries the model's envelope,
   // arguments, results or document text — only the closed status, the counters and the action lines.
-  function runRecord(runStatus) {
-    const counters = active?.agent;
+  // It is built from the run it describes, so a record frozen at Stop keeps that run's own counters.
+  function runRecord(runStatus, source = active) {
+    const counters = source?.agent;
     return Object.freeze({ status: runStatus, steps: counters?.steps ?? 0, toolCalls: counters?.toolCalls ?? 0,
       actions: counters?.actions ?? Object.freeze([]) });
   }
@@ -93,8 +99,13 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     capabilityCount = null;
     if (forgetContext) context = noContext();
     status = old?.dispatched ? 'APPLY_UNCERTAIN' : nextStatus;
-    if (agent !== null && agent.status === 'RUNNING') agent = runRecord('CANCELLED');
+    // The record is frozen from the run being invalidated, BEFORE its counters would be read back
+    // from the cleared active slot: Stop must preserve the actions completed before it.
+    if (agent !== null && agent.status === 'RUNNING') agent = runRecord('CANCELLED', old);
   }
+  // The one ownership predicate every publication uses: the run must still be the active owned run
+  // of its own generation, so a superseded run can never publish anything over its successor.
+  function owns(owned) { return !disposed && active === owned && generation === owned.generation; }
   function valid(owned) {
     if (disposed || active !== owned || generation !== owned.generation) return false;
     if (now() >= owned.deadline) {
@@ -153,14 +164,22 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     if (!eligible) return null;
     return Object.freeze({ replacement: done.preview.arguments.text, original: captured.text, expiresAt: now() + LIMITS.previewTtlMs });
   }
+  // The published status is derived from the run's OWN terminal outcome, never from the request kind:
+  // only a FINAL run proves a connection, and a classified ERROR publishes only a closed code.
   function statusFor(kind, done, candidate) {
-    if (kind === 'connection') return 'CONNECTION_OK';
+    if (done.status === 'FINAL') return kind === 'connection' ? 'CONNECTION_OK' : RUN_STATUS.FINAL;
     if (done.status === 'PREVIEW_READY') return candidate ? RUN_STATUS.PREVIEW_READY : 'CAPABILITY_UNAVAILABLE';
-    if (done.status === 'ERROR') return done.code ?? ERROR_CODES.INTERNAL_ERROR;
+    if (done.status === 'ERROR') return closedCode(done.code);
     return RUN_STATUS[done.status] ?? ERROR_CODES.INTERNAL_ERROR;
   }
-  // Publishes the terminal outcome for one owned run. The non-final run record is already stored in
-  // `agent`; only a final answer or a proposal appends a chat pair, and only a proposal exposes one.
+  // Publishes the terminal outcome for one owned run. The RUNNING record is already stored in `agent`
+  // (the terminal one is committed before this call, under the same ownership); only a final answer
+  // or a proposal appends a chat pair, and only a proposal exposes one.
+  // Return contract for `analyze`/`testConnection`: `true` iff the terminal outcome was published
+  // through THIS owned settle path. `false` does NOT mean nothing was published — an async transport
+  // rejection, an ownership loss, a deadline breach and the busy path all publish their own status
+  // (through `fail()` or through the invalidating action) while returning false, and only the early
+  // guards (busy/disposed/write-locked) return false without publishing anything.
   // `target` is the private owned selection capture for this run, never model data.
   function settle(owned, nextStatus, append, candidate, target) {
     return finish(owned, nextStatus, function () {
@@ -213,23 +232,28 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         return dispatched;
       };
       owned.agent = { status: 'RUNNING', steps: 0, toolCalls: 0, actions: [] };
-      agent = owned.agent;
+      if (owns(owned)) agent = owned.agent;
       emit();
       const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities: CAPABILITIES,
         mode: owned.mode, settings, uuid, request: kind === 'connection' ? CONNECTION_REQUEST : user,
         signal, transport: send, now,
         onEvent(event) {
           // One line per completed action: the tool name and the closed outcome only. The raw
-          // envelope, arguments and results never reach the record or the DOM.
-          owned.agent = Object.freeze({ status: 'RUNNING', steps: event.steps, toolCalls: owned.agent.toolCalls + 1,
+          // envelope, arguments and results never reach the record or the DOM. The event only
+          // republishes while its own run still owns the controller, so an action settling after
+          // Stop cannot resurrect a running record over the invalidating status.
+          owned.agent = Object.freeze({ status: 'RUNNING', steps: event.step, toolCalls: owned.agent.toolCalls + 1,
             actions: Object.freeze([...owned.agent.actions, Object.freeze({ tool: event.tool, outcome: event.outcome })]) });
-          agent = owned.agent;
-          emit();
+          if (owns(owned)) { agent = owned.agent; emit(); }
         } });
-      // The terminal run record is committed even for a superseded owner: it is content-free and
-      // carries no control decision, while the STATUS assignment below stays generation-guarded so a
-      // late run can never overwrite the invalidating status.
-      agent = Object.freeze({ status: done.status, steps: done.steps, toolCalls: done.toolCalls, actions: done.actions });
+      // The terminal run record is committed only for the owned run, or for a run that still holds
+      // the current generation with nothing active: a superseded run may report its own outcome, but
+      // it can never replace the record of a newer run that is publishing next to its own status. The
+      // record is content-free and carries no control decision; the STATUS assignment below stays
+      // generation-guarded as well.
+      if (owns(owned) || (active === null && generation === owned.generation)) {
+        agent = Object.freeze({ status: done.status, steps: done.steps, toolCalls: done.toolCalls, actions: done.actions });
+      }
       if (active === owned) owned.agent = agent;
       const dispatched = owned.dispatch;
       owned.dispatch = null;
