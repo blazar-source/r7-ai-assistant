@@ -36,7 +36,10 @@ function validBody(value) {
 function validConfig(config) {
   const keys = ['keyPath', 'certPath', 'listenAddress', 'port', 'prefix', 'profile', 'corsOrigin', 'delayMs'];
   const hasMode = config !== null && typeof config === 'object' && Object.hasOwn(config, 'corsMode');
-  return closed(config, hasMode ? [...keys, 'corsMode'] : keys) && (!hasMode || config.corsMode === 'allow' || config.corsMode === 'omit') &&
+  const hasOrdinals = config !== null && typeof config === 'object' && Object.hasOwn(config, 'sessionOrdinalLimit');
+  return closed(config, [...keys, ...(hasMode ? ['corsMode'] : []), ...(hasOrdinals ? ['sessionOrdinalLimit'] : [])]) &&
+    (!hasOrdinals || Number.isInteger(config.sessionOrdinalLimit) && config.sessionOrdinalLimit >= 1 && config.sessionOrdinalLimit <= 64) &&
+    (!hasMode || config.corsMode === 'allow' || config.corsMode === 'omit') &&
     typeof config.keyPath === 'string' && config.keyPath.length > 0 && typeof config.certPath === 'string' && config.certPath.length > 0 &&
     isIP(config.listenAddress) !== 0 && !['0.0.0.0', '::'].includes(config.listenAddress) && Number.isInteger(config.port) && config.port >= 0 && config.port <= 65535 &&
     typeof config.prefix === 'string' && config.prefix.length <= 256 && /^(?:\/[A-Za-z0-9_-]+)*$/.test(config.prefix) && profiles.has(config.profile) &&
@@ -48,6 +51,9 @@ export async function startMock(config) {
   // Snapshot trusted configuration. Never choose a profile/mode from requests or messages.
   const { listenAddress, port, prefix, profile, corsOrigin, delayMs } = config;
   const corsMode = Object.hasOwn(config, 'corsMode') ? config.corsMode : 'allow';
+  const sessionOrdinalLimit = Object.hasOwn(config, 'sessionOrdinalLimit') ? config.sessionOrdinalLimit : 0;
+  const acceptedSessionOrdinals = [];
+  let sessionOrdinalCapacityReached = false;
   let key; let cert;
   try {
     key = await readFile(config.keyPath); cert = await readFile(config.certPath);
@@ -126,6 +132,11 @@ export async function startMock(config) {
         if (sessions.has(identity)) counts.repeatedSessions = increment(counts.repeatedSessions);
         else if (sessions.size < 64) { sessions.add(identity); counts.sessions = sessions.size; }
         else counts.sessionCapacityReached = true;
+        // Trusted opt-in, accepted requests only. Export bounded integers, never identities.
+        if (sessionOrdinalLimit > 0) {
+          if (acceptedSessionOrdinals.length < sessionOrdinalLimit) acceptedSessionOrdinals.push(Array.from(sessions).indexOf(identity) + 1);
+          else sessionOrdinalCapacityReached = true;
+        }
         if (['401', '403', '429', '5xx'].includes(profile)) { reply(profile === '5xx' ? 503 : Number(profile), '{"error":"SYNTHETIC_CONTROLLED_ERROR"}'); return; }
         if (profile === 'redirect') { res.setHeader('Location', route); reply(307); return; }
         const content = profile === 'proposal' ? { type: 'tool', tool: 'r7_replace_selection', arguments: { text: 'Synthetic replacement.' } } : { type: 'final', message: 'Synthetic final response.' };
@@ -153,7 +164,8 @@ export async function startMock(config) {
   server.removeAllListeners('error'); server.on('error', () => {});
   let closing;
   return Object.freeze({ port: server.address().port,
-    stats: () => Object.freeze({ ...counts, activeSockets: sockets.size, pendingTimers: timers.size }),
+    stats: () => Object.freeze({ ...counts, activeSockets: sockets.size, pendingTimers: timers.size,
+      ...(sessionOrdinalLimit > 0 ? { acceptedSessionOrdinals: Object.freeze([...acceptedSessionOrdinals]), sessionOrdinalCapacityReached } : {}) }),
     close: () => {
       if (!closing) closing = new Promise(accept => {
         for (const timer of timers) clearTimeout(timer);
