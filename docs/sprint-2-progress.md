@@ -1,4 +1,4 @@
-# Sprint 2 progress — the delivered engine, the unrun calibration and the native-smoke gap
+# Sprint 2 progress — the delivered engine, the partial real-call calibration and the blocked native smoke
 
 ## Status at a glance
 
@@ -9,15 +9,24 @@ final tree).
 
 **Two things are NOT proven, and nothing in this document claims otherwise:**
 
-1. **Pilot workload calibration (§15.2) is NOT RUN.** The values in
-   [design §12.2](<superpowers/specs/2026-10-04-sprint-2-agent-runtime-design.md#L320-L342>) remain
-   the **initial engineering defaults** (`maxSteps` 12, `maxToolCalls` 32, operation deadline
-   150000 ms). No real-workload measurement exists.
-2. **The minimal native R7 end-to-end smoke (§15.3, plan Task 12) is NOT RUN — BLOCKED.** No live R7
-   plugin session is available on this host, and no host-side mock can substitute for a live editor.
+1. **Pilot workload calibration (§15.2) is PARTIALLY RUN — engine-level real calls measured, the pilot
+   workloads themselves NOT.** Real development-Qwen calls were executed through the product's own
+   `createRequest(..., { agent: true })` and `requestCompletion`, and are tabulated below. None of the
+   three guardrails in
+   [design §12.2](<superpowers/specs/2026-10-04-sprint-2-agent-runtime-design.md#L321-L361>) was
+   reached, so the values there (`maxSteps` 12, `maxToolCalls` 32, operation deadline 150000 ms) stand
+   **as measured-baseline defaults, not as guesses**. The three §15.2 pilot workloads themselves — the
+   ten-page document, the P&L model and the 10–15 slide deck — are still **NOT measured**, because the
+   harness sends them through the Word-only catalogue.
+2. **The minimal native R7 end-to-end smoke (§15.3, plan Task 12) is ATTEMPTED and BLOCKED.** The
+   current plugin build was installed into the local R7 user plugin directory and R7 was launched with
+   a disposable document, but **no editor session exists to drive** (no document open, no editor CDP
+   target, no document-bridge listener), so the chain was **not exercised on a live editor**. What the
+   attempt does verify is the install location and content, the app launch and the CDP plumbing —
+   never the agent-to-editor chain.
 
-The final-review defect that was item 1 here — the uncertain-mutation outcome on the insert path — is
-**fixed and re-verified**; it is recorded under [What was proven after the final review](#what-was-proven-after-the-final-review)
+The final-review defect that was item 1 in an earlier revision of this document — the uncertain-mutation
+outcome on the insert path — is **fixed and re-verified**; it is recorded under [What was proven after the final review](#what-was-proven-after-the-final-review)
 and is no longer an open defect.
 
 Sprint 2's implementation range is **40 commits**, `a9784e4..HEAD` on branch `stage-b`, of which the
@@ -53,10 +62,11 @@ native method names, result shapes and the **document-identity legs** of the bri
 
 ## Verification actually performed
 
-All three commands were re-run on the FINAL tree — commit `f0781d8` plus this round's test/doc-only
-commit — and the numbers below were measured on that tree. Only test and documentation files changed
-after `f0781d8`, so the bundle input is byte-identical and the bundle hash is `f0781d8`'s own. Exact
-result lines:
+All three commands were re-run on the FINAL tree — commit `f0781d8` plus the test/doc-only commits after
+it — and the numbers below were measured on that tree. Only test and documentation files changed after
+`f0781d8` (this correction pass edits the three documents named in its commit and no source file), so the
+bundle input is byte-identical and the bundle hash is `f0781d8`'s own. A single confirming `node --test`
+run in this correction pass returned `ℹ tests 604` / `ℹ pass 604` / `ℹ fail 0`. Exact result lines:
 
 - **Full host suite** — `node --test` (three consecutive runs, every one identical):
   `ℹ tests 604` / `ℹ pass 604` / `ℹ fail 0` / `ℹ cancelled 0` / `ℹ skipped 0` / `ℹ todo 0`.
@@ -174,14 +184,62 @@ correction pass applies its documentation findings.
 
 ## What is NOT proven
 
-### 1. Pilot workload calibration — NOT RUN
+### 1. Pilot workload calibration — PARTIALLY RUN (engine-level real calls measured; pilot workloads NOT)
 
-**Status:** the harness is built and reviewed; the **real run never happened.** The development endpoint
-key lives in the DSH credential store (`OPENCUST_API_KEY`) and is **unreadable from this environment**,
-so the harness cannot authenticate a real Qwen workload.
+**Status:** real development-Qwen calls **were** executed in this correction round against OpenRouter,
+using the development credential (`OPENCUST_API_KEY`) from the DSH credential store. The earlier
+"unreadable from this environment" statement described the environment before this attempt and is
+superseded for these runs. The harness builds every request through the product's own
+`createRequest(..., { agent: true })` and `requestCompletion`, so the measured body sizes and the
+98304-byte ceiling are the product's; only the HTTP/TLS client differs from a live plugin run.
 
-- The §15.2 numbers (`maxSteps`, `maxToolCalls`, batch sizes, per-step latency, context/result bytes,
-  JSON-discipline and guardrail-reached counts) **do not exist**.
+**Route substitution — a material calibration input.** The planned default `qwen/qwen3.8-27b:free`
+returned HTTP 429 (free-tier rate limit) on repeated attempts, so the recorded runs used two paid Qwen
+routes, `qwen/qwen3-235b-a22b-2507` and `qwen/qwen3-30b-a3b-instruct-2507`. The measurement is therefore
+of those routes, not of the free default.
+
+Measured records (per-step fields are in step order; the table's `qwen3-235b` is
+`qwen/qwen3-235b-a22b-2507` and `qwen3-30b` is `qwen/qwen3-30b-a3b-instruct-2507`; `null` is the
+record's own value for "no valid envelope observed"):
+
+| Workload | Model | Terminal | Steps | Tool calls | Repairs | Total ms | Per-step ms | Per-step request bytes | Actions per step | Result bytes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| word | `qwen3-235b` | **`ERROR`** / `TIMEOUT` | 0 completed | 0 | 0 | 30009 | — | 1040 (body built) | — | — |
+| excel | `qwen3-235b` | `FINAL` | 1 | 0 | 0 | 2866 | 2866 | 1022 | 0 | — |
+| powerpoint | `qwen3-235b` | `FINAL` | 1 | 0 | 0 | 3704 | 3704 | 947 | 0 | — |
+| word | `qwen3-30b` | `FINAL` | 5 | 1 | 0 | 11743 | 1226 / 5562 / 1936 / 1722 / 1293 | 1047 / 1339 / 2127 / 2930 / 3733 | 1 / 1 / 1 / 1 / 0 | `[65]` |
+| excel | `qwen3-30b` | `FINAL` | 5 | 3 | **1** | 27472 | 907 / 14221 / 1250 / 6228 / 4861 | 1029 / 1321 / 1617 / 1909 / 2201 | one repair step `null` | — |
+| powerpoint | `qwen3-30b` | **`PROTOCOL_ERROR`** | 3 | 1 | **1** | 29426 | — (largest step 17.8 s) | — | two steps `null` | — |
+
+- The `qwen3-235b` **word** run ended `ERROR` / `TIMEOUT` at 30 009 ms: a 1040-byte body was built, but
+  **0 steps of work completed** — the settings `httpTimeoutSeconds = 30` bound fired because the model
+  did not answer the long prompt within 30 s.
+- The `qwen3-30b` **excel** run consumed its single repair; that repair step records `actions: null`.
+- The `qwen3-30b` **powerpoint** run ended `PROTOCOL_ERROR`: two steps record `actions: null`, the
+  single controlled repair was consumed and the second failure ended the run.
+
+**Conclusion — what this does and does not establish.** Real calls were made, and their observed maxima
+are **5 steps, 3 tool calls, batch size 1, single-step latency 17.8 s, total runtime 29.4 s, per-request
+context 3 733 B and 1 repair**. The initial guardrails — `maxSteps` 12, `maxToolCalls` 32, deadline
+150 000 ms — were therefore **not stressed by these runs**, so they stand, now with a measured baseline
+instead of a guess. The constraint that actually fired was the **settings HTTP timeout (30 s)**, not a
+guardrail: the largest model did not answer a long prompt in time. For the pilot this means a slow model
+or a long single response needs either a larger configured timeout within the documented 5–120 s range
+or a smaller per-step ask — a calibration decision, not an architecture change. `maxActionsPerStep` = 8
+remains **unexercised**: every observed step returned at most one action (batch size 1), and the
+largest single step belongs to the 3-step `qwen3-30b` PowerPoint run.
+
+**The §15.2 pilot workloads themselves are still NOT measured.** The harness runs all three prompts
+through a Word-only catalogue (`createWordTools`, three tools) with a stub bridge, so the ten-page
+document, the P&L model and the 10–15 slide deck cannot be exercised until Sprint 3+ adds the Cell and
+Slide tools. This round does **not** close §15.2, and its real-call result must not be read as "pilot
+calibration done": it measures the **engine**, not those tasks.
+
+**JSON-discipline observations:** two runs ended with an immediate `final` and no tool use (the model
+declining the task through a Word-only catalogue), and one ended in `PROTOCOL_ERROR` after its repair —
+that is the designed repair-then-fail behaviour, reported as it happened rather than smoothed into a
+success.
+
 - **Mock records are not calibration data.** In `--mock` mode the fixed envelope yields exactly **one
   model step and zero tool calls** for all three workloads, and the elapsed ms is loop **overhead**, not
   model latency. The [harness README](<../tests/acceptance/agent/README.md#L139-L146>) states this, and
@@ -189,48 +247,69 @@ so the harness cannot authenticate a real Qwen workload.
 - What mock mode *does* demonstrate: the multi-step and repair accounting (`proposal` profile),
   a `LIMIT` with the named guardrail (`--max-steps 1`), a bounded per-request `TIMEOUT`, and an
   over-ceiling `BYTE_LIMIT` — all through the product's own `createRequest`/`requestCompletion`.
-  The evidence is now a committed `node --test` artifact:
+  The evidence is a committed `node --test` artifact:
   [tests/acceptance/agent/dev-qwen-workloads.test.js](<../tests/acceptance/agent/dev-qwen-workloads.test.js>)
   drives three of the four mock profiles as child processes — `final`, `proposal` and `oversize`; the
   stalling `timeout` profile is deliberately excluded because it waits on wall-clock time — and all
   nine of the file's cases pass in the full suite (9/9), beside the documented commands in the
   [harness README](<../tests/acceptance/agent/README.md#L111-L119>).
-- **What would close it:** a real run of the three workloads
-  (`node tests/acceptance/agent/dev-qwen-workloads.mjs word|excel|powerpoint` with
-  `AGENT_DEV_ENDPOINT`/`AGENT_DEV_KEY` from a readable development credential) and setting §12.2 from
-  the measured maxima plus margin. Until then the initial engineering defaults stand and are labelled as
-  such in §12.2.
+- **What would close it:** re-running the same harness on the three pilot workloads once the Cell and
+  Slide catalogues exist (Sprint 3+), so the tasks actually execute through their own tools, and then
+  setting §12.2 from those maxima plus margin. Until then the **measured-baseline defaults** stand and
+  are labelled as such in §12.2.
 
-### 2. Minimal native R7 end-to-end smoke — NOT RUN / BLOCKED
+### 2. Minimal native R7 end-to-end smoke — ATTEMPTED, NOT COMPLETED / BLOCKED
 
-**Status:** unproven. The plan's [Task 12](<superpowers/plans/2026-10-04-sprint-2-agent-runtime.md#L1555-L1590>)
-chain — user request → development Qwen → Agent Runtime → Tool Registry → read tool → a real
-`insert_paragraph` → bounded result → next model step → `final`, with the inserted paragraph read back
-as proof — has never run against a live editor.
+**Status:** attempted with the user's authorization to use the local R7-Office 2026.3.1 installation and
+a disposable document, and **not completed**. The plan's
+[Task 12](<superpowers/plans/2026-10-04-sprint-2-agent-runtime.md#L1555-L1590>) chain — user request →
+development Qwen → Agent Runtime → Tool Registry → read tool → a real `insert_paragraph` → bounded
+result → next model step → `final`, with the inserted paragraph read back as proof — was **not exercised
+on a live editor**.
 
-**Facts on this host** (checked read-only while writing this document; a host-side mock cannot stand in
-for a live editor):
+**What the attempt did verify** (install, launch and CDP-plumbing facts — not the chain):
 
-- **R7-Office 2026.3.1 IS installed** at `C:\Program Files\R7-Office\Editors-2026.3.1`. The blocker is
-  **not** a missing application.
-- **No R7 window is running or attached:** no `DesktopEditors`/`editors` process is present, and the
-  R7 Desktop bridge reports `connected: false`, `clientCount: 0`, `port: 7888`,
-  `developerMode: false`.
-- `adb` is absent; it is Android tooling and not part of the R7 path, but no device route exists either.
-- The previous round's temporary remote native target (SSH access, test NSS CA, mock and tunnel) was
-  **deliberately torn down**; no remote target remains.
+- The current build was installed into the user plugin directory
+  `%LOCALAPPDATA%\R7-Office\Editors\data\sdkjs-plugins\{7C91D48E-5F12-4B36-8A90-2DFA8467C013}\` — the
+  eight release files, GUID verified. That directory already contains `v1`, another plugin and
+  `addons`, so the location is the app's own user plugin path and **no vendor file was touched**. (The
+  vendor `plugins` folder under `Program Files` is a **VLC media** plugins directory, not an office
+  one.)
+- R7 is launched with the disposable document path as its argument plus
+  `--ascdesktop-support-debug-info`; CDP answers on `127.0.0.1:8080`.
 
-**Exact dependency — what would close it:**
+**What blocks it — there is no editor session to drive:**
 
-1. The user's **explicit authorization** to use their local R7 installation for a native run.
-2. **Installing this plugin build** into that installation.
-3. A **disposable Word document**, so no real file is touched.
-4. Either the **development key** (for a real Qwen call) or the Sprint 1 native pattern of the
-   **acceptance mock plus a CA trusted by R7**.
-5. Proving the mutation by **reading the paragraph back** through a public read.
+- The app's own shell reports `sourcePath: ""`, `editorId: "-1"` and `openChanges: 0` (**no document
+  open**), while the window title merely reflects the last document. CDP lists only the launcher page
+  (`index.html?waitingloader=yes`, "Hello Documents") and never the editor page. The document bridge on
+  port 7888 has no listener, which is consistent with "no document editor open".
+- Disabling our plugin and repeating the launch changed nothing, so the state is **environmental and not
+  caused by this build**.
+- The app's shell API (`LocalFileOpen` with a plain path, a `file://` URL and an object argument)
+  returned without effect, and a real CDP double-click on the recent-file row did not open the document.
+- Driving the native "Открыть документ" dialog with synthesized keystrokes was **abandoned
+  deliberately**: the dialog is native, the approach is blind, and it produced an unrelated Explorer
+  window. Blind GUI input has already damaged an in-memory document in this project's history, so
+  continuing was not acceptable.
+
+**Therefore the chain is NOT proven.** What is verified is the plugin install location and content, the
+app launch and the CDP plumbing — never a user request reaching the live editor, the `insert_paragraph`
+native dispatch, the read handler, the document-identity legs or a document readback.
+
+**State left behind:** the plugin remains installed (the user authorized installing the current build)
+and R7 is left running with the disposable document path; the disposable file lives in
+`.local/native-smoke/`.
+
+**Exact dependency — what would close it:** an interactive session in which the disposable document is
+actually open, so the document bridge and/or the editor CDP target can attach, settings can be entered,
+and the chain can be run and proven by reading the document back; or the target Astra/R7 environment.
+Per the user, a local Windows smoke counts as **integration evidence** but does **not** replace the
+future target Astra/R7 check.
 
 Because the tool paths were authored against unverified public method names, the smoke is also the first
-real test of the `insert_paragraph` native dispatch, the read handler and the document-identity legs.
+real test of the `insert_paragraph` native dispatch, the read handler and the document-identity legs;
+those remain **PENDING NATIVE VERIFICATION** exactly as recorded above.
 
 ## Design deviations and deferred minors a reader must know
 
@@ -295,9 +374,10 @@ Sprint 3+ grows the **catalogue**, not the runtime:
   and static handlers registered through the same registry — no runtime, protocol or context-window
   change. This is the design property the `descriptor.execute` dispatch exists for.
 - **The Excel (`P&L`) and PowerPoint (10–15 slide) §15.2 workloads** require those catalogues; today's
-  harness sends all three prompts through the Word catalogue and calibrates the **engine** only.
-- **The §15.2 calibration itself** and **the §15.3 native smoke** remain open from this sprint and are
-  prerequisites for any "sized for real work" claim.
+  harness sends all three prompts through the Word catalogue and calibrates the **engine** only. Those
+  two tasks — and the ten-page Word document — are consequently still **NOT measured**.
+- **The §15.2 pilot-workload calibration** (measured at engine level only so far) and **the §15.3 native
+  smoke** remain open from this sprint and are prerequisites for any "sized for real work" claim.
 - Out of Sprint 2 and still not claimed: full native catalogue acceptance, bank TLS/CORS/AUTH/Qwen,
   DEB/packaging, and publication.
 
@@ -315,9 +395,15 @@ Sprint 3+ grows the **catalogue**, not the runtime:
 - **FIXED AND RE-VERIFIED (was the final review's defect):** the uncertain-mutation outcome on the insert
   path — commit `f0781d8`; the withheld `read_context` is also no longer exported through
   `registry.tools`. No host-side defect from the final review remains open.
-- **NOT RUN:** pilot workload calibration (§15.2) — no readable development key.
-- **NOT RUN / BLOCKED:** the native R7 smoke (§15.3 / Task 12) — needs the user's authorization to use
-  the local R7 install, the plugin installed, a disposable document, and the dev key or a trusted mock;
-  the install itself is present.
+- **PARTIALLY RUN (engine level):** pilot workload calibration (§15.2) — real development-Qwen calls
+  were measured through the product's own request path (maxima 5 steps / 3 tool calls / 29.4 s /
+  3 733 B per request / 1 repair; no guardrail reached), so §12.2 keeps its defaults as
+  **measured-baseline** defaults. The three §15.2 pilot workloads themselves remain **NOT measured**,
+  because the catalogue is Word-only.
+- **ATTEMPTED / BLOCKED:** the native R7 smoke (§15.3 / Task 12) — the build is installed in the local
+  R7 user plugin directory and R7 launches with a disposable document, but **no editor session exists to
+  drive** (no open document, no editor CDP target, no document-bridge listener), so the live chain is
+  **not exercised**. Closing it needs an interactive session with the document actually open, or the
+  target Astra/R7 environment.
 - **DONE:** the whole-branch final review of `a9784e4..HEAD` has run; it found the uncertain-mutation
   defect now fixed by `f0781d8`, and its documentation findings are applied by this correction pass.

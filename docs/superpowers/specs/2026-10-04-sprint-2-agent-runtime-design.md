@@ -320,7 +320,7 @@ All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `
 
 ### 12.2 Runtime task guardrails (configurable; calibrated on the pilot workloads)
 
-| Guardrail | Initial engineering default | Meaning |
+| Guardrail | Measured-baseline default | Meaning |
 | --- | --- | --- |
 | `maxSteps` | 12 | model round-trips per user task |
 | `maxToolCalls` | 32 | executed actions per user task |
@@ -328,19 +328,37 @@ All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `
 | HTTP timeout | settings, 5–120 s | unchanged, per request |
 
 A legitimate pilot task — a ten-page structured document, a P&L model, a 10–15 slide deck — may need
-several minutes, many model steps and dozens of tool calls. The numbers above are **development
-defaults**, not a product limit: the pilot guardrails are set from the measurements in §15.2, and the
-architecture must accept far larger values without a runtime change. When a guardrail is reached, the
+several minutes, many model steps and dozens of tool calls. The numbers above are **measured-baseline
+development defaults** — the engine-level real runs recorded below did not stress them, and the full
+§15.2 pilot workloads are still pending — not a product limit: the pilot guardrails are set from the
+complete §15.2 measurements, and the architecture must accept far larger values without a runtime
+change. When a guardrail is reached, the
 run stops with a clear "задача превысила текущий лимит" outcome, completed changes stay (native Undo
 is the user's rollback), and nothing is silently truncated.
 
-> **Calibration status (recorded by Task 13, 2026-10-04): the §15.2 pilot calibration was NOT RUN, so
-> the values above are still the INITIAL ENGINEERING DEFAULTS, not measured pilot guardrails.** The
-> development endpoint key lives in the DSH credential store and is unreadable from the implementation
-> environment, so no real Qwen workload was executed; mock harness records are explicitly **not**
-> calibration data (the fixed envelope yields one model step, zero tool calls and loop-overhead
-> latency). The measurements listed in §15.2 remain PENDING, and the gap with its dependencies is
-> recorded in [Sprint 2 progress](../../sprint-2-progress.md).
+> **Calibration status (real development-Qwen calls measured in the Task 13 correction round,
+> 2026-10-04; the §15.2 pilot workloads themselves remain UNRUN).** Real calls were executed through the
+> product's own `createRequest(..., { agent: true })` and `requestCompletion`, so the measured body
+> sizes and the 98304-byte request ceiling are the product's. **Route substitution — a material
+> calibration input, not a footnote:** the planned default `qwen/qwen3.8-27b:free` answered HTTP 429
+> (free-tier rate limit) on repeated attempts, so the runs used the paid routes
+> `qwen/qwen3-235b-a22b-2507` and `qwen/qwen3-30b-a3b-instruct-2507`. **Observed maxima: 5 steps,
+> 3 tool calls, batch size 1, single-step latency 17.8 s, total runtime 29.4 s, per-request context
+> 3733 B, 1 repair.** None of the three guardrails above was reached (`maxSteps` 12 vs 5,
+> `maxToolCalls` 32 vs 3, 150000 ms vs 29.4 s), so they stand — now as **measured-baseline defaults**
+> rather than guesses. The constraint that actually fired was the **settings HTTP timeout (30 s)**:
+> `qwen/qwen3-235b-a22b-2507` did not answer a long prompt within it and that run ended `ERROR` /
+> `TIMEOUT` with no step of work completed. A slow model or a long single response therefore needs
+> either a larger configured timeout inside the settings range (5–120 s) or a smaller per-step ask — a
+> calibration decision, not an architecture change. `maxActionsPerStep` = 8 remains **unexercised**:
+> every observed step returned at most one action. **The §15.2 pilot workloads are still not measured**
+> — the harness sends all three prompts through the Word-only catalogue (three tools) with a stub
+> bridge, so the ten-page document, the P&L model and the 10–15 slide deck cannot be exercised until
+> Sprint 3+ adds the Cell and Slide tools. JSON discipline was observed only at engine level: two runs
+> ended in an immediate `final` with no tool use (the model declining the task through a Word-only
+> catalogue) and one ended in `PROTOCOL_ERROR` after its single controlled repair was consumed. The
+> remaining measurements listed in §15.2 stay PENDING, and the gap with its dependencies is recorded in
+> [Sprint 2 progress](../../sprint-2-progress.md).
 
 All limits live in one table (§4 `limits.js`). `previewTtlMs` (120000 ms) and `applyObservationMs`
 (15000 ms) stay and apply to `confirm` tools only.
