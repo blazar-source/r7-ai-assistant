@@ -426,9 +426,16 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // composes from `Asc.scope` (never composed into source, ADR 0002), no composed-source transport, a
       // PRE-DISPATCH BASELINE read as the gate, every cell filled BEFORE the one mutation, and a POST read
       // of the document's own state — and it differs in exactly the three things a TABLE differs in:
-      //   1. the structure is created by `Api.CreateTable(rows, columns)` — MEASURED on the target — and
-      //      the geometry comes from the matrix the caller sent, NEVER from `GetRowCount`/`GetColumnCount`,
-      //      which were measured as `undefined` and are therefore named nowhere in this body;
+      //   1. the structure is created by `Api.CreateTable(columns, rows)` — THE MEASURED ARGUMENT ORDER on
+      //      the target — and the geometry comes from the matrix the caller sent, NEVER from
+      //      `GetRowCount`/`GetColumnCount`, which were measured as `undefined` and are therefore named
+      //      nowhere in this body. THE ORDER IS THE WHOLE POINT: `CreateTable(a, b)` creates `a` COLUMNS
+      //      and `b` ROWS, so the first argument is the COLUMN count. The first version of this body passed
+      //      `(rowCount, columnCount)`, which builds the TRANSPOSED table; a SQUARE matrix is its own
+      //      transpose, so that mistake was invisible on a square and fatal on the pilot's 1×2 header table
+      //      (measured: `CAPABILITY_UNAVAILABLE` with nothing written, because the fill loop walked a cell
+      //      that does not exist). Because the order is an assumption about a build rather than a fact this
+      //      body can observe, the created geometry is VERIFIED before anything is filled or pushed, below;
       //   2. every cell is filled through the MEASURED chain `table.GetCell(r, c).GetContent()
       //      .GetElement(0).AddText(text)`, with EVERY step — and the symmetric `GetText()` the readback
       //      needs — checked as a function BEFORE the first push, so an editor whose cell chain is not the
@@ -512,8 +519,43 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // measured chain is a function before it is called — including the `GetText()` the readback
             // below needs, so a build whose cell elements cannot be read is refused with NOTHING inserted
             // instead of pushing a table this body could never verify.
-            var table = Api.CreateTable(rowCount, columnCount);
+            // THE FACTORY IS GIVEN THE MEASURED ORDER: the COLUMN count first, the ROW count second.
+            var table = Api.CreateTable(columnCount, rowCount);
             if (table === null || table === undefined || typeof table.GetCell !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // THE GEOMETRY IS AN EXPLICIT, VERIFIED PRECONDITION, because the argument order is the one fact
+            // about this factory that this body cannot observe on its own: a build whose `CreateTable` takes
+            // its arguments the other way round builds the TRANSPOSED table, and filling that table must be
+            // a closed pre-insert refusal with ZERO writes rather than a partially filled table. THE
+            // PRECONDITION IS THE FILL LOOP'S OWN BOUNDARY: read the LAST cell the loop below will touch,
+            // `(rowCount - 1, columnCount - 1)`, and require the same measured chain the loop requires; then
+            // read `(rowCount, 0)` — the first cell of the row one past the end the caller asked for — and
+            // require it to be ABSENT. Both reads go through `probeCell`, and that is an authored-code-audit
+            // requirement as well as a correctness one: this analysis treats a member read with a
+            // NON-CONSTANT key as a computed value, so a local holding `list[index]` would make every later
+            // call on it a computed-execution finding, and a CALL's result is not tainted. The probe is
+            // DEFENSIVE IN BOTH DIRECTIONS on purpose: the target's out-of-range behaviour is measured as
+            // ASYMMETRIC — a cell past the end of a row can answer `null` while a cell past the end of the
+            // table THROWS internally (`Cannot read properties of null (reading 'Pr')`) — so an inaccessible
+            // or throwing address is reported as absence rather than escaping the body. This is a
+            // belt-and-braces check on top of the schema, the bridge and the shape pass: it costs two reads
+            // and it is the only thing standing between a wrong factory order on some other build and a
+            // half-filled table in the document.
+            function probeCell(list, row, column) {
+              if (list === null || list === undefined || typeof list.GetCell !== 'function') return null;
+              try { return list.GetCell(row, column); } catch (error) { return null; }
+            }
+            var lastCell = probeCell(table, rowCount - 1, columnCount - 1);
+            if (lastCell === null || lastCell === undefined || typeof lastCell.GetContent !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            var lastContent = lastCell.GetContent();
+            if (lastContent === null || lastContent === undefined || typeof lastContent.GetElement !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            var lastElement = lastContent.GetElement(0);
+            if (lastElement === null || lastElement === undefined || typeof lastElement.AddText !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof lastElement.GetText !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // The first index of the row PAST the last one the matrix owns: on a correctly created table a
+            // row is absent at that address (measured `null`), and a table that answers a cell there is one
+            // row taller than the matrix asked for and is refused for the same reason.
+            var pastCell = probeCell(table, rowCount, 0);
+            if (pastCell !== null && pastCell !== undefined) return tableRefusal('CAPABILITY_UNAVAILABLE');
             for (var fillRow = 0; fillRow < rowCount; fillRow++) {
               for (var fillCol = 0; fillCol < columnCount; fillCol++) {
                 var fillCell = table.GetCell(fillRow, fillCol);

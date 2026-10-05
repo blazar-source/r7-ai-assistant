@@ -1627,9 +1627,27 @@ existing limit VALUE moved, `src/agent/*` is untouched, and only `src/tools/word
 `src/plugin/bridge.js`, `src/shared/limits.js`, two test files and this document changed.
 
 **The measured primitives.** On the target (Astra / R7 2026.1.2.1942, this round):
-`Api.CreateTable(rows, columns)` creates a table object whose public methods include `GetCell(row, column)`,
-`GetRow(i)` and `SetWidth`; **`GetRowCount` and `GetColumnCount` are `undefined`** and are therefore named
-**nowhere** in this tool — the geometry is the matrix the caller sent. `table.GetCell(r, c).GetContent()
+`Api.CreateTable(columns, rows)` creates a table object whose public methods include `GetCell(row, column)`,
+`GetRow(i)` and `SetWidth` — **the FIRST argument is the COLUMN count and the second is the ROW count**,
+the **opposite** of the order the first version of this tool assumed. It was measured cell by cell:
+`CreateTable(3, 2)` fills `GetCell(0..2, 0..1)` while `GetCell(2, 0)`/`(2, 1)`/`(2, 2)` are `null`, so a
+3-then-2 call built a **2-row × 3-column** table; `CreateTable(2, 3)` fills columns 0..1 and rows 0..2 while
+`GetCell(0, 2)`/`(1, 2)`/`(2, 2)` **throw** internally (`Cannot read properties of null (reading 'Pr')`), so
+a 2-then-3 call built **3 rows × 2 columns**; and `CreateTable(2, 2)` fills all four cells because a
+**square** table is its own transpose. That last line is why the reversed order survived the earlier native
+run and failed the pilot's main case: passing `(rowCount, columnCount)` builds a transposed table, so a
+square matrix verifies while a **1 row × 2 column** header table has no `GetCell(0, 1)` at all — measured
+end to end as `insert_table` → `CAPABILITY_UNAVAILABLE` with the document unchanged (a closed, fail-closed
+refusal, but a refusal: the tool was correct-and-unusable for **every** non-square table). The fill loop now
+passes `(columnCount, rowCount)` and the body **verifies the created geometry before it fills or pushes
+anything**: it reads the LAST cell the loop will touch, `(rowCount - 1, columnCount - 1)`, and requires it to
+exist carrying the measured chain, then reads `(rowCount, 0)` and requires it to be **absent** — so a build
+whose factory takes the arguments the other way round refuses closed with ZERO writes instead of pushing a
+partially filled table. Both reads are **defensive in both directions** because the out-of-range behaviour
+is measured as **asymmetric** (a `null` in one direction, an internal throw in the other), so a throwing
+address is treated as absence inside the body. **`GetRowCount` and `GetColumnCount` are `undefined`** and
+are therefore named **nowhere** in this tool — the geometry is the matrix the caller sent. `table.GetCell(r,
+c).GetContent()
 .GetElement(0).AddText(text)` fills a cell (measured: the cell text appears in the document).
 `document.GetAllTables()` answers the tables (measured **0 → 1** after one insert) and is the count the
 delta is decided on. `doc.Push(element)` **appends at the END** while `doc.InsertContent([...])` lands at
@@ -1730,8 +1748,11 @@ dispatches exactly **one** command for the whole run; `src/agent/*` untouched.
 
 **Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What the
 host-side suite cannot prove is the **shipped** carriage of this leg: (1) that `{ data }` written into the
-page's `Asc.scope` reaches the body's `scope` binding; (2) that `Api.CreateTable(rows, columns)` takes the
-rows FIRST and answers a table whose `GetCell` exists; (3) that the element at
+page's `Asc.scope` reaches the body's `scope` binding; (2) that the created table really has the geometry
+the matrix asked for — the argument order is now the **MEASURED** one (`(columns, rows)`), and because that
+is a fact about a BUILD rather than something this body can observe, the body additionally **verifies** the
+geometry (the last cell exists with the measured chain, the first cell of the row past the end is absent)
+and refuses closed with ZERO writes when it does not; (3) that the element at
 `GetCell(r, c).GetContent().GetElement(0)` answers **both** `AddText` and `GetText` — the fill half is
 measured, the readback half is the symmetric mate of it and the **one** primitive this round did not
 measure directly, which is why the body checks it as a function **before** the one push: an absent
@@ -1745,5 +1766,32 @@ malformed one or a throwing push is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with 
 and an editor that never calls back settles `APPLY_UNCERTAIN` (a dispatched write-class ticket), never a
 verified insert. A native run on the target is required before this tool's delta can be called measured; it
 is recorded here as PENDING NATIVE VERIFICATION.
+
+**§13.4 CORRECTION (post-native): the factory's argument order, and the geometry precondition it forced.**
+The native run above went on to settle fact (2) — **against** the assumption: the Lead measured
+`Api.CreateTable(a, b)` as **`a` COLUMNS and `b` ROWS**, and the end-to-end consequence on the pilot's main
+case: `insert_table` with `{ "data": [["НОВАЯ-Т1", "НОВАЯ-Т2"]] }` (1 row × 2 columns) answered
+**`CAPABILITY_UNAVAILABLE`** and wrote **nothing** — the fill loop walked `GetCell(0, 1)`, which does not
+exist on the transposed 2-row × 1-column table the reversed arguments had built. The document was left
+unchanged (fail-closed), but the tool was **correct-and-unusable for every non-square table**, and the
+earlier native PASS proved nothing because a square matrix is its own transpose. Two things changed, and
+nothing else:
+1. the body now calls **`Api.CreateTable(columnCount, rowCount)`** — the MEASURED order;
+2. the created geometry is an **explicit, verified precondition** rather than an assumption: before the
+   fill loop and before the one `Push`, the body reads the LAST cell the loop will touch,
+   `(rowCount - 1, columnCount - 1)`, and requires it to exist with the measured chain, then reads
+   `(rowCount, 0)` and requires it to be **absent**; both reads are **defensive in both directions**
+   (a `null` and an internal throw are both "absent"), matching the measured asymmetry. A wrong factory
+   order on any build is therefore a **closed pre-insert refusal with ZERO writes** —
+   `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']`, slot released, no partial table — never a half-filled insert.
+The schema, the four limits, the exact-delta outcome contract (table count +1 and one flag per cell read
+from the appended table), the phase protocol, the closed failure classes and the single `Push` are all
+unchanged. The verification gate on the final tree: the focused `tests/unit/tools-word.test.js` suite
+**188/188** (it grew by the new factory-order, wrong-geometry and geometry-precondition cases), `node --test`
+**820 tests, pass 820, fail 0**, `node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0), and
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+dc10a529f14f7730e1f53826ed789017ed4857640fae1d4c1d056d117e0f14a1`. The `package` test's
+authored-command leg classifier is **unchanged** (the table leg is still recognised by `CreateTable` before
+the `.Push(` branch).
 
 

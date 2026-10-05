@@ -1145,7 +1145,16 @@ export function createWordTools(bridge) {
       // a post read, and an outcome that is `ok` ONLY on an exact proof.
       //
       // THE MEASURED PRIMITIVES, all established on the target (Astra / R7 2026.1.2.1942) for this round:
-      // `Api.CreateTable(rows, columns)` builds the structure; `table.GetCell(r, c).GetContent()
+      // `Api.CreateTable(columns, rows)` builds the structure and its arguments are in THAT order — the
+      // FIRST argument is the COLUMN count and the second is the ROW count. This was measured cell by cell:
+      // `CreateTable(3, 2)` fills `GetCell(0..2, 0..1)` while `GetCell(2, 0)`/`(2, 1)`/`(2, 2)` are `null`,
+      // so a 3-then-2 call built a 2-row × 3-column table, and `CreateTable(2, 3)` fills columns 0..1 and
+      // rows 0..2 while `GetCell(0, 2)`/`(1, 2)`/`(2, 2)` THROW internally (`Cannot read properties of null
+      // (reading 'Pr')`), so a 2-then-3 call built 3 rows × 2 columns. `CreateTable(2, 2)` fills all four
+      // cells because a SQUARE table is its own transpose — which is why the first version of this tool,
+      // passing `(rowCount, columnCount)`, passed a native run on a square matrix and refused the pilot's
+      // 1×2 header table with `CAPABILITY_UNAVAILABLE` and nothing written (the fill loop walked a cell
+      // that does not exist). `table.GetCell(r, c).GetContent()
       // .GetElement(0).AddText(text)` fills a cell (measured: the cell text appears in the document);
       // `document.GetAllTables()` answers the tables (measured 0 → 1 after one insert); `doc.Push(element)`
       // APPENDS AT THE END while `doc.InsertContent([...])` lands at the BEGINNING and can replace existing
@@ -1154,6 +1163,16 @@ export function createWordTools(bridge) {
       // document's own table count. Neither mutation primitive's return value is read: `Push` answered
       // `true` for a paragraph and `false` for an image host, so no boolean says anything about what the
       // document now holds.
+      //
+      // THE GEOMETRY IS AN EXPLICIT VERIFIED PRECONDITION, not an assumption about the factory (see the
+      // bridge body): because the argument order is an assumption about a BUILD, the body reads the LAST
+      // cell the fill loop will touch — `(rowCount - 1, columnCount - 1)` — and requires it to exist and to
+      // carry the measured chain, and reads `(rowCount, 0)` and requires it to be ABSENT. The probe is
+      // defensive in BOTH directions because the target's out-of-range behaviour is measured as
+      // ASYMMETRIC (a `null` in one direction, an internal throw in the other), so an inaccessible or
+      // throwing address is treated as absence inside the body instead of escaping it. A build whose
+      // factory takes the arguments the other way round therefore answers the closed
+      // `CAPABILITY_UNAVAILABLE` with ZERO writes rather than a partially filled table.
       //
       // THE PROOF IS ONE-TO-ONE OVER THE APPEND, and for a table that is TWO conditions that cannot
       // substitute for each other: the table count grew by EXACTLY one, AND the table the append added

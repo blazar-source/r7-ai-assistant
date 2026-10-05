@@ -5030,31 +5030,53 @@ test('insert_table measures the exact entry it publishes, and its five bounded i
 });
 
 // --- the real bridge: the SIXTH authored command body, and the SECOND one that mutates -----------------
-// One TABLE double, modelling the MEASURED creation/fill chain. `Api.CreateTable(rows, columns)` answers
-// this object, `GetCell(r, c)` answers a cell whose `GetContent().GetElement(0)` carries the measured
-// `AddText(text)` AND the symmetric `GetText()` the readback needs, and every cell keeps the text it was
-// given, so a test can state exactly what the appended table holds. `write: false` fills every cell with
-// NOTHING and `write: 'Другое'` fills every cell with a text that is not the requested one; both model an
-// insert whose table really arrived while its content did not.
-function tableDouble(rows, columns, { write = true, initial = () => '' } = {}) {
+// One TABLE double, modelling the MEASURED creation/fill chain AND the MEASURED argument order of the
+// factory: on the target, `Api.CreateTable(a, b)` creates `a` COLUMNS and `b` ROWS, so a double that is
+// handed the OLD assumed order `(rows, columns)` really builds a TRANSPOSED table — which is exactly the
+// defect the geometry precondition below exists to catch, and why `tableDouble` is parameterised on the
+// terms it receives (`first` = what the factory got first, i.e. the column count on a correct build).
+// `GetCell(r, c)` answers a cell whose `GetContent().GetElement(0)` carries the measured `AddText(text)`
+// AND the symmetric `GetText()` the readback needs, and every cell keeps the text it was given, so a test
+// can state exactly what the appended table holds. `write: false` fills every cell with NOTHING and
+// `write: 'Другое'` fills every cell with a text that is not the requested one; both model an insert whose
+// table really arrived while its content did not. `missingRow` builds a table with `missingRow` rows FEWER
+// than the requested matrix (the created table is one row too SHORT) and `missingCell` removes that many
+// cells from the end of its LAST row (one column too NARROW); both are the two DIRECTIONS of the measured
+// out-of-range asymmetry — a row past the end answers `null`, while a column past the end of a row that
+// does exist is an internal throw (`Cannot read properties of null (reading 'Pr')`), never a value a
+// caller may invoke. `extraRow` is the opposite malformation: the table carries `extraRow` rows MORE than
+// the matrix asked for, so an address PAST the matrix's own last row still answers a real cell.
+function tableDouble(first, second, { write = true, initial = () => '', missingRow = 0, missingCell = 0, extraRow = 0 } = {}) {
   const cells = [];
-  for (let row = 0; row < rows; row += 1) {
+  for (let row = 0; row < second - missingRow; row += 1) {
     const line = [];
-    for (let column = 0; column < columns; column += 1) line.push({ text: initial(row, column) });
+    for (let column = 0; column < first; column += 1) line.push({ text: initial(row, column) });
     cells.push(line);
   }
+  for (let removed = 0; removed < missingCell && cells.length > 0; removed += 1) cells[cells.length - 1].pop();
+  const writes = { addTexts: 0, getCells: 0 };
   function cellAt(row, column) {
+    writes.getCells += 1;
+    if (row >= second && row < second + extraRow && column === 0) {
+      const stray = { text: '' };
+      const strayElement = {
+        AddText(text) { writes.addTexts += 1; stray.text = text; },
+        GetText() { return stray.text; }
+      };
+      return { GetContent() { return { GetElement(index) { return index === 0 ? strayElement : null; } }; } };
+    }
     const line = cells[row];
     if (line === undefined) return null;
+    if (column >= first && column < second) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
     const holder = line[column];
     if (holder === undefined) return null;
     const element = {
-      AddText(text) { holder.text = write === true ? text : (write === false ? '' : write); },
+      AddText(text) { writes.addTexts += 1; holder.text = write === true ? text : (write === false ? '' : write); },
       GetText() { return holder.text; }
     };
     return { GetContent() { return { GetElement(index) { return index === 0 ? element : null; } }; } };
   }
-  return { cells, GetCell: cellAt };
+  return { cells, writes, GetCell: cellAt };
 }
 function tableTexts(table) { return table.cells.map(line => line.map(holder => holder.text)); }
 // The DOCUMENT double, modelling the MEASURED route: `doc.Push(table)` answers and APPENDS AT THE END, so
@@ -5082,9 +5104,15 @@ function evaluateTableBody(body, api, scope) {
 // `forge` hands the bridge a REPLACEMENT for the answer the body really produced, after that body has run
 // to completion against the document double — a real insert included. It is the only way to model a
 // hostile or damaged native answer for a dispatched insert without weakening the body itself.
+// `creationOrder` is the FACTORY MODEL: `'measured'` (the target: the first argument is the column count,
+// the second the row count) or `'assumed'` (the pre-fix build: the body passed `(rows, columns)`, so the
+// double really must build the transposed table the target builds for those arguments). `missingRow` and
+// `missingCell` cut one row off the end and one cell off the last row's end respectively, so a wrong
+// geometry can be modelled as an ABSENT cell in either of the two measured directions.
 function tablesRig({ existing = 1, existingShape = [2, 2], grow = 1, prepends = false, answer = true, write = true,
   command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined, forge = undefined,
-  createThrows = false, cellThrows = false, createTable = undefined } = {}) {
+  createThrows = false, cellThrows = false, createTable = undefined, creationOrder = 'measured',
+  missingRow = 0, missingCell = 0, extraRow = 0 } = {}) {
   const commands = [];
   const createdShapes = [];
   const tables = [];
@@ -5093,11 +5121,16 @@ function tablesRig({ existing = 1, existingShape = [2, 2], grow = 1, prepends = 
   }
   const measured = tablesDocument({ tables, grow, prepends, answer });
   const api = { GetDocument() { return document === undefined ? measured.document : document; },
-    CreateTable(rows, columns) {
+    CreateTable(first, second) {
       if (createThrows) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
-      createdShapes.push([rows, columns]);
-      if (typeof createTable === 'function') return createTable(rows, columns);
-      const table = tableDouble(rows, columns, { write });
+      createdShapes.push([first, second]);
+      if (typeof createTable === 'function') return createTable(first, second);
+      // THE TARGET'S OWN ARGUMENT ORDER, modelled: the factory's first argument is a COLUMN count and its
+      // second is a ROW count. `creationOrder: 'assumed'` hands the double the pair the OLD body passed
+      // (`(rows, columns)`), which on the target really builds the TRANSPOSED table — the created geometry
+      // then no longer matches the requested matrix, and the tool must refuse it before any write.
+      const shape = creationOrder === 'assumed' ? [second, first] : [first, second];
+      const table = tableDouble(shape[0], shape[1], { write, missingRow, missingCell, extraRow });
       if (cellThrows) table.GetCell = () => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); };
       return table;
     } };
@@ -5129,7 +5162,7 @@ test('bridge insertTable dispatches ONE command, carries the matrix as DATA and 
   assert.equal(carried.recalculate, false);
   assert.deepEqual(carried.scope, { data }, 'the matrix crosses as the command SCOPE, never interpolated into source');
   assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no matrix outlives its dispatch');
-  assert.deepEqual(r.createdShapes, [[2, 2]], 'the measured factory is called with (rows, columns)');
+  assert.deepEqual(r.createdShapes, [[2, 2]], 'the measured factory is called with (columns, rows) — the square case hides the order');
   assert.equal(r.doc.state.pushes, 1, 'ONE Push for the whole table: a table is ONE element, not one per cell');
   assert.equal(r.doc.state.insertContents, 0, 'the legacy whole-array primitive — which lands at the START — is never called');
   assert.deepEqual(carried.answered, ['POST_INSERT', 1, 2, 1, 1, 1, 1],
@@ -5142,6 +5175,90 @@ test('bridge insertTable dispatches ONE command, carries the matrix as DATA and 
   assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
   assert.equal(r.bridge.getState().writePending, false);
   assert.equal(r.bridge.getState().uncertain, false);
+});
+
+// --- THE MEASURED ARGUMENT ORDER OF THE FACTORY, and the GEOMETRY PRECONDITION it forces ----------------
+// THE MEASURED FACT, established on the target (Astra / R7 2026.1.2.1942): `Api.CreateTable(a, b)` creates
+// `a` COLUMNS and `b` ROWS — the OPPOSITE of the `(rows, columns)` order the first version of this tool
+// assumed. A square matrix is its own transpose, which is exactly why the earlier native run passed and
+// the pilot's main case — a one-row header table — went out as `CAPABILITY_UNAVAILABLE`. These tests pin
+// the order AND the precondition that turns any build whose factory order differs into a CLOSED pre-insert
+// refusal rather than a partially filled table.
+for (const [label, shape, expected] of [
+  ['ONE ROW × TWO COLUMNS (the pilot case: the row count is the SHORT one)', [1, 2], [2, 1]],
+  ['TWO ROWS × ONE COLUMN (the transposed pilot case)', [2, 1], [1, 2]],
+  ['a SQUARE 2 × 2 (the case that could never have caught the defect)', [2, 2], [2, 2]],
+  ['THREE ROWS × FIVE COLUMNS', [3, 5], [5, 3]],
+  ['FIVE ROWS × THREE COLUMNS', [5, 3], [3, 5]]
+]) {
+  test(`the factory is given (columns, rows): ${label}`, async () => {
+    const [rows, columns] = shape;
+    const data = new Array(rows).fill(null).map((_, row) => new Array(columns).fill(null).map((__, column) => `я${row}${column}`));
+    const r = tablesRig({ existing: 0, namespace: { scope: { data } } });
+    const result = await r.bridge.insertTable({ data });
+    assert.deepEqual(r.createdShapes, [expected],
+      `the measured signature is (columns, rows): ${columns} columns then ${rows} rows, never the reverse`);
+    assert.equal(r.doc.state.pushes, 1, 'exactly one table is pushed for the whole matrix');
+    assert.deepEqual(tableTexts(r.doc.state.tables[0]), data,
+      'and the appended table carries the requested matrix read row by row and cell by cell');
+    assert.deepEqual(result, { ok: true, tablesBefore: 0, tablesAfter: 1, present: new Array(rows * columns).fill(true) },
+      'every cell of the created geometry is the cell the matrix asked for');
+    assert.equal(r.bridge.getState().busy, false, 'a verified insert releases the slot');
+  });
+}
+
+test('a factory that builds the OLD assumed geometry is a CLOSED pre-insert refusal with ZERO writes', async () => {
+  // THE DEFECT ITSELF, modelled: the double is handed the pair the OLD body passed (`(rowCount,
+  // columnCount)`) and, being the target's factory, builds that transposed table — `a` columns and `b`
+  // rows. For a 1×2 matrix the result is a 2-column, 1-row table: the LAST cell the fill loop would touch,
+  // `(rowCount - 1, columnCount - 1)` = `(0, 1)`, does not exist. The precondition must see that BEFORE
+  // the one `Push`, so the insert is refused closed with nothing created and nothing written — never a
+  // partially filled table. Both measured DIRECTIONS of the out-of-range asymmetry are modelled: an
+  // absent cell (a `null` from an index past the end) and an internal THROW.
+  const data = [['НОВАЯ-Т1', 'НОВАЯ-Т2']];
+  const absent = tablesRig({ existing: 1, namespace: { scope: { data } }, creationOrder: 'assumed' });
+  assert.deepEqual(await absent.bridge.insertTable({ data }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' },
+    'a factory that built the wrong geometry is the closed capability class, not a partial insert');
+  assert.equal(absent.doc.state.pushes, 0, 'the mutation is NEVER reached');
+  assert.equal(absent.doc.state.insertContents, 0, 'and neither is the legacy whole-array primitive');
+  assert.equal(absent.doc.state.tables.length, 1, 'the document still holds exactly its one pre-existing table');
+  assert.equal(absent.createdShapes.length, 1, 'the factory was tried once, with the body\'s own argument pair');
+  assert.equal(absent.bridge.getState().busy, false, 'the slot is RELEASED: a pre-insert refusal proves nothing was inserted');
+  assert.equal(absent.bridge.getState().uncertain, false);
+  const throwing = tablesRig({ existing: 1, namespace: { scope: { data } }, creationOrder: 'assumed', cellThrows: true });
+  assert.deepEqual(await throwing.bridge.insertTable({ data }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' },
+    'the same wrong geometry is closed when the out-of-range read THROWS instead of answering null');
+  assert.equal(throwing.doc.state.pushes, 0);
+  assert.equal(throwing.bridge.getState().busy, false);
+  // A WIDER wrong shape, so the precondition is not tuned to one matrix: 1 row × 4 columns is created as a
+  // 4-column, 1-row table and the last cell the loop would touch is again one that does not exist.
+  const wide = [['а', 'б', 'в', 'г']];
+  const wideRig = tablesRig({ existing: 0, namespace: { scope: { data: wide } }, creationOrder: 'assumed' });
+  assert.deepEqual(await wideRig.bridge.insertTable({ data: wide }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(wideRig.doc.state.pushes, 0);
+  assert.equal(wideRig.doc.state.tables.length, 0, 'and the wrong-shaped table never reached the document');
+});
+
+test('the geometry is a VERIFIED precondition: an absent cell in either direction refuses before any write', async () => {
+  // The precondition reads the geometry it is about to fill rather than trusting the factory's argument
+  // order: the LAST cell the fill loop will touch must exist and carry the measured chain, and the cell
+  // immediately after it — `(rowCount, 0)`, the first index of a row past the end — must be ABSENT, both
+  // with the same null/undefined/typeof guards the fill loop uses. The absent-cell directions are modelled
+  // separately because the target's out-of-range behaviour is asymmetric: `null` in one direction and an
+  // internal throw in the other, and BOTH are closed refusals.
+  const data = [['а', 'б', 'в'], ['г', 'д', 'е']];
+  for (const [label, options] of [
+    ['the last cell is ABSENT (a table one column too narrow: the cell answers null)', { missingCell: 1 }],
+    ['the last cell is ABSENT (a table one row too short: the row answers null)', { missingRow: 1 }],
+    ['the last cell read THROWS (the asymmetry the guards must survive)', { missingCell: 1, cellThrows: true }],
+    ['the row past the matrix still answers a cell (a table one row too tall)', { extraRow: 1 }]
+  ]) {
+    const r = tablesRig({ existing: 0, namespace: { scope: { data } }, ...options });
+    assert.deepEqual(await r.bridge.insertTable({ data }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, label);
+    assert.equal(r.doc.state.pushes, 0, `${label}: nothing is pushed`);
+    assert.equal(r.doc.state.tables.length, 0, `${label}: no table reached the document`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: the slot is released`);
+  }
 });
 
 test('the table body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
@@ -5206,10 +5323,10 @@ test('the table outcome contract is ONE-TO-ONE over the APPENDED TABLE, never a 
   // nothing. The anchor is the baseline the body took BEFORE `Push`: `Push` appends at the END, so the
   // insert's OWN table is the one at index `tablesBefore`, and its cells are read back cell by cell.
   const data = [['Глава', 'Текст']];
-  const existing = tableDouble(1, 2, { initial: (row, column) => data[row][column] });
+  const existing = tableDouble(2, 1, { initial: (row, column) => data[row][column] });
   const silentDocument = tablesDocument({ tables: [existing], grow: 1 });
   const api = { GetDocument() { return silentDocument.document; },
-    CreateTable(rows, columns) { return tableDouble(rows, columns, { write: false }); } };
+    CreateTable(columns, rows) { return tableDouble(columns, rows, { write: false }); } };
   const plugin = { info: { editorType: 'word' },
     callCommand(body, close, recalculate, callback) { callback(evaluateTableBody(body, api, { data })); return false; } };
   const quiet = bridgeWith(plugin, { editorType: 'word', ascNamespace: { scope: undefined },
@@ -5234,7 +5351,7 @@ test('the table outcome contract is ONE-TO-ONE over the APPENDED TABLE, never a 
   assert.deepEqual(tableTexts(wrong.doc.state.tables[0]), [['Другое']], 'the double really wrote the other text');
   // THE TWO CASES THE ANCHOR MUST NOT BREAK. A matrix whose texts ALREADY occur in another table still
   // verifies, because the append carried them in the cells the matrix owns.
-  const duplicateText = tableDouble(1, 2, { initial: (row, column) => data[row][column] });
+  const duplicateText = tableDouble(2, 1, { initial: (row, column) => data[row][column] });
   const elsewhere = tablesRig({ existing: 0 });
   elsewhere.doc.state.tables.push(duplicateText);
   assert.deepEqual(await elsewhere.bridge.insertTable({ data }),
