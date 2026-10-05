@@ -23,8 +23,12 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // it writes the same way in place — ONE `paragraph.GetParaPr().SetJc(...)` plus ONE
 // `paragraph.GetRange(from,to).SetBold/SetItalic/SetUnderline/SetStrikeout(true)` per requested property, on
 // an EXISTING paragraph inside its own command body — and it is the SECOND leg that appends nothing, which is
-// why it is named here explicitly for the same reason the heading assignment is.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat']));
+// why it is named here explicitly for the same reason the heading assignment is. `hyperlinkinsert` is the
+// hyperlink insert: it writes ONE `ApiParagraph.AddElement` of an `Api.CreateHyperlink` into an EXISTING
+// paragraph, or — for its OTHER form — ONE `Api.CreateParagraph` plus the same `AddElement` plus ONE
+// `document.Push` that lands the created paragraph at the END of the document. It is therefore BOTH an
+// in-place write and an append, and it is named here explicitly for the range format's reason.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -1349,6 +1353,242 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return formatRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE HYPERLINK INSERT, and the FIFTH leg in this bridge that MUTATES a document through the `Api`
+      // builder. It is the same carriage as the four before it — a FULL inline static literal whose only model
+      // data arrives as the `scope` binding the vendor wrapper composes from `Asc.scope` (never composed into
+      // source, ADR 0002) — and it is the THIRD leg that APPENDS.
+      //
+      // TWO FORMS, and the scope says which one this ticket is, because THE ADDRESS AND THE FORM ARE ONE FACT.
+      // The NAMED form appends ONE `Api.CreateHyperlink(url, text)` into an EXISTING paragraph through that
+      // paragraph's own `AddElement`, which the vendored SDK implements as an APPEND at the end of the
+      // paragraph's own content: with NO position it calls `_i(paragraph, element)`, and `_i` is
+      // `paragraph.Add_ToContent(paragraph.Content.length - 1, element)`. The APPEND form creates ONE
+      // `Api.CreateParagraph()` — DETACHED, so `IsUseInDocument()` is still false — appends the same link into
+      // it, and then `document.Push`es it, which the SDK lands at `Document.Content.length`, i.e. at the END
+      // of the document. `ApiParagraph.AddHyperlink` is authored NOWHERE: its own body starts with
+      // `this.Paragraph.SelectAll(1)` and would REPLACE the paragraph's content instead of appending to it.
+      // NO mutation primitive's return value is consulted anywhere in this body: the two readbacks below are
+      // the whole ground truth, exactly as in the four legs before it.
+      //
+      // THE FRAGMENT PROOF, and it is the MEASURED rendering of the addressed paragraph rather than a
+      // document-wide search: the markdown converter's `HandleHyperlink` emits `"[" + <runs> + "](" +
+      // GetLinkedText() + ")"` and `HandleRun` emits every run character RAW (no markdown escaping), so once
+      // the link is appended to a paragraph whose own PRE-mutation text was `T`, the export holds the
+      // contiguous string `T + "[" + text + "]("`. That string is the needle (`opener`), and the proof is:
+      //   * it occurs EXACTLY ONCE in the POST-mutation export (`fragmentUnique`), and
+      //   * the url this ticket carried follows it IMMEDIATELY and is closed by `)` (`urlInFragment`) — the
+      //     url really is inside the located fragment.
+      // A needle the PRE-mutation export ALREADY holds is refused CLOSED with ZERO writes, BEFORE the phase
+      // ever turns: the fragment could not be attributed one-to-one, so the honest answer is the closed class
+      // rather than a write whose outcome nothing can tell apart. A needle that is absent, duplicated or
+      // url-less only AFTER the write can only be UNCERTAIN, because the write has already run.
+      //
+      // THE EXPORT IS BOUNDED BY `markdownMax` (composed by the bridge from `LIMITS.addHyperlinkMarkdownChars`)
+      // and it never leaves the editor: the body locates the fragment in it and returns THREE one-character
+      // flags. An export that does not exist or does not FIT is refused BEFORE the mutation (closed class,
+      // ZERO writes); an export that fails only AFTER it is a POST-insert refusal the decoder settles as
+      // uncertain with the slot HELD.
+      //
+      // THE ANSWER is ONE flat array of primitives (the native return validator keeps those and strips a plain
+      // object): `[POST_INSERT, paragraphsBefore, paragraphsAfter, textBeforeChars, textAfterChars,
+      // textAppended, fragmentUnique, urlInFragment]` — EIGHT slots — or a TWO-slot refusal
+      // `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and it turns at the FIRST call
+      // that can change the DOCUMENT, which is the ONE `Push` for the append form (an element appended to the
+      // created paragraph writes nothing: the paragraph is detached) and the ONE live `AddElement` for the
+      // named form. A throw out of a call that cannot have touched the document therefore keeps its known
+      // refusal instead of wedging the write slot.
+      hyperlink(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
+          // bodies state: the alias analysis is NAME-based and scope-insensitive over the whole bundle, so an
+          // array literal built from identifier names could make the receiver of every later call on it a
+          // computed value.
+          function linkRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            // The scope the vendor wrapper injected: `{ url, text, paragraph, append, markdownMax }`, already
+            // validated by the bridge. Anything else — a missing wrapper, an empty url or label, a form that
+            // does not agree with its address, a missing export bound — is this body's own closed refusal
+            // rather than a document written on the strength of `undefined`.
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var measured = measureRequest(request);
+            if (measured === null) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            var address = measured[0];
+            var append = measured[1];
+            var url = measured[2];
+            var text = measured[3];
+            var markdownMax = measured[4];
+            // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check
+            // reaches for NO global at all, so the stringified body depends on nothing but the two bindings
+            // the vendor wrapper creates.
+            function isCount(value) {
+              return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+            }
+            // `list[index]` is a member read with a NON-CONSTANT key, which this module's NAME-based alias
+            // analysis treats as a computed value; a CALL's result is not tainted by it, so a paragraph is
+            // taken through this helper and the measured member calls below stay clean.
+            function paragraphAt(list, position) {
+              return position >= 0 && position < list.length ? list[position] : null;
+            }
+            function textAt(item) {
+              if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
+              try { return item.GetText(); } catch (error) { return null; }
+            }
+            // THE MEASURED FRAGMENT READBACK: the document's own markdown export, read through
+            // `doc.ToMarkdown()`, which the Lead measured to carry the link's own TEXT and URL. A missing
+            // primitive, a non-string answer and a throw are all the ABSENCE of a measurement (`null`), which
+            // the caller settles as a closed refusal BEFORE the mutation or as the uncertain class after it.
+            // THE EXPORT IS NOT ENTITY-ESCAPED — unlike `ToHtml()`, which IS — and that is the measured form
+            // the needle is built in. The export NEVER leaves the editor: only the three flags derived from it
+            // cross.
+            function exportMarkdown(doc) {
+              try {
+                if (doc === null || doc === undefined || typeof doc.ToMarkdown !== 'function') return null;
+                var markup = doc.ToMarkdown();
+                return typeof markup === 'string' ? markup : null;
+              } catch (error) { return null; }
+            }
+            // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The address is re-checked HERE and not
+            // only in the bridge method, because the scope is the ONE thing that crosses: a form that is not a
+            // boolean, an address that does not agree with that form, an empty url or label and a missing
+            // export bound are this body's own closed argument refusal, never a link written to a coerced
+            // address. The return is an ARRAY so the caller binds each measured value separately, which keeps
+            // every later member call on a call's own result rather than on an indexed read.
+            function measureRequest(given) {
+              if (given === null || given === undefined || typeof given !== 'object') return null;
+              var position = given.paragraph;
+              var appends = given.append;
+              var linkUrl = given.url;
+              var displayed = given.text;
+              var bound = given.markdownMax;
+              if (appends !== true && appends !== false) return null;
+              // THE ADDRESS AND THE FORM ARE ONE FACT: the append form names NO index at all, and the named
+              // form must name a whole non-negative one.
+              if (appends === true) {
+                if (position !== null) return null;
+              } else if (!isCount(position)) return null;
+              if (typeof linkUrl !== 'string' || linkUrl === '') return null;
+              if (typeof displayed !== 'string' || displayed === '') return null;
+              if (!isCount(bound) || bound < 1) return null;
+              return [position, appends, linkUrl, displayed, bound];
+            }
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            // Every primitive this body authors is a FUNCTION CHECK before any call, exactly like the four
+            // mutation bodies before it: an editor that does not expose one of them answers this body's own
+            // refusal rather than a link placed through a primitive that is not the measured one.
+            if (typeof document.GetAllParagraphs !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.ToMarkdown !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.CreateHyperlink !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            if (append === true) {
+              if (typeof Api.CreateParagraph !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof document.Push !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            // THE PRE-DISPATCH BASELINE: the document's own paragraph count and — for the NAMED form — the
+            // addressed paragraph's own text, read BEFORE anything is mutated. The index is checked against
+            // the SAME snapshot the text is read from, so a baseline that cannot be read and an index outside
+            // THIS document are closed refusals with ZERO writes. The APPEND form reads no address at all:
+            // the paragraph it will act on does not exist yet, and its own text is EMPTY by construction.
+            var before = document.GetAllParagraphs();
+            if (before === null || before === undefined || typeof before.length !== 'number') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            var countBefore = before.length;
+            if (!isCount(countBefore)) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            var textBefore = '';
+            var existing = null;
+            if (append === false) {
+              // AN INDEX OUTSIDE THE DOCUMENT is the closed ARGUMENT class, not the capability class: the
+              // caller named a position that does not exist.
+              if (!(address < countBefore)) return linkRefusal('TOOL_ERROR');
+              existing = paragraphAt(before, address);
+              if (existing === null || existing === undefined) return linkRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof existing.AddElement !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+              var readBefore = textAt(existing);
+              if (typeof readBefore !== 'string') return linkRefusal('CAPABILITY_UNAVAILABLE');
+              textBefore = readBefore;
+            }
+            // THE FRAGMENT NEEDLE: the addressed paragraph's own PRE-mutation text followed by the FIRST
+            // half of the measured markdown link rendering. The needle is built from the PRE read on BOTH
+            // sides of the mutation, so a post-read that moved cannot supply its own context.
+            var opener = textBefore + '[' + text + '](';
+            // THE EXPORT GATE, and it is the ONLY place the bound can be a KNOWN refusal. An export must
+            // EXIST and FIT before anything is written, because the fragment proof has no other evidence: a
+            // build without `ToMarkdown` answers the closed capability class and an export above `markdownMax`
+            // answers the closed export class — both with ZERO writes and the slot RELEASED. The bound is
+            // applied to the WHOLE export, never to a prefix: a prefix could hide the addressed fragment, so a
+            // too-large export makes this read unusable rather than partially trusted.
+            var markdownBefore = exportMarkdown(document);
+            if (markdownBefore === null) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(markdownBefore.length <= markdownMax)) return linkRefusal('BYTE_LIMIT');
+            // THE ONE-TO-ONE ADDRESS, decided BEFORE anything is written: a fragment the document ALREADY
+            // renders cannot be told apart from the one this call would add, so the call is refused CLOSED
+            // with ZERO writes rather than written and left unprovable.
+            if (markdownBefore.indexOf(opener) >= 0) return linkRefusal('TOOL_ERROR');
+            // THE MUTATION, and the exact boundary the two refusal classes are split on. The link object is
+            // created FIRST (it is detached and writes nothing), then the phase turns at — and immediately
+            // BEFORE — the first call that can change the DOCUMENT: the ONE `Push` of the append form, or the
+            // ONE `AddElement` of the named form.
+            var element = Api.CreateHyperlink(url, text);
+            if (element === null || element === undefined) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            if (append === true) {
+              var created = Api.CreateParagraph();
+              if (created === null || created === undefined || typeof created.AddElement !== 'function') return linkRefusal('CAPABILITY_UNAVAILABLE');
+              // THE DETACHED HALF: this paragraph belongs to no document yet, so an element appended to it
+              // writes NOTHING and the ONE append is the `Push` below.
+              created.AddElement(element);
+              phase = 'POST_INSERT';
+              document.Push(created);
+            } else {
+              phase = 'POST_INSERT';
+              existing.AddElement(element);
+            }
+            // THE POST READ, and NOTHING is taken from the pre-mutation snapshot: a FRESH `GetAllParagraphs()`
+            // answers fresh wrappers, so the readback cannot be a stale one. The addressed paragraph is re-taken
+            // at the SAME index — which for the APPEND form is the baseline's own `countBefore`, the position
+            // the measured `Push` lands the created paragraph at.
+            var after = document.GetAllParagraphs();
+            if (after === null || after === undefined || typeof after.length !== 'number') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            var countAfter = after.length;
+            if (!isCount(countAfter)) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            var reached = paragraphAt(after, append === true ? countBefore : address);
+            var textAfter = textAt(reached);
+            if (typeof textAfter !== 'string') return linkRefusal('CAPABILITY_UNAVAILABLE');
+            // THE PRIMARY LEG: the addressed paragraph's own text, EXACTLY. The NAMED form requires the old
+            // text plus the label; the APPEND form requires the label alone, because the created paragraph
+            // started empty (its own pre text is published as 0 characters and re-checked by the bridge).
+            var expected = append === true ? text : textBefore + text;
+            var textAppended = textAfter === expected ? 1 : 0;
+            // THE SECONDARY LEG, and it can only REFUTE: the fragment opener must occur EXACTLY ONCE in the
+            // POST-mutation export, and the url this ticket carried must follow it IMMEDIATELY, closed by `)`.
+            // The needle's uniqueness is what keeps the tolerance honest — the occurrence being located is
+            // around THAT fragment and never around a different one.
+            var markdownAfter = exportMarkdown(document);
+            if (markdownAfter === null) return linkRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(markdownAfter.length <= markdownMax)) return linkRefusal('BYTE_LIMIT');
+            var at = markdownAfter.indexOf(opener);
+            var unique = at >= 0 && markdownAfter.indexOf(opener, at + 1) < 0 ? 1 : 0;
+            var urlInside = unique === 1 && markdownAfter.indexOf(url + ')', at + opener.length) === at + opener.length ? 1 : 0;
+            // The phase slot, the two counts, the two text lengths and the three flags are APPENDED rather
+            // than spelled as one array literal, for the authored-code-audit reason the block body states.
+            var answer = [];
+            answer.push(phase);
+            answer.push(countBefore);
+            answer.push(countAfter);
+            answer.push(textBefore.length);
+            answer.push(textAfter.length);
+            answer.push(textAppended);
+            answer.push(unique);
+            answer.push(urlInside);
+            return answer;
+          } catch (error) { return linkRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -1631,7 +1871,12 @@ function preInsertRefusal(error, kind) {
   // for an export above `LIMITS.formatRangeHtmlChars` — a refusal decided before anything was written. For the
   // other three write legs `BYTE_LIMIT` is what `assertByteLimit` throws on an OVERSIZED ANSWER, which is a
   // dispatched write whose outcome is unknown, so it must keep the uncertain class and the HELD slot.
-  return kind === 'rangeformat' && error.code === ERROR_CODES.BYTE_LIMIT;
+  // THE HYPERLINK INSERT'S OWN CLOSED EXPORT CLASS, allowed for exactly the same reason and no other: its
+  // decoder validates eight one-character-or-small scalars BEFORE its `assertByteLimit`, so a `BYTE_LIMIT`
+  // from THIS kind can only be the phase-gated `[PRE_INSERT, 'BYTE_LIMIT']` the body emits for a markdown
+  // export above `LIMITS.addHyperlinkMarkdownChars` — a refusal decided with ZERO writes.
+  if (kind === 'rangeformat' || kind === 'hyperlinkinsert') return error.code === ERROR_CODES.BYTE_LIMIT;
+  return false;
 }
 // The TABLE-INSERT answer, decoded with the same strictness as `decodeBlocks` and for the same reason: the
 // authored body encodes its measurements as ONE flat array of PRIMITIVES —
@@ -1880,6 +2125,28 @@ function rangeRun(value) {
   if (value === undefined) return false;
   return value === true || value === false ? value : null;
 }
+// THE TWO CLOSED HYPERLINK REQUEST SHAPES, written on THIS side as well as in `src/tools/word.js` for the
+// reason `rangeAlign` is written beside `formatAlign`: the two modules cannot import each other, so the
+// VOCABULARY lives in `LIMITS` and each side reads the SAME table. The bridge is a PUBLIC ENTRY POINT — a
+// descriptor held directly could bypass the tool's own precondition — so the rule is re-applied here rather
+// than taken on trust. See `hyperlinkUrl` in `src/tools/word.js` for the measurements each clause rests on:
+// the lower-case scheme list the editor's own `rx_allowedProtocols` test rewrites, the `%20` normalisation
+// `ApiHyperlink.SetLink` performs, and the control-character rule the markdown converter's own
+// `para_NewLine` rendering forces.
+function requestedUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.addHyperlinkUrlBytes) return null;
+  let scheme = null;
+  for (const prefix of LIMITS.addHyperlinkSchemes) if (value.startsWith(prefix)) scheme = prefix;
+  if (scheme === null || value.length <= scheme.length) return null;
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return null;
+  return value.includes('%20') ? null : value;
+}
+function requestedText(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.addHyperlinkTextBytes) return null;
+  return /[\u0000-\u001f\u007f]/.test(value) ? null : value;
+}
 function decodeRange(value) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -1986,6 +2253,99 @@ function exactRangeFormat(outcome, requested) {
   if (outcome.underlineVerified !== (requested.underline === true)) return false;
   if (outcome.strikeoutVerified !== (requested.strikeout === true)) return false;
   return true;
+}
+// THE HYPERLINK-INSERT ANSWER, decoded with the same strictness as the four decoders before it. The authored
+// body encodes its measurements as ONE flat array of PRIMITIVES —
+// `[POST_INSERT, paragraphsBefore, paragraphsAfter, textBeforeChars, textAfterChars, textAppended,
+// fragmentUnique, urlInFragment]` — because the native return validator keeps arrays of primitives and STRIPS
+// a plain object. `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every
+// member is read through its own data descriptor, never through a getter. Three rules are this leg's own:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes are
+//     split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a KNOWN
+//     refusal whose code the caller republishes (nothing was written), and `[POST_INSERT, name]` is the
+//     UNCERTAIN class (the document may already carry the link). A phase that is ABSENT — the one-slot
+//     `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real write — or a pre-insert
+//     phase over a measurement can never be a known refusal: it is decoded as `APPLY_UNCERTAIN`.
+//   * THE FOUR NUMBERS ARE NON-NEGATIVE SAFE INTEGERS — the document's own array lengths and the addressed
+//     paragraph's own text lengths — and the three flags are EXACTLY `0` or `1`: a length this bridge cannot
+//     trust is not a length, and an editor that answers anything else is not one this body can have read.
+//   * the answer needs NO byte ceiling beyond the one this decoder carries, and it is carried because it is
+//     cheap and exact: the phase is one of two literals, four numbers and three flags at most seventeen JSON
+//     characters each, so the widest legal answer measures about 90 bytes against `LIMITS.editorResultBytes`
+//     (65536) — and, unlike the block/table decoders' retired assertions, this one is genuinely reachable by
+//     no legal shape either. It is a CEILING on an answer this bridge accepts from the native, and a ceiling
+//     that is never applied is not a ceiling at all.
+const HYPERLINK_COUNTS = 2;
+const HYPERLINK_CHARS = 2;
+const HYPERLINK_FLAGS = 3;
+const HYPERLINK_PHASE_PRE = 'PRE_INSERT';
+const HYPERLINK_PHASE_POST = 'POST_INSERT';
+const HYPERLINK_NUMBERS = HYPERLINK_COUNTS + HYPERLINK_CHARS;
+const HYPERLINK_LENGTH = 1 + HYPERLINK_NUMBERS + HYPERLINK_FLAGS;
+function decodeHyperlink(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > HYPERLINK_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  // THE PHASE GATE, exactly as the four decoders before it apply it: the name the body emits only from its
+  // pre-insert half keeps its KNOWN class ONLY when the answer itself carries the pre-insert phase.
+  if (size === 2) {
+    if (members[0] !== HYPERLINK_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    // The closed refusals the body can make BEFORE the one mutating call: an address outside the document or
+    // a fragment the pre-mutation export ALREADY renders — the closed argument class — and an export above
+    // `LIMITS.addHyperlinkMarkdownChars`. All three carry the pre-insert phase, so they keep their known
+    // class and RELEASE the slot, because nothing was written.
+    if (members[1] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    if (members[1] === 'BYTE_LIMIT') throw new SafeError(ERROR_CODES.BYTE_LIMIT);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal.
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== HYPERLINK_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== HYPERLINK_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = members.slice(1, 1 + HYPERLINK_NUMBERS);
+  for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const flags = members.slice(1 + HYPERLINK_NUMBERS);
+  for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({ paragraphsBefore: numbers[0], paragraphsAfter: numbers[1],
+    textBeforeChars: numbers[2], textAfterChars: numbers[3],
+    textAppended: flags[0] === 1, fragmentUnique: flags[1] === 1, urlInFragment: flags[2] === 1 });
+}
+// THE EXACT OUTCOME RULE the hyperlink insert rests on, in ONE place so the decision and its comment cannot
+// drift apart. It is judged against the SCOPE this ticket carried (`requested`), never against a value read
+// back out of the answer, and the conditions are split by what they can do:
+//   1. THE PRIMARY LEG is the addressed paragraph's own text: the body published the text it READ back and
+//      whether that text is EXACTLY the text this request meant (`textAppended`). It is a boolean, and the
+//      arithmetic beside it is the independent check the bridge can do itself —
+//      `textAfterChars === textBeforeChars + requested.text.length` — so a flipped boolean cannot carry a
+//      length that contradicts the request, and a stated length cannot excuse a wrong text.
+//   2. THE APPEND FORM AND THE NAMED FORM HAVE DIFFERENT COUNTS, and the rule derives the expected delta from
+//      the REQUEST rather than from the answer: an append grows the document by exactly one paragraph and
+//      starts from an EMPTY one (`textBeforeChars === 0`), a named address moves no count at all.
+//   3. THE FRAGMENT LEG can only REFUTE: the opener was located EXACTLY ONCE in the post-mutation export
+//      (`fragmentUnique`) and the requested url really follows it (`urlInFragment`). A false one is a
+//      mutation this tool cannot stand behind, and the mutation has already run, so the ticket settles
+//      `APPLY_UNCERTAIN` with the slot HELD.
+function exactHyperlinkDelta(outcome, requested) {
+  if (outcome.textAppended !== true) return false;
+  if (outcome.fragmentUnique !== true) return false;
+  if (outcome.urlInFragment !== true) return false;
+  if (requested.append === true) {
+    if (outcome.textBeforeChars !== 0) return false;
+    if (outcome.paragraphsAfter - outcome.paragraphsBefore !== 1) return false;
+  } else if (outcome.paragraphsAfter !== outcome.paragraphsBefore) return false;
+  return outcome.textAfterChars === outcome.textBeforeChars + requested.text.length;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -2592,6 +2952,22 @@ export function createR7Bridge(plugin, {
             if (!exactRangeFormat(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE HYPERLINK INSERT. Its answer is the authored flat array of primitives, decoded with NO
+          // caller-supplied collection to pin against — this leg addresses exactly ONE paragraph and ONE
+          // fragment — so the answer's length is fixed by `decodeHyperlink` and the phase gate is the whole of
+          // the length rule. The outcome rule then decides the ticket HERE, while it still owns the slot, and
+          // it is judged against the SCOPE (`params`) this ticket carried: an addressed paragraph whose own
+          // text is not exactly what the request meant, an append whose count did not grow by exactly one or
+          // whose paragraph did not start empty, a fragment that was not located exactly once, a url that is
+          // not inside it, and a text length that contradicts the request are all the UNCERTAIN class with the
+          // slot HELD, never a known error about a document this call may already have linked. A decode that
+          // THROWS is classified by the catch below (a `[PRE_INSERT, name]` answer keeps its known code;
+          // everything else is uncertain).
+          else if (kind === 'hyperlinkinsert') {
+            const outcome = decodeHyperlink(value);
+            if (!exactHyperlinkDelta(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -2616,7 +2992,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -2854,6 +3230,32 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.format(callback); }
           finally { clearScope(previousRange); }
+        } else if (kind === 'hyperlinkinsert') {
+          // THE HYPERLINK INSERT: ONE command, and the SAME parameter channel the other read and write legs
+          // use — the validated `{ url, text, paragraph, append, markdownMax }` scope written into the page's
+          // `Asc.scope`, never composed into source (ADR 0002). It needs the entry point that OWNS that wrapper
+          // (`callCommand`); a build whose command channel is the bare `executeCommand` transport has no
+          // sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases the slot
+          // because nothing reached the editor.
+          // It carries NO document-identity probe, for the heading assignment's reason: this leg addresses a
+          // POSITION and a LABEL, not an owned TARGET, so there is no handle whose identity a probe could
+          // establish. What it does instead is the subject of the body's own comment: the addressed paragraph's
+          // OWN TEXT is read before the ONE `AddElement` (or before the ONE `Push`) and again after it, the
+          // document's own paragraph-count delta is derived from the two pushed counts, and the URL is proven
+          // inside the MARKDOWN FRAGMENT the addressed paragraph's own pre-mutation text locates — because the
+          // public `ApiRange`/`ApiTextPr` surface has no hyperlink getter at all, and the markdown export is the
+          // ONE readback the Lead measured to carry a link's text AND its URL.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a
+          // synchronous throw out of the transport must never release a slot whose work may already be queued,
+          // and the body's own pre-insert refusals keep their known class through the callback (they arrive as
+          // a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousHyperlink;
+          try { previousHyperlink = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.hyperlink(callback); }
+          finally { clearScope(previousHyperlink); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -3390,6 +3792,66 @@ export function createR7Bridge(plugin, {
           bold, italic, underline, strikeout,
           boldVerified: outcome.boldVerified, italicVerified: outcome.italicVerified,
           underlineVerified: outcome.underlineVerified, strikeoutVerified: outcome.strikeoutVerified });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // THE HYPERLINK INSERT behind `add_hyperlink` — the FIFTH MUTATION of Sprint 3, the THIRD write leg that
+    // APPENDS, and the FIRST one that takes a URL from the model. It has TWO FORMS and the request names which
+    // one it is: the NAMED form appends ONE `Api.CreateHyperlink(url, text)` into an EXISTING paragraph through
+    // that paragraph's own `AddElement`, while the APPEND form creates a DETACHED `Api.CreateParagraph()`,
+    // places the same link in it, and `Push`es it at the END of the document. The body's own comment carries
+    // the mechanism (a pre-dispatch baseline of the document's paragraph count and the addressed paragraph's
+    // own text, the fragment needle and the export gate, then the ONE mutation, then the post reads and the
+    // fragment proof) and why no mutation primitive's return value is the signal; what matters HERE is the
+    // shape: ONE command on the ONE entry point that owns the parameter wrapper, the validated
+    // `{ url, text, paragraph, append, markdownMax }` scope carried as DATA through `Asc.scope`, and ONE strict
+    // decoder that turns the authored flat array — an explicit phase slot, two paragraph counts, the addressed
+    // paragraph's own pre and post text lengths, and three proof flags — into the envelope below. The OUTCOME
+    // rule is then decided inside the ticket, before the slot is released, and the ADDRESSED TEXT is PRIMARY:
+    // a text that is not exactly what the request meant, a count delta that is not the request's own, a text
+    // length that contradicts it, a fragment that was not located exactly once, a url that is not inside it, an
+    // answer that cannot be interpreted and the body's own POST-insert uncertainty are all `APPLY_UNCERTAIN`
+    // with the slot HELD and no retry, while the body's PRE-insert refusals (an unusable baseline, an index
+    // outside the document, a fragment the export ALREADY renders, a missing/throwing export and an export
+    // above `LIMITS.addHyperlinkMarkdownChars`) settle their closed KNOWN class with the slot released, because
+    // nothing was written — and they do so ONLY when the answer carries their phase.
+    // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather than
+    // taken on trust: the bridge is a public entry point, and a url, a label or a form this module never
+    // measured would let a caller write a link the tool's own schema would have refused. The bounds, the scheme
+    // vocabulary and the control-character rule are the SAME ones the descriptor advertises (`LIMITS`), and THE
+    // ADDRESS AND THE FORM ARE ONE FACT: the append form must name NO index, and the named form must name a
+    // whole non-negative one inside the advertised bound.
+    async addHyperlink(raw) {
+      const url = requestedUrl(raw?.url), text = requestedText(raw?.text);
+      const append = raw?.append, address = raw?.paragraph, signal = raw?.signal;
+      if (url === null || text === null) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (append !== true && append !== false) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (append === true) {
+        if (address !== null && address !== undefined) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      } else if (!Number.isSafeInteger(address) || address < 0 || address > LIMITS.addHyperlinkIndexMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // THE SCOPE, and `markdownMax` is composed HERE from the named limit rather than read from the caller:
+        // a descriptor held directly, or a caller that guessed the key, cannot widen the export bound, and the
+        // number the body enforces is the number this module publishes. `paragraph` is `null` for the append
+        // form, which is the form's OWN address rather than an invented index.
+        const outcome = await start('hyperlinkinsert', signal, {},
+          Object.freeze({ url, text, paragraph: append === true ? null : address, append,
+            markdownMax: LIMITS.addHyperlinkMarkdownChars }));
+        // THE FORM IS ECHOED, not dropped, exactly as `styleName` and the four run switches are: the tool
+        // derives it from the closed request and carries it to the body, so the tool can require the answer to
+        // name the SAME form it asked for — an `ok` envelope produced for a different request is never
+        // republished as this one's proof. The three flags beside it are the body's own measurement.
+        return Object.freeze({ ok: true, paragraphsBefore: outcome.paragraphsBefore,
+          paragraphsAfter: outcome.paragraphsAfter, textBeforeChars: outcome.textBeforeChars,
+          textAfterChars: outcome.textAfterChars, textAppended: outcome.textAppended,
+          fragmentUnique: outcome.fragmentUnique, urlInFragment: outcome.urlInFragment });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

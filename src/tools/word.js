@@ -221,6 +221,17 @@ function setHeadingEntryBytes(data) {
 function formatRangeEntryBytes(data) {
   return toolResultEntryBytes('format_range', data);
 }
+// `add_hyperlink`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the two form fields, the two paragraph counts, the addressed paragraph's own pre and post
+// text LENGTHS, and the three proof flags, plus the dispatched scope's own byte size. The measurement is NOT
+// a formality here either, even though every field is a bounded scalar, `null`, or a boolean
+// (`LIMITS.addHyperlinkUrlBytes` states the arithmetic): it is the module's single ENFORCED bound, and a
+// field added to this result later must not be able to widen the entry unmeasured. THE URL AND THE LINK
+// TEXT ARE NOT PART OF IT: they are the caller's own words, and the markdown export they are proven against
+// never leaves the editor — only three one-character flags derived from it cross.
+function addHyperlinkEntryBytes(data) {
+  return toolResultEntryBytes('add_hyperlink', data);
+}
 // THE CLOSED ALIGNMENT VOCABULARY, in ONE place so the value the schema advertises, the value the body
 // applies, the value the readback is compared against and the value the result publishes can never be four
 // different strings. It is MEASURED rather than invented: the vendored 2026.1.2 editor SDK's
@@ -314,6 +325,53 @@ function measuredStatistics(value) {
 function measuredCounts(value) {
   return value !== null && typeof value === 'object' && measuredCount(value.paragraphs) &&
     measuredCount(value.headings) && measuredCount(value.tables) && measuredCount(value.sections);
+}
+// THE CLOSED URL SHAPE, in ONE place so the schema advertises, the precondition refuses and the handler
+// dispatches the SAME rule. The bridge re-applies the same rule at its own public entry point (it is written
+// beside its own copy for the reason `formatAlign`/`rangeAlign` are two functions: the two modules cannot
+// import each other, so the VOCABULARY lives in `LIMITS` and each side reads it).
+//   * an ABSOLUTE url, spelled with a SCHEME the closed `LIMITS.addHyperlinkSchemes` list names — the list
+//     is LOWER CASE exactly because `AscCommon.rx_allowedProtocols` is applied to the string AS GIVEN and a
+//     scheme it does not match is REWRITTEN (`url = type === 2 ? "mailto:" : "http://" + url`);
+//   * the url must NAME something after the scheme (`https://` alone is not an address this leg can prove);
+//   * NO whitespace and NO control character, because the fragment proof compares the url VERBATIM against
+//     the markdown export and a character the export cannot hold verbatim could only be written and left
+//     unprovable;
+//   * NO `%20`, and that is a MEASUREMENT rather than a taste: the vendored `ApiHyperlink.SetLink` ends with
+//     `url = url && url.replace(new RegExp("%20","g"), " ")`, so the editor stores a LITERAL SPACE where the
+//     caller wrote `%20` and the export can never carry the requested string. A `%20` url is refused HERE,
+//     closed, with ZERO writes, instead of being written and wedging the write slot on an outcome nothing
+//     can prove. Every OTHER percent escape survives unchanged and is served.
+function hyperlinkUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.addHyperlinkUrlBytes) return null;
+  let scheme = null;
+  for (const prefix of LIMITS.addHyperlinkSchemes) if (value.startsWith(prefix)) scheme = prefix;
+  if (scheme === null || value.length <= scheme.length) return null;
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return null;
+  return value.includes('%20') ? null : value;
+}
+// THE CLOSED VISIBLE-TEXT SHAPE: a NON-EMPTY string inside its own byte bound and with NO control character.
+// The control-character rule is what keeps the fragment needle honest rather than a convenience: a line
+// break inside a paragraph is emitted by the markdown converter as ` \\` plus a newline (`HandleRun`'s
+// `para_NewLine` case) instead of the character `GetText()` answers, so a label carrying one could only be
+// written and left unprovable — exactly like a `%20` url.
+function hyperlinkText(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.addHyperlinkTextBytes) return null;
+  return /[\u0000-\u001f\u007f]/.test(value) ? null : value;
+}
+// THE TWO FORMS, in ONE place, and the caller is never left to guess which one ran. An ABSENT `paragraph` is
+// the APPEND form: a new paragraph is created, the link is placed in it, and it is pushed at the END of the
+// document. A PRESENT one must be a whole non-negative number inside the advertised bound, and the link is
+// appended into THAT existing paragraph. The result carries BOTH facts — `appended` and the `index` (`null`
+// when there is no address at all) — so the schema, the precondition, the dispatched scope, the published
+// result and the proof cannot be five different opinions about the form of one call. Anything that is
+// neither an absent key nor an in-bound index is the closed argument class with ZERO writes.
+function hyperlinkAddress(value) {
+  if (value === undefined) return Object.freeze({ appended: true, index: null });
+  return measuredCount(value) && value <= LIMITS.addHyperlinkIndexMax
+    ? Object.freeze({ appended: false, index: value }) : null;
 }
 
 export function createWordTools(bridge) {
@@ -1926,6 +1984,187 @@ export function createWordTools(bridge) {
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the three
         // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
         const entry = formatRangeEntryBytes(published);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(published);
+      }
+    }),
+    // --- THE FIFTH MUTATION OF SPRINT 3: `add_hyperlink`, the THIRD leg that APPENDS, and the FIRST one
+    // that takes a URL from the model ---
+    //
+    // THE SDK INSPECTION THIS LEG RESTS ON, read out of the vendored 2026.1.2 bundle
+    // (`.local/stage-b-runtime/vendor-word-sdk-all.js`) rather than assumed:
+    //   * `p.prototype.CreateHyperlink = function (url, text, tip) { var V = new ParaHyperlink, ht = new N(V);
+    //     return ht.SetLink(url), ht.SetDisplayedText(text), ht.SetScreenTipText(tip), ht }` — the ONE
+    //     factory, with `N` the `ApiHyperlink` builder (`GetClassType()` answers `"hyperlink"`).
+    //   * `function Fi(el){ ... || el instanceof N || ... }` — the guard `ApiParagraph.AddElement` applies,
+    //     and the hyperlink class IS in it.
+    //   * `function _i(content, el){ content.Add_ToContent(content.Content.length - 1, el) }` and
+    //     `G.prototype.AddElement = function (el, pos) { if (!Fi(el) || pos < 0 || pos > this.Paragraph.Content.length - 1)
+    //     return false; ... return pos !== undefined ? this.Paragraph.Add_ToContent(pos, impl) :
+    //     _i(this.Paragraph, impl), true }` — with NO position the element is APPENDED at the end of the
+    //     paragraph's own content. That is the route, and NO primitive's boolean is ever the signal; the
+    //     addressed paragraph's own text and the export are.
+    //   * `u.prototype.Push = function (el) { ... return impl.IsUseInDocument() ? false :
+    //     (this.Document.Internal_Content_Add(this.Document.Content.length, impl), true) ... }` — the append
+    //     form's one document write lands at the END, and `Api.CreateParagraph()`'s
+    //     `new G(new Paragraph(ci(), qt()))` is DETACHED until it. `ApiParagraph.AddHyperlink` is authored
+    //     NOWHERE: its own body starts with `this.Paragraph.SelectAll(1)` and would replace the paragraph.
+    //   * `L.prototype.ToMarkdown(...)` builds the markdown converter, whose `HandleHyperlink` emits
+    //     `"[" + <runs> + "](" + GetLinkedText() + ")"` and whose `HandleRun` emits every run character RAW
+    //     via `String.fromCharCode` with NO markdown escaping — so the export really holds
+    //     `paragraphPreText + "[" + text + "](" + url + ")"` contiguously for the addressed paragraph.
+    //
+    // THE ADDRESS, AND WHY THERE ARE TWO FORMS. `paragraph` is OPTIONAL and the two shapes are two different
+    // mutations: NAMED appends the link INTO an existing paragraph through that paragraph's own
+    // `AddElement` (the paragraph's text grows by exactly the link text and NOTHING else in the document
+    // changes), while OMITTED creates a NEW paragraph, places the link in it and pushes it at the END (the
+    // document's paragraph count grows by exactly one). The caller is never left to guess: the request the
+    // handler dispatches names the form, and the result republishes it as `appended`/`paragraph`.
+    //
+    // THE PROOF IS ONE-TO-ONE AND NEVER A DOCUMENT-WIDE SEARCH, and it has THREE legs:
+    //   1. THE ADDRESSED PARAGRAPH'S OWN TEXT, read before and after through `GetAllParagraphs()`: for the
+    //      NAMED form the AFTER text must be EXACTLY the BEFORE text plus the link text; for the APPEND form
+    //      the addressed paragraph (the one at the baseline's own `countBefore`, which is where `Push` lands)
+    //      must carry EXACTLY the link text — the created paragraph started EMPTY, and that emptiness is
+    //      published as `textBeforeChars` and re-checked by the module and by the bridge.
+    //   2. THE DOCUMENT'S OWN PARAGRAPH COUNT, which is unchanged for the NAMED form and grows by exactly one
+    //      for the APPEND form. It is a SECONDARY signal: a count that moved can only REFUTE, never establish.
+    //   3. THE MARKDOWN FRAGMENT, and this is the leg that makes the URL itself provable. The addressed
+    //      paragraph's own PRE-mutation text IS the needle's context, and the MEASURED rendering of the
+    //      appended link is `[` + link text + `](` + url + `)` — so the fragment's opener is
+    //      `preText + "[" + text + "]("`. The proof requires that opener to occur EXACTLY ONCE in the
+    //      POST-mutation export AND the named url to follow it immediately, closed by `)`. A needle that
+    //      occurs twice leaves the fragment's target ambiguous, and the URL inside it cannot be attributed
+    //      to THIS paragraph; the documented rule is therefore to REFUSE rather than to guess.
+    //
+    // THE DUPLICATE DECISION, STATED EXACTLY. A needle the PRE-mutation export ALREADY holds is the closed
+    // argument class with ZERO writes, decided in the authored body BEFORE the phase turns: the fragment
+    // could not be attributed one-to-one, so the honest answer is a known refusal rather than a write whose
+    // outcome nothing can tell apart. A needle that is ABSENT, DUPLICATED or URL-LESS only AFTER the write —
+    // a concurrent writer, an editor that stored another URL — cannot be refused closed, because the write
+    // has already run: it is `APPLY_UNCERTAIN` with the write slot HELD and NO retry. THE RESIDUALS ARE
+    // ACCEPTED AND NAMED rather than silently relied on: a paragraph whose text ends in a LINE BREAK or in a
+    // bold/italic run boundary renders its inline markers between the text and the link, so the contiguous
+    // needle is not found — a FALSE UNCERTAIN (the slot stays held), never a false `ok`; and the concurrent
+    // window is the same one the other mutations acknowledge.
+    //
+    // THE LIMITATIONS AT THE POINT A CALLER MEETS THEM: only an absolute `http://`/`https://` url is served
+    // (`mailto:`, a relative path and a scheme the editor would rewrite are the closed argument class with
+    // ZERO writes); a url holding `%20` is refused for the measured normalisation stated beside
+    // `hyperlinkUrl`; the link text may not hold a control character; the export the fragment is located in
+    // is bounded by `LIMITS.addHyperlinkMarkdownChars` and refused CLOSED above it (never truncated to a
+    // prefix, because a prefix could hide the fragment).
+    //
+    // THE FAILURE MAP, each class closed: a wrong editor is `CAPABILITY_UNAVAILABLE`; a bad url, an empty or
+    // over-bound text, an uninterpretable paragraph address and a `%20` url are the closed argument class
+    // with ZERO writes (precondition AND handler, because a descriptor is also executable when it is held
+    // directly); a missing bridge entry point is `CAPABILITY_UNAVAILABLE`; an unusable pre-dispatch baseline,
+    // a paragraph index outside the DOCUMENT, a missing/throwing/over-bound export and an ALREADY-RENDERED
+    // fragment are `CAPABILITY_UNAVAILABLE` / `TOOL_ERROR` / `BYTE_LIMIT` with ZERO writes, all decided in
+    // the body BEFORE the first mutating call; a bridge refusal keeps the closed class it reported
+    // (`refusalCode`); an envelope this handler cannot interpret is the module's unknown convention,
+    // `known()`; a returned or thrown `APPLY_UNCERTAIN` and any outcome that is not the exact proof above —
+    // including a count that moved the wrong way, a text length that does not match the request and any of
+    // the three flags being false — are `TOOL_UNCERTAIN` with the slot HELD and NO retry; and an
+    // over-ceiling result entry is `BYTE_LIMIT`.
+    defineTool({
+      name: 'add_hyperlink', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['url', 'text'],
+        properties: {
+          url: { type: 'string', minBytes: 1, maxBytes: LIMITS.addHyperlinkUrlBytes },
+          text: { type: 'string', minBytes: 1, maxBytes: LIMITS.addHyperlinkTextBytes },
+          // THE OPTIONAL ADDRESS, and its presence or absence IS the form switch, which is why the schema
+          // expresses no default: a default would be a form the caller never asked for. An index past THIS
+          // document's own paragraph list is the closed argument class with ZERO writes, decided by the
+          // body against the document's own array rather than guessed from this bound.
+          paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.addHyperlinkIndexMax }
+        } },
+      precondition: (args, ctx) => {
+        if (ctx?.editor !== 'word') return { code: ERROR_CODES.CAPABILITY_UNAVAILABLE, message: REFUSAL };
+        // Every closed argument rule is re-checked HERE and not only by the schema, because a descriptor is
+        // also executable when it is held directly and nothing this mutation cannot interpret may reach the
+        // bridge. The ORDER is part of the contract: the two payloads are judged before the address, so a
+        // call that is wrong in two ways receives the same class either way.
+        if (hyperlinkUrl(args?.url) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        if (hyperlinkText(args?.text) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        if (hyperlinkAddress(args?.paragraph) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        return null;
+      },
+      execute: async (args, ctx) => {
+        // The editor is re-checked HERE as well as in the precondition, because a descriptor is also
+        // executable when it is held directly: a Word mutation offered to a spreadsheet must never reach the
+        // bridge, and it is the same closed capability class the precondition returns.
+        if (ctx?.editor !== 'word') return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (missingBridgeMethod(bridge, 'addHyperlink')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The three closed arguments are resolved ONCE and carried to the body, so the url the editor stores,
+        // the label it displays, the address it acts on and the values this handler later judges the answer
+        // against cannot be different values. `hyperlinkAddress` answers the form AND the index, and the
+        // absent key is the APPEND form rather than an invented index 0.
+        const url = hyperlinkUrl(args?.url);
+        const text = hyperlinkText(args?.text);
+        const address = hyperlinkAddress(args?.paragraph);
+        if (url === null || text === null || address === null) return known();
+        const request = { url, text, append: address.appended, paragraph: address.index,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        // `bytes` is the size of the dispatched SCOPE — the url, the label, the form or the address, and the
+        // export bound the BRIDGE composes — and it is measured on exactly what is forwarded, never on the
+        // caller's raw object.
+        const bytes = utf8ByteLength(`${url}:${text}:${address.appended ? 'append' : address.index}:${LIMITS.addHyperlinkMarkdownChars}`);
+        let result;
+        try { result = await bridge.addHyperlink(request); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops the
+          // run. Every other bridge throw is a closed local failure.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing it)
+        // when the ticket has already been created, so the class is classified here before any ordinary
+        // refusal path can treat it as a known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own. The order of
+        // these checks is the CONTRACT and not a style choice: everything a real run of this bridge cannot
+        // produce is the module's unknown class (`known()`, the closed tool-error class), while the shapes it
+        // CAN produce and yet not stand behind are the runtime's own `TOOL_UNCERTAIN`.
+        if (!measuredCount(result.paragraphsBefore) || !measuredCount(result.paragraphsAfter)) return known();
+        if (!measuredCount(result.textBeforeChars) || !measuredCount(result.textAfterChars)) return known();
+        if (typeof result.textAppended !== 'boolean' || typeof result.fragmentUnique !== 'boolean') return known();
+        if (typeof result.urlInFragment !== 'boolean') return known();
+        // THE DELTA IS RE-DERIVED HERE from the REQUEST, exactly as the bridge's own outcome rule does, so an
+        // `ok` envelope whose own counts or lengths contradict this call is never republished as its proof.
+        //   1. THE APPEND FORM GROWS THE COUNT BY EXACTLY ONE and starts from an EMPTY paragraph; the NAMED
+        //      form moves no count at all, because it changes an existing paragraph in place.
+        //   2. THE TWO TEXT LENGTHS MUST BE THE REQUEST'S OWN ARITHMETIC: the addressed paragraph's text is
+        //      the text it had plus the LINK TEXT, exactly, in the code units the editor's own string uses.
+        // Both are `TOOL_UNCERTAIN` rather than unknown-envelope classes, because they are exactly the shapes
+        // a write that may already have applied leaves behind.
+        if (address.appended && result.textBeforeChars !== 0) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.paragraphsAfter - result.paragraphsBefore !== (address.appended ? 1 : 0)) {
+          return known(ERROR_CODES.TOOL_UNCERTAIN);
+        }
+        if (result.textAfterChars !== result.textBeforeChars + text.length) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE THREE PROOF FLAGS ARE ALL REQUIRED, and each one is the body's own measurement: the addressed
+        // paragraph really carries the exact expected text; the fragment opener really occurs exactly once in
+        // the export; and the named url really follows it. A false one is a mutation this tool cannot claim —
+        // and the mutation has already run, so the run stops fail-safe instead of reporting a known failure
+        // about a document that may already carry the link.
+        if (result.textAppended !== true || result.fragmentUnique !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.urlInFragment !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE PUBLISHED SHAPE says which form ran and where, and NOTHING of the caller's own words: the url
+        // and the label are not republished, because the model already knows them and the entry stays a
+        // proof. `paragraph` is `null` for the append form rather than an invented index.
+        const published = Object.freeze({ appended: address.appended, paragraph: address.index,
+          paragraphsBefore: result.paragraphsBefore, paragraphsAfter: result.paragraphsAfter,
+          textBeforeChars: result.textBeforeChars, textAfterChars: result.textAfterChars,
+          textAppended: result.textAppended, fragmentUnique: result.fragmentUnique,
+          urlInFragment: result.urlInFragment, bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the four
+        // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
+        const entry = addHyperlinkEntryBytes(published);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(published);
       }

@@ -64,7 +64,9 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+  assert.equal(tools.find(tool => tool.name === 'add_hyperlink').policy, 'auto');
+  assert.equal(tools.find(tool => tool.name === 'add_hyperlink').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').kind, 'mutate');
@@ -102,7 +104,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading'],
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -320,7 +322,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -7939,4 +7941,803 @@ test('bridge formatRange refuses a run switch that is not a boolean, with nothin
   }
   assert.equal(r.commands.length, 0, 'none of the refused requests reached the editor');
   assert.equal(r.bridge.getState().busy, false, 'and none of them holds a slot');
+});
+
+// --- Sprint 3, tool 9: `add_hyperlink` — the THIRD append leg, and the ONE whose proof is a markdown
+// fragment the editor itself renders -------------------------------------------------------------------
+//
+// THE SDK INSPECTION THIS LEG RESTS ON, read out of the vendored 2026.1.2 bundle
+// (`.local/stage-b-runtime/vendor-word-sdk-all.js`) rather than assumed. The builder façade and the
+// markdown converter are both in it:
+//   * `p.prototype.CreateHyperlink = function (url, text, tip) { var V = new ParaHyperlink, ht = new N(V);
+//     return ht.SetLink(url), ht.SetDisplayedText(text), ht.SetScreenTipText(tip), ht }` — the ONE factory,
+//     with `N` the `ApiHyperlink` builder (`GetClassType()` answers `"hyperlink"`, `GetLinkedText()` the
+//     stored URL, `GetDisplayedText()` the inner text).
+//   * `function Fi(el){ return el instanceof F || el instanceof Dt || el instanceof N || el instanceof W }`
+//     — the guard `ApiParagraph.AddElement` applies, and the hyperlink class IS in it.
+//   * `function _i(content, el){ content.Add_ToContent(content.Content.length - 1, el) }` and
+//     `G.prototype.AddElement = function (el, pos) { if (!Fi(el) || pos < 0 ||
+//     pos > this.Paragraph.Content.length - 1) return false; ... return pos !== undefined ?
+//     this.Paragraph.Add_ToContent(pos, impl) : _i(this.Paragraph, impl), true }` — with NO position the
+//     element is APPENDED at the end of the paragraph's own content (the last slot is the paragraph-end
+//     marker). That is the route, and no primitive's BOOLEAN is ever the signal.
+//   * `u.prototype.Push = function (el) { if (el instanceof G || el instanceof R || el instanceof xt) {
+//     var impl = el.private_GetImpl(); return impl.IsUseInDocument() ? false :
+//     (this.Document.Internal_Content_Add(this.Document.Content.length, impl), true) } return false }` — the
+//     document append lands at `Content.length`, i.e. at the END, and `Api.CreateParagraph()`'s
+//     `new G(new Paragraph(ci(), qt()))` is DETACHED until that Push.
+//   * THE TRAP THIS ROUTE EXISTS TO MISS: `G.prototype.AddHyperlink = function (url, tip) { ...
+//     return this.Paragraph.SelectAll(1), ... }` — the paragraph-level helper SELECTS THE WHOLE PARAGRAPH
+//     before it links it, so it is authored nowhere in this bundle and the classifier pins that.
+//   * `L.prototype.ToMarkdown = function (htmlHeadings, base64img, demoteHeadings, renderHTMLTags) { var
+//     cfg = { convertType: "markdown", ... }; return new _(cfg).DoMarkdown() }`, and the converter renders a
+//     link as `_.prototype.HandleHyperlink = function (el, mode) { var out = ""; mode === "html" ?
+//     out += '<a href="' + el.GetLinkedText() + '">' : out += "["; for (...) out +=
+//     this.HandleChildElement(el.GetElement(i)); return mode === "html" ? out += "</a>" :
+//     out += "](" + el.GetLinkedText() + ")", out }` — so the export carries `[displayedText](url)`.
+//     `HandleRun` emits every run character RAW (`ui += String.fromCharCode(va.Value)`) with NO markdown
+//     escaping, and the block prefixes (`# `, `1. `, `> `) sit BEFORE the paragraph's own text, so the
+//     needle `paragraphPreText + "[" + text + "]("` really is the export's own rendering of the addressed
+//     paragraph. THE EXPORT IS BOUNDED and never crosses: only three one-character flags do.
+//   * `N.prototype.SetLink` REWRITES the URL when `AscCommon.rx_allowedProtocols` does not match it
+//     (`url = type === 0 ? null : (type === 2 ? "mailto:" : "http://") + url`) and then rewrites every
+//     `%20` to a literal SPACE. The proof compares the URL VERBATIM, so a URL the editor would rewrite is
+//     refused closed BEFORE any write rather than written and left unprovable.
+function addHyperlinkTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'add_hyperlink'); }
+// A bridge double whose `addHyperlink` records the ONE request and answers a supplied envelope. The
+// envelopes are built from the same fields the REAL bridge publishes, so a handler check that passes here
+// is a check the real decoder's shape satisfies.
+function linkBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, addHyperlink: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+const LINK_URL = 'https://example.org/r7';
+const LINK_TEXT = 'документация';
+// The envelope the REAL bridge publishes for a verified APPEND: the document grew by exactly one
+// paragraph, the created paragraph starts EMPTY, and the three proof flags are the body's own measurement.
+function linked(overrides = {}) {
+  return { ok: true, paragraphsBefore: 2, paragraphsAfter: 3, textBeforeChars: 0,
+    textAfterChars: LINK_TEXT.length, textAppended: true, fragmentUnique: true, urlInFragment: true, ...overrides };
+}
+// The same envelope for the NAMED form: the addressed paragraph's own text grows by exactly the link text
+// and the document's paragraph count does not move.
+const namedProof = (overrides = {}) => linked({ paragraphsAfter: 2, textBeforeChars: 12, textAfterChars: 24, ...overrides });
+// The dispatched SCOPE, composed by the bridge exactly as the assertions below expect it: the link crosses
+// as DATA and `markdownMax` is composed from the named limit, never supplied by the caller.
+const namedScope = (overrides = {}) => ({ url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false,
+  markdownMax: LIMITS.addHyperlinkMarkdownChars, ...overrides });
+const appendScope = (overrides = {}) => ({ url: LINK_URL, text: LINK_TEXT, paragraph: null, append: true,
+  markdownMax: LIMITS.addHyperlinkMarkdownChars, ...overrides });
+// The dispatched scope's own byte size, measured on exactly the values that cross.
+const linkBytes = (address, text = LINK_TEXT, url = LINK_URL) =>
+  utf8ByteLength(`${url}:${text}:${address}:${LIMITS.addHyperlinkMarkdownChars}`);
+// THE DOCUMENT DOUBLE, and every fault this leg must survive is a REAL state change on it, built on the
+// SDK's own measured semantics:
+//   * `GetAllParagraphs()` hands out FRESH wrapper objects on every call (the editor's own behaviour, and
+//     the reason this module never compares two lists by identity) while each wrapper delegates to the SAME
+//     underlying paragraph, so a pre-read wrapper and a post-read wrapper see the same document;
+//   * `ApiParagraph.AddElement` really appends the element's text to its paragraph, and the paragraph's own
+//     `GetText()` really includes it — `ParaHyperlink` extends `CParagraphContentWithParagraphLikeContent`,
+//     whose `Get_Text` iterates its inner runs, so the link's displayed text becomes part of the
+//     paragraph's text exactly as the contract requires;
+//   * `ApiDocument.Push` really appends the created paragraph at the END of the paragraph list, and a
+//     `Push` that appended nothing is modelled as a list that did not move — the ONLY evidence there is;
+//   * `ToMarkdown()` renders each paragraph's own markdown and separates paragraphs with a blank line,
+//     which is what the converter's `HandleParagraph` emits and what the fragment needle is located in.
+function linkDocument(options = {}) {
+  const texts = options.texts ?? ['первый абзац', 'второй абзац'];
+  const state = { created: 0, hyperlinks: 0, installed: 0, detached: 0, pushes: 0, insertContents: 0,
+    markdownReads: 0, documentWrites: 0 };
+  const doubles = texts.map(text => ({ text, links: [], installed: true }));
+  function paragraphText(double) {
+    let out = double.text;
+    for (const link of double.links) out += link.text;
+    return out;
+  }
+  function rendered(double) {
+    let out = double.text;
+    for (const link of double.links) out += `[${link.text}](${link.url})`;
+    return out;
+  }
+  function wrapperFor(double) {
+    return {
+      // The SDK's own unwrap, which `ApiDocument.Push` uses to reject an element already in the document.
+      private_GetImpl() { return double; },
+      GetText() {
+        // THE FAULT OF TWO READBACKS THAT DISAGREE: the paragraph's own text is NOT what the export
+        // renders, once the document has really been written. Both readbacks are the proof, so this can
+        // only ever cost a false UNCERTAIN — it is here to prove that the export leg cannot carry the
+        // outcome on its own.
+        if (options.textAfterFault !== undefined && state.documentWrites > 0) return options.textAfterFault;
+        return paragraphText(double);
+      },
+      AddElement(element) {
+        // THE APPEND ROUTE, modelled exactly: an element added to a DETACHED paragraph writes nothing to
+        // the document; an element added to a LIVE one is the ONE document mutation the named form has.
+        if (double.installed === true) { state.installed += 1; state.documentWrites += 1; }
+        else state.detached += 1;
+        if (options.appendNothing === true && double.installed !== true) return true;
+        double.links.push(Object.freeze({ text: element.text, url: element.url }));
+        return true;
+      }
+    };
+  }
+  const document = {
+    GetAllParagraphs() {
+      if (options.paragraphsThrow === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      return doubles.map(double => wrapperFor(double));
+    },
+    Push(element) {
+      state.pushes += 1;
+      const double = element && typeof element.private_GetImpl === 'function' ? element.private_GetImpl() : null;
+      // A PUSH THAT APPENDED NOTHING is modelled as a list that did not move, because the document's own
+      // list is the only evidence there is — the primitive's boolean is never the signal.
+      if (double === null || double.installed === true || options.pushAppends === false) return false;
+      double.installed = true;
+      doubles.push(double);
+      state.documentWrites += 1;
+      return true;
+    },
+    ToMarkdown() {
+      state.markdownReads += 1;
+      if (options.throwingMarkdown === 'always' ||
+        (options.throwingMarkdown === 'after' && state.markdownReads > 1)) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (state.markdownReads > 1 && options.markdownAfter !== undefined) return options.markdownAfter;
+      if (options.markdown !== undefined) return options.markdown;
+      return doubles.map(rendered).join('\n\n');
+    },
+    InsertContent() { state.insertContents += 1; }
+  };
+  if (options.toMarkdown === false) delete document.ToMarkdown;
+  return {
+    state,
+    doubles,
+    document,
+    createParagraph() {
+      state.created += 1;
+      return wrapperFor({ text: '', links: [], installed: false });
+    },
+    createHyperlink(url, text) {
+      state.hyperlinks += 1;
+      return Object.freeze({ url, text: options.displayedText === undefined ? text : options.displayedText });
+    }
+  };
+}
+// The IN-EDITOR rig, exactly the carriage `formatRig` reproduces: the vendor wrapper reads `Asc.scope`
+// SYNCHRONOUSLY and evaluates the body in a fresh, module-free scope whose only bindings are `Api` and
+// `scope`. `forge` replaces the answer the body really produced AFTER that body ran to completion — the one
+// real write included — which is the only way to model a hostile native answer for a dispatched write.
+function linkRig(options = {}) {
+  const commands = [];
+  const measured = linkDocument(options);
+  const api = { GetDocument: () => measured.document };
+  if (options.createParagraph !== false) api.CreateParagraph = () => measured.createParagraph();
+  if (options.createHyperlink !== false) api.CreateHyperlink = (url, text) => measured.createHyperlink(url, text);
+  const carrier = options.namespace ?? { scope: {} };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: options.command === false ? undefined : function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = carrier.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(options.forge === undefined ? answered : options.forge);
+      return false;
+    } };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  const bridge = bridgeWith(plugin, bridgeOptions);
+  return { bridge, plugin, commands, namespace: carrier, api, doc: measured };
+}
+
+test('add_hyperlink advertises the closed bounded schema, the two forms and the ONE URL vocabulary', () => {
+  const tool = addHyperlinkTool(linkBridge(linked()));
+  assert.equal(tool.name, 'add_hyperlink');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  // THE ADDRESS IS OPTIONAL AND THAT IS THE FORM SWITCH: an ABSENT `paragraph` is the APPEND form, and no
+  // schema keyword can say "one of the two shapes" — so the closed rule lives in the precondition and is
+  // re-decided by the handler and by the bridge entry point.
+  assert.deepEqual([...schema.required].sort(), ['text', 'url']);
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['paragraph', 'text', 'url']);
+  assert.equal(schema.properties.url.type, 'string');
+  assert.equal(schema.properties.url.minBytes, 1);
+  assert.equal(schema.properties.url.maxBytes, LIMITS.addHyperlinkUrlBytes);
+  assert.equal(schema.properties.text.type, 'string');
+  assert.equal(schema.properties.text.minBytes, 1);
+  assert.equal(schema.properties.text.maxBytes, LIMITS.addHyperlinkTextBytes);
+  assert.equal(schema.properties.paragraph.type, 'integer');
+  assert.equal(schema.properties.paragraph.minimum, 0);
+  assert.equal(schema.properties.paragraph.maximum, LIMITS.addHyperlinkIndexMax);
+  // THE BOUNDS ARE PINNED AS NUMBERS AND AS DISTINCT QUANTITIES: a URL bound is not a label bound, an index
+  // is not a label, and the scanned export bound is not any of them.
+  assert.equal(LIMITS.addHyperlinkUrlBytes, 2048);
+  assert.equal(LIMITS.addHyperlinkTextBytes, 512);
+  assert.equal(LIMITS.addHyperlinkIndexMax, 128);
+  assert.equal(LIMITS.addHyperlinkMarkdownChars, 131072);
+  assert.equal(LIMITS.addHyperlinkMarkdownChars * 2, LIMITS.documentHtmlBytes,
+    'the scanned export bound is the read path\u2019s byte ceiling divided by the worst-case two bytes per character');
+  assert.deepEqual([...LIMITS.addHyperlinkSchemes], ['http://', 'https://'],
+    'the CLOSED scheme vocabulary: exactly the two absolute schemes the proof can compare verbatim');
+  // THE THREE INDEX BOUNDS ARE EQUAL TODAY AND ARE STILL THREE DECISIONS, exactly like the three
+  // `contextReadBytes` scopes: each leg names its own entry, so a later widening of one address cannot widen
+  // the others. The equality is asserted as a SCALE rather than hidden behind an alias.
+  assert.equal(LIMITS.addHyperlinkIndexMax, LIMITS.setHeadingIndexMax, 'the same chapter-scale address bound');
+  assert.equal(LIMITS.addHyperlinkIndexMax, LIMITS.formatRangeIndexMax);
+  assert.notEqual(LIMITS.addHyperlinkTextBytes, LIMITS.findQueryBytes, 'a label is not a search needle');
+  assert.notEqual(LIMITS.addHyperlinkUrlBytes, LIMITS.addHyperlinkTextBytes, 'a URL is not its visible text');
+  assert.notEqual(LIMITS.addHyperlinkMarkdownChars, LIMITS.addHyperlinkUrlBytes, 'an export bound is not a payload bound');
+  assert.notEqual(LIMITS.addHyperlinkMarkdownChars, LIMITS.addHyperlinkIndexMax);
+  // BOTH FORMS ARE LEGAL AT THE SCHEMA: the URL and the label are required, the address is not.
+  assert.deepEqual(validateArguments(schema, { url: LINK_URL, text: LINK_TEXT }), { url: LINK_URL, text: LINK_TEXT });
+  assert.deepEqual(validateArguments(schema, { url: LINK_URL, text: LINK_TEXT, paragraph: 3 }),
+    { url: LINK_URL, text: LINK_TEXT, paragraph: 3 });
+  // The precondition is the same closed rule for a descriptor held directly.
+  assert.equal(tool.precondition({ url: LINK_URL, text: LINK_TEXT }, { editor: 'word' }), null);
+  assert.equal(tool.precondition({ url: LINK_URL, text: LINK_TEXT, paragraph: 0 }, { editor: 'word' }), null);
+  assert.equal(tool.precondition({ url: LINK_URL, text: LINK_TEXT }, { editor: 'cell' }).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(tool.precondition({ url: LINK_URL, text: LINK_TEXT, paragraph: null }, { editor: 'word' }).code, 'TOOL_ERROR');
+  assert.equal(tool.precondition({ url: LINK_URL, text: LINK_TEXT, paragraph: '1' }, { editor: 'word' }).code, 'TOOL_ERROR');
+});
+
+test('add_hyperlink refuses every illegal argument with nothing dispatched, at the schema or in the handler', async () => {
+  const bridge = linkBridge(linked());
+  const tool = addHyperlinkTool(bridge);
+  const legal = { url: LINK_URL, text: LINK_TEXT };
+  const illegal = [
+    ['no argument object', null],
+    ['missing url', { text: LINK_TEXT }],
+    ['missing text', { url: LINK_URL }],
+    ['an unknown top-level key', { ...legal, target: 'x' }],
+    ['a non-string url', { url: 7, text: LINK_TEXT }],
+    ['an empty url', { url: '', text: LINK_TEXT }],
+    ['an empty text', { url: LINK_URL, text: '' }],
+    ['a non-string text', { url: LINK_URL, text: 7 }],
+    ['a relative url', { url: '/docs/r7', text: LINK_TEXT }],
+    ['a schemeless url', { url: 'example.org/r7', text: LINK_TEXT }],
+    ['a javascript: url', { url: 'javascript:alert(1)', text: LINK_TEXT }],
+    ['a mailto: url', { url: 'mailto:user@example.org', text: LINK_TEXT }],
+    ['a file: url', { url: 'file:///etc/passwd', text: LINK_TEXT }],
+    ['an upper-case scheme', { url: 'HTTPS://example.org/r7', text: LINK_TEXT }],
+    ['a scheme with no host at all', { url: 'https://', text: LINK_TEXT }],
+    ['a url with a space', { url: 'https://example.org/a b', text: LINK_TEXT }],
+    // THE ONE MEASURED NORMALISATION: `ApiHyperlink.SetLink` rewrites every `%20` to a literal space, so a
+    // URL holding one can never be compared verbatim with the export. It is refused HERE, closed, with
+    // ZERO writes, instead of being written and left unprovable.
+    ['a url with the editor-normalised escape', { url: 'https://example.org/a%20b', text: LINK_TEXT }],
+    ['a url with a line break', { url: 'https://example.org/a\nb', text: LINK_TEXT }],
+    ['a url with a tab', { url: 'https://example.org/a\tb', text: LINK_TEXT }],
+    ['a text with a line break', { url: LINK_URL, text: 'ссылка\nсломана' }],
+    ['a text with a tab', { url: LINK_URL, text: 'ссылка\tсломана' }],
+    ['an over-bound url', { url: `https://example.org/${'я'.repeat(LIMITS.addHyperlinkUrlBytes)}`, text: LINK_TEXT }],
+    ['an over-bound text', { url: LINK_URL, text: 'я'.repeat(LIMITS.addHyperlinkTextBytes) }],
+    ['a negative paragraph', { ...legal, paragraph: -1 }],
+    ['a fractional paragraph', { ...legal, paragraph: 1.5 }],
+    ['a stringified paragraph', { ...legal, paragraph: '1' }],
+    ['a null paragraph', { ...legal, paragraph: null }],
+    ['a paragraph over the advertised cap', { ...legal, paragraph: LIMITS.addHyperlinkIndexMax + 1 }]
+  ];
+  for (const [label, args] of illegal) {
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', `schema: ${label}`); }
+    // A KEY OR A WIDTH THE SCHEMA CLOSES OUT NEVER REACHES THE HANDLER, so only the arguments the schema
+    // cannot express are required to be refused by the handler as well — and those are exactly the URL-shape
+    // and control-character rules, asserted once more below.
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+  }
+  assert.equal((await tool.execute(legal, { editor: 'cell' })).code, 'CAPABILITY_UNAVAILABLE',
+    'a Word mutation offered to another editor refuses before any dispatch');
+  assert.equal(bridge.seen.length, 0, 'NOTHING was dispatched for any refused argument');
+  // THE SHAPE THE SCHEMA CANNOT EXPRESS: an absolute-URL rule, a scheme vocabulary, a control-character rule
+  // and the editor's OWN `%20` normalisation are all admitted by the schema and refused by the handler, which
+  // is what a descriptor held directly receives too.
+  for (const raw of [{ url: '/docs', text: LINK_TEXT }, { url: 'example.org', text: LINK_TEXT },
+    { url: 'mailto:user@example.org', text: LINK_TEXT }, { url: 'javascript:alert(1)', text: LINK_TEXT },
+    { url: 'HTTPS://example.org/r7', text: LINK_TEXT }, { url: 'https://', text: LINK_TEXT },
+    { url: 'https://example.org/a b', text: LINK_TEXT }, { url: 'https://example.org/a%20b', text: LINK_TEXT },
+    { url: LINK_URL, text: 'метка\nсломана' }, { url: LINK_URL, text: 'метка\tсломана' }]) {
+    validateArguments(tool.schema, raw);
+    assert.equal((await tool.execute(raw, { editor: 'word' })).code, 'TOOL_ERROR', JSON.stringify(raw));
+    assert.equal(tool.precondition(raw, { editor: 'word' }).code, 'TOOL_ERROR', JSON.stringify(raw));
+  }
+  assert.equal(bridge.seen.length, 0, 'and none of the shaped refusals reached the bridge either');
+});
+
+test('add_hyperlink appends into the ADDRESSED paragraph and publishes only what it measured', async () => {
+  const bridge = linkBridge(namedProof());
+  const result = await addHyperlinkTool(bridge).execute({ url: LINK_URL, text: LINK_TEXT, paragraph: 1 }, { editor: 'word' });
+  assert.equal(bridge.seen.length, 1, 'exactly ONE bridge call for the whole operation');
+  assert.deepEqual(bridge.seen[0], { url: LINK_URL, text: LINK_TEXT, append: false, paragraph: 1 },
+    'the named form asks the bridge to address an existing paragraph and names no others');
+  assert.deepEqual(result, { ok: true, data: { appended: false, paragraph: 1, paragraphsBefore: 2, paragraphsAfter: 2,
+    textBeforeChars: 12, textAfterChars: 24, textAppended: true, fragmentUnique: true, urlInFragment: true,
+    bytes: linkBytes('1') } });
+});
+
+test('add_hyperlink appends a NEW paragraph when no index is named, and the count grows by exactly one', async () => {
+  const bridge = linkBridge(linked());
+  const result = await addHyperlinkTool(bridge).execute({ url: LINK_URL, text: LINK_TEXT }, { editor: 'word' });
+  assert.deepEqual(bridge.seen[0], { url: LINK_URL, text: LINK_TEXT, append: true, paragraph: null },
+    'the append form carries the form itself as data, so the body never guesses which one it serves');
+  assert.deepEqual(result.data, { appended: true, paragraph: null, paragraphsBefore: 2, paragraphsAfter: 3,
+    textBeforeChars: 0, textAfterChars: LINK_TEXT.length, textAppended: true, fragmentUnique: true,
+    urlInFragment: true, bytes: linkBytes('append') });
+  // THE CALLER IS NEVER LEFT TO GUESS which form ran: `appended` and `paragraph` say it in the result, and
+  // the two text lengths say the created paragraph started EMPTY.
+  assert.equal(result.data.appended, true);
+  assert.equal(result.data.paragraph, null);
+});
+
+test('add_hyperlink maps every refusal class it can receive, and never invents a proof', async () => {
+  const legal = { url: LINK_URL, text: LINK_TEXT };
+  assert.equal((await addHyperlinkTool(linkBridge(linked())).execute(legal, { editor: 'word' })).ok, true);
+  // A bridge that does not expose the entry point is the closed capability class, never a crash.
+  assert.equal((await addHyperlinkTool({ seen: [] }).execute(legal, { editor: 'word' })).code, 'CAPABILITY_UNAVAILABLE');
+  // The bridge's own closed classes are REPUBLISHED as they are.
+  for (const code of ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT', 'EDITOR_BUSY', 'CANCELLED']) {
+    const refused = await addHyperlinkTool(linkBridge(null, { addHyperlink: async () => ({ ok: false, code }) }))
+      .execute(legal, { editor: 'word' });
+    assert.equal(refused.code, code, code);
+  }
+  // An UNKNOWN code keeps the closed fallback rather than the caller's own string.
+  const odd = await addHyperlinkTool(linkBridge(null, { addHyperlink: async () => ({ ok: false, code: 'НЕИЗВЕСТНО' }) }))
+    .execute(legal, { editor: 'word' });
+  assert.equal(odd.code, 'TOOL_ERROR');
+  // A THROWN or RETURNED `APPLY_UNCERTAIN` is the runtime's own uncertain class, so the run stops fail-safe.
+  const thrown = linkBridge(null, { addHyperlink: async () => { throw Object.assign(new Error('x'), { code: 'APPLY_UNCERTAIN' }); } });
+  assert.equal((await addHyperlinkTool(thrown).execute(legal, { editor: 'word' })).code, 'TOOL_UNCERTAIN');
+  const returned = linkBridge(null, { addHyperlink: async () => ({ ok: false, code: 'APPLY_UNCERTAIN' }) });
+  assert.equal((await addHyperlinkTool(returned).execute(legal, { editor: 'word' })).code, 'TOOL_UNCERTAIN');
+  // AN UNINTERPRETABLE ENVELOPE is the module's unknown convention: a value this bridge cannot have
+  // published is never read as a verified append.
+  for (const answer of [null, 'ответ', { ok: true }, { ok: true, paragraphsBefore: 2 },
+    { ok: true, paragraphsBefore: 2, paragraphsAfter: 3, textBeforeChars: 0, textAfterChars: 12,
+      textAppended: 'да', fragmentUnique: true, urlInFragment: true }]) {
+    const broken = await addHyperlinkTool(linkBridge(answer)).execute(legal, { editor: 'word' });
+    assert.equal(broken.ok, false, JSON.stringify(answer));
+    assert.equal(broken.code, 'TOOL_ERROR', JSON.stringify(answer));
+  }
+});
+
+test('add_hyperlink publishes ok ONLY for the exact proof, and holds the run otherwise', async () => {
+  const named = { url: LINK_URL, text: LINK_TEXT, paragraph: 1 };
+  const appended = { url: LINK_URL, text: LINK_TEXT };
+  const exact = namedProof();
+  for (const [label, answer] of [
+    ['the document count moved under a NAMED address', { ...exact, paragraphsAfter: 3 }],
+    ['the addressed text did not grow by the link text', { ...exact, textAfterChars: 25 }],
+    ['the addressed text is not EXACTLY the old text plus the link text', { ...exact, textAppended: false }],
+    ['the fragment was not located exactly once', { ...exact, fragmentUnique: false }],
+    ['the URL is not inside the located fragment', { ...exact, urlInFragment: false }],
+    ['the lengths contradict the request outright', { ...exact, textAfterChars: 25, textAppended: true }]
+  ]) {
+    const result = await addHyperlinkTool(linkBridge(answer)).execute(named, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  // THE SAME RULE FOR THE APPEND FORM, and it carries the two shapes the append ALONE can produce: a count
+  // that did not grow by exactly one, and a "new" paragraph that did not start empty.
+  for (const [label, answer] of [
+    ['the paragraph count did not grow by exactly one', { ...linked(), paragraphsAfter: 2 }],
+    ['the paragraph count grew by two', { ...linked(), paragraphsAfter: 4 }],
+    ['the appended paragraph did not start empty', { ...linked(), textBeforeChars: 6, textAfterChars: 18 }],
+    ['the appended text is not the link text', { ...linked(), textAppended: false }],
+    ['the URL is not inside the located fragment', { ...linked(), urlInFragment: false }]
+  ]) {
+    const result = await addHyperlinkTool(linkBridge(answer)).execute(appended, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+  }
+  assert.equal((await addHyperlinkTool(linkBridge(exact)).execute(named, { editor: 'word' })).ok, true);
+  assert.equal((await addHyperlinkTool(linkBridge(linked())).execute(appended, { editor: 'word' })).ok, true);
+});
+
+test('addHyperlink forwards the caller signal and touches exactly one bridge entry point', async () => {
+  const controller = new AbortController();
+  const bridge = linkBridge(namedProof());
+  await addHyperlinkTool(bridge).execute({ url: LINK_URL, text: LINK_TEXT, paragraph: 1 },
+    { editor: 'word', signal: controller.signal });
+  assert.deepEqual(Object.keys(bridge.seen[0]).sort(), ['append', 'paragraph', 'signal', 'text', 'url']);
+  assert.equal(bridge.seen[0].signal, controller.signal);
+});
+
+test('add_hyperlink measures the exact entry it publishes, and its bounded fields cannot reach the ceiling', async () => {
+  const bridge = linkBridge(namedProof());
+  const result = await addHyperlinkTool(bridge).execute({ url: LINK_URL, text: LINK_TEXT, paragraph: 1 }, { editor: 'word' });
+  const entry = JSON.stringify({ tool: 'add_hyperlink', ok: true, data: result.data });
+  assert.ok(utf8ByteLength(entry) < AGENT_CEILINGS.toolResultBytes,
+    'the published entry is far inside the per-result ceiling the runtime applies');
+  // THE WIDEST SHAPE THE HANDLER CAN PUBLISH, so the guard is measured against its own maximum rather than
+  // against one small answer: every bounded field at its extreme, which is what a forged answer could carry.
+  const widestData = { appended: true, paragraph: null, paragraphsBefore: Number.MAX_SAFE_INTEGER,
+    paragraphsAfter: Number.MAX_SAFE_INTEGER, textBeforeChars: Number.MAX_SAFE_INTEGER,
+    textAfterChars: Number.MAX_SAFE_INTEGER, textAppended: true, fragmentUnique: true, urlInFragment: true,
+    bytes: LIMITS.addHyperlinkMarkdownChars };
+  const widest = JSON.stringify({ tool: 'add_hyperlink', ok: true, data: widestData });
+  assert.ok(utf8ByteLength(widest) < AGENT_CEILINGS.toolResultBytes,
+    'nine bounded scalars cannot fill a 16384-byte entry');
+  const crossed = toolResultMessages([{ tool: 'add_hyperlink', result: { ok: true, data: widestData } }]);
+  assert.equal(JSON.parse(crossed[0].content).results[0].data.paragraph, null);
+});
+
+test('bridge addHyperlink dispatches ONE command, carries the link as DATA and verifies the exact proof', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = linkRig({ namespace });
+  const request = { url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false };
+  const pending = r.bridge.addHyperlink(request);
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole operation');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, namedScope(),
+    'the link crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no request outlives its dispatch');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 2, 2, 12, 24, 1, 1, 1],
+    'the body encodes the explicit phase, the two paragraph counts, the two text lengths and the three flags');
+  assert.deepEqual(await pending, { ok: true, paragraphsBefore: 2, paragraphsAfter: 2, textBeforeChars: 12,
+    textAfterChars: 24, textAppended: true, fragmentUnique: true, urlInFragment: true });
+  assert.equal(r.doc.state.created, 0, 'the NAMED form creates no paragraph at all');
+  assert.equal(r.doc.state.pushes, 0, 'and appends nothing: it changes an EXISTING paragraph in place');
+  assert.equal(r.doc.state.installed, 1, 'the ONE document mutation is a single element append');
+  assert.equal(r.doc.state.detached, 0);
+  assert.equal(r.doc.state.hyperlinks, 1, 'one hyperlink object is created through the measured factory');
+  assert.equal(r.doc.state.insertContents, 0, 'and the legacy whole-array primitive is never called');
+  assert.deepEqual(r.doc.doubles.map(double => double.links.length), [0, 1],
+    'the ADDRESSED paragraph is the one that gained the link, and no other paragraph was touched');
+  assert.equal(r.doc.doubles[1].links[0].url, LINK_URL);
+  assert.equal(r.doc.doubles[1].links[0].text, LINK_TEXT);
+  assert.ok(r.doc.document.ToMarkdown().includes(`второй абзац[${LINK_TEXT}](${LINK_URL})`),
+    'and the addressed paragraph really renders the measured markdown link fragment');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('bridge addHyperlink creates and PUSHES a new paragraph for the append form', async () => {
+  const r = linkRig();
+  const request = { url: LINK_URL, text: LINK_TEXT, paragraph: null, append: true };
+  const pending = r.bridge.addHyperlink(request);
+  assert.equal(r.commands.length, 1);
+  assert.deepEqual(r.commands[0].scope, appendScope(),
+    'the append form names NO index, and `markdownMax` is composed here rather than taken from the caller');
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 2, 3, 0, 12, 1, 1, 1]);
+  assert.deepEqual(await pending, { ok: true, paragraphsBefore: 2, paragraphsAfter: 3, textBeforeChars: 0,
+    textAfterChars: 12, textAppended: true, fragmentUnique: true, urlInFragment: true });
+  assert.equal(r.doc.state.created, 1, 'exactly ONE paragraph is created');
+  assert.equal(r.doc.state.detached, 1, 'and the link is added to it while it is still DETACHED');
+  assert.equal(r.doc.state.pushes, 1, 'the document append is ONE Push');
+  assert.equal(r.doc.state.installed, 0, 'and no EXISTING paragraph is written');
+  assert.equal(r.doc.doubles.length, 3, 'the document really grew by exactly one paragraph');
+  assert.equal(r.doc.doubles[2].links[0].url, LINK_URL, 'the appended paragraph is the one carrying the link');
+  assert.equal(r.doc.doubles[0].links.length, 0);
+  assert.equal(r.doc.doubles[1].links.length, 0);
+  assert.ok(r.doc.document.ToMarkdown().includes(`[${LINK_TEXT}](${LINK_URL})`));
+  assert.equal(r.bridge.getState().busy, false);
+  // AN APPEND WHOSE `Push` CHANGED NOTHING is the uncertain class with the slot HELD: the count is the only
+  // evidence, so nothing here may be reported as a known failure or as a success.
+  const silent = linkRig({ pushAppends: false });
+  assert.deepEqual(await silent.bridge.addHyperlink(request), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(silent.doc.state.pushes, 1, 'the mutation WAS dispatched exactly once');
+  assert.equal(silent.doc.doubles.length, 2, 'and the document really did not grow');
+  assert.equal(silent.bridge.getState().busy, true, 'so the slot is HELD and there is no retry');
+  assert.equal(silent.bridge.getState().uncertain, true);
+  assert.equal(silent.bridge.getState().writePending, true);
+  assert.deepEqual(await silent.bridge.addHyperlink(request), { ok: false, code: 'EDITOR_BUSY' });
+});
+
+test('the hyperlink body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  const r = linkRig({ namespace: { scope: appendScope() } });
+  const pending = r.bridge.addHyperlink({ url: LINK_URL, text: LINK_TEXT, paragraph: null, append: true });
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|decodeHeading|decodeRange|decodeHyperlink|exactBlocksDelta|exactTableDelta|exactHeadingDelta|exactRangeFormat|exactHyperlinkDelta|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== ['"]undefined['"]/, 'and it builds the public Api facade itself');
+  // THE MEASURED ROUTE, pinned: the factory, the append into the addressed paragraph, and the ONE document
+  // append of the created paragraph.
+  assert.match(withoutComments(carried.source), /CreateHyperlink\(/, 'the link is created through the measured factory');
+  assert.match(withoutComments(carried.source), /\.AddElement\(/, 'and placed through the measured element append');
+  assert.match(withoutComments(carried.source), /CreateParagraph\(/, 'a new paragraph is built through the measured factory');
+  assert.match(withoutComments(carried.source), /\.Push\(/, 'and the document append is the measured Push');
+  assert.match(withoutComments(carried.source), /ToMarkdown\(\)/, 'the fragment proof reads the measured markdown export');
+  assert.match(withoutComments(carried.source), /GetAllParagraphs\(/, 'and the paragraph list is the snapshot the counts come from');
+  // THE TWO ROUTES THAT MUST STAY UNAUTHORED, each for its own measured reason: the paragraph-level helper
+  // SELECTS THE WHOLE PARAGRAPH before it links it, and the legacy whole-array primitive lands at the START.
+  assert.equal(/\.AddHyperlink\s*\(/.test(withoutComments(carried.source)), false,
+    'the paragraph-level AddHyperlink route selects the whole paragraph (measured) and is authored nowhere');
+  assert.equal(withoutComments(carried.source).includes('InsertContent'), false,
+    'the legacy whole-array primitive is authored nowhere');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it. Only `Api` and `scope` are bound here, so a body that closed over
+  // a module binding would raise ReferenceError exactly as it did natively on 2026.3.1.
+  const fresh = linkRig();
+  const evaluated = new Function('Api', 'scope', 'return (' + carried.source + ')();')(fresh.api, carried.scope);
+  assert.deepEqual(evaluated, ['POST_INSERT', 2, 3, 0, 12, 1, 1, 1],
+    'the request arrived as DATA and the readback is the document\u2019s own');
+  assert.equal(fresh.doc.state.created, 1);
+  assert.equal(fresh.doc.state.pushes, 1, 'and the ONE Push is where the document append happens');
+  assert.equal(fresh.doc.state.insertContents, 0);
+  assert.equal((await pending).textAfterChars, 12);
+});
+
+test('the paragraph address is a BOUNDARY: an index outside the document or a missing primitive writes nothing', async () => {
+  // AN INDEX OUTSIDE THE DOCUMENT is the body's own closed ARGUMENT class, decided from the document's OWN
+  // array BEFORE anything is written — the fail-closed half of the index bound.
+  for (const index of [1, LIMITS.addHyperlinkIndexMax]) {
+    const r = linkRig({ texts: ['один'] });
+    const request = { url: LINK_URL, text: LINK_TEXT, paragraph: index, append: false };
+    assert.deepEqual(await r.bridge.addHyperlink(request), { ok: false, code: 'TOOL_ERROR' }, `paragraph ${index}`);
+    assert.deepEqual(r.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'], `paragraph ${index}: the body decided it`);
+    assert.equal(r.doc.state.documentWrites, 0, `paragraph ${index}: ZERO writes`);
+    assert.equal(r.doc.state.hyperlinks, 0, `paragraph ${index}: and no link was even created`);
+    assert.equal(r.bridge.getState().busy, false, `paragraph ${index}: the slot is RELEASED`);
+  }
+  // AN UNUSABLE BASELINE OR A MISSING PRIMITIVE is the closed CAPABILITY class with ZERO writes: this leg
+  // must never append a link it could not prove, and it must never append one to `undefined`.
+  for (const [label, options, scope] of [
+    ['a build with no hyperlink factory', { createHyperlink: false }, namedScope()],
+    ['a build with no paragraph factory', { createParagraph: false }, appendScope()],
+    ['a build with no markdown export', { toMarkdown: false }, namedScope()],
+    ['a paragraph list that throws', { paragraphsThrow: true }, namedScope()]
+  ]) {
+    const r = linkRig(options);
+    assert.deepEqual(await r.bridge.addHyperlink(scope), { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, label);
+    assert.equal(r.doc.state.documentWrites, 0, `${label}: ZERO writes`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: nothing reached the document, so nothing is held`);
+    assert.equal(r.bridge.getState().uncertain, false, label);
+  }
+});
+
+test('a fragment the document ALREADY renders is refused CLOSED with ZERO writes, never left ambiguous', async () => {
+  // THE DOCUMENTED DUPLICATE RULE, and it is decided on the PRE-mutation export: the located fragment must
+  // be attributable one-to-one, so a document that already renders it is the closed argument class with
+  // ZERO writes rather than a write followed by an outcome nothing can tell apart. A later duplicate — a
+  // concurrent writer — cannot be refused closed, and the body settles it as UNCERTAIN with the slot HELD.
+  const named = linkRig({ markdown: `второй абзац[${LINK_TEXT}](https://другой-адрес)` });
+  const namedRequest = { url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false };
+  assert.deepEqual(await named.bridge.addHyperlink(namedRequest), { ok: false, code: 'TOOL_ERROR' });
+  assert.deepEqual(named.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR']);
+  assert.equal(named.doc.state.documentWrites, 0, 'ZERO writes: the ambiguity is detected before the mutation');
+  assert.equal(named.doc.state.markdownReads, 1, 'and the export is read ONCE and refused');
+  assert.equal(named.bridge.getState().busy, false, 'the slot is RELEASED: nothing was written');
+  // The append form's own opener is its EMPTY pre text plus the link prefix, so an existing link with the
+  // same visible text is the same ambiguity for that form.
+  const appended = linkRig({ markdown: `до[${LINK_TEXT}](https://другой-адрес)` });
+  const appendRequest = { url: LINK_URL, text: LINK_TEXT, paragraph: null, append: true };
+  assert.deepEqual(await appended.bridge.addHyperlink(appendRequest), { ok: false, code: 'TOOL_ERROR' });
+  assert.equal(appended.doc.state.documentWrites, 0);
+  assert.equal(appended.bridge.getState().busy, false);
+  // A DUPLICATE THAT ONLY APPEARS AFTER THE WRITE: the fragment the caller asked for really landed, and the
+  // same fragment now stands twice, so nothing can tell the occurrences apart. UNCERTAIN, slot HELD.
+  const raced = linkRig({ markdownAfter: `второй абзац[${LINK_TEXT}](${LINK_URL})\n\nвторой абзац[${LINK_TEXT}](${LINK_URL})` });
+  assert.deepEqual(await raced.bridge.addHyperlink(namedRequest), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(raced.commands[0].answered, ['POST_INSERT', 2, 2, 12, 24, 1, 0, 0],
+    'the fragment is not unique, so the URL inside it is not judged either');
+  assert.equal(raced.doc.state.installed, 1, 'the write really happened');
+  assert.equal(raced.bridge.getState().busy, true, 'the slot is HELD and there is no retry');
+  assert.equal(raced.bridge.getState().uncertain, true);
+  assert.equal(raced.bridge.getState().writePending, true);
+  assert.deepEqual(await raced.bridge.addHyperlink(namedRequest), { ok: false, code: 'EDITOR_BUSY' });
+  // A UNIQUE FRAGMENT WHOSE URL IS NOT THERE (the editor stored something else) is the same non-success.
+  const wrongUrl = linkRig({ markdownAfter: `второй абзац[${LINK_TEXT}](https://другой-адрес)` });
+  assert.deepEqual(await wrongUrl.bridge.addHyperlink(namedRequest), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(wrongUrl.commands[0].answered, ['POST_INSERT', 2, 2, 12, 24, 1, 1, 0]);
+  assert.equal(wrongUrl.bridge.getState().busy, true);
+  // TWO READBACKS THAT DISAGREE: the paragraph's own text is not what the export renders. Both are the
+  // proof, so a correct-looking export cannot carry the outcome on its own.
+  const disagree = linkRig({ textAfterFault: 'я'.repeat(24) });
+  assert.deepEqual(await disagree.bridge.addHyperlink(namedRequest), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(disagree.commands[0].answered, ['POST_INSERT', 2, 2, 12, 24, 0, 1, 1],
+    'the LENGTHS are right and the exact text is not: the string equality is the only leg that can see it');
+  assert.equal(disagree.bridge.getState().busy, true);
+});
+
+test('a missing, throwing or over-bound export refuses CLOSED before the write and is UNCERTAIN after one', async () => {
+  const namedRequest = { url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false };
+  for (const [label, options, code] of [
+    ['an export that throws on every read', { throwingMarkdown: 'always' }, 'CAPABILITY_UNAVAILABLE'],
+    ['a document with no ToMarkdown at all', { toMarkdown: false }, 'CAPABILITY_UNAVAILABLE'],
+    ['an export above the scanned bound', { markdown: 'и'.repeat(LIMITS.addHyperlinkMarkdownChars + 1) }, 'BYTE_LIMIT']
+  ]) {
+    const r = linkRig(options);
+    assert.deepEqual(await r.bridge.addHyperlink(namedRequest), { ok: false, code }, label);
+    assert.deepEqual(r.commands[0].answered, ['PRE_INSERT', code], label);
+    assert.equal(r.doc.state.documentWrites, 0, `${label}: ZERO writes — an unprovable link is never written`);
+    assert.ok(r.doc.state.markdownReads <= 1, `${label}: the export is read AT MOST once and refused, never scanned unbounded`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: the slot is RELEASED`);
+    assert.equal(r.bridge.getState().uncertain, false, label);
+  }
+  // EXACTLY AT THE BOUND IS ACCEPTED, measured rather than assumed: the PRE-mutation export is the largest
+  // legal one and holds no fragment yet, and the POST-mutation export is the largest legal one and holds the
+  // addressed paragraph's own fragment with the url inside it.
+  const opener = `второй абзац[${LINK_TEXT}](`;
+  const atBound = `${'и'.repeat(LIMITS.addHyperlinkMarkdownChars - (opener + LINK_URL + ')').length)}${opener}${LINK_URL})`;
+  assert.equal(atBound.length, LIMITS.addHyperlinkMarkdownChars);
+  const pass = linkRig({ markdown: 'и'.repeat(LIMITS.addHyperlinkMarkdownChars), markdownAfter: atBound });
+  assert.equal((await pass.bridge.addHyperlink(namedRequest)).ok, true, 'a pilot-sized export is served');
+  assert.equal(pass.doc.state.markdownReads, 2, 'the export is read once per side of the mutation');
+  // THE TWO POST-MUTATION FAULTS cannot be refused closed: the write already ran.
+  for (const [label, options, code] of [
+    ['an export that throws only after the write', { throwingMarkdown: 'after' }, 'CAPABILITY_UNAVAILABLE'],
+    ['an export that grows over the bound only after the write',
+      { markdownAfter: 'и'.repeat(LIMITS.addHyperlinkMarkdownChars + 1) }, 'BYTE_LIMIT']
+  ]) {
+    const r = linkRig(options);
+    assert.deepEqual(await r.bridge.addHyperlink(namedRequest), { ok: false, code: 'APPLY_UNCERTAIN' }, label);
+    assert.deepEqual(r.commands[0].answered, ['POST_INSERT', code], label);
+    assert.equal(r.doc.state.installed, 1, `${label}: the write really happened before the read failed`);
+    assert.equal(r.bridge.getState().busy, true, label);
+    assert.equal(r.bridge.getState().uncertain, true, label);
+    assert.equal(r.bridge.getState().writePending, true, label);
+    assert.deepEqual(await r.bridge.addHyperlink(namedRequest), { ok: false, code: 'EDITOR_BUSY' }, `${label}: no retry`);
+  }
+});
+
+test('the refusal PHASE is explicit in the hyperlink protocol: a phase-less answer after a real write is uncertain', async () => {
+  const request = { url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false };
+  // THE FORGERY THE PHASE GATE EXISTS FOR. The body turns its phase at the ONE document mutation, so a
+  // forged answer that cannot be confirmed as PRE-insert must never be read as a known refusal.
+  for (const forged of [['CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR'], ['APPLY_UNCERTAIN'],
+    ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ'], ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'], ['POST_INSERT', 'TOOL_ERROR']]) {
+    const r = linkRig({ forge: forged });
+    const result = await r.bridge.addHyperlink(request);
+    assert.equal(r.doc.state.documentWrites, 1, `${JSON.stringify(forged)}: the body really mutated before the answer`);
+    assert.equal(result.ok, false, JSON.stringify(forged));
+    assert.equal(result.code, 'APPLY_UNCERTAIN',
+      `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, JSON.stringify(forged));
+    assert.equal(state.uncertain, true, JSON.stringify(forged));
+    assert.equal(state.writePending, true, `${JSON.stringify(forged)}: the write lock stays engaged`);
+    assert.deepEqual(await r.bridge.addHyperlink(request), { ok: false, code: 'EDITOR_BUSY' },
+      `${JSON.stringify(forged)}: no retry`);
+    assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
+  }
+  // A GENUINE PRE-INSERT REFUSAL KEEPS ITS KNOWN CLASS and RELEASES the slot, because nothing was written.
+  const outside = linkRig({ texts: ['один'] });
+  const outsideRequest = { url: LINK_URL, text: LINK_TEXT, paragraph: 5, append: false };
+  assert.deepEqual(await outside.bridge.addHyperlink(outsideRequest), { ok: false, code: 'TOOL_ERROR' });
+  assert.equal(outside.doc.state.documentWrites, 0, 'the one mutation is never reached');
+  assert.equal(outside.bridge.getState().busy, false, 'the slot is RELEASED: nothing was mutated');
+  // THE DECODER'S OWN GATE, one class per phase-marked name: a `[PRE_INSERT, name]` answer keeps its name's
+  // class, and a PRE-insert phase over a MEASUREMENT is not a refusal at all.
+  for (const [name, code] of [['CAPABILITY_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR', 'TOOL_ERROR'],
+    ['BYTE_LIMIT', 'BYTE_LIMIT']]) {
+    const r = linkRig({ forge: ['PRE_INSERT', name] });
+    assert.equal((await r.bridge.addHyperlink(request)).code, code, name);
+  }
+  const measuredAsRefusal = linkRig({ forge: ['PRE_INSERT', 2, 2, 12, 24, 1, 1, 1] });
+  assert.equal((await measuredAsRefusal.bridge.addHyperlink(request)).code, 'APPLY_UNCERTAIN');
+});
+
+test('bridge addHyperlink refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const request = { url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false };
+  // No command wrapper at all: the parameter channel does not exist, so the refusal is made BEFORE the
+  // ticket and nothing reaches the editor.
+  const noCommand = linkRig({ command: false, namespace: { scope: request } });
+  assert.deepEqual(await noCommand.bridge.addHyperlink(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noCommand.commands.length, 0);
+  // A namespace that is not there, and one whose `scope` cannot be written, are the same class.
+  const noNamespace = linkRig({ omitCarrier: true, namespace: { scope: request } });
+  assert.deepEqual(await noNamespace.bridge.addHyperlink(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noNamespace.commands.length, 0, 'nothing reached the editor');
+  assert.equal(noNamespace.bridge.getState().busy, false, 'and no slot is held for work that never ran');
+  const frozen = linkRig({ namespace: Object.freeze({ scope: request }) });
+  assert.deepEqual(await frozen.bridge.addHyperlink(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(frozen.commands.length, 0);
+  assert.equal(frozen.bridge.getState().busy, false);
+  // THE REQUEST IS CROSS-CHECKED AT THE ENTRY POINT, not taken on trust: a descriptor held directly and an
+  // uninterpretable scope both settle the closed argument class with NO dispatch.
+  const bounded = linkRig({ namespace: { scope: request } });
+  for (const [label, raw] of [
+    ['a relative url', { ...request, url: '/docs' }],
+    ['a schemeless url', { ...request, url: 'example.org' }],
+    ['a javascript: url', { ...request, url: 'javascript:alert(1)' }],
+    ['a mailto: url', { ...request, url: 'mailto:user@example.org' }],
+    ['an upper-case scheme', { ...request, url: 'HTTPS://example.org/r7' }],
+    ['a url with a space', { ...request, url: 'https://example.org/a b' }],
+    ['a url with the editor-normalised escape', { ...request, url: 'https://example.org/a%20b' }],
+    ['an over-bound url', { ...request, url: `https://example.org/${'я'.repeat(LIMITS.addHyperlinkUrlBytes)}` }],
+    ['an empty url', { ...request, url: '' }],
+    ['a non-string url', { ...request, url: 7 }],
+    ['an empty text', { ...request, text: '' }],
+    ['an over-bound text', { ...request, text: 'я'.repeat(LIMITS.addHyperlinkTextBytes) }],
+    ['a control character in the text', { ...request, text: 'метка\nсломана' }],
+    ['a non-boolean append', { ...request, append: 'да' }],
+    ['an index over the cap', { ...request, paragraph: LIMITS.addHyperlinkIndexMax + 1 }],
+    ['a negative index', { ...request, paragraph: -1 }],
+    ['a fractional index', { ...request, paragraph: 1.5 }],
+    ['an appending request that also names an index', { url: LINK_URL, text: LINK_TEXT, paragraph: 0, append: true }],
+    ['an addressing request with no index', { url: LINK_URL, text: LINK_TEXT, paragraph: null, append: false }]
+  ]) {
+    assert.deepEqual(await bounded.bridge.addHyperlink(raw), { ok: false, code: 'TOOL_ERROR' }, label);
+  }
+  assert.equal(bounded.commands.length, 0, 'none of the refused requests reached the editor');
+  assert.equal(bounded.bridge.getState().busy, false, 'and none of them holds a slot');
+  // A PRE-ABORTED signal dispatches nothing at all.
+  const controller = new AbortController();
+  controller.abort();
+  const aborted = linkRig({ namespace: { scope: request } });
+  assert.deepEqual(await aborted.bridge.addHyperlink({ ...request, signal: controller.signal }),
+    { ok: false, code: 'CANCELLED' });
+  assert.equal(aborted.commands.length, 0, 'an aborted caller never reaches the editor');
+});
+
+test('bridge addHyperlink decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const request = { url: LINK_URL, text: LINK_TEXT, paragraph: 1, append: false };
+  const run = (forge) => linkRig({ forge }).bridge.addHyperlink(request);
+  // The authored shape is EIGHT slots: the phase, the two paragraph counts, the addressed paragraph's own
+  // pre and post text LENGTHS, and the three flags. A malformed answer is a dispatched write whose outcome
+  // cannot be interpreted: UNCERTAIN, never a known error and never an `ok`.
+  for (const [label, forge] of [
+    ['a non-array answer', 'POST_INSERT'],
+    ['a plain object answer', { phase: 'POST_INSERT' }],
+    ['an answer with too few slots', ['POST_INSERT', 2, 2, 12]],
+    ['an answer with an extra slot', ['POST_INSERT', 2, 2, 12, 24, 1, 1, 1, 'лишний']],
+    ['a count that is not a whole number', ['POST_INSERT', 2.5, 2, 12, 24, 1, 1, 1]],
+    ['a count that is negative', ['POST_INSERT', -1, 2, 12, 24, 1, 1, 1]],
+    ['a count that is a string', ['POST_INSERT', '2', 2, 12, 24, 1, 1, 1]],
+    ['a flag that is not 0 or 1', ['POST_INSERT', 2, 2, 12, 24, 2, 1, 1]],
+    ['a boolean flag', ['POST_INSERT', 2, 2, 12, 24, true, 1, 1]],
+    ['a PRE_INSERT answer over a measurement', ['PRE_INSERT', 2, 2, 12, 24, 1, 1, 1]],
+    ['a one-slot answer', ['CAPABILITY_UNAVAILABLE']]
+  ]) {
+    const result = await run(forge);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  // The genuine PRE-INSERT refusals are the ONE shape that keeps a known class, and they carry their phase.
+  const outside = linkRig({ texts: ['один'] });
+  assert.equal((await outside.bridge.addHyperlink({ ...request, paragraph: 4 })).code, 'TOOL_ERROR');
+  assert.deepEqual(outside.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR']);
+});
+
+test('add_hyperlink is offered with policy auto and a model call appends exactly one link', async () => {
+  const r = linkRig({ namespace: { scope: namedScope() } });
+  const registry = createRegistry(createWordTools(r.bridge));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'add_hyperlink');
+  assert.ok(offered, 'the offered catalogue contains add_hyperlink');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.deepEqual([...offered.requires], ['document.write']);
+  assert.equal(offered.schema.properties.url.maxBytes, LIMITS.addHyperlinkUrlBytes);
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' })
+    .some(entry => entry.name === 'add_hyperlink'), false, 'no write capability, no mutation tool');
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' })
+    .some(entry => entry.name === 'add_hyperlink'), false, 'ASK exposes no mutation tool');
+  const batch = validateBatch(catalogue, [{ tool: 'add_hyperlink', arguments: { url: LINK_URL, text: LINK_TEXT, paragraph: 1 } }]);
+  assert.equal(batch[0].descriptor.name, 'add_hyperlink');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"add_hyperlink","arguments":{"url":"' + LINK_URL + '","text":"' + LINK_TEXT + '","paragraph":1}}]}',
+    '{"type":"final","message":"ссылка добавлена"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '15151515-1515-4515-8515-151515151515', request: 'добавь ссылку во второй абзац',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['add_hyperlink', 'ok']]);
+  // The model really RECEIVES the proof through the runtime's own per-result serialization.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'add_hyperlink');
+  assert.equal(published.data.fragmentUnique, true);
+  assert.equal(published.data.appended, false);
+  assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
+  assert.equal(r.doc.doubles[1].links.length, 1, 'and the addressed paragraph really carries the link');
 });

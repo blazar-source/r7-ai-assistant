@@ -113,6 +113,20 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // while the four measured run setters (`SetBold`/`SetItalic`/`SetUnderline`/`SetStrikeout`) ARE authored.
   // It appends nothing and never takes the legacy whole-array insert primitive (measured to land at the START
   // and to replace existing text under a selection).
+  // NINE legs are carried inline, and the last one is the HYPERLINK INSERT (`add_hyperlink`): the FIFTH body
+  // that MUTATES the document through the `Api` builder, the THIRD one that APPENDS, and the FIRST to take a
+  // URL from the model. It is classified by its OWN creation primitive (`CreateHyperlink`, which no other leg
+  // authors) — and its OWN branch must come FIRST, because the append form ALSO authors
+  // `CreateParagraph`/`Push`/`GetAllParagraphs`, so every later branch would otherwise recognise it: left to
+  // the `.Push(` branch it would be blessed as the BLOCK APPEND, whose body looks the same and whose contract
+  // is entirely different. It takes its `{ url, text, paragraph, append, markdownMax }` scope as DATA, places
+  // the link through the measured `AddElement` (an APPEND at the end of the paragraph's own content), pushes
+  // the created paragraph for the append form, and proves the outcome through the MEASURED markdown export
+  // (`ToMarkdown()`), in whose fragment the addressed paragraph's own pre text and the link's `](url)` are
+  // located. `ApiParagraph.AddHyperlink` is FORBIDDEN here rather than merely unused: its own body starts with
+  // `this.Paragraph.SelectAll(1)` and would replace the paragraph's content, so it must never appear in this
+  // body. The legacy whole-array insert primitive — measured to land at the START and to replace existing text
+  // under a selection — is absent too.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -126,7 +140,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(code, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      if (code.includes('.SetJc(')) {
+      // The ninth leg, whose narrative is stated once at the head of this classifier.
+      if (code.includes('CreateHyperlink')) {
+        assert.match(code, /\bscope\b/, 'the hyperlink body takes its url, label and address from the injected command scope');
+        assert.match(code, /GetAllParagraphs/, 'and checks the address against the document\u2019s own paragraph list');
+        assert.match(code, /AddElement\(/, 'and places the link through the measured element append');
+        assert.match(code, /CreateParagraph\(/, 'and builds the appended paragraph through the measured factory');
+        assert.match(code, /\.Push\(/, 'and appends it with the measured document primitive, which lands at the END');
+        assert.match(code, /ToMarkdown\(\)/, 'and proves the url inside the measured markdown fragment');
+        assert.equal(/\.AddHyperlink\s*\(/.test(code), false,
+          'the paragraph-level AddHyperlink route selects the whole paragraph (measured) and is authored nowhere');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        legs.push('hyperlink');
+      } else if (code.includes('.SetJc(')) {
         assert.match(code, /\bscope\b/, 'the format body takes its address from the injected command scope');
         assert.match(code, /GetRange\(/, 'and resolves the addressed region through the paragraph\u2019s own GetRange');
         assert.match(code, /GetAllParagraphs/, 'and checks the index against the document\u2019s own paragraph list');
@@ -184,8 +210,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 8, 'the adapter dispatches exactly the eight authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'search', 'structure', 'table'],
+  assert.equal(commands, 9, 'the adapter dispatches exactly the nine authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'hyperlink', 'search', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

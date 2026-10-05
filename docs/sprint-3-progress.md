@@ -2815,3 +2815,150 @@ the same call that produced the false UNCERTAIN, (2) that underlining exports th
 `align`-omitting call leaves the paragraph's alignment untouched on a real document. Each unknown lands on a
 closed path — no proof means `TOOL_UNCERTAIN` with the slot held, and no run property means no export read at
 all.
+
+## 17. Tool 9 — `add_hyperlink`, the THIRD append, and the fragment proof the markdown export enables
+
+`add_hyperlink` is the NINTH Sprint 3 Word tool, the FIFTH mutation, the THIRD write leg that APPENDS, and the
+FIRST one that takes a URL from the model. Its contract is the house one — closed schema, ZERO writes on every
+pre-insert refusal, ONE mutation phase, an explicit `PRE_INSERT`/`POST_INSERT` phase slot, an exact proof or
+`TOOL_UNCERTAIN` with the slot HELD and no retry, closed failure classes, a static self-contained `callCommand`
+body whose data crosses as `Asc.scope`, a bounded serialized result entry and a classifier leg — so this
+section records only what is NEW: the route, the two forms, the proof, the duplicate rule and the residuals.
+
+### 17.1 The route, read out of the vendored SDK
+
+The whole leg rests on four facts read out of `.local/stage-b-runtime/vendor-word-sdk-all.js` (2026.1.2) rather
+than assumed, and each is quoted where it is used in `src/plugin/bridge.js`:
+
+* **THE FACTORY.** `p.prototype.CreateHyperlink = function (url, text, tip) { var V = new ParaHyperlink,
+  ht = new N(V); return ht.SetLink(url), ht.SetDisplayedText(text), ht.SetScreenTipText(tip), ht }` — one call
+  builds the element, and `N` (the `ApiHyperlink` builder) answers `GetClassType() === "hyperlink"`,
+  `GetLinkedText()` and `GetDisplayedText()`.
+* **THE PLACEMENT IS AN APPEND.** `ApiParagraph.AddElement(el, pos)` guards on
+  `Fi(el)` — and `Fi` is `el instanceof F || el instanceof Dt || el instanceof N || el instanceof W`, so a
+  hyperlink IS accepted — and with NO position it calls `_i(paragraph, el)`, where
+  `function _i(content, el){ content.Add_ToContent(content.Content.length - 1, el) }`. The element therefore
+  lands at the END of the paragraph's own content (the last slot is the paragraph-end marker), which is exactly
+  the "appended into THAT paragraph" contract. NO primitive's boolean is consulted anywhere in the body.
+* **THE DOCUMENT APPEND LANDS AT THE END.** `u.prototype.Push = function (el) { ... return
+  impl.IsUseInDocument() ? false : (this.Document.Internal_Content_Add(this.Document.Content.length, impl),
+  true) ... }`, and `Api.CreateParagraph()` is `new G(new Paragraph(ci(), qt()))` — DETACHED, so
+  `IsUseInDocument()` is false and the created paragraph really is appended as the document's LAST content
+  element.
+* **THE FORBIDDEN ROUTE.** `G.prototype.AddHyperlink(url, tip)` exists and its own body starts with
+  `this.Paragraph.SelectAll(1)`: it SELECTS THE WHOLE PARAGRAPH and replaces its content. It is authored
+  nowhere, and `tests/integration/package.test.js` pins that with
+  `assert.equal(/\.AddHyperlink\s*\(/.test(code), false)`.
+
+### 17.2 The two forms, and why the caller never has to guess
+
+`paragraph` is OPTIONAL and its presence or absence IS the form switch. NAMED appends the link into THAT
+existing paragraph (the paragraph's own text grows by exactly the link text and NOTHING else in the document
+changes); OMITTED creates a new paragraph, places the link in it and pushes it at the END (the document's
+paragraph count grows by exactly one). Both forms are implemented, both are tested, and the result states which
+one ran — `appended` plus `paragraph` (`null` for the append form) — so the model is never left to infer it.
+
+### 17.3 The proof: three legs, one of them a MEASURED fragment
+
+1. **THE ADDRESSED PARAGRAPH'S OWN TEXT**, read through `GetAllParagraphs()` before and after. NAMED requires
+   the AFTER text to be EXACTLY the BEFORE text plus the link text — a string equality, not a length, and the
+   bridge re-derives the length arithmetic (`textAfterChars === textBeforeChars + text.length`) from the request
+   so a flipped boolean cannot carry a length that contradicts it. APPEND requires the paragraph at the
+   baseline's own `countBefore` to carry EXACTLY the link text, and its `textBeforeChars` to be 0 — the created
+   paragraph really started empty. (`ParaHyperlink` extends `CParagraphContentWithParagraphLikeContent`, whose
+   `Get_Text` iterates its inner runs, so the link's displayed text IS part of the paragraph's own text.)
+2. **THE DOCUMENT'S OWN PARAGRAPH COUNT**, unchanged for NAMED and +1 for APPEND, derived by the bridge from the
+   two pushed counts against the REQUEST rather than from a flag in the answer. It is SECONDARY: a count that
+   moved can only REFUTE.
+3. **THE MARKDOWN FRAGMENT**, and this is the leg that makes the URL itself provable.
+   `L.prototype.ToMarkdown(...)` builds the markdown converter, whose
+   `HandleHyperlink` renders `"[" + <runs> + "](" + GetLinkedText() + ")"`, and whose `HandleRun` emits every
+   run character RAW through `String.fromCharCode` (and emits the hyperlink's own inner runs with NO mode
+   argument at all, so the displayed text gets neither escaping nor emphasis markers). The addressed paragraph's
+   own PRE-mutation text is therefore the fragment's context, and the needle is
+   `preText + "[" + text + "]("`. The proof requires that needle to occur EXACTLY ONCE in the POST-mutation
+   export AND the requested URL to follow it IMMEDIATELY, closed by `)`. The needle is built from the PRE read
+   on BOTH sides, so a post-read that moved cannot supply its own context.
+
+**THE DUPLICATE DECISION, STATED EXACTLY.** A needle the PRE-mutation export ALREADY holds is the closed
+argument class with ZERO writes, decided in the body BEFORE the phase turns: the fragment could not be
+attributed one-to-one, so the honest answer is a known refusal rather than a write whose outcome nothing can
+tell apart. A needle that is only ABSENT, DUPLICATED or URL-LESS after the write — a concurrent writer, an
+editor that stored another URL — cannot be refused closed, because the write has already run: it is
+`APPLY_UNCERTAIN` with the slot HELD and NO retry. Both directions are pinned by tests, and neither can produce
+a false `ok`.
+
+### 17.4 The residuals, named rather than relied on
+
+* **A FORMATTING BOUNDARY INSIDE THE ADDRESSED PARAGRAPH'S OWN TEXT MAKES THE FRAGMENT UNLOCATABLE.** The
+  converter wraps a formatted run with its measured markdown symbol
+  (`MdSymbols = { Bold: "**", Italic: "*", Strikeout: "~~", Code: "`", ... }`; underline has none), so a
+  paragraph containing bold/italic/strikeout text — or ending in such a run, whose closer lands between its last
+  character and the link's `[` — exports its text with markers INSIDE the needle. A LINE BREAK does the same
+  (`para_NewLine` renders as ` \` plus a newline while `GetText()` answers `\r`). The needle is then not found:
+  a **FALSE UNCERTAIN** with the slot held, **never a false `ok`**. This is the leg's primary residual and it is
+  the FIRST thing a native run should settle. The STRUCTURAL REMEDY for a later round, already visible in the
+  vendored SDK and deliberately NOT used here because no native run has measured it: `ApiParagraph` exposes
+  `GetElementsCount()` and `GetElement(i)`, and the hyperlink wrapper exposes `GetLinkedText()`/`GetDisplayedText()`
+  — a PER-OBJECT readback over the addressed paragraph's own content that would need no export at all. It is not
+  adopted in this round because the contract prescribes the fragment proof and the export route is the one the
+  Lead MEASURED; swapping the readback channel on an unmeasured route is exactly the mistake this sprint has
+  already paid for twice.
+* **THE CONCURRENT WINDOW**, the same one the other mutations acknowledge: a writer who appends exactly the link
+  text to the addressed paragraph while another fragment appears elsewhere inside the two reads. Accepted and
+  recorded, not silently relied on.
+* **THE `%20` NORMALISATION IS REFUSED, NOT WRITTEN.** `ApiHyperlink.SetLink` ends with
+  `url = url && url.replace(new RegExp("%20","g"), " ")`, so a URL holding `%20` is stored with a literal space
+  and could never be compared verbatim with the export. It is the closed argument class with ZERO writes — a
+  clean refusal instead of a write that would wedge the slot. Every other percent escape survives unchanged.
+* **THE CLOSED SCHEME VOCABULARY.** `SetLink` also REWRITES a URL its `AscCommon.rx_allowedProtocols` test does
+  not match (`url = type === 0 ? null : (type === 2 ? "mailto:" : "http://") + url`). The tool serves only the
+  two absolute, lower-case schemes it can prove (`http://`, `https://`, in `LIMITS.addHyperlinkSchemes`); a
+  relative path, a `mailto:` and an upper-case scheme are refused closed with ZERO writes.
+* **THE EXPORT IS BOUNDED** by `LIMITS.addHyperlinkMarkdownChars` (131072 characters, the read path's pilot byte
+  ceiling divided by the worst-case two bytes per character) and never truncated to a prefix: above it the body
+  answers the closed `BYTE_LIMIT` with ZERO writes before the mutation and the UNCERTAIN class after one.
+
+### 17.5 The failure map, and the RED/GREEN record
+
+Wrong editor / missing bridge entry point / unusable baseline / missing `ToMarkdown` / missing factories →
+`CAPABILITY_UNAVAILABLE`; a bad URL, an empty or over-bound label, an uninterpretable address, a `%20` URL, an
+index outside the document and an already-rendered fragment → the closed argument class with ZERO writes
+(precondition AND handler AND the body, because a descriptor is also executable when it is held directly); a
+pre-mutation export above the bound → `BYTE_LIMIT` with ZERO writes; a bridge refusal → `refusalCode`; an
+uninterpretable envelope → `known()`; a thrown or returned `APPLY_UNCERTAIN` and every non-exact outcome →
+`TOOL_UNCERTAIN` with the slot HELD and no retry; an over-ceiling entry → `BYTE_LIMIT`.
+
+**RED.** The 18 new tests were written first and run against the untouched tree: 21 failures — the three
+catalogue/registry name lists (because `add_hyperlink` did not exist) plus the 18 new tests, every bridge test
+dying on `TypeError: r.bridge.addHyperlink is not a function` and the schema test on the missing descriptor.
+**GREEN.** Focused set `tests/unit/tools-word.test.js tests/integration/package.test.js` → **267/267**
+(262 + 5), `fail 0`. Four fixes were required by the RED run itself and none of them weakened a proof: the three
+index bounds are equal by SCALE and are therefore asserted as equal-but-separate decisions instead of as
+inequalities (`contextReadBytes`' own rule); the schema-closed cases are checked with the existing
+`schemaRefused` pattern, with the URL-shape and control-character cases asserted explicitly as the ones the
+schema CANNOT express and the handler therefore refuses; the "at the bound" export had to be split into a
+PRE read that holds no fragment and a POST read that holds exactly one, because the single-string version
+tripped this leg's own zero-write duplicate refusal — which is the rule working.
+
+### 17.6 Verification (this round, final tree)
+
+Full suite `node --test` → **894 tests, pass 894, fail 0, cancelled 0, skipped 0** (**876 → 894**, never
+shrunk); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs`
+→ exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+dd54e294a3f4edecfe1ef114ca6b73ae975e9fe10e280f71b27b2791f672ddc0`. The SHA moved from `927770d`'s because the
+builder runs with **`minify: false`** and this round added one authored body, one decoder and the descriptor.
+The classifier counts NINE inline legs, and the hyperlink branch is placed FIRST on purpose: this body also
+authors `CreateParagraph`, `Push` and `GetAllParagraphs`, so without its own branch it would have been blessed
+as the BLOCK APPEND. `src/agent/*` is untouched and no dynamic execution was added to `src/`.
+
+### 17.7 What only a native run can settle
+
+(1) That the fragment needle is found for a REAL document — the first native run should try a plain paragraph
+AND a paragraph containing bold text and a line break, to measure exactly how much of §17.4's residual bites.
+(2) That `doc.ToMarkdown()` really carries `[displayedText](url)` with the URL byte-identical to the request
+(the vendor converter says so; Phase 0 measured the text and the URL in the export without recording the exact
+bracketing). (3) That `Api.CreateParagraph()` + `AddElement` + `Push` really lands the created paragraph as the
+document's LAST one, which is the index the append form's own readback addresses. Each unknown lands on a closed
+path: no located fragment means `TOOL_UNCERTAIN` with the slot held and no retry, and no write means a known
+refusal.

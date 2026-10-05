@@ -409,6 +409,68 @@ export const LIMITS = Object.freeze({
   // to a prefix: a prefix could hide the addressed region or its marker, so a large export makes the read
   // unusable rather than partially trusted.
   formatRangeHtmlChars: 131072,
+  // The bounded HYPERLINK INSERT (`add_hyperlink`) — the NINTH Sprint 3 Word tool, the FIFTH MUTATION, the
+  // THIRD one that APPENDS, and the FIRST to take a URL from the model. It adds FOUR static per-call bounds
+  // and ONE closed vocabulary, and the two that bound TEXT are payload bounds rather than an address:
+  //   * `addHyperlinkUrlBytes` bounds the URL. 2048 is this module's existing text-PAYLOAD scale
+  //     (`insertBlockBytes`), and it is deliberately its own constant rather than an alias: a URL is a
+  //     single opaque token whose own scheme decides whether the editor even keeps it, so a later widening
+  //     of one payload bound must not silently widen two tools. The bound is ALREADY the schema's advertised
+  //     width (`maxBytes`), so a caller's over-bound URL is refused at the schema with ZERO writes; the
+  //     precondition and the bridge entry point re-check the SAME number because a descriptor is also
+  //     executable when it is held directly.
+  //   * `addHyperlinkTextBytes` bounds the VISIBLE link text. 512 is TWICE the module's search-needle bound
+  //     (`findQueryBytes` = 256), because a link's visible text is a LABEL the document renders inline
+  //     rather than a paragraph: the measure is a phrase, not a block. It is not an alias of
+  //     `findQueryBytes`: a needle is matched against text, a label becomes text.
+  //   * `addHyperlinkIndexMax` bounds the optional paragraph INDEX. It is a SEPARATE constant from
+  //     `setHeadingIndexMax` and `formatRangeIndexMax` although all three bound the same kind of quantity,
+  //     because they are separate decisions and a later widening of one address must not silently widen
+  //     three tools. 128 is the same scale as both — a document this product WRITES is a chapter. An index
+  //     past THIS document's own `GetAllParagraphs()` array is the closed argument class with ZERO writes,
+  //     decided by the authored body before the one mutation, never a link appended to `undefined`.
+  //   * `addHyperlinkMarkdownChars` bounds the MARKDOWN EXPORT the fragment proof reads, and it is a
+  //     CHARACTER bound for `formatRangeHtmlChars`'s exact reason: the export never CROSSES anything. The
+  //     authored body reads it inside the editor, locates the addressed paragraph's own fragment in it and
+  //     returns three one-character flags, so the only quantity that bounds the work this leg pays is the
+  //     LENGTH of the string the editor built, and the body has no honest way to compute UTF-8 bytes (there
+  //     is no `TextEncoder` in the evaluated command scope). THE ARITHMETIC is the one this module already
+  //     does: take the export byte ceiling the read path fixes for a pilot document (`documentHtmlBytes` =
+  //     262144) and divide by this product's realistic worst case of two UTF-8 bytes per character
+  //     (Cyrillic) — 262144 / 2 = 131072 characters. It is deliberately its OWN constant even though it
+  //     equals `formatRangeHtmlChars` today: the two bound DIFFERENT exports of the same document (the HTML
+  //     export carries inline styles and is roughly 4.25x the text; the markdown export is close to the
+  //     text), so equal values are a coincidence of the arithmetic and not an identity. An export above it is
+  //     REFUSED CLOSED before any write (`BYTE_LIMIT`, slot released) and is the UNCERTAIN class after one
+  //     (slot held); it is never truncated to a prefix, because a prefix could hide the addressed fragment.
+  //   * `addHyperlinkSchemes` is the CLOSED scheme list, and it is a LIST because the accepted shape of the
+  //     URL is a vocabulary rather than a bound. It is deliberately NARROWER than the editor's own
+  //     `AscCommon.rx_allowedProtocols` (measured in the vendored 2026.1.2 SDK): `ApiHyperlink.SetLink`
+  //     REWRITES a URL that test does not match — a bare `AscCommon.getUrlType(U) === 2` value gets a
+  //     `mailto:` prefix and everything else an `http://` prefix — and it ALSO rewrites every `%20` to a
+  //     literal space (`U.replace(new RegExp("%20","g"), " ")`). The fragment proof compares the URL
+  //     VERBATIM against the export, so a URL the editor would rewrite can never be proven. The list holds
+  //     only the two ABSOLUTE schemes this tool serves, spelled in lower case exactly as `SetLink` matches
+  //     them; `mailto:` and a relative path are the closed argument class with ZERO writes, and a URL that
+  //     contains `%20` is refused there too rather than written and left unprovable.
+  // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
+  // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({tool, ok, data})`, the shape
+  // `stringifyToolResults` measures and `runtime.js:27-36` replaces with the literal "the tool result
+  // could not be serialized" when it is exceeded). The entry is
+  // `{"tool":"add_hyperlink","ok":true,"data":{"appended":B,"paragraph":N|null,"paragraphsBefore":N,"paragraphsAfter":N,"textBeforeChars":N,"textAfterChars":N,"textAppended":B,"fragmentUnique":B,"urlInFragment":B,"bytes":N}}`
+  // and EVERY field is a non-negative safe integer, `null`, or a boolean: the index by the bound above, the
+  // two paragraph counts by the document's own array lengths, the two character counts by the addressed
+  // paragraph's own text, and `bytes` by the dispatched scope. Nine bounded scalars cannot fill 16384 bytes
+  // (measured in the tool's own test at well under 400), so this guard cannot fire for any shape the handler
+  // can publish; the measurement is nevertheless the ENFORCED bound, exactly as it is for the other four
+  // mutations. THE URL AND THE LINK TEXT ARE NOT PART OF THIS ENTRY: they are the caller's own words, and
+  // the export they are proven against never leaves the editor — only the three one-character flags derived
+  // from it cross.
+  addHyperlinkUrlBytes: 2048,
+  addHyperlinkTextBytes: 512,
+  addHyperlinkIndexMax: 128,
+  addHyperlinkMarkdownChars: 131072,
+  addHyperlinkSchemes: Object.freeze(['http://', 'https://']),
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
