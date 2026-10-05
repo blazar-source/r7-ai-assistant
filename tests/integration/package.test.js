@@ -41,8 +41,10 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // document through the `Api` builder. Like the search and the structure read it builds the facade
   // itself and receives DATA — here the whole block array — from the `scope` binding the vendor's
   // `callCommand` wrapper injects (never from source text), and it is classified by its own mutating
-  // primitive (`InsertContent`), which is what distinguishes it from the structure body it shares
-  // `GetAllParagraphs`/`GetAllHeadingParagraphs` with.
+  // primitive (`Push`, one call per block, the route the Lead measured to append at the END), which is
+  // what distinguishes it from the structure body it shares
+  // `GetAllParagraphs`/`GetAllHeadingParagraphs` with; the legacy whole-array insert primitive — measured
+  // to land at the START and to replace existing text under a selection — is authored nowhere.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -55,7 +57,7 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(carried), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(carried, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      if (carried.includes('.InsertContent(')) {
+      if (carried.includes('.Push(')) {
         assert.match(carried, /\bscope\b/, 'the append body takes its blocks from the injected command scope');
         assert.match(carried, /CreateParagraph/, 'and builds each paragraph through the measured factory');
         assert.match(carried, /GetAllParagraphs/, 'and reads the document\u2019s own counts around the append');

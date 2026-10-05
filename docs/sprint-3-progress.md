@@ -1329,12 +1329,13 @@ result wrapper (`insertBlocksEntryBytes`). No limit VALUE moved, `src/agent/*` i
 `src/tools/word.js`, `src/plugin/bridge.js`, `src/shared/limits.js`, two test files and this document
 changed.
 
-**The mutation ground truth is the document, never the primitive's return value.** Measured on the
+**The mutation ground truth is the document, never a primitive's return value.** Measured on the
 target (Astra / R7 2026.1.2.1942, this round): inside a `callCommand` body, `Api.CreateParagraph()` +
-`paragraph.AddText(text)` + `doc.InsertContent([paragraph])` works, and `InsertContent` returns `true`
-**even for `[]`, `[null]` and `'nonsense'`** — so its boolean is not a result signal in either direction
+`paragraph.AddText(text)` + `paragraph.SetStyle(style)` work, and **no mutation primitive's boolean is a
+result signal** in either direction — `Push` answered `true` for a paragraph and `false` for an image
+host, and the legacy whole-array primitive answered `true` **even for `[]`, `[null]` and `'nonsense'`**
 (a `false` is not proof of failure either, which is why the rule is not written as "true means inserted"
-with a fallback). What **is** measured is the document's own shape: after `InsertContent` the paragraph
+with a fallback). What **is** measured is the document's own shape: after an insert the paragraph
 **IS** a heading — `GetAllHeadingParagraphs()` went **3 → 4** while `GetAllParagraphs()` went **10 → 11**
 — and `paragraph.SetStyle(style)` applies. Two bridge tests drive both halves of that: a document that
 really grew while the primitive answered `false` is **verified**, and a primitive that answered `true`
@@ -1345,18 +1346,20 @@ exactly like the search and structure bodies, so the native can stringify and ev
 `bridge.js`'s module bindings exist) which does all three phases in ONE synchronous evaluation: a
 **pre-dispatch baseline** of `GetAllParagraphs()`/`GetAllHeadingParagraphs()`, then every paragraph built
 (`Api.CreateParagraph` + `AddText`, and `SetStyle(doc.GetStyle('Heading ' + n))` where a heading was
-asked for) with **every style resolved BEFORE anything is inserted**, then **ONE**
-`document.InsertContent(paragraphs)`, then the **post read** of the same two counts plus every block's
-own text out of the document's own paragraph texts. The model data crosses as the `Asc.scope` parameter
-channel (`{ blocks }`), never interpolated into source (ADR 0002). Position is the **END** of the
-document — what the measured `InsertContent` does and what the pilot's "add a chapter" needs — and the
-body authors **no** positioning option, because no positioning primitive was measured.
+asked for) with **every style resolved BEFORE anything is inserted**, then **ONE `document.Push` PER
+BLOCK, IN BLOCK ORDER**, then the **post read** of the same two counts plus every block's own text out of
+the document's own paragraph texts. The model data crosses as the `Asc.scope` parameter channel
+(`{ blocks }`), never interpolated into source (ADR 0002). Position is the **END** of the document
+**because `Push` is the route measured to append there** (§13.2), and the body authors **no** positioning
+option. It authors the legacy whole-array insert primitive **nowhere** — not as the mutation, not as a
+fallback, and not even as a capability check — because on the same target that route lands at the
+**BEGINNING** and, with a selection present, replaced existing text (§13.2).
 
 **The schema is closed** (`additionalProperties: false`, `required: ['blocks']`): `blocks` is an array
 with `maxItems: LIMITS.insertBlocksMax`, each item a closed object of `text` (`minBytes: 1`,
 `maxBytes: LIMITS.insertBlockBytes`) and an optional integer `heading` (`1..LIMITS.insertHeadingMax`).
 Three bounds and one level bound are named in `src/shared/limits.js` with their reasoning: **64** blocks
-(one `ApiParagraph` array the body materialises before the single `InsertContent`; twice the module's
+(one `ApiParagraph` array the body materialises before the push loop; twice the module's
 other report caps because a chapter is a *sequence* of paragraphs), **2048** bytes per text (a written
 paragraph, deliberately not an alias of a read budget), **8192** bytes for the whole payload — the same
 number as `AGENT_CEILINGS.argumentsBytes`, because the blocks *are* the action's arguments and JSON
@@ -1387,10 +1390,10 @@ applied twice, not two competing measurements.
 
 **The failure map**, each class closed: wrong editor → `CAPABILITY_UNAVAILABLE` (precondition); missing
 bridge entry point → `CAPABILITY_UNAVAILABLE`; an **unusable baseline** → `CAPABILITY_UNAVAILABLE` with
-**no `InsertContent`** (the body answers before the one mutation); an **unresolvable heading style** →
-`TOOL_ERROR` with no `InsertContent` (the editor's heading machinery is intact, so the capability class
+**no `Push`** (the body answers before the one mutation); an **unresolvable heading style** →
+`TOOL_ERROR` with no `Push` (the editor's heading machinery is intact, so the capability class
 would misname the failure; what the document does not define is the requested `Heading <n>`; and it is
-not uncertain, because the body resolves every style before it inserts); a bridge refusal → its own
+not uncertain, because the body resolves every style before its first `Push`); a bridge refusal → its own
 closed `refusalCode`; an uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` →
 `TOOL_UNCERTAIN`; an over-ceiling result entry → `BYTE_LIMIT`. The refusal's **phase is an explicit slot
 of the answer**, not a property of its name (§13.1): the body answers `[PRE_INSERT, name]` before its one
@@ -1398,12 +1401,16 @@ mutation and `[POST_INSERT, name]` after it, and `decodeBlocks` raises the two k
 a `[PRE_INSERT, name]` answer. A phase-less one-slot `['CAPABILITY_UNAVAILABLE']` — the forgery the review
 reproduced — is therefore `APPLY_UNCERTAIN` with the slot held: the body ran, and the document may already
 hold the append. `owned.dispatched` alone cannot decide this: it is set before the command is handed to
-the native, so it does not mean "`InsertContent` ran".
+the native, so it does not mean "the push ran".
 
-**The mutation boundary is the call, not its return.** The body's phase turns uncertain
-**immediately before** `InsertContent(created)`, so a native that **throws out of** the mutation is
-`APPLY_UNCERTAIN` with the slot held, never a known refusal with the slot released — a throwing mutation
-may already have applied part of the array. That path is covered.
+**The mutation boundary is the FIRST call, not its return.** The body's phase turns uncertain
+**immediately before the first `Push`**, so a native that **throws out of** a push is `APPLY_UNCERTAIN`
+with the slot held, never a known refusal with the slot released — a throwing mutation may already have
+applied that block. Because the append is now a **loop of calls**, the same rule covers the **partial**
+case: a throw between two pushes can leave the document holding *some* of the batch, so the body answers
+its refusal with the post-insert phase and the decoder turns it into `APPLY_UNCERTAIN` — slot held, no
+retry — rather than a known refusal for a write that may already have happened. Both paths are covered by
+tests.
 
 **The result entry is measured** through the module's one `toolResultEntryBytes` shape
 (`insertBlocksEntryBytes`): `ok({ inserted, headings, paragraphsBefore, paragraphsAfter, bytes })`,
@@ -1449,7 +1456,7 @@ and body is rebuilt into the bundle and the SHA **moved** from the `e5d3f6f` pin
 `eab165582c68d3cb3ba9ad5f5ffe5a5fa3ac725854a6219fbb41db4d162e926b`; the moved bytes are comments and one
 new authored body. The `package` test's authored-command-leg classifier grew **4 → 5**
 (`['blocks', 'capability', 'context', 'search', 'structure']`, classified by the primitive each body
-authors — the append body is recognised by `.InsertContent(` **before** the structure branch, because
+authors — the append body is recognised by `.Push(` **before** the structure branch, because
 both read `GetAllHeadingParagraphs`). The registry offers the tool in `EDIT` only (`kind: 'mutate'`), with
 `policy: 'auto'` and `requires: ['document.write']`, and a model batch dispatches exactly **one** command
 for the whole run; `src/agent/*` untouched.
@@ -1457,10 +1464,10 @@ for the whole run; `src/agent/*` untouched.
 **Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What
 the host-side suite cannot prove is the **shipped** carriage of this leg: (1) that `{ blocks }` written
 into the page's `Asc.scope` reaches the body's `scope` binding, (2) that `Api.CreateParagraph()` /
-`paragraph.AddText` / `document.GetStyle('Heading <n>')` / `document.InsertContent([…])` answer from
+`paragraph.AddText` / `document.GetStyle('Heading <n>')` / `document.Push(…)` answer from
 **inside** this exact body, (3) that the native return validator passes a flat array of `5 + n`
 primitives unaltered, and (4) that the post read inside the same body observes the append (i.e. that the
-two document reads around a synchronous `InsertContent` really differ). Each unknown lands on a closed
+two document reads around the synchronous push loop really differ). Each unknown lands on a closed
 path: a scope that does not arrive makes the body answer its own phase-marked refusal
 (`[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']`, nothing inserted, slot released); a missing primitive does the
 same; a style the document does not define answers `[PRE_INSERT, 'STYLE_UNAVAILABLE']` → `TOOL_ERROR`
@@ -1475,13 +1482,14 @@ measured; it is recorded here as PENDING NATIVE VERIFICATION.
 An independent review of `2fdaa45` (the revision §13 describes) found two fail-open defects in
 `insert_blocks` and one unreachable bound. Nothing in §13's mechanism changed; what changed is where the
 verifier is anchored and how the refusal phase travels. `src/agent/*` is untouched, the tool is still a
-mutation with the exact-delta contract, there is still exactly **one** `InsertContent` per body, and
-anything unprovable is still `TOOL_UNCERTAIN` + held slot + no retry.
+mutation with the exact-delta contract, the body's mutation is still **one call per paragraph** (the
+primitive was corrected to the measured `Push` in §13.2), and anything unprovable is still
+`TOOL_UNCERTAIN` + held slot + no retry.
 
 **D1 (fail-open) — the presence check was existential, not one-to-one over the append.** The body asked
 `paragraphTexts.some(text => text.indexOf(block.text) !== -1)` over the WHOLE document, so a document that
 already held the block texts satisfied it. The reviewer's reproduction: a document already holding
-`['Глава','Текст']`, an `InsertContent` that creates the right NUMBER of paragraphs and writes no text,
+`['Глава','Текст']`, an append that creates the right NUMBER of paragraphs and writes no text,
 and the bridge published `{ok:true, paragraphsBefore:2, paragraphsAfter:4, present:[true,true]}` while the
 document ended `['Глава','Текст','','']`. **The method chosen is per-slot equality over the region the
 append added**, addressed by the baseline the body already takes: `flag_i = 1` **iff**
@@ -1494,7 +1502,7 @@ per-needle multiplicity bookkeeping; joining the region under a separator is wea
 because one region text can be split into paragraphs two ways. The exact count deltas are unchanged.
 
 **D2 (fail-open, latent) — the decoder trusted a one-slot sentinel without checking the phase.** The body
-flipped its phase immediately before `InsertContent`, but the decoder mapped the pre-insert NAMES
+flipped its phase immediately before its first push, but the decoder mapped the pre-insert NAMES
 unconditionally, so a forged post-insert `['CAPABILITY_UNAVAILABLE']` or `['STYLE_UNAVAILABLE']` produced a
 false KNOWN refusal with the slot RELEASED and `writePending` false. **The phase is now an explicit slot
 of every answer**: `[PRE_INSERT, name]` / `[POST_INSERT, name]` for a refusal, and
@@ -1502,7 +1510,7 @@ of every answer**: `[PRE_INSERT, name]` / `[POST_INSERT, name]` for a refusal, a
 known classes only for `[PRE_INSERT, name]`; a missing phase, a post-insert phase, a pre-insert phase over
 a measurement, and every other single value are `APPLY_UNCERTAIN` with the slot HELD. Both genuine
 pre-insert refusals (an unusable baseline, an unresolvable style) still map to their known classes with
-ZERO `InsertContent`.
+ZERO `Push`.
 
 **D3 (info) — the decoder's byte assertion was unreachable, and it was DELETED rather than kept as a claim
 nothing can test.** The wire shape is closed to one of two phase literals, four safe integers of at most
@@ -1545,4 +1553,66 @@ and it carries `BLOCKS_PHASE_PRE`/`BLOCKS_PHASE_POST`/`BLOCKS_HEAD` and the per-
 comment-only edit did not move the SHA, so esbuild does drop some comments). The audit trap §13 records
 was respected: `build-plugin.mjs` was run (not only the audit), and the bundle audits with
 **0 findings**.
+
+### 13.2 Native-run correction — the append route is `Push` per block, and the legacy primitive is never authored
+
+The Lead's native run of the shipped tool on the target (Astra / R7 2026.1.2.1942) found that the route
+§13 assumed was wrong. On a document whose paragraphs were `[TARGET ROUTES CHECK, ПЕРВЫЙ-АБЗАЦ-РОУТ,
+ВТОРОЙ-АБЗАЦ-РОУТ, ТРЕТИЙ-АБЗАЦ-РОУТ]`, inside a `callCommand` body:
+
+* `doc.Push(paragraph)` returned `true` and **APPENDED AT THE END** — `[…, ТРЕТИЙ-АБЗАЦ-РОУТ,
+  МАРКЕР-МАРШРУТ-2]`;
+* `doc.InsertContent([paragraph])` returned `true` and put the paragraph at the **BEGINNING** —
+  `[МАРКЕР-МАРШРУТ-1, TARGET ROUTES CHECK, …]`;
+* the same `InsertContent` **with a selection present** (`doc.GetRange(lastIndex, 0, lastIndex,
+  lastText.length).Select()`) did not append either: it inserted at the beginning **and clobbered
+  existing text** — `МАРКЕР-МАРШРУТ-1` became `-МАРШРУТ-1` — so select-then-insert is unsafe and is not
+  used anywhere.
+
+A native run of the previous revision (a level-2 heading chapter on a clean document) confirmed the
+consequence: the append landed at the START, the per-slot region rule therefore did not match, and the
+tool reported a **FALSE** `TOOL_UNCERTAIN` for an insert that had actually happened (the document did show
+the heading and the paragraph). The region anchor was right; the route was not.
+
+**What changed.** The body's mutation is now `document.Push(paragraph)` **once per block, in block
+order** (`src/plugin/bridge.js`), and the legacy whole-array primitive is authored **nowhere**: it is not
+the mutation, not a fallback, and not even a capability the body checks for (`typeof document.Push ===
+'function'` is the check). The phase still turns `POST_INSERT` **before the first push**. `Push`'s own
+return value is still **not read** — measured `false` for an image host earlier and `true` for a paragraph
+here — and the ground truth stays the document readback, with the exact count deltas and the per-slot
+region flag rule unchanged: they become correct precisely because the append now really is at the end
+(`paragraphTexts[paragraphsBefore + i] === blocks[i].text`).
+
+**A PARTIAL append is uncertain, not refused.** The append is now ONE CALL PER BLOCK, so a native that
+throws between two calls can leave the document holding *some* of the batch. The post-insert phase is set
+before the FIRST call, so a throw at any point in the loop answers a post-insert refusal, `decodeBlocks`
+turns it into `APPLY_UNCERTAIN`, the bridge HOLDS its slot and there is no retry; the exact-delta rule is
+never consulted for a write that may have happened. One test drives a second-`Push` throw and asserts the
+**first block really landed** in the document while the result is `APPLY_UNCERTAIN` with the slot held,
+and another drives a first-`Push` throw (nothing landed, the phase had already turned) to the same class.
+
+**TDD, and the exact RED.** The new and re-modelled test blocks were written FIRST and run against
+`1c08827`: `node --test tests/unit/tools-word.test.js` → **tests 161, pass 149, fail 12** (`fail 0` on that
+file before the round), every failure rooted in the one cause — the carried body still called
+`document.InsertContent(…)`, so the doubles built to the measured route recorded ZERO `Push` calls, the
+append went through the wrong primitive, and `AssertionError … expected: /\.Push\s*\(/` named the body's
+missing route. Green on the final tree: **161/161** on that file. The doubles were re-modelled (they now
+record `pushes` + `pushed` order and keep an `insertContents` trap, and `prepends` models a start-landing
+mutation), and four new test blocks cover the measured route and call order, a start-landing mutation
+(`TOOL_UNCERTAIN`, slot held, no retry), a partial push failure, and a build that exposes only the legacy
+primitive (refused up-front with nothing written). No test was deleted or weakened.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js` →
+**182/182**, `fail 0`; full suite `node --test` → **793**, `pass 793`, `fail 0` (789 → 793: four added test
+blocks, none removed or weakened); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+27c99d41c90d2bbc1ee74b6672c716ef7c3a75d0454fb855536df110b00aa432` — the SHA **moved** from the `1c08827` pin
+`2072b90e0e8f1fb78b480dfcd73c669691adb90c20e44e27bb072dbb5262e65b`, because the authored body changed. The
+audit trap §13 records was respected: `build-plugin.mjs` was run (not only the audit), and the bundle
+audits with **0 findings**. The `package` test's authored-command-leg classifier — the one place outside
+`src/` that names the append body's primitive — was corrected with it: the append leg is recognised by
+`.Push(` **before** the structure branch, because both bodies read `GetAllHeadingParagraphs`. `src/agent/*`
+untouched, no dynamic execution added, and the tool is still a mutation under the exact-delta contract,
+`TOOL_UNCERTAIN` + held slot + no retry on anything unprovable.
 

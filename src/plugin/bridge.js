@@ -14,8 +14,8 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // cover the leg (`pendingMutation`), and does an abort AFTER the dispatch leave an outcome that may
 // already be in the document (`cancel`)? Four literal kind lists answering the same question is how a
 // new write leg comes to be missing from one of them. `blocksinsert` is the block append: it writes the
-// document through `InsertContent` inside its own command body, so it is a write leg in every sense the
-// other two are.
+// document through `document.Push`, one call per block, inside its own command body, so it is a write leg
+// in every sense the other two are.
 const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
@@ -258,15 +258,23 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       //      block that asked for a heading) and EVERY heading style is RESOLVED (`GetStyle('Heading <n>')`)
       //      first, so an unresolvable style refuses the whole call with NOTHING inserted — never a plain
       //      paragraph where a heading was asked for;
-      //   3. ONE `document.InsertContent(paragraphs)` carrying the whole array, followed by the POST
-      //      read of the same counts plus each block's own text, so the delta and the REGION flags are
-      //      measured INSIDE the editor by the two primitives the Lead measured.
-      // `InsertContent`'s return value is DELIBERATELY NOT READ. Measured on the target: it answers `true`
-      // even for `[]`, `[null]` and `'nonsense'`, so its boolean says nothing about what the document now
-      // holds — and a `false` is not proof of failure either. The delta is the only evidence this body
-      // reports. POSITION: the append is at the END of the document, which is what the measured
-      // `InsertContent` does and what the pilot's "add a chapter" needs; the body authors NO positioning
-      // option, because no positioning primitive was measured.
+      //   3. `document.Push(paragraph)` ONCE PER BLOCK, IN BLOCK ORDER, followed by the POST read of the
+      //      same counts plus each block's own text, so the delta and the REGION flags are measured
+      //      INSIDE the editor by the two primitives the Lead measured.
+      // THE ROUTE IS MEASURED, NOT ASSUMED, and the measured route is `Push`. On the target it APPENDS AT
+      // THE END: one paragraph inserted into [TARGET ROUTES CHECK, ПЕРВЫЙ-АБЗАЦ-РОУТ, ВТОРОЙ-АБЗАЦ-РОУТ,
+      // ТРЕТИЙ-АБЗАЦ-РОУТ] landed as (…, ТРЕТИЙ-АБЗАЦ-РОУТ, МАРКЕР-МАРШРУТ-2). The legacy whole-array
+      // insert primitive this body used to call lands at the BEGINNING ([МАРКЕР-МАРШРУТ-1, TARGET ROUTES
+      // CHECK, …]) and, with a selection present (`GetRange(lastIndex, 0, lastIndex, lastText.length)
+      // .Select()`), REPLACED existing text — `МАРКЕР-МАРШРУТ-1` was written and read back as
+      // `-МАРШРУТ-1`. That route is therefore authored NOWHERE in this body: it is neither the mutation
+      // nor a capability the body checks for, and select-then-insert (the shape that clobbered text) is
+      // never authored either. The body authors NO positioning option: an append at the END of the
+      // document is what the measured `Push` does and what the pilot's "add a chapter" needs.
+      // NO MUTATION PRIMITIVE'S RETURN VALUE IS READ. Measured on the target: `Push` answered `true` for a
+      // paragraph and `false` for an image host, and the legacy primitive answered `true` even for `[]`,
+      // `[null]` and `'nonsense'` — so no boolean says anything about what the document now holds, in
+      // either direction, and the document readback is the only evidence this body reports.
       // The answer is ONE flat array of primitives (the native return validator keeps those and strips a
       // plain object): `[POST_INSERT, paragraphsBefore, paragraphsAfter, headingsBefore, headingsAfter,
       // flag0, …]`, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY
@@ -280,9 +288,10 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
         return plugin.callCommand(function () {
           // The phase, and the ONE place the two classes are distinguished: everything answered while it
           // is `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after
-          // the one call is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
-          // IMMEDIATELY BEFORE `InsertContent`, not after it, because a native that throws OUT of the call
-          // may already have applied part of the array.
+          // the FIRST push is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
+          // IMMEDIATELY BEFORE that first push, not after it, because a native that throws OUT of the call
+          // may already have applied that block, and a throw PART WAY THROUGH leaves some pushed and some
+          // not.
           var phase = 'PRE_INSERT';
           // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
           // name. It is built by APPENDING to an array that starts as a literal, exactly like the answer
@@ -309,7 +318,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // rather than an append of invented zeros.
             if (!available || typeof Api.CreateParagraph !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
             if (typeof document.GetAllParagraphs !== 'function' || typeof document.GetAllHeadingParagraphs !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
-            if (typeof document.GetStyle !== 'function' || typeof document.InsertContent !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetStyle !== 'function' || typeof document.Push !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
             // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check
             // reaches for NO global at all, so the stringified body depends on nothing but the two
             // bindings the vendor wrapper creates.
@@ -343,14 +352,20 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               created.push(paragraph);
             }
             if (created.length !== blocks.length) return blocksRefusal('CAPABILITY_UNAVAILABLE');
-            // THE ONE MUTATION of this leg, and the exact boundary the two refusal classes are split on:
-            // the phase turns `POST_INSERT` IMMEDIATELY BEFORE the call, not after it, because a native
-            // that throws OUT of `InsertContent` may already have applied part of the array. From the
-            // moment this call is entered, nothing observed here proves the document was not touched, so
-            // every refusal below carries the post-insert phase and the decoder turns it into the
-            // uncertain class, for which the bridge holds its slot.
+            // THE MUTATION, and the exact boundary the two refusal classes are split on. THE ROUTE IS
+            // THE MEASURED ONE: ONE `Push` PER BLOCK, IN BLOCK ORDER, which appends at the END
+            // (…, ТРЕТИЙ-АБЗАЦ-РОУТ, МАРКЕР-МАРШРУТ-2) — never the legacy whole-array insert primitive,
+            // which lands at the BEGINNING ([МАРКЕР-МАРШРУТ-1, TARGET ROUTES CHECK, …]) and, with a
+            // selection present, replaced existing text (`МАРКЕР-МАРШРУТ-1` → `-МАРШРУТ-1`), and which is
+            // therefore authored nowhere in this body. Because the append is a LOOP of calls, the phase
+            // turns `POST_INSERT` IMMEDIATELY BEFORE THE FIRST PUSH: a native that throws out of one
+            // `Push` may already have applied it, and a throw PART WAY THROUGH leaves the document
+            // holding SOME of the batch. From the first call entered, nothing observed here proves the
+            // document was not touched, so every refusal below carries the post-insert phase and the
+            // decoder turns it into the uncertain class, for which the bridge holds its slot — the
+            // readback is the ground truth, never the primitive's return value.
             phase = 'POST_INSERT';
-            document.InsertContent(created);
+            for (var pushed = 0; pushed < created.length; pushed++) document.Push(created[pushed]);
             var allParagraphs = document.GetAllParagraphs();
             var allHeadings = document.GetAllHeadingParagraphs();
             if (allParagraphs === null || allParagraphs === undefined || typeof allParagraphs.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
@@ -624,10 +639,11 @@ function decodeBlocks(value, blockCount) {
 // cannot drift apart: the document's paragraph count must have grown by EXACTLY the number of blocks
 // asked for, its heading count by EXACTLY the number of blocks that asked for a heading, and EVERY block
 // must have carried its text in the paragraph slot the append gave it — the flag is one-to-one with the
-// append, not a substring match over the document. Nothing else is evidence, and `InsertContent`'s return
-// value is not consulted anywhere: it answers `true` even for `[]`, `[null]` and `'nonsense'` (measured on
-// the target), so it carries no information at all — and a `false` is not proof of failure either, so the
-// rule cannot be written in terms of it in either direction.
+// append, not a substring match over the document. Nothing else is evidence, and NO MUTATION PRIMITIVE'S
+// RETURN VALUE is consulted anywhere: `Push` answered `true` for a paragraph and `false` for an image host,
+// and the legacy whole-array primitive answered `true` even for `[]`, `[null]` and `'nonsense'` (all
+// measured on the target), so no boolean carries information in either direction — a `true` proves nothing
+// and a `false` is not proof of failure, so the rule cannot be written in terms of it.
 function exactBlocksDelta(outcome, blocks) {
   let headings = 0;
   for (const block of blocks) if (Object.hasOwn(block, 'heading')) headings += 1;
@@ -645,11 +661,13 @@ function exactBlocksDelta(outcome, blocks) {
 // The two PRE-insert refusals the block body can answer with, and the ONLY classes that keep a KNOWN code
 // once the ticket's dispatch flag is set. `blocksinsert` sets `owned.dispatched` BEFORE the command is
 // handed to the native (a synchronous throw out of the transport must never release a slot whose work may
-// already be queued), so that flag does NOT mean "InsertContent ran": the PHASE travels in the answer's
+// already be queued), so that flag does NOT mean "the push ran": the PHASE travels in the answer's
 // OWN SLOT, and `decodeBlocks` raises these two codes only for a `[PRE_INSERT, name]` answer. Everything
 // else a dispatched append can answer — a phase-less one-slot name, the post-insert phase, a malformed
 // array, a decode this bridge refuses — means the append may already be in the document, so it is the
-// uncertain class with the slot HELD.
+// uncertain class with the slot HELD. That is the shape a PARTIAL push leaves behind as well: a body that
+// had pushed some blocks and then threw answers its refusal with the post-insert phase, so the exact delta
+// is never consulted for a write that may have happened and the slot is never released.
 function blocksPreInsertRefusal(error) {
   return error instanceof SafeError &&
     (error.code === ERROR_CODES.CAPABILITY_UNAVAILABLE || error.code === ERROR_CODES.TOOL_ERROR);
@@ -1668,16 +1686,18 @@ export function createR7Bridge(plugin, {
     // The BLOCK APPEND behind `insert_blocks` — the FIRST MUTATION of Sprint 3 and the only leg in this
     // bridge that both WRITES and VERIFIES inside ONE authored command body. The body's own comment
     // carries the mechanism (a pre-dispatch baseline, every paragraph built and every heading style
-    // resolved BEFORE the single `InsertContent`, then the post read) and why the primitive's boolean is
-    // never the signal; what matters HERE is the shape: ONE command on the ONE entry point that owns the
-    // parameter wrapper, the validated block array carried as DATA through `Asc.scope`, and ONE strict
-    // decoder that turns the authored flat array — an explicit phase slot, the delta's four counts, and
-    // one REGION flag per block (the block's own paragraph in the region the append added, never a
-    // substring match over the document) — into the envelope below. The EXACT-DELTA rule is then decided
-    // inside the ticket, before the slot is released: a delta that is not exact, an answer that cannot be
-    // interpreted, and the body's own POST-insert uncertainty all settle `APPLY_UNCERTAIN` with the slot
-    // HELD and no retry, while the body's PRE-insert refusals (an unusable baseline, an unresolvable
-    // heading style) settle their closed KNOWN class with the slot released, because nothing was inserted
+    // resolved BEFORE the first `Push`, then ONE `Push` PER BLOCK IN BLOCK ORDER, then the post read) and
+    // why no mutation primitive's boolean is the signal; what matters HERE is the shape: ONE command on
+    // the ONE entry point that owns the parameter wrapper, the validated block array carried as DATA
+    // through `Asc.scope`, and ONE strict decoder that turns the authored flat array — an explicit phase
+    // slot, the delta's four counts, and one REGION flag per block (the block's own paragraph in the
+    // region the append added, never a substring match over the document) — into the envelope below. The
+    // EXACT-DELTA rule is then decided inside the ticket, before the slot is released: a delta that is
+    // not exact, an answer that cannot be interpreted, and the body's own POST-insert uncertainty (a
+    // throw PART WAY THROUGH the push loop, which leaves some blocks applied and some not) all settle
+    // `APPLY_UNCERTAIN` with the slot HELD and no retry, while the body's PRE-insert refusals (an
+    // unusable baseline, an unresolvable heading style) settle their closed KNOWN class with the slot
+    // released, because nothing was inserted
     // — and they do so ONLY when the answer carries their phase, so a name alone can never release a slot.
     // The request is a closed precondition, never an optional refinement: a caller that cannot name a
     // bounded block array gets a refusal instead of an SDK call that appends an unbounded one. The SHAPE

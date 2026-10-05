@@ -946,15 +946,28 @@ export function createWordTools(bridge) {
       // descriptor with an OUTCOME CONTRACT rather than a result shape, and the mutation ground truth is
       // the document's own structure, never the primitive that changed it.
       //
-      // WHY THE PRIMITIVE'S RETURN VALUE IS NOT THE SIGNAL. Measured on the target (Astra / R7
-      // 2026.1.2.1942, this round): inside a `callCommand` body, `Api.CreateParagraph()` +
-      // `paragraph.AddText(text)` + `doc.InsertContent([paragraph])` works, and `InsertContent` returns
-      // `true` EVEN FOR `[]`, `[null]` and `'nonsense'` — so its boolean is not a result signal in either
-      // direction (and a `false` is not proof of failure, which is why the rule is not written as "true
-      // means inserted" with a fallback). What IS measured is the document's own shape: after
-      // `InsertContent` the paragraph IS a heading — `GetAllHeadingParagraphs()` went 3 → 4 while
+      // WHY NO MUTATION PRIMITIVE'S RETURN VALUE IS THE SIGNAL. Measured on the target (Astra / R7
+      // 2026.1.2.1942, this round): `Push` returned `true` for a paragraph this tool hands it and `false`
+      // for an image host, and the legacy whole-array insert primitive `doc.InsertContent([paragraph])`
+      // returned `true` EVEN FOR `[]`, `[null]` and `'nonsense'` — so no boolean is a result signal in
+      // either direction (and a `false` is not proof of failure, which is why the rule is not written as
+      // "true means inserted" with a fallback). What IS measured is the document's own shape: after an
+      // insert the paragraph IS a heading — `GetAllHeadingParagraphs()` went 3 → 4 while
       // `GetAllParagraphs()` went 10 → 11 — so the delta between the two reads is the evidence, and this
       // handler verifies it EXACTLY.
+      //
+      // WHERE THE CONTENT GOES IS MEASURED TOO, AND THE ROUTE IS `Push`. On the same target, inside a
+      // `callCommand` body on a document [TARGET ROUTES CHECK, ПЕРВЫЙ-АБЗАЦ-РОУТ, ВТОРОЙ-АБЗАЦ-РОУТ,
+      // ТРЕТИЙ-АБЗАЦ-РОУТ]: `doc.Push(paragraph)` returned `true` and APPENDED AT THE END (…,
+      // ТРЕТИЙ-АБЗАЦ-РОУТ, МАРКЕР-МАРШРУТ-2), while `doc.InsertContent([paragraph])` put the paragraph at
+      // the BEGINNING ([МАРКЕР-МАРШРУТ-1, TARGET ROUTES CHECK, …]) and, once a selection existed
+      // (`doc.GetRange(lastIndex, 0, lastIndex, lastText.length).Select()`), REPLACED existing text — the
+      // marker was written as `МАРКЕР-МАРШРУТ-1` and read back as `-МАРШРУТ-1`. This tool therefore authors
+      // `Push` ONE CALL PER BLOCK, IN BLOCK ORDER, and authors `InsertContent` nowhere: it is not the
+      // mutation, not a fallback, and not even a capability this tool checks for, and select-then-insert —
+      // the shape that clobbered text — is never authored either. So the tool's position semantics are
+      // "appends at the END of the document via `Push`", not "writes at the end because the insert
+      // primitive is assumed to".
       //
       // THE OUTCOME CONTRACT, in one sentence: `ok` is published ONLY when the post read shows the exact
       // expected delta — paragraphs grew by exactly the number of blocks, headings grew by exactly the
@@ -970,9 +983,16 @@ export function createWordTools(bridge) {
       // static and self-contained exactly like the search and structure bodies: it builds the `Api`
       // facade itself, receives the blocks as DATA through the `Asc.scope` parameter channel (never
       // interpolated into source), reads the baseline, builds every paragraph and resolves every heading
-      // style, inserts the WHOLE array in ONE `InsertContent` call, and reads the document back. It
-      // authors NO positioning option: the append is at the END of the document, which is what the
-      // measured `InsertContent` does, and no positioning primitive was measured.
+      // style, then pushes EVERY created paragraph with `document.Push`, ONE `Push` PER BLOCK in block
+      // order, and reads the document back. It authors NO positioning option: the append is at the END of
+      // the document because `Push` is the route measured to append there.
+      //
+      // A FAILURE PART WAY THROUGH THE PUSH LOOP IS UNCERTAIN, NOT A REFUSAL. Because the append is one
+      // call per block, a native that throws between two calls can leave the document holding SOME of the
+      // batch; the body flips its phase to post-insert immediately before the FIRST push, so a throw at
+      // any point in the loop answers a post-insert refusal, the bridge decodes it as `APPLY_UNCERTAIN`,
+      // HOLDS its slot, and the run stops with `TOOL_UNCERTAIN`. It is never a known refusal for a write
+      // that may already have happened, and there is no retry.
       //
       // THE SCHEMA is closed. `blocks` is required, bounded above by `LIMITS.insertBlocksMax`, and each
       // item is a closed object of `text` (bounded by `LIMITS.insertBlockBytes`) and an optional integer
@@ -993,9 +1013,9 @@ export function createWordTools(bridge) {
       // editor's heading machinery is intact — it resolves styles and it inserts content — so the
       // capability class would misname the failure as "this editor cannot do headings". What this
       // DOCUMENT does not define is the requested `Heading <n>`, so the failure is about the ARGUMENT,
-      // and it is not uncertain either: the authored body resolves EVERY style BEFORE its single
-      // `InsertContent`, so nothing was inserted, and an uncertain outcome would be false information
-      // about a mutation that provably did not happen. The style name is still the MEASURED one — the
+      // and it is not uncertain either: the authored body resolves EVERY style BEFORE its first `Push`, so
+      // nothing was inserted, and an uncertain outcome would be false information about a mutation that
+      // provably did not happen. The style name is still the MEASURED one — the
       // lookup accepts the English `'Heading <n>'` on a localized document too (`GetStyle('Heading 1')`
       // and the same style as `'Heading1'`, `'heading 1'` and `'Заголовок 1'` all resolve on the target),
       // so the mapping is not a guess about the document's language.

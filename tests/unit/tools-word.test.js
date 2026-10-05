@@ -3848,12 +3848,16 @@ test('read_structure is offered with policy auto and a model call dispatches exa
 // --- Sprint 3, tool 5: `insert_blocks` — the FIRST MUTATION, under an EXACT-DELTA contract ----------
 //
 // THE MECHANISM'S GROUND TRUTH IS THE DOCUMENT, NEVER THE PRIMITIVE'S RETURN VALUE. Measured on the
-// target (Astra / R7 2026.1.2.1942, this round): `InsertContent` answers `true` even for `[]`, `[null]`
-// and `'nonsense'`, so its boolean carries NO information about what the document now holds — neither a
-// `true` nor a `false` does. The evidence is the delta between the document's OWN counts before and
-// after (`GetAllParagraphs()` went 10 → 11 and `GetAllHeadingParagraphs()` 3 → 4 for one inserted
-// heading paragraph). The tool is therefore a pure arbiter over four counts and one presence flag per
-// block, and every test below drives exactly those.
+// target (Astra / R7 2026.1.2.1942, this round): a mutation primitive's boolean carries NO information
+// about what the document now holds — neither a `true` nor a `false` does (`Push` answered `true` for a
+// paragraph and `false` for an image host; the legacy whole-array primitive answered `true` even for
+// `[]`, `[null]` and `'nonsense'`). The evidence is the delta between the document's OWN counts before
+// and after (`GetAllParagraphs()` went 10 → 11 and `GetAllHeadingParagraphs()` 3 → 4 for one inserted
+// heading paragraph), plus one presence flag per block for the region the append added. The tool is
+// therefore a pure arbiter over four counts and one presence flag per block, and every test below drives
+// exactly those. THE ROUTE is `Push`, one call per block, which the target measures as an APPEND AT THE
+// END; the tool never calls the legacy whole-array primitive, which the same target measures as landing
+// at the BEGINNING (and, with a selection present, replacing existing text).
 function blocksBridge(answer, extras = {}) {
   const seen = [];
   return { seen, insertBlocks: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
@@ -4035,7 +4039,7 @@ test('insert_blocks refuses an unusable baseline or a heading style it cannot re
   // THE STYLE GATE, and the code is TOOL_ERROR by a DECISION that is stated here: the editor's heading
   // capability is intact (it resolves styles and inserts content) — what this document does not define
   // is the requested `Heading <n>`, so the failure is about the ARGUMENT. It is not the uncertain class
-  // either: the body resolves every style BEFORE `InsertContent`, so nothing was inserted, and an
+  // either: the body resolves every style BEFORE its first `Push`, so nothing was inserted, and an
   // uncertain outcome would be false information about a documented mutation that provably did not
   // happen. The real bridge leg below proves the no-insert half of that statement.
   const styled = await insertBlocksTool(blocksBridge({ ok: false, code: 'TOOL_ERROR' }))
@@ -4167,42 +4171,63 @@ function paragraphDouble() {
   const state = { text: '', heading: false };
   return { state, AddText(text) { state.text = text; }, SetStyle() { state.heading = true; } };
 }
-// The DOCUMENT double. Its ONE mutating primitive really appends (pushing the paragraphs the body built
-// onto the document's own arrays), which is what the measured primitive does: `GetAllParagraphs()` went
-// 10 → 11 and `GetAllHeadingParagraphs()` 3 → 4. `appends: false` models a primitive that answered and
-// changed nothing, and `answer` is its own RETURN VALUE — which the body never consults, so the two are
-// deliberately independent knobs.
-function blocksDocument({ paragraphs = 10, headings = 3, styles = true, appends = true, answer = true } = {}) {
+// The DOCUMENT double, modelling the MEASURED route: `doc.Push(paragraph)` returned `true` and APPENDED
+// AT THE END, in call order, so its ONE mutating primitive really appends and counts one call per
+// paragraph. The legacy whole-array insert primitive is offered ONLY as a trap that records any call and
+// lands its content at the BEGINNING — the measured behaviour of that route (measured on the target:
+// `[МАРКЕР-МАРШРУТ-1, TARGET ROUTES CHECK, …]`, and with a selection present it replaced existing text),
+// which is why this tool must never use it. `appends: false` models a primitive that answered and changed
+// nothing, `prepends: true` models a mutation that lands at the START, and `answer` is the primitive's own
+// RETURN VALUE — which the body never consults (measured `false` for an image host, `true` for a
+// paragraph), so the knobs are deliberately independent.
+function blocksDocument({ paragraphs = 10, headings = 3, styles = true, appends = true, prepends = false, answer = true } = {}) {
   const texts = [];
   for (let index = 0; index < paragraphs; index += 1) texts.push(`абзац-${index + 1}`);
   const styled = [];
   for (let index = 0; index < headings; index += 1) styled.push(texts[index]);
-  const calls = { inserts: 0, styleNames: [] };
+  const calls = { pushes: 0, pushed: [], insertContents: 0, styleNames: [] };
   return { texts, styled, calls, document: {
     GetAllParagraphs() { return texts.map(text => ({ GetClassType() { return 'paragraph'; }, GetText() { return text; } })); },
     GetAllHeadingParagraphs() { return styled.map(text => ({ GetText() { return text; } })); },
     GetStyle(name) { calls.styleNames.push(name); return styles ? { GetName() { return name; } } : null; },
+    Push(item) {
+      calls.pushes += 1;
+      calls.pushed.push(item.state.text);
+      if (appends) {
+        if (prepends) { texts.unshift(item.state.text); if (item.state.heading) styled.unshift(item.state.text); }
+        else { texts.push(item.state.text); if (item.state.heading) styled.push(item.state.text); }
+      }
+      return answer;
+    },
+    // NEVER the route this tool takes. It is here so a test can prove the body does not call it, and it
+    // lands at the BEGINNING exactly as the measured legacy primitive does.
     InsertContent(items) {
-      calls.inserts += 1;
-      if (appends) for (const item of items) { texts.push(item.state.text); if (item.state.heading) styled.push(item.state.text); }
+      calls.insertContents += 1;
+      for (const item of items) texts.unshift(item.state.text);
       return answer;
     }
   } };
 }
 // A SECOND document double, for the one shape the default cannot express: a document that ALREADY holds
-// the block texts, and an `InsertContent` whose number of created paragraphs is right while the text it
-// writes is not. `write: false` pushes an empty paragraph per item, `write: 'Другое'` pushes a text that
-// is not the block's, and `write: true` is the real append. The texts are the ONLY state this double
-// keeps, so a test can state exactly what the document holds after the call.
+// the block texts, and an append whose number of created paragraphs is right while the text it writes is
+// not. `write: false` pushes an empty paragraph per block, `write: 'Другое'` pushes a text that is not the
+// block's, and `write: true` is the real append — one `Push` per block, at the END, in call order. The
+// texts are the ONLY state this double keeps, so a test can state exactly what the document holds after
+// the call.
 function blocksDocumentFromTexts(texts, { write = true } = {}) {
-  const state = { texts: [...texts], inserts: 0 };
+  const state = { texts: [...texts], pushes: 0, insertContents: 0 };
   return { state, document: {
     GetAllParagraphs() { return state.texts.map(text => ({ GetText() { return text; } })); },
     GetAllHeadingParagraphs() { return []; },
     GetStyle(name) { return { GetName() { return name; } }; },
+    Push(item) {
+      state.pushes += 1;
+      state.texts.push(write === true ? item.state.text : (write === false ? '' : write));
+      return true;
+    },
     InsertContent(items) {
-      state.inserts += 1;
-      for (const item of items) state.texts.push(write === true ? item.state.text : (write === false ? '' : write));
+      state.insertContents += 1;
+      for (const item of items) state.texts.unshift(item.state.text);
       return true;
     }
   } };
@@ -4213,10 +4238,10 @@ function evaluateBlocksBody(body, api, scope) {
 // `forge` hands the bridge a REPLACEMENT for the answer the body really produced, after that body has
 // run to completion against the document double — a real append included. It is the only way to model a
 // hostile or damaged native answer for a dispatched append without weakening the body itself.
-function blocksRig({ paragraphs = 10, headings = 3, styles = true, appends = true, answer = true,
+function blocksRig({ paragraphs = 10, headings = 3, styles = true, appends = true, prepends = false, answer = true,
   command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined, forge = undefined } = {}) {
   const commands = [];
-  const measured = blocksDocument({ paragraphs, headings, styles, appends, answer });
+  const measured = blocksDocument({ paragraphs, headings, styles, appends, prepends, answer });
   const api = { GetDocument() { return document === undefined ? measured.document : document; },
     CreateParagraph() { return paragraphDouble(); } };
   const plugin = { info: { editorType: 'word' },
@@ -4247,7 +4272,9 @@ test('bridge insertBlocks dispatches ONE command, carries the blocks as DATA and
   assert.equal(carried.recalculate, false);
   assert.deepEqual(carried.scope, { blocks }, 'the blocks cross as the command SCOPE, never interpolated into source');
   assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no blocks outlive their dispatch');
-  assert.equal(r.doc.calls.inserts, 1, 'ONE InsertContent call carries the whole array, and only one exists');
+  assert.equal(r.doc.calls.pushes, 2, 'ONE Push per block: the whole batch is appended one paragraph at a time');
+  assert.deepEqual(r.doc.calls.pushed, ['Глава первая', 'Первый абзац.'], 'in block order, each at the END');
+  assert.equal(r.doc.calls.insertContents, 0, 'the legacy whole-array primitive — which lands at the START — is never called');
   assert.deepEqual(r.doc.calls.styleNames, ['Heading 1'], 'the level is mapped to the measured style name');
   assert.deepEqual(carried.answered, ['POST_INSERT', 10, 12, 3, 4, 1, 1],
     'the body encodes the explicit phase slot, the four counts and one flag per block');
@@ -4273,16 +4300,19 @@ test('the blocks body is self-contained: it answers the measured shapes in a fre
   const evaluated = evaluateBlocksBody(carried.body, freshApi, carried.scope);
   assert.deepEqual(evaluated, ['POST_INSERT', 2, 4, 0, 1, 1, 1],
     'the blocks arrived as DATA and the counts are the document\'s own');
-  assert.equal(fresh.calls.inserts, 1, 'and the ONE InsertContent call is where the mutation happens');
+  assert.equal(fresh.calls.pushes, 2, 'and the two Push calls are where the mutation happens — one per block');
+  assert.equal(fresh.calls.insertContents, 0, 'never through the legacy whole-array primitive');
   assert.deepEqual(fresh.texts, ['абзац-1', 'абзац-2', 'Один', 'Два']);
   assert.deepEqual(fresh.styled, ['Два'], 'only the block that asked for a heading became one');
   assert.deepEqual(carried.scope, { blocks: [{ text: 'Один' }, { text: 'Два', heading: 2 }] });
   assert.deepEqual((await pending).present, [true, true]);
 });
 
-test('the InsertContent boolean is never the signal: a false that appended verifies, a true that appended nothing does not', async () => {
-  // BOTH halves of the measured primitive's uselessness. `InsertContent` answered `true` even for `[]`,
-  // `[null]` and `'nonsense'`, so a `true` proves nothing; and a `false` does not prove failure either.
+test('the Push boolean is never the signal: a false that appended verifies, a true that appended nothing does not', async () => {
+  // BOTH halves of a mutation primitive's uselessness, on the MEASURED route. `Push` answered `true` for
+  // the paragraph this body hands it and `false` for an image host, and the legacy whole-array primitive
+  // answered `true` even for `[]`, `[null]` and `'nonsense'`. A `true` therefore proves nothing, and a
+  // `false` does not prove failure either.
   // The document's own delta is the only evidence, and it is what these two rigs vary.
   const lied = blocksRig({ paragraphs: 3, headings: 1, answer: false });
   assert.deepEqual(await lied.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }),
@@ -4293,7 +4323,7 @@ test('the InsertContent boolean is never the signal: a false that appended verif
   assert.deepEqual(await noop.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }),
     { ok: false, code: 'APPLY_UNCERTAIN' },
     'the primitive answered true and the document did not move: never a verified append');
-  assert.equal(noop.doc.calls.inserts, 1, 'the mutation was dispatched exactly once and is never retried');
+  assert.equal(noop.doc.calls.pushes, 1, 'the mutation was dispatched exactly once and is never retried');
   const state = noop.bridge.getState();
   assert.equal(state.busy, true, 'the slot is HELD for an uncertain append');
   assert.equal(state.uncertain, true);
@@ -4301,34 +4331,34 @@ test('the InsertContent boolean is never the signal: a false that appended verif
   assert.deepEqual(await noop.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
     'no retry: the held slot refuses the next append');
   assert.equal(noop.commands.length, 1, 'and the refused call dispatches nothing at all');
-  // THE PHASE BOUNDARY IS THE CALL, NOT ITS RETURN. A native that THROWS out of `InsertContent` may
-  // already have applied part of the array, so the body's phase turns uncertain IMMEDIATELY BEFORE the
-  // call: a throwing mutation is never reported as a known refusal with the slot released.
+  // THE PHASE BOUNDARY IS THE FIRST CALL, NOT ITS RETURN. A native that THROWS out of `Push` may already
+  // have applied that block, so the body's phase turns uncertain IMMEDIATELY BEFORE the first push: a
+  // throwing mutation is never reported as a known refusal with the slot released.
   const base = blocksDocument();
-  const calls = { inserts: 0 };
-  const document = { ...base.document, InsertContent() { calls.inserts += 1; throw new Error('СЕКРЕТ-ДОКУМЕНТА'); } };
+  const calls = { pushes: 0 };
+  const document = { ...base.document, Push() { calls.pushes += 1; throw new Error('СЕКРЕТ-ДОКУМЕНТА'); } };
   const threw = blocksRig({ document });
   assert.deepEqual(await threw.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }), { ok: false, code: 'APPLY_UNCERTAIN' },
     'a primitive that threw out of the mutation is the uncertain class');
-  assert.equal(calls.inserts, 1);
+  assert.equal(calls.pushes, 1);
   assert.equal(threw.bridge.getState().busy, true, 'the slot is HELD: a throwing mutation may still have applied part of the array');
   assert.equal(threw.bridge.getState().writePending, true);
   assert.equal(JSON.stringify(await threw.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] })).includes('СЕКРЕТ'), false);
-  assert.equal(calls.inserts, 1, 'and the uncertain append is never retried');
+  assert.equal(calls.pushes, 1, 'and the uncertain append is never retried');
 });
 
 test('the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an existential match over the document', async () => {
-  // THE REVIEWER'S REPRODUCTION. The document ALREADY holds both block texts, and `InsertContent`
-  // creates the right NUMBER of paragraphs while writing no text at all. An existential substring search
-  // over the whole document is satisfied by the pre-existing occurrences, so the old check verified an
-  // append that carried nothing: `{ok:true, paragraphsBefore:2, paragraphsAfter:4, present:[true,true]}`
-  // while the document ended `['Глава','Текст','','']`. The verifier must be anchored to the REGION the
-  // append added — the paragraphs at indices `paragraphsBefore …` — so a text that was already in the
-  // document cannot stand in for the block's own paragraph.
+  // THE REVIEWER'S REPRODUCTION, on the measured route. The document ALREADY holds both block texts, and
+  // the append creates the right NUMBER of paragraphs while writing no text at all. An existential
+  // substring search over the whole document is satisfied by the pre-existing occurrences, so the old
+  // check verified an append that carried nothing: `{ok:true, paragraphsBefore:2, paragraphsAfter:4,
+  // present:[true,true]}` while the document ended `['Глава','Текст','','']`. The verifier must be
+  // anchored to the REGION the append added — the paragraphs at indices `paragraphsBefore …` — so a text
+  // that was already in the document cannot stand in for the block's own paragraph.
   const silent = blocksDocumentFromTexts(['Глава', 'Текст'], { write: false });
   const quiet = blocksRig({ document: silent.document });
   const result = await quiet.bridge.insertBlocks({ blocks: [{ text: 'Глава' }, { text: 'Текст' }] });
-  assert.equal(silent.state.inserts, 1, 'the mutation was dispatched exactly once');
+  assert.equal(silent.state.pushes, 2, 'the mutation was dispatched exactly once PER BLOCK');
   assert.deepEqual(silent.state.texts, ['Глава', 'Текст', '', ''],
     'the double created two paragraphs and carried no text — the count delta is exact and the text is not');
   assert.equal(result.ok, false, 'an append that carried no text is NEVER verified, whatever the document already held');
@@ -4340,7 +4370,7 @@ test('the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an exis
   assert.equal(held.writePending, true);
   assert.deepEqual(await quiet.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
     'no retry of an append whose outcome is unknown');
-  assert.equal(silent.state.inserts, 1, 'and the refused call dispatches nothing');
+  assert.equal(silent.state.pushes, 2, 'and the refused call dispatches nothing');
   // The same region anchor closes the OTHER wrong-text shape: the paragraphs are created and filled with
   // something that is not the block's own text. The old existential rule could also be fed by a document
   // that merely CONTAINS the block's text somewhere else.
@@ -4365,16 +4395,117 @@ test('the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an exis
     { ok: true, paragraphsBefore: 1, paragraphsAfter: 3, headingsBefore: 0, headingsAfter: 0, present: [true, true] },
     'two blocks with the same text are two appended paragraphs, and both verify');
   assert.deepEqual(duplicates.state.texts, ['старт', 'Дубль', 'Дубль']);
-  assert.equal(duplicates.state.inserts, 1);
+  assert.equal(duplicates.state.pushes, 2);
 });
 
-test('bridge insertBlocks refuses an unusable baseline or an unresolvable style with a closed class and NO InsertContent', async () => {
+// --- §13.2 the MEASURED append route: `Push` per block, in order, AT THE END -----------------------
+// The Lead's native run corrected the route this body authors. Measured on the target (Astra / R7
+// 2026.1.2.1942) on a document [TARGET ROUTES CHECK, ПЕРВЫЙ-АБЗАЦ-РОУТ, ВТОРОЙ-АБЗАЦ-РОУТ,
+// ТРЕТИЙ-АБЗАЦ-РОУТ]: `doc.Push(paragraph)` returned `true` and APPENDED AT THE END
+// (…, ТРЕТИЙ-АБЗАЦ-РОУТ, МАРКЕР-МАРШРУТ-2); the legacy whole-array insert primitive put its paragraph at
+// the BEGINNING (МАРКЕР-МАРШРУТ-1, TARGET ROUTES CHECK, …) and, with a selection present, REPLACED
+// existing text (a paragraph lost its first characters: `МАРКЕР-МАРШРУТ-1` came out as `-МАРШРУТ-1`), so
+// select-then-insert is unsafe and is not used. The region anchor of §13.1 is what makes the tool's
+// promise true on BOTH routes: content that lands at the START still grows the paragraph count, so only
+// the per-slot region check can tell a real append from a start-landing mutation.
+
+test('the body pushes ONE paragraph per block, in order, and never calls the legacy insert primitive', async () => {
+  const r = blocksRig({ paragraphs: 4, headings: 0 });
+  const blocks = [{ text: 'МАРКЕР-МАРШРУТ-1' }, { text: 'ВТОРОЙ-МАРКЕР' }, { text: 'ТРЕТИЙ-МАРКЕР', heading: 1 }];
+  const result = await r.bridge.insertBlocks({ blocks });
+  const carried = r.commands[0];
+  // THE SOURCE THE EDITOR EVALUATES: the mutation is a `Push` call, and the route that lands at the
+  // START is not named as a call anywhere in the body.
+  assert.match(carried.source, /\.Push\s*\(/, 'the carried body authors the measured append primitive');
+  assert.equal(/\.InsertContent\s*\(/.test(carried.source), false, 'and never the route that lands at the START');
+  // THE BEHAVIOUR: one Push PER BLOCK, in block order, each landing after the last existing paragraph.
+  assert.equal(r.doc.calls.pushes, 3, 'ONE Push per block — three blocks are three calls');
+  assert.deepEqual(r.doc.calls.pushed, ['МАРКЕР-МАРШРУТ-1', 'ВТОРОЙ-МАРКЕР', 'ТРЕТИЙ-МАРКЕР'], 'in block order');
+  assert.equal(r.doc.calls.insertContents, 0, 'the legacy primitive is never called');
+  assert.deepEqual(r.doc.texts, ['абзац-1', 'абзац-2', 'абзац-3', 'абзац-4', 'МАРКЕР-МАРШРУТ-1', 'ВТОРОЙ-МАРКЕР', 'ТРЕТИЙ-МАРКЕР'],
+    'the content is at the END, in the order it was asked for');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 4, 7, 0, 1, 1, 1, 1],
+    'the phase slot, the four counts and one flag per block — every flag over the region the append added');
+  assert.deepEqual(result, { ok: true, paragraphsBefore: 4, paragraphsAfter: 7, headingsBefore: 0, headingsAfter: 1,
+    present: [true, true, true] });
+});
+
+test('a mutation that lands at the START is TOOL_UNCERTAIN with the slot HELD: the region anchor catches it', async () => {
+  // THE OLD ASSUMED ROUTE, modelled: the mutation answers and the content lands at the BEGINNING — the
+  // measured behaviour of the legacy primitive this tool used to call. The paragraph count really grows,
+  // so the count delta ALONE would call this a verified append; only the per-slot region check can see
+  // that the block does not own the paragraph the append was supposed to give it.
+  const r = blocksRig({ paragraphs: 4, headings: 0, prepends: true });
+  const result = await r.bridge.insertBlocks({ blocks: [{ text: 'МАРКЕР-МАРШРУТ-1' }] });
+  assert.equal(r.doc.calls.pushes, 1, 'the mutation was dispatched exactly once');
+  assert.deepEqual(r.doc.texts, ['МАРКЕР-МАРШРУТ-1', 'абзац-1', 'абзац-2', 'абзац-3', 'абзац-4'],
+    'it landed at the START, not the END');
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 4, 5, 0, 0, 0],
+    'the counts grew by exactly one and the block does NOT own the paragraph at index 4 — the flag is 0');
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, 'a start-landing mutation is NEVER a verified append');
+  const held = r.bridge.getState();
+  assert.equal(held.busy, true, 'the slot is HELD: the write really happened, just not where it was promised');
+  assert.equal(held.uncertain, true);
+  assert.equal(held.writePending, true);
+  assert.deepEqual(await r.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
+    'and there is NO retry');
+  assert.equal(r.commands.length, 1, 'the refused call dispatches nothing at all');
+});
+
+test('a Push that throws PART WAY THROUGH is TOOL_UNCERTAIN with the slot HELD, never a known refusal', async () => {
+  // A block array is pushed ONE CALL AT A TIME, so a failure between two calls can leave the document
+  // holding SOME of the batch. The phase turns POST_INSERT before the FIRST call, so that partial write
+  // is never reported as a known refusal for a mutation that may already have happened — for a throw on
+  // the first block as well as on a later one.
+  for (const throwOn of [1, 2]) {
+    const base = blocksDocument({ paragraphs: 3, headings: 0 });
+    let pushes = 0;
+    const document = { ...base.document,
+      Push(item) { pushes += 1; if (pushes === throwOn) throw new Error('СЕКРЕТ-ДОКУМЕНТА'); return base.document.Push(item); } };
+    const r = blocksRig({ document });
+    const result = await r.bridge.insertBlocks({ blocks: [{ text: 'Первый' }, { text: 'Второй' }] });
+    assert.equal(pushes, throwOn, `throwOn ${throwOn}: the batch stopped at the throwing Push`);
+    if (throwOn === 2) {
+      assert.deepEqual(base.texts, ['абзац-1', 'абзац-2', 'абзац-3', 'Первый'],
+        'the FIRST block really landed and the second did not — a partial write the readback cannot verify');
+    }
+    assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, `throwOn ${throwOn}`);
+    assert.equal(JSON.stringify(result).includes('СЕКРЕТ'), false, 'no native text leaks through the refusal');
+    const held = r.bridge.getState();
+    assert.equal(held.busy, true, `throwOn ${throwOn}: the slot is HELD`);
+    assert.equal(held.uncertain, true);
+    assert.equal(held.writePending, true);
+    assert.deepEqual(await r.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
+      `throwOn ${throwOn}: an uncertain append is never retried`);
+    assert.equal(r.commands.length, 1, `throwOn ${throwOn}: and the refused call dispatches nothing`);
+  }
+});
+
+test('a document that offers ONLY the legacy primitive is refused up-front with NOTHING inserted', async () => {
+  // The route this tool must not use is not a fallback. A build that does not expose the measured append
+  // primitive gets the body's own closed refusal, answered BEFORE any write, with the slot released —
+  // never a content-in-front mutation published as an append.
+  const legacy = { texts: ['старт'], insertContents: 0 };
+  const document = {
+    GetAllParagraphs() { return legacy.texts.map(text => ({ GetText() { return text; } })); },
+    GetAllHeadingParagraphs() { return []; },
+    GetStyle(name) { return { GetName() { return name; } }; },
+    InsertContent(items) { legacy.insertContents += 1; for (const item of items) legacy.texts.unshift(item.state.text); return true; }
+  };
+  const r = blocksRig({ document });
+  assert.deepEqual(await r.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(legacy.insertContents, 0, 'the legacy primitive is never called');
+  assert.deepEqual(legacy.texts, ['старт'], 'and nothing reached the document');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is RELEASED: nothing was inserted');
+});
+
+test('bridge insertBlocks refuses an unusable baseline or an unresolvable style with a closed class and NO Push', async () => {
   // THE PRE-DISPATCH GATE. Every shape below is a document whose BASELINE cannot be established, so the
   // delta the outcome rests on can never be computed: the body answers before it inserts.
   const gated = (override) => {
     const base = blocksDocument();
-    const calls = { inserts: 0 };
-    const document = { ...base.document, InsertContent() { calls.inserts += 1; return true; }, ...override };
+    const calls = { pushes: 0 };
+    const document = { ...base.document, Push() { calls.pushes += 1; return true; }, ...override };
     return { r: blocksRig({ document }), calls };
   };
   for (const [label, override] of [
@@ -4383,7 +4514,7 @@ test('bridge insertBlocks refuses an unusable baseline or an unresolvable style 
     ['GetAllParagraphs answers no array', { GetAllParagraphs: () => 7 }],
     ['GetAllParagraphs answers a fractional length', { GetAllParagraphs: () => ({ length: 1.5 }) }],
     ['GetAllHeadingParagraphs answers null', { GetAllHeadingParagraphs: () => null }],
-    ['no InsertContent at all', { InsertContent: null }],
+    ['no Push at all', { Push: null }],
     ['no GetStyle at all', { GetStyle: null }],
     ['no Api.CreateParagraph', {}]
   ]) {
@@ -4392,23 +4523,23 @@ test('bridge insertBlocks refuses an unusable baseline or an unresolvable style 
     const result = await r.bridge.insertBlocks({ blocks: [{ text: 'а' }] });
     assert.equal(result.ok, false, label);
     assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', label);
-    assert.equal(calls.inserts, 0, `${label}: InsertContent is never reached`);
+    assert.equal(calls.pushes, 0, `${label}: the measured append primitive is never reached`);
     assert.equal(r.bridge.getState().busy, false, label);
   }
   // THE STYLE GATE, and it is a TOOL_ERROR rather than the uncertain class because the body resolves the
-  // style BEFORE `InsertContent`: nothing was inserted, so an uncertain outcome would be false
+  // style BEFORE its first `Push`: nothing was inserted, so an uncertain outcome would be false
   // information about a mutation that provably did not happen.
   const style = blocksRig({ styles: false });
   assert.deepEqual(await style.bridge.insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] }),
     { ok: false, code: 'TOOL_ERROR' });
   assert.deepEqual(style.doc.calls.styleNames, ['Heading 1'], 'the level WAS mapped to the measured name before the refusal');
-  assert.equal(style.doc.calls.inserts, 0, 'never a plain paragraph where a heading was asked for');
+  assert.equal(style.doc.calls.pushes, 0, 'never a plain paragraph where a heading was asked for');
   assert.equal(style.bridge.getState().busy, false);
   // The same document serves a heading-less append: the style bound is about the ARGUMENT it cannot
   // serve, never about the document's ability to append.
   const plain = await style.bridge.insertBlocks({ blocks: [{ text: 'Просто текст' }] });
   assert.equal(plain.ok, true);
-  assert.equal(style.doc.calls.inserts, 1);
+  assert.equal(style.doc.calls.pushes, 1);
 });
 
 test('bridge insertBlocks refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
@@ -4530,7 +4661,7 @@ test('bridge insertBlocks decodes ONLY the authored shapes and never publishes a
 });
 
 test('the refusal PHASE is explicit in the protocol: a forged one-slot sentinel answered after a real append is uncertain, never a known class', async () => {
-  // THE REVIEWER'S FORGERY. `blocksRefusal` flips the phase immediately before `InsertContent`, but the
+  // THE REVIEWER'S FORGERY. `blocksRefusal` flips the phase immediately before the first `Push`, but the
   // decoder used to map the PRE-insert sentinel NAMES unconditionally — so a forged post-insert answer
   // `['CAPABILITY_UNAVAILABLE']` (or `['STYLE_UNAVAILABLE']`) produced a false KNOWN refusal with the slot
   // RELEASED and `writePending` false, even though the body had really appended. The phase now travels IN
@@ -4540,7 +4671,7 @@ test('the refusal PHASE is explicit in the protocol: a forged one-slot sentinel 
   for (const forged of [['CAPABILITY_UNAVAILABLE'], ['STYLE_UNAVAILABLE'], ['APPLY_UNCERTAIN'], ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ']]) {
     const r = blocksRig({ paragraphs: 10, headings: 3, forge: forged });
     const result = await r.bridge.insertBlocks({ blocks: [{ text: 'Глава' }] });
-    assert.equal(r.doc.calls.inserts, 1, `${JSON.stringify(forged)}: the body really appended before the answer`);
+    assert.equal(r.doc.calls.pushes, 1, `${JSON.stringify(forged)}: the body really appended before the answer`);
     assert.equal(result.ok, false, JSON.stringify(forged));
     assert.equal(result.code, 'APPLY_UNCERTAIN',
       `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
@@ -4553,14 +4684,14 @@ test('the refusal PHASE is explicit in the protocol: a forged one-slot sentinel 
     assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
   }
   // THE GENUINE PRE-INSERT REFUSALS ARE UNCHANGED: the body answers them BEFORE the one mutation, with the
-  // pre-insert phase, so each keeps its KNOWN class with the slot RELEASED and ZERO `InsertContent`.
+  // pre-insert phase, so each keeps its KNOWN class with the slot RELEASED and ZERO `Push`.
   const baseline = blocksRig({ document: { ...blocksDocument().document, GetAllParagraphs: null } });
   assert.deepEqual(await baseline.bridge.insertBlocks({ blocks: [{ text: 'а' }] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
-  assert.equal(baseline.doc.calls.inserts, 0, 'an unusable baseline never reaches the mutation');
+  assert.equal(baseline.doc.calls.pushes, 0, 'an unusable baseline never reaches the mutation');
   assert.equal(baseline.bridge.getState().busy, false, 'and the slot is RELEASED: nothing was inserted');
   const style = blocksRig({ styles: false });
   assert.deepEqual(await style.bridge.insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] }), { ok: false, code: 'TOOL_ERROR' });
-  assert.equal(style.doc.calls.inserts, 0, 'an unresolvable style never reaches the mutation');
+  assert.equal(style.doc.calls.pushes, 0, 'an unresolvable style never reaches the mutation');
   assert.equal(style.bridge.getState().busy, false);
   // A PHASE-MARKED answer that names a pre-insert class from the POST-insert half is still not a known
   // refusal: only the PRE-insert phase makes those names known.
@@ -4592,7 +4723,7 @@ test('insert_blocks is offered with policy auto and a model call appends exactly
   assert.equal(run.status, 'FINAL');
   assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_blocks', 'ok']]);
   assert.equal(r.commands.length, 1, 'one command for the whole run, and no read/write path touched');
-  assert.equal(r.doc.calls.inserts, 1);
+  assert.equal(r.doc.calls.pushes, 1, 'the one block of the batch became exactly one Push, at the END');
   assert.equal(r.bridge.getState().busy, false);
   assert.equal(r.bridge.getState().writePending, false);
   // The model really RECEIVES the measured delta through the runtime's own per-result serialization.
