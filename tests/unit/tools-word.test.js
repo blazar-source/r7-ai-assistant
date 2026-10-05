@@ -4290,6 +4290,18 @@ function paragraphDouble() {
   const state = { text: '', heading: false };
   return { state, AddText(text) { state.text = text; }, SetStyle() { state.heading = true; } };
 }
+// THE EDITOR'S OWN LINE-BREAK FORM, which a double must model where the editor's STORAGE is the thing under
+// test. MEASURED on the target (Astra / R7 2026.1.2.1942): `Api.CreateParagraph()` +
+// `paragraph.AddText('СТРОКА-А\nСТРОКА-Б')` + `document.Push(paragraph)` yields ONE paragraph — the delta was
+// exactly +1 for `\n`, `\r\n`, `\n\n`, a TRAILING `\n` and a long multi-line text alike — whose `GetText()`
+// answers `'СТРОКА-А\rСТРОКА-Б'`. Every line break handed to the editor comes back as `\r`. The default
+// `paragraphDouble` above keeps the raw text, so every existing single-line case is untouched; a test that
+// models the editor's storage swaps in `storedParagraphDouble`.
+function editorStoredForm(text) { return text.replace(/\r\n/g, '\n').replace(/\n/g, '\r'); }
+function storedParagraphDouble() {
+  const state = { text: '', heading: false };
+  return { state, AddText(text) { state.text = editorStoredForm(text); }, SetStyle() { state.heading = true; } };
+}
 // The DOCUMENT double, modelling the MEASURED route: `doc.Push(paragraph)` returned `true` and APPENDED
 // AT THE END, in call order, so its ONE mutating primitive really appends and counts one call per
 // paragraph. The legacy whole-array insert primitive is offered ONLY as a trap that records any call and
@@ -4358,11 +4370,12 @@ function evaluateBlocksBody(body, api, scope) {
 // run to completion against the document double — a real append included. It is the only way to model a
 // hostile or damaged native answer for a dispatched append without weakening the body itself.
 function blocksRig({ paragraphs = 10, headings = 3, styles = true, appends = true, prepends = false, answer = true,
-  command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined, forge = undefined } = {}) {
+  command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined, forge = undefined,
+  paragraph = paragraphDouble } = {}) {
   const commands = [];
   const measured = blocksDocument({ paragraphs, headings, styles, appends, prepends, answer });
   const api = { GetDocument() { return document === undefined ? measured.document : document; },
-    CreateParagraph() { return paragraphDouble(); } };
+    CreateParagraph() { return paragraph(); } };
   const plugin = { info: { editorType: 'word' },
     callCommand: command ? function (body, close, recalculate, callback) {
       const source = Function.prototype.toString.call(body);
@@ -4515,6 +4528,71 @@ test('the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an exis
     'two blocks with the same text are two appended paragraphs, and both verify');
   assert.deepEqual(duplicates.state.texts, ['старт', 'Дубль', 'Дубль']);
   assert.equal(duplicates.state.pushes, 2);
+});
+
+// --- the MEASURED line-break representation: the editor stores `\r`, and the comparison follows it -------
+// The block append's own native runs hit this: the model writes multi-line blocks, the editor stores every
+// line break it is handed as `\r`, and the old comparison of the REQUESTED text (`\n`) against the READ text
+// (`\r`) gave the block flag 0 and settled TOOL_UNCERTAIN although the document had really grown. The fix is
+// a change of REPRESENTATION on BOTH sides of the flag comparison, never of the rule: one block still owns
+// exactly the one paragraph the append gave it, the count deltas are unchanged, and any real difference is
+// still a mismatch. These two tests pin both halves against doubles that store the editor's `\r` form.
+test('a block whose text carries line breaks verifies: the editor stores them as CR and BOTH sides are compared in that form', async () => {
+  const cases = [
+    ['a lone `\\n`', 'СТРОКА-А\nСТРОКА-Б', 'СТРОКА-А\rСТРОКА-Б'],
+    ['a `\\r\\n` pair', 'СТРОКА-А\r\nСТРОКА-Б', 'СТРОКА-А\rСТРОКА-Б'],
+    ['a blank line (`\\n\\n`)', 'СТРОКА-А\n\nСТРОКА-Б', 'СТРОКА-А\r\rСТРОКА-Б'],
+    ['a TRAILING `\\n`', 'СТРОКА-А\n', 'СТРОКА-А\r'],
+    ['a long multi-line text', 'первая\nвторая\nтретья\nчетвёртая', 'первая\rвторая\rтретья\rчетвёртая']
+  ];
+  for (const [label, requested, stored] of cases) {
+    const r = blocksRig({ paragraphs: 2, headings: 0, paragraph: storedParagraphDouble });
+    const result = await r.bridge.insertBlocks({ blocks: [{ text: requested }] });
+    assert.deepEqual(r.doc.calls.pushed, [stored], `${label}: the double stored the editor's own form, ONE Push`);
+    assert.deepEqual(r.doc.texts, ['абзац-1', 'абзац-2', stored], `${label}: the document really grew by exactly one paragraph`);
+    assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 2, 3, 0, 0, 1],
+      `${label}: the delta is exact AND the block owns its paragraph — the flag is 1, not 0`);
+    assert.deepEqual(result, { ok: true, paragraphsBefore: 2, paragraphsAfter: 3, headingsBefore: 0, headingsAfter: 0, present: [true] }, label);
+    const state = r.bridge.getState();
+    assert.equal(state.uncertain, false, `${label}: no false uncertainty on a write that succeeded`);
+    assert.equal(state.busy, false, `${label}: and the slot is released`);
+    assert.equal(state.writePending, false, label);
+  }
+  // THE IDENTITY HALF: the editor's storage maps a break-free text to itself, so the single-line cases every
+  // existing test drives are unchanged — asserted here against BOTH doubles.
+  for (const paragraph of [paragraphDouble, storedParagraphDouble]) {
+    const r = blocksRig({ paragraphs: 2, headings: 0, paragraph });
+    assert.deepEqual(await r.bridge.insertBlocks({ blocks: [{ text: 'СТРОКА-А' }] }),
+      { ok: true, paragraphsBefore: 2, paragraphsAfter: 3, headingsBefore: 0, headingsAfter: 0, present: [true] },
+      'a break-free text is unaffected by the editor\'s storage');
+  }
+});
+
+test('a text that differs BEYOND line breaks still fails: the representation changed, the rule did not', async () => {
+  // The mapping touches line breaks and NOTHING else, so a genuine difference is still a mismatch with the
+  // slot HELD and no retry. Each double stores the editor form of a text that differs from the block's own in
+  // a way no line-break mapping can erase.
+  const wrong = [
+    ['a DIFFERENT second line', 'СТРОКА-А\nСТРОКА-Б', 'СТРОКА-А\rСТРОКА-В'],
+    ['an EXTRA line', 'СТРОКА-А\nСТРОКА-Б', 'СТРОКА-А\rСТРОКА-Б\rСТРОКА-В'],
+    ['the break replaced by a SPACE', 'СТРОКА-А\nСТРОКА-Б', 'СТРОКА-А СТРОКА-Б'],
+    ['the same lines REVERSED', 'СТРОКА-А\rСТРОКА-Б', 'СТРОКА-Б\rСТРОКА-А'],
+    ['a PREFIX of the text instead of it', 'СТРОКА-А\nСТРОКА-Б', 'СТРОКА-А']
+  ];
+  for (const [label, requested, stored] of wrong) {
+    const document = blocksDocumentFromTexts(['старт'], { write: stored });
+    const r = blocksRig({ document: document.document });
+    const result = await r.bridge.insertBlocks({ blocks: [{ text: requested }] });
+    assert.equal(document.state.pushes, 1, `${label}: the mutation was dispatched exactly once`);
+    assert.deepEqual(document.state.texts, ['старт', stored], `${label}: the document holds the DIFFERENT text`);
+    assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 1, 2, 0, 0, 0], `${label}: the block does not own that paragraph — flag 0`);
+    assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, label);
+    const held = r.bridge.getState();
+    assert.equal(held.busy, true, `${label}: the slot is HELD`);
+    assert.equal(held.uncertain, true, label);
+    assert.equal(held.writePending, true, label);
+    assert.equal(document.state.pushes, 1, `${label}: and the uncertain append is never retried`);
+  }
 });
 
 // --- §13.2 the MEASURED append route: `Push` per block, in order, AT THE END -----------------------

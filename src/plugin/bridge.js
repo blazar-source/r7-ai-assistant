@@ -347,6 +347,21 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             function measured(value) {
               return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
             }
+            // THE EDITOR'S OWN LINE-BREAK FORM, and the ONE representation rule applied before any text
+            // comparison in this body. MEASURED on the target (Astra / R7 2026.1.2.1942, the round that hit
+            // this): `Api.CreateParagraph()` + `paragraph.AddText('СТРОКА-А\nСТРОКА-Б')` +
+            // `document.Push(paragraph)` yields ONE paragraph — the paragraph delta was exactly +1 for `\n`,
+            // `\r\n`, `\n\n`, a TRAILING `\n` and a long multi-line text alike — whose `GetText()` answers
+            // `'СТРОКА-А\rСТРОКА-Б'`. Every line break handed to the editor is therefore STORED as `\r`, so
+            // the requested text and the read text are compared in that stored form, BOTH sides mapped by
+            // THIS function: `\r\n` -> `\r`, a lone `\n` -> `\r`, and a `\r` left exactly as it is.
+            // THIS IS A CHANGE OF REPRESENTATION, NEVER OF THE RULE: one block still owns exactly the ONE
+            // paragraph the append gave it, the four counts and their exact deltas below are unchanged, and
+            // every genuine difference — different words, extra text, a missing paragraph, a DIFFERENT
+            // block — still maps to different strings and still fails the block's flag.
+            function editorStoredText(handedText) {
+              return handedText.replace(/\r\n/g, '\n').replace(/\n/g, '\r');
+            }
             // THE PRE-DISPATCH BASELINE, and the gate on the whole append: no baseline means no delta
             // means no evidence means no write.
             var baselineParagraphs = document.GetAllParagraphs();
@@ -433,9 +448,15 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // separator would be weaker than per-slot equality for the same reason: it cannot distinguish
             // two paragraph splits of one region text.
             for (var which = 0; which < blocks.length; which++) {
-              var wanted = blocks[which].text;
+              // BOTH SIDES ARE COMPARED IN THE EDITOR'S OWN STORED FORM (`editorStoredText` above): the
+              // editor stores `\r` for every line break it is handed (measured), so a multi-line block the
+              // append really carried must compare EQUAL to the text that was asked for. This is a change
+              // of REPRESENTATION, never of the rule — one block still owns exactly one appended paragraph,
+              // and a genuine difference (different words, extra text, a missing paragraph, a different
+              // block) still maps to a different string and still makes the flag 0.
+              var wanted = editorStoredText(blocks[which].text);
               answer.push(paragraphsBefore + which < paragraphTexts.length &&
-                paragraphTexts[paragraphsBefore + which] === wanted ? 1 : 0);
+                editorStoredText(paragraphTexts[paragraphsBefore + which]) === wanted ? 1 : 0);
             }
             return answer;
           } catch (error) { return blocksRefusal('CAPABILITY_UNAVAILABLE'); }

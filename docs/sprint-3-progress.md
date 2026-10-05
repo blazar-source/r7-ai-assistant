@@ -3936,3 +3936,49 @@ ceiling, so the first native run's report must be read as `criteria` vs `verifie
 instruction, not a measurement) is the remaining constraint, not the cap. The floor derivation's own risk is
 language: the markers are Russian, so a request phrased differently than the owner's measured one may derive a
 lower floor than the owner intended вЂ” the report's `floor` field makes that visible in one line.
+
+## Stage B, round 3 — the block append's own proof compared the text in the WRONG line-break form
+
+**The measurement.** `insert_blocks` proves each appended block by comparing the paragraph the append added
+with the text the caller asked for, in the editor's own stored form. The target NORMALIZES line breaks inside
+a paragraph: `Api.CreateParagraph()` + `paragraph.AddText('СТРОКА-А\nСТРОКА-Б')` + `document.Push(paragraph)`
+yields ONE paragraph — the paragraph delta was exactly +1 for `\n`, `\r\n`, `\n\n`, a TRAILING `\n` and a long
+multi-line text alike — whose `GetText()` answers `'СТРОКА-А\rСТРОКА-Б'`. Every line break the editor is handed
+is therefore STORED as `\r`.
+
+**The defect, and why it stopped the owner's runs.** The flag compared the requested text — which the model
+naturally writes with `\n` — against that stored `\r` form, so ANY block whose text carried a line break got
+flag 0 and the append settled `TOOL_UNCERTAIN` although the write had succeeded and the document really grew
+(it was measured twice in native pilot runs). That uncertainty stops the whole orchestrated run, which is why
+the bulk-generation acceptance runs could not pass.
+
+**The fix.** ONE small named pure helper inside the command body, `editorStoredText(handedText)`, implements
+the measured mapping — `\r\n` → `\r`, a lone `\n` → `\r`, and a `\r` left exactly as it is — and it is applied
+to BOTH sides of the flag comparison at the region check, the requested text and the read text alike. This is
+a change of REPRESENTATION, never of the rule, and the comment beside the helper AND beside the flag check
+says so: one block still owns exactly the ONE paragraph the append gave it, the four counts and the
+exact-delta contract are untouched, and every genuine difference — different words, extra text, a missing
+paragraph, a different block — still maps to a different string and still fails its flag. Nothing else changed:
+the contract, the phase protocol, the failure classes, the limits and every other tool are exactly as they
+were.
+
+**RED, then GREEN.** The new tests were written first and run against the UNFIXED body: `a block whose text
+carries line breaks verifies: the editor stores them as CR and BOTH sides are compared in that form` failed
+with the real measurement — `['POST_INSERT', 2, 3, 0, 0, 0]` against the expected
+`['POST_INSERT', 2, 3, 0, 0, 1]`, i.e. flag 0 on a block whose text really landed — **321 tests, pass 320,
+fail 1**. The fix makes it pass: **321 tests, pass 321, fail 0**. The second new test, `a text that differs
+BEYOND line breaks still fails: the representation changed, the rule did not`, passes on BOTH trees, which is
+exactly its job: it pins that the mapping erases line breaks and nothing else — a different second line, an
+extra line, the break replaced by a space, reversed lines and a prefix of the text instead of it are each
+still `APPLY_UNCERTAIN` with the slot HELD and no retry. In the first test a block with `\n`, with `\r\n`, with
+`\n\n`, with a trailing `\n` and a long multi-line text all verify against a double that stores the editor's
+`\r` form, and a break-free text is proven unchanged against BOTH the raw and the stored double, so the
+existing single-line cases are untouched.
+
+**Verification (this round, final tree).** Focused set `node --test tests/unit/tools-word.test.js` → **321
+tests, pass 321, fail 0**; `node --test` → **995 tests, pass 995, fail 0, cancelled 0, skipped 0, todo 0**
+(grew from 993, never shrank); `node scripts/static-audit.mjs` → **`Authored-code audit PASS`**, exit 0; `node
+scripts/build-plugin.mjs` → exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+42f96c781b66f7d9530c761c43ba546a69cdd15954e5131dc4c56a565f499a73`** — the bundle pass stayed GREEN, so the
+helper introduced no optionally-chained method call and no non-constant key. `git diff --stat -- src/agent` is
+empty: `src/agent/` is untouched.
