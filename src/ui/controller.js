@@ -1,4 +1,4 @@
-import { LIMITS } from '../shared/limits.js';
+import { LIMITS, AGENT_GUARDRAILS } from '../shared/limits.js';
 import { assertByteLimit, utf8ByteLength } from '../shared/bytes.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 import { validateSettings, validateRequestSettings } from '../config/settings.js';
@@ -25,6 +25,16 @@ const CAPABILITIES = Object.freeze(['document.read', 'document.write']);
 const RUN_STATUS = Object.freeze({ FINAL: 'COMPLETE', PREVIEW_READY: 'PREVIEW_READY', UNCERTAIN: 'APPLY_UNCERTAIN',
   LIMIT: 'AGENT_LIMIT', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
 const CONNECTION_REQUEST = 'Проверка соединения. Ответь JSON final.';
+// The HOST-side bound the panel brackets one multi-step agent run with. It is NOT the single-shot
+// 150 s operation timeout: a pilot task of a ten-page document needs dozens of tool calls and minutes
+// (see AGENT_GUARDRAILS), so this bound is the SAME named configuration the request carries, plus ONE
+// transport window — the runtime's per-request budget, `LIMITS.operationTimeoutMs` — so a request still
+// in flight when the runtime's own deadline fires can settle before this controller invalidates. It is
+// strictly ABOVE `AGENT_GUARDRAILS.operationDeadlineMs` on purpose: a task that exhausts its budget must
+// report the runtime's own LIMIT (`AGENT_LIMIT`, completed changes kept), never this controller's
+// TIMEOUT. Raising the guardrails therefore needs no runtime change (limits.js:598-599,
+// session.js:74); it does need this host bound to move with them, which is all that happens here.
+const AGENT_RUN_HOST_DEADLINE_MS = AGENT_GUARDRAILS.operationDeadlineMs + LIMITS.operationTimeoutMs;
 
 // Multi-step Agent Runtime run + explicit Preview/Apply only. Ownership capabilities stay private;
 // neither model proposals nor public UI snapshots can supply an editor target.
@@ -116,7 +126,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   function begin(kind) {
     if (disposed || active || writeLocked()) return null;
     dropPreview();
-    const deadline = now() + LIMITS.operationTimeoutMs; // BEFORE any context/SDK work
+    const deadline = now() + AGENT_RUN_HOST_DEADLINE_MS; // BEFORE any context/SDK work
     const owned = { kind, generation: ++generation, settings: validateRequestSettings(stored.settings),
       mode: kind === 'connection' ? 'ASK' : mode, includeContext, uuid: kind === 'connection' ? createConnectionSession(crypto).uuid : chat.uuid,
       editorType: bridge?.getState().editorType ?? 'unknown', deadline, abort: new AbortController(), timer: null };
@@ -125,7 +135,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     try {
       owned.timer = timers.schedule(function () {
         if (active === owned) { invalidate('TIMEOUT', true); emit(); }
-      }, LIMITS.operationTimeoutMs);
+      }, AGENT_RUN_HOST_DEADLINE_MS);
     } catch (error) { active = null; owned.abort.abort(); throw error; }
     emit();
     return owned;
@@ -236,6 +246,12 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       emit();
       const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities: CAPABILITIES,
         mode: owned.mode, settings, uuid, request: kind === 'connection' ? CONNECTION_REQUEST : user,
+        // The panel's agent runs carry the named pilot guardrails IN THE REQUEST: the runtime validates
+        // them through the same `createGuardrails` (runtime.js:111) and needs no edit of its own
+        // (limits.js:598-599, session.js:74). Without them the defaults (maxSteps 12 / maxToolCalls 32 /
+        // 150 s) applied, which is what ended the owner's pilot request with AGENT_LIMIT after five
+        // executed actions.
+        guardrails: AGENT_GUARDRAILS,
         signal, transport: send, now,
         onEvent(event) {
           // One line per completed action: the tool name and the closed outcome only. The raw

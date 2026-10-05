@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createController } from '../../src/ui/controller.js';
+import { AGENT_GUARDRAILS, LIMITS } from '../../src/shared/limits.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { SafeError } from '../../src/shared/errors.js';
+
+// The host-side bound the controller brackets ONE multi-step agent run with: the named pilot
+// configuration plus one transport window. The injected clock starts at 100, so the absolute deadline
+// the transport receives is 100 + this value. It is strictly above the guardrail deadline on purpose:
+// an exhausted task must report the runtime's own LIMIT, not the panel's TIMEOUT.
+const RUN_DEADLINE_MS = AGENT_GUARDRAILS.operationDeadlineMs + LIMITS.operationTimeoutMs;
 
 const final = (message = 'ответ') => ({ type: 'final', message });
 const toolCalls = (...tools) => ({ type: 'tool_calls', calls: tools.map(([tool, args]) => ({ tool, arguments: args })) });
@@ -193,7 +200,7 @@ test('one active operation rejects overlap without replacing current ownership',
 });
 test('absolute deadline starts BEFORE context read; expired editor result never reaches HTTP', async () => {
   const waiting = pending(); const { controller: c, advance, replies } = setup({ bridge: { readSelection() { return waiting.promise; } } });
-  const operation = c.analyze('question'); advance(150000);
+  const operation = c.analyze('question'); advance(RUN_DEADLINE_MS);
   waiting.resolve({ text: 'late', editorType: 'word', eligible: false, target: null }); await operation;
   assert.equal(replies.length, 0); assert.equal(c.getState().status, 'TIMEOUT');
 });
@@ -202,7 +209,12 @@ test('transport receives original operation deadline after time spent reading co
   const operation = c.analyze('question'); advance(4000);
   waiting.resolve({ text: 'selection', editorType: 'word', eligible: false, target: null }); await operation;
   assert.equal(replies.length, 1);
-  assert.equal(replies[0][3].deadline, 150100);
+  // 100 (the injected clock at begin()) + the host bound, and the host bound must BRACKET the named
+  // guardrail deadline rather than replace it: 1800000 + 150000 = 1950000.
+  assert.equal(replies[0][3].deadline, 100 + RUN_DEADLINE_MS);
+  assert.equal(replies[0][3].deadline, 1950100);
+  assert.ok(replies[0][3].deadline > AGENT_GUARDRAILS.operationDeadlineMs,
+    'the runtime guardrail deadline, not the panel TIMEOUT, is the binding limit of a long run');
   assert.ok(Object.isFrozen(replies[0][0]) && Object.isFrozen(replies[0][1]));
 });
 test('unknown/unavailable/empty/exact context is explicit; no cell/slide speculative read', async () => {
@@ -240,7 +252,7 @@ test('timer setup failure remains recoverable rather than stranding active owner
 });
 test('deadline recheck BEFORE final commit prevents history/preview publication', async () => {
   let reads = 0;
-  const clock = { now() { reads++; return reads < 4 ? 0 : 150000; } };
+  const clock = { now() { reads++; return reads < 4 ? 0 : RUN_DEADLINE_MS; } };
   const { controller: c } = setup({ dependencies: { clock } }); c.setIncludeContext(false);
   assert.equal(await c.analyze('q'), false);
   assert.equal(c.getState().status, 'TIMEOUT'); assert.equal(c.getState().chat.history.length, 0); assert.equal(c.getState().preview, null);
@@ -273,6 +285,42 @@ test('EDIT runs the agent loop, reaches COMPLETE and exposes the content-free ac
   const serialized = JSON.stringify(state);
   for (const forbidden of ['"type":', '"calls"', '"arguments"', 'абзац']) assert.equal(serialized.includes(forbidden), false, forbidden);
   assert.equal(serialized.includes('insert_paragraph'), true);
+});
+
+// The panel's pilot guardrails reach the runtime IN THE REQUEST. There is no seam to spy on
+// `runAgent` (and none is added: src/agent/ stays untouched), so both tests are BEHAVIOURAL: each run
+// passes a budget the UNNAMED defaults would refuse, so it can only reach FINAL if the request carried
+// the named set. Each test would fail against the old controller with status AGENT_LIMIT.
+test('the panel carries the named guardrails: a run past the OLD 12-step default reaches FINAL', async () => {
+  // 15 executed actions, each in its own model round-trip: 16 steps is past createGuardrails()'s
+  // default maxSteps of 12 (the measured cause of the owner's AGENT_LIMIT after five tool calls).
+  const calls = Array.from({ length: 15 }, (_, index) => toolCalls(['insert_paragraph', { text: `абзац ${index}` }]));
+  const f = setup({ response: [...calls, final('Готово')] });
+  f.controller.setMode('EDIT');
+  assert.equal(await f.controller.analyze('создай документ'), true);
+  const state = f.controller.getState();
+  assert.equal(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'FINAL');
+  assert.equal(state.agent.steps, 16);
+  assert.equal(state.agent.toolCalls, 15);
+  assert.ok(state.agent.steps > 12, 'past the unchanged DEFAULT maxSteps');
+});
+
+test('the panel carries the named guardrails: a 40-action run past the OLD 32-call default reaches FINAL', async () => {
+  // Five envelopes of eight actions (the whole per-step allowance): 40 executed actions in 6 steps -
+  // more than createGuardrails()'s default maxToolCalls of 32 while staying inside its default
+  // maxSteps, so this run isolates the tool-call budget from the step budget.
+  const batch = Array.from({ length: 8 }, (_, index) => ['insert_paragraph', { text: `пункт ${index}` }]);
+  const f = setup({ response: [toolCalls(...batch), toolCalls(...batch), toolCalls(...batch), toolCalls(...batch), toolCalls(...batch), final('Готово')] });
+  f.controller.setMode('EDIT');
+  assert.equal(await f.controller.analyze('создай документ'), true);
+  const state = f.controller.getState();
+  assert.equal(state.status, 'COMPLETE');
+  assert.equal(state.agent.status, 'FINAL');
+  assert.equal(state.agent.steps, 6);
+  assert.equal(state.agent.toolCalls, 40);
+  assert.ok(state.agent.toolCalls > 32 && state.agent.steps < 12,
+    'past the unchanged DEFAULT maxToolCalls, inside the unchanged DEFAULT maxSteps');
 });
 
 test('ASK sends read tools only and never exposes a mutation tool to the model', async () => {
@@ -358,8 +406,10 @@ test('LIMIT maps to AGENT_LIMIT and keeps the completed actions', async () => {
   const state = f.controller.getState();
   assert.equal(state.status, 'AGENT_LIMIT');
   assert.equal(state.agent.status, 'LIMIT');
-  assert.equal(state.agent.steps, 12);
-  assert.equal(state.agent.actions.length, 12);
+  // The run stops at the panel's NAMED maxSteps (120), not at the unchanged DEFAULT 12 that ended the
+  // owner's pilot request: this is the same carriage the two tests above pin from the other side.
+  assert.equal(state.agent.steps, 120);
+  assert.equal(state.agent.actions.length, 120);
   assert.equal(state.agent.actions.every(action => action.tool === 'read_selection' && action.outcome === 'ok'), true);
 });
 

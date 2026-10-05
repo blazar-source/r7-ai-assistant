@@ -3350,3 +3350,78 @@ text ALONE and creates at document/selection level — the reason this tool has 
 carriage every command leg of this sprint already uses. (5) That a comment's `GetId()` is stable across the two
 collection reads (an id that changed between them would make the id-set route report `null` and settle
 uncertain).
+
+## 21. The pilot guardrails — a CONFIGURATION change, exactly as the design intends, with `src/agent/` untouched
+
+**What was measured on the target.** The owner's pilot request («создай структурированный документ примерно на
+10 страниц, добавь главы, несколько таблиц, списки, выводы и оформи его») ended with the panel's `AGENT_LIMIT`
+message after **FIVE executed tool calls**, with only a couple of paragraphs in the document, at ~**148 s**. The
+cause is not a defect: `createGuardrails()`'s defaults (`maxSteps` 12, `maxToolCalls` 32, deadline 150000 ms) were
+being applied to a task that needs dozens of calls, and the panel started the loop **without passing any
+guardrails** (`runAgent({…})` at `src/ui/controller.js`), so the defaults always applied. One call cannot carry a
+ten-page document — `AGENT_CEILINGS.argumentsBytes` is 8192 — and the measured run burned ~**2.4 model steps per
+executed action**, so the 12-step default is reached at about the fifth action.
+
+**This is a configuration change by the design's own intent, not a runtime change.** The code says so three times,
+and the runtime already accepts the set in the request:
+
+* `src/shared/limits.js:598-599` — "Runtime task guardrails. These are engineering defaults calibrated on the pilot
+  workloads; raising them must never require a runtime change."
+* `src/shared/session.js:74` — "…§12.2 requires far larger maxSteps to work without a runtime change."
+* `src/agent/runtime.js:111` — `const guardrails = createGuardrails(requested ?? {});` — the runtime takes the
+  guardrails **IN THE REQUEST**, and §12.2 itself ("A legitimate pilot task — a ten-page structured document … may
+  need several minutes, many model steps and dozens of tool calls … the architecture must accept far larger values
+  without a runtime change") is the sanction.
+
+**`src/agent/` WAS NOT TOUCHED in this round.** The change is one named, frozen set and the panel's request:
+
+* `src/shared/limits.js` — a new export `AGENT_GUARDRAILS = createGuardrails({ maxSteps: 120, maxToolCalls: 400,
+  operationDeadlineMs: 1800000 })`, built THROUGH `createGuardrails` so its validation (unknown key, non-integer,
+  `< 1`) still applies and the value is frozen. The DEFAULTS at `limits.js:603` are byte-for-byte unchanged: they
+  are what `tests/unit/limits.test.js`, the runtime's own tests and the calibration CLI profile
+  (`tests/acceptance/agent/dev-qwen-workloads.mjs`, whose README prints 12 / 32 / 150000) assert, and every other
+  caller keeps behaving exactly as before.
+* `src/ui/controller.js` — the panel's `runAgent({…})` request now carries `guardrails: AGENT_GUARDRAILS`.
+* `src/ui/controller.js` — the host-side bound of the agent run (`begin()`'s deadline and its timer) is the SAME
+  named configuration plus ONE transport window: `AGENT_RUN_HOST_DEADLINE_MS = 1800000 + LIMITS.operationTimeoutMs
+  = 1950000 ms`. It has to be raised with the set, and it must stay STRICTLY ABOVE the guardrail deadline: a task
+  that exhausts its budget then reports the runtime's own `LIMIT`/`AGENT_LIMIT` with its completed changes kept,
+  never the panel's own `TIMEOUT` — which is the outcome the old 150000 ms host bound would have produced ~2 s
+  after the step cap that actually fired. The single-shot paths keep `LIMITS.operationTimeoutMs` untouched (R7
+  check, context refresh, Apply's 15 s observation window). Any OUTER wall-clock bound applied around a native run
+  must exceed 1950000 ms; that is deliberately the only host-side coupling.
+
+**The numbers, against the measured shape.**
+
+| Guardrail | Default | Named pilot set | Why this value |
+| --- | --- | --- | --- |
+| `maxSteps` | 12 | **120** | The prose alone is bounded by the 8192-byte argument ceiling, so a ten-page document needs 8–12 `insert_blocks` calls; with 6–8 chapters (`set_heading` + their blocks), 3 `insert_table` calls, lists, conclusions and a formatting pass (`format_range`), the task is ~40–55 calls ≈ **95–135 steps** at the measured ~2.4 steps per call. 120 covers that band and, at the measured ~12.3 s per step, ~**24.6 min** — inside the deadline below. |
+| `maxToolCalls` | 32 | **400** | >7× the pilot's own call count: it bounds a runaway loop without ever being the guardrail a real ten-page task meets (`maxSteps` binds first). It stays inside the theoretical maximum for this step budget (`actionsPerStep` 8 × 120), so it cannot mask an unbounded loop. |
+| `operationDeadlineMs` | 150000 | **1800000** (30 min) | The measured 120 steps at ~12.3 s each is ~24.6 min, so the deadline **brackets** the step budget instead of pre-empting it, and it is ~12× the ~148 s the measured run had already spent. It is strictly below the 1950000 ms host bound above, so the runtime's own LIMIT is what a long task reports. |
+
+**RED.** The two new controller tests were first run against the pre-change controller (the named set and the
+request carriage stashed): the 15-action run ended **`AGENT_LIMIT`, steps 12**, and the 40-action run ended
+**`AGENT_LIMIT`, toolCalls 32, steps 5** — the owner's failure mode reproduced in both dimensions. **GREEN.**
+Focused set `node --test tests/unit/limits.test.js tests/unit/controller.test.js` → **60 tests, pass 60, fail 0**.
+
+**What pins the new behaviour.** `tests/unit/limits.test.js` — the named set's exact values, that it is frozen and
+equal to what `createGuardrails` validates, and that `createGuardrails()`'s defaults are still exactly
+12 / 32 / 150000. `tests/unit/controller.test.js` — a 16-step run and a 40-action run both reach `COMPLETE`
+(each past a default the old controller would have refused), a runaway now stops at **120** steps instead of 12,
+and the transport receives the host deadline **1950100** (= 100 + 1800000 + 150000) which is strictly above
+`AGENT_GUARDRAILS.operationDeadlineMs`.
+
+**Verification (this round, final tree).** Focused set
+`node --test tests/unit/limits.test.js tests/unit/controller.test.js` → **60 tests, pass 60, fail 0, cancelled 0,
+skipped 0**. Full suite `node --test` → **952 tests, pass 952, fail 0, cancelled 0, skipped 0, todo 0** (**948 →
+952**, never shrunk); `node scripts/static-audit.mjs` → **`Authored-code audit PASS`**, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+2ba045334e72d193ce77b152acb08a2060ae0720eb322eddf769ecc30bc18ab4`**. `git diff HEAD -- src/agent` is empty
+(`src/agent/*` untouched), and no dynamic execution was added to `src/` — the change adds one `Object.freeze`d
+configuration object and one request field.
+
+**What only a native run can settle.** That the raised budget is enough for the real ten-page request: the number
+of `insert_blocks` calls a 10-page document really costs, the per-step wall clock for this workload, and therefore
+whether `maxSteps` 120 and the 30-minute deadline bracket it or the task needs the next calibration step. This
+round moved the configuration the design says is meant to move; the calibration itself (design §15.2) is still a
+measurement, not a claim.

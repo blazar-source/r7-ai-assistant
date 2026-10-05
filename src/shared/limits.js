@@ -606,3 +606,42 @@ export function createGuardrails(overrides = {}) {
   }
   return Object.freeze(value);
 }
+
+// The panel's OWN agent-run guardrails: a NAMED, frozen configuration set built THROUGH the validated
+// contract above, so an out-of-contract value could not have been exported at all.
+//
+// THIS IS A CONFIGURATION CHANGE BY THE DESIGN'S OWN INTENT, not a runtime change. The design says so
+// three times, and the runtime already accepts the set IN THE REQUEST:
+//   - above: "Runtime task guardrails. These are engineering defaults calibrated on the pilot workloads;
+//     raising them must never require a runtime change."
+//   - session.js:74: "…§12.2 requires far larger maxSteps to work without a runtime change."
+//   - runtime.js:111 `const guardrails = createGuardrails(requested ?? {});` and §12.2: "A legitimate
+//     pilot task — a ten-page structured document … may need several minutes, many model steps and
+//     dozens of tool calls … the architecture must accept far larger values without a runtime change."
+// The DEFAULTS above stay exactly as they are: they are what the tests and the calibration CLI profile
+// (`tests/acceptance/agent/dev-qwen-workloads.mjs`, whose README prints 12 / 32 / 150000) assert, and
+// every other caller keeps behaving as before. Only the panel's request carries the set below.
+//
+// THE NUMBERS, against the measured pilot shape. The owner's pilot request (a ~10-page structured
+// document with chapters, several tables, lists, conclusions and formatting) ended AGENT_LIMIT after
+// FIVE tool calls at ~148 s, i.e. ~2.4 steps and ~12.3 s of wall clock per executed action:
+//   maxSteps 120            the prose alone is bounded by the 8192-byte argument ceiling, so a ten-page
+//                           document needs 8-12 `insert_blocks` calls; with 6-8 chapters (`set_heading`
+//                           plus their blocks), 3 `insert_table` calls, lists, conclusions and a
+//                           formatting pass (`format_range`) the task is ~40-55 calls, which at the
+//                           measured 2.4 steps per call is ~95-135 steps. 120 covers that band and, at
+//                           the measured 12.3 s per step, ~24.6 minutes - inside the deadline below.
+//   maxToolCalls 400        more than 7x the pilot's own call count: it bounds a runaway loop without
+//                           ever being the guardrail a real ten-page task meets (maxSteps binds first).
+//                           It stays inside the theoretical maximum for this step budget
+//                           (AGENT_CEILINGS.actionsPerStep 8 x 120 steps), so it cannot mask a loop.
+//   1800000 ms (30 min)     the measured 120 steps at ~12.3 s each is ~24.6 minutes, so the deadline
+//                           BRACKETS the step budget instead of pre-empting it, and it is several
+//                           times the ~148 s the measured run had already spent. It is deliberately
+//                           BELOW the host-side bound the panel brackets a run with (the same deadline
+//                           plus ONE transport window: 1800000 + LIMITS.operationTimeoutMs = 1950000 ms,
+//                           `AGENT_RUN_HOST_DEADLINE_MS` in src/ui/controller.js), so a long task reports
+//                           the runtime's own LIMIT/AGENT_LIMIT with its completed changes kept, never
+//                           the panel's TIMEOUT. Any outer wall-clock bound applied around a native run
+//                           must therefore exceed that host bound.
+export const AGENT_GUARDRAILS = createGuardrails({ maxSteps: 120, maxToolCalls: 400, operationDeadlineMs: 1800000 });
