@@ -1370,56 +1370,61 @@ export function createWordTools(bridge) {
       // can REPLACE text under a selection (measured, §13.2) — a route that would destroy the very text
       // this tool promises to leave unchanged.
       //
-      // THE STYLE READBACK IS A HYPOTHESIS AND IS TREATED AS ONE. The public `ApiParaPr` that
-      // `paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…), so a
-      // paragraph's OWN style is LIKELY readable as `paragraph.GetParaPr().GetStyle()` — but that exact
-      // call was NOT measured, so the authored body does not DEPEND on it: it reads the style inside its
-      // own `try`, behind a `typeof` check on BOTH members, and reports what happened in a separate flag.
-      // A build where `GetParaPr` is absent, not a function, or throws therefore loses the strongest half
-      // of the proof and still verifies on the measured signals — it never fails, and it never invents a
-      // style it did not read.
+      // THE STYLE READBACK IS MEASURED, AND IT IS THE PROOF. The target was MEASURED (Astra / R7
+      // 2026.1.2.1942) to answer the paragraph's OWN style through the chain
+      // `paragraph.GetParaPr().GetStyle().GetName()`: for a paragraph carrying an explicit Heading style
+      // `GetStyle()` returns a STYLE OBJECT (`GetClassType()` = `'style'`) whose `GetName()` answers the
+      // canonical `'Heading 1'`, and for a plain Normal paragraph it answers `null`. That is an exact,
+      // PER-OBJECT proof and it needs neither identity nor text uniqueness.
+      // AN EARLIER REVISION OF THIS LEG IS DEAD BECAUSE THE LEAD MEASURED IT FALSE: it decided "the addressed
+      // paragraph is now a heading" by OBJECT IDENTITY — the object the body addressed had to BE an element
+      // of `GetAllHeadingParagraphs()`. On a three-paragraph document with one heading, the two lists answered
+      // equal TEXT while `GetAllHeadingParagraphs()[0] === GetAllParagraphs()[i]` was FALSE for EVERY i: the
+      // lists hand out DIFFERENT wrapper objects, so no reference comparison can ever hold, and relying on it
+      // would have turned EVERY call into `TOOL_UNCERTAIN` with the write slot held for the session.
       //
-      // THE OUTCOME CONTRACT IS ONE-TO-ONE FOR THE TARGET PARAGRAPH, and every leg of it is about THAT
-      // paragraph rather than about a global count. `ok` is published ONLY when the post read shows ALL
-      // of:
-      //   1. the addressed paragraph's TEXT is EXACTLY what it was BEFORE the mutation (`textUnchanged`) —
-      //      read by the body around the single `SetStyle`, so a route that replaced text (the measured
-      //      `InsertContent`-under-a-selection behaviour) and a stale index whose paragraph now holds
-      //      something else can never be reported as a success. THE TEXT IS A SECONDARY SIGNAL: it can
-      //      REFUTE an assignment and it can never ESTABLISH one, because two paragraphs of one document
-      //      can carry the same text. (An independent review drove exactly that false success through the
-      //      real body: two paragraphs with the SAME text and a `SetStyle` that landed on the second one was
-      //      reported `ok` with the slot released while the addressed paragraph was never restyled.)
-      //   2. the document's heading count grew by EXACTLY one, while the paragraph COUNT is unchanged
-      //      (`targetAdded`) — a style assignment changes no paragraph's existence, so a paragraph count
-      //      that moved means something else happened to the document and the outcome is uncertain;
-      //   3. THE ADDRESSED OBJECT — the paragraph the body took from `GetAllParagraphs()` at the caller's
-      //      index — IS one of the post-mutation heading paragraphs, compared BY REFERENCE against
-      //      `GetAllHeadingParagraphs()` (`inHeadings`, on EVERY build). This is the IDENTITY leg and it is
-      //      what decides that THIS paragraph became a heading; it is NEVER a text comparison, because the
-      //      text of a paragraph is not its identity;
-      //   4. IF the style readback worked (`styleRead`), the target's OWN style name MATCHES the requested
+      // THE OUTCOME CONTRACT IS ONE-TO-ONE FOR THE TARGET PARAGRAPH, and the READBACK is its PRIMARY leg.
+      // `ok` is published ONLY when the post read shows ALL of:
+      //   1. the addressed paragraph's OWN style name WAS READ (`styleRead`) and MATCHES the requested
       //      `Heading <n>` (`styleMatches`) under the SAME case- and space-folding `readsStyleName` applies
       //      (the editor's lookup was measured to accept `'Heading1'`/`'heading 1'` for that one style, so a
       //      differently SPELLED answer is a match and not the false disagreement that used to hold the
-      //      write lock on a mutation that had succeeded). A readable name that differs by more than case
-      //      and spaces is a genuine contradiction and the outcome is uncertain.
-      //   5. IF THE STYLE READBACK DID NOT WORK (`styleRead: false`), the outcome is decided by leg 3, the
-      //      IDENTITY leg, ALONE: `ok` when the addressed object really is the one new heading,
-      //      `TOOL_UNCERTAIN` with the slot HELD when it is not. THE TEXT LEG IS NEVER SUFFICIENT IN EITHER
-      //      DIRECTION. That is the DECIDED contract for the absent readback — a missing readback is not a
-      //      failure by itself, and it is not a licence to fall back on text either — and `styleRead`
-      //      travels in the result so a caller is never told an identity that was not established.
-      // THE ONE CASE THIS TOOL CANNOT VERIFY IS REFUSED, NOT GUESSED AT: a paragraph that is ALREADY a
-      // heading is not a supported target. The one signal a style assignment moves is the heading COUNT,
-      // and a LEVEL CHANGE on an existing heading moves it NOWHERE (the document loses one heading and gains
-      // one), so no measured signal could tell an applied level change from a route that did nothing at all.
-      // The body detects it BEFORE the one `SetStyle` — by the SAME object-identity comparison, against the
-      // heading paragraphs read as the baseline — and answers the closed argument class (`TOOL_ERROR`) with
-      // ZERO writes and the slot RELEASED. It is recorded as a stated limitation in §15 of
-      // docs/sprint-3-progress.md, together with the one route that COULD verify a level change (an
-      // object-identity style readback, which this tool cannot rely on while `GetParaPr().GetStyle()` is
-      // unmeasured).
+      //      write lock on a mutation that had succeeded). A readable name that differs by more than case and
+      //      spaces — INCLUDING the measured `null` of a plain paragraph, which arrives as a READABLE
+      //      non-match — is a genuine contradiction and the outcome is uncertain. THIS LEG IS THE ONLY ONE
+      //      THAT CAN ESTABLISH AN ASSIGNMENT;
+      //   2. the addressed paragraph's TEXT is EXACTLY what it was BEFORE the mutation (`textUnchanged`) —
+      //      read by the body around the single `SetStyle`, so a route that replaced text (the measured
+      //      `InsertContent`-under-a-selection behaviour) and a stale index whose paragraph now holds
+      //      something else can never be reported as a success. THE TEXT IS A SECONDARY SIGNAL: it can
+      //      REFUTE an assignment and it can never ESTABLISH one, because two paragraphs of one document can
+      //      carry the same text. (An independent review drove exactly that false success through the real
+      //      body when an even older text-membership leg stood here: two paragraphs with the SAME text and a
+      //      `SetStyle` that landed on the second one was reported `ok` with the slot released while the
+      //      addressed paragraph was never restyled. The duplicate-text case is now settled by the addressed
+      //      paragraph's OWN style, and the reviewer's reproduction is kept as a regression test.)
+      //   3. the document's paragraph count is UNCHANGED (`paragraphsStable`) — a style assignment changes no
+      //      paragraph's existence, so a paragraph count that moved means something else happened to the
+      //      document and the outcome is uncertain — and its heading count grew by EXACTLY one. Both are
+      //      SECONDARY signals that can only REFUTE.
+      // THE DECIDED FAILURE PATH FOR AN UNUSABLE READBACK: a build where `GetStyle()` answers nothing
+      // readable, or where `GetName()` is absent or throws, cannot establish the assignment — and the
+      // mutation has ALREADY happened by the time the post read is taken. The honest outcome is therefore
+      // `TOOL_UNCERTAIN` with the slot HELD: never `ok`, and never a known class. There is NO fallback on
+      // identity (measured impossible, above) and none on the text (never sufficient).
+      // THE ONE CASE THIS TOOL CANNOT VERIFY IS REFUSED, NOT GUESSED AT: a paragraph whose OWN style name is
+      // already a HEADING name is not a supported target. The one signal a style assignment moves is the
+      // heading COUNT, and a LEVEL CHANGE on an existing heading moves it NOWHERE (the document loses one
+      // heading and gains one), so no measured signal could tell an applied level change from a route that
+      // did nothing at all. The body detects it BEFORE the one `SetStyle` — from the SAME readback, on the
+      // addressed paragraph itself — and answers the closed argument class (`TOOL_ERROR`) with ZERO writes
+      // and the slot RELEASED. It is recorded as a stated limitation in §15b of docs/sprint-3-progress.md,
+      // together with the verifiable route a level change WOULD need: the pre-name must be the old heading
+      // style and the post-name must match the request, with the counts and the text unchanged. That route
+      // is NOT taken yet, in one sentence, because the in-place effect of `SetStyle` on an EXISTING heading
+      // paragraph (as opposed to the newly created paragraph the append-side measurement used) was never
+      // measured on the target, so the count legs could neither confirm nor refute a level change and the
+      // proof would rest on the readback pair alone.
       // NO MUTATION PRIMITIVE'S RETURN VALUE IS READ anywhere in this leg: `Push` answered `true` for a
       // paragraph and `false` for an image host, and the legacy whole-array primitive answered `true` even
       // for `[]`, `[null]` and `'nonsense'` (all measured), so no boolean says anything about what the
@@ -1444,9 +1449,10 @@ export function createWordTools(bridge) {
       // entry point is `CAPABILITY_UNAVAILABLE`; a BASELINE that cannot be read and an index outside the
       // DOCUMENT are `CAPABILITY_UNAVAILABLE` with ZERO writes (the body's pre-insert half, measured
       // BEFORE the one `SetStyle`, exactly as `insert_blocks` resolves every style before its first
-      // `Push`); a target that is ALREADY a heading is the closed ARGUMENT class (`ALREADY_HEADING` →
-      // `TOOL_ERROR`) with ZERO writes and the slot RELEASED — a level change on an existing heading is not
-      // supported, and the body decides it BEFORE the mutation rather than settling `TOOL_UNCERTAIN` on it;
+      // `Push`); a target whose own style name is ALREADY a heading name is the closed ARGUMENT class
+      // (`ALREADY_HEADING` → `TOOL_ERROR`) with ZERO writes and the slot RELEASED — a level change on an
+      // existing heading is not supported, and the body decides it BEFORE the mutation rather than settling
+      // `TOOL_UNCERTAIN` on it;
       // an unresolvable `Heading <n>` is the closed argument/style class (`STYLE_UNAVAILABLE` →
       // `TOOL_ERROR`) with ZERO writes, resolved BEFORE the mutation for the same reason; a bridge refusal
       // keeps the closed class it reported (`refusalCode`); an envelope this handler cannot interpret is
@@ -1458,10 +1464,10 @@ export function createWordTools(bridge) {
       // static and self-contained exactly like the search, structure, block and table bodies: it builds
       // the `Api` facade itself, receives `{ paragraph, level, styleName }` as DATA through the `Asc.scope`
       // parameter channel (never interpolated into source, ADR 0002), reads the baseline, resolves the
-      // style, reads the target's own text, turns its phase to `POST_INSERT` IMMEDIATELY BEFORE the single
-      // `paragraph.SetStyle(style)`, and then re-reads the whole document state. The phase is an explicit
-      // slot of every answer, exactly as `insert_blocks`/`insert_table` state it: a throw out of the
-      // mutation is never a known refusal with the slot released.
+      // style, reads the addressed paragraph's own style name and text, turns its phase to `POST_INSERT`
+      // IMMEDIATELY BEFORE the single `paragraph.SetStyle(style)`, and then re-reads the whole document
+      // state. The phase is an explicit slot of every answer, exactly as `insert_blocks`/`insert_table`
+      // state it: a throw out of the mutation is never a known refusal with the slot released.
       name: 'set_heading', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
       schema: { type: 'object', additionalProperties: false, required: ['paragraph', 'level'],
         properties: { paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.setHeadingIndexMax },
@@ -1508,12 +1514,13 @@ export function createWordTools(bridge) {
         if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
         // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own: the two
         // counts are the document's own non-negative safe integers, and the three flags are EXACTLY
-        // booleans — `targetAdded` says the ADDRESSED OBJECT became the one new heading (its identity, not
-        // its text), `textUnchanged` that its text is what it was before the mutation, and `styleRead` says
-        // whether the style readback was available at all (`styleMatches` is then meaningful, and is `false`
-        // when it was not read). An answer of any other shape is not one this bridge can have produced — the
-        // real bridge's decoder guarantees this shape and turns its own uninterpretable answer into the
-        // uncertain class — so publishing it would let a forged envelope pass as a verified assignment.
+        // booleans — `paragraphsStable` says the document's paragraph count did not move, `textUnchanged`
+        // that the addressed paragraph's text is what it was before the mutation, and `styleRead` says
+        // whether the ADDRESSED paragraph's own style name was READABLE at all (`styleMatches` is then
+        // meaningful, and is `false` when it was not read). An answer of any other shape is not one this
+        // bridge can have produced — the real bridge's decoder guarantees this shape and turns its own
+        // uninterpretable answer into the uncertain class — so publishing it would let a forged envelope
+        // pass as a verified assignment.
         const headingsBefore = result.headingsBefore;
         const headingsAfter = result.headingsAfter;
         // THE ENVELOPE CONTRACT, re-decided here because the descriptor is executable on its own. The order
@@ -1521,7 +1528,7 @@ export function createWordTools(bridge) {
         // cannot produce is the module's unknown class (`known()`, the closed tool-error class), while the
         // two shapes it CAN produce and yet not stand behind are the runtime's own `TOOL_UNCERTAIN`.
         if (!measuredCount(headingsBefore) || !measuredCount(headingsAfter)) return known();
-        if (typeof result.targetAdded !== 'boolean' || typeof result.textUnchanged !== 'boolean') return known();
+        if (typeof result.paragraphsStable !== 'boolean' || typeof result.textUnchanged !== 'boolean') return known();
         if (typeof result.styleRead !== 'boolean') return known();
         // The envelope NAMES THE STYLE IT WAS PRODUCED FOR, and it must be the one THIS request meant: the
         // name is DERIVED from the level and carried to the body, so an `ok` answer carrying a different
@@ -1539,14 +1546,14 @@ export function createWordTools(bridge) {
         // is a mutation whose outcome this tool cannot claim — and the run stops fail-safe instead of
         // reporting a known failure about a document that may already carry the style.
         if (headingsAfter - headingsBefore !== 1) return known(ERROR_CODES.TOOL_UNCERTAIN);
-        if (result.targetAdded !== true || result.textUnchanged !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
-        // A READABLE READBACK THAT DISAGREES IS THE SAME CONTRADICTION: `exactHeadingDelta` never lets such
-        // an answer out of the bridge, so an `ok` that carries one is never a verified assignment. A
-        // READBACK THAT WAS NOT AVAILABLE IS NOT A CONTRADICTION: the bridge's identity leg decided that
-        // outcome on its own, `styleRead: false` travels in the result, and this handler republishes it
-        // rather than inventing an identity the body never read.
+        if (result.paragraphsStable !== true || result.textUnchanged !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // A READBACK THAT WAS NOT READ, AND A READABLE READBACK THAT DISAGREES, ARE BOTH THE SAME
+        // CONTRADICTION: `exactHeadingDelta` never lets either out of the bridge as an `ok` (the readback is
+        // its PRIMARY leg and there is no identity or text fallback), so an `ok` carrying one is never a
+        // verified assignment — and the run stops fail-safe instead of reporting a known failure about a
+        // document that may already carry the style.
         const styleMatches = result.styleMatches === true;
-        if (result.styleRead && !styleMatches) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (!result.styleRead || !styleMatches) return known(ERROR_CODES.TOOL_UNCERTAIN);
         const published = Object.freeze({ paragraph: args.paragraph, level: args.level, heading: true,
           headingsBefore, headingsAfter, styleRead: result.styleRead, styleMatches, bytes });
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the two

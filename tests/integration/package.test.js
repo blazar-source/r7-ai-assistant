@@ -125,6 +125,13 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /\bscope\b/, 'the heading body takes its address, level and style name from the injected command scope');
         assert.match(code, /GetAllHeadingParagraphs/, 'and reads the document\u2019s own heading count around the mutation');
         assert.match(code, /GetAllParagraphs/, 'and re-reads the addressed paragraph\u2019s own text');
+        // THE PROOF'S OWN CHAIN, pinned because the whole leg now rests on it: the addressed paragraph's
+        // style is read through the MEASURED `GetParaPr().GetStyle().GetName()` route (measured on the
+        // target), never by comparing the two paragraph lists — which were measured to hand out DIFFERENT
+        // wrapper objects, so no reference comparison can hold.
+        assert.match(code, /GetParaPr\(\)/, 'and proves the assignment through the measured paragraph-properties chain');
+        assert.equal(/GetAllHeadingParagraphs\(\)[^;]*===/.test(code), false,
+          'and never compares the two paragraph lists by identity: they answer different wrapper objects (measured)');
         assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
         assert.equal(code.includes('document.Push('), false, 'and never the append primitive: this leg changes an existing paragraph in place');
         legs.push('heading');

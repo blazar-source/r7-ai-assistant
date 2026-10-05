@@ -1913,6 +1913,14 @@ heading moves no count, so no measured signal could verify it. The body decides 
 RELEASED — instead of the `APPLY_UNCERTAIN` with the slot HELD that used to leave the write lock engaged for
 the rest of the session.
 
+> **SUPERSEDED BY §15b.** Points **2**, **3** and **5** of the outcome contract above, and the
+> object-identity comparison in the pre-state paragraph, are the IDENTITY leg — and the Lead MEASURED it
+> impossible on the target: the two paragraph lists hand out DIFFERENT wrapper objects, so no reference
+> comparison can ever hold. §15b replaces that leg with the addressed paragraph's OWN style readback (also
+> measured), and it is the current contract: an UNUSABLE readback is `APPLY_UNCERTAIN` with the slot HELD
+> rather than a fallback on identity. The TEXT and COUNT legs survive as SECONDARY signals only; the
+> already-heading refusal survives, decided by the readback.
+
 **The mechanism is ONE self-contained static body** (`command.heading`), the same carriage as the block and
 table legs: the request crosses as the `Asc.scope` parameter channel (`{ paragraph, level, styleName }`),
 never interpolated into source (ADR 0002); a **pre-dispatch baseline** of the two counts AND the addressed
@@ -2153,7 +2161,115 @@ is unchanged: the heading leg is still recognised by `paragraph.SetStyle` and st
 double now answers `GetAllHeadingParagraphs()` with the paragraph objects themselves (it used to answer fresh
 `{ GetText() }` wrappers), because that is the identity the proof now rests on, and it gained the
 `freshHeadingWrappers` and `readback` modes the new blocks need. The four verification counts in this document
-and the §15 red-run arithmetic were corrected. Every previously green block stays green.
+and the §15 red-run arithmetic were corrected. Every previously green block stayed green — until §15b removed
+the identity leg it rested on.
+
+
+## 15b. The MEASURED round on `set_heading` — the identity leg is dead, the addressed paragraph's own style readback is the proof
+
+**The two measured facts that decide this round** (Astra / R7 2026.1.2.1942, measured by the Lead in the same
+session, inside a real `callCommand` body).
+
+1. **There is NO object identity between the two paragraph lists.** On a three-paragraph document with one
+   heading, `GetAllParagraphs()` returned 3 objects and `GetAllHeadingParagraphs()` returned 1 whose
+   `GetText()` equalled `GetAllParagraphs()[0]`, while `GetAllParagraphs()[i] === GetAllHeadingParagraphs()[0]`
+   was **FALSE for every i** (`identityMatchAt: -1`). The lists hand out **different wrapper objects**.
+   **Consequence:** the `isAmong` reference-equality leg §15a introduced can **never** hold on the target, so
+   EVERY `set_heading` call would have settled `APPLY_UNCERTAIN` with the write slot held for the rest of the
+   session — fail-safe, but the tool unusable. The defect was introduced by following the previous review's
+   "compare by identity" suggestion, which rested on an unverified assumption, verified only afterwards.
+2. **The paragraph's own style readback works and is exact.** For every paragraph,
+   `typeof paragraph.GetParaPr === 'function'` and `typeof paragraph.GetParaPr().GetStyle === 'function'`. Its
+   answer: for a paragraph carrying an explicit Heading style a **style object** (`GetClassType()` =
+   `'style'`) whose `GetName()` gives the canonical **`'Heading 1'`**; for a plain (Normal) paragraph
+   **`null`**. Measured on the same document: index 0 (a Heading 1) → `'Heading 1'`; indices 1 and 2 (Normal)
+   → `null`; and the same read on `GetAllHeadingParagraphs()[0]` → `'Heading 1'`.
+
+**The new contract, in order of authority.** `ok` requires, all of them:
+1. **PRIMARY — the readback.** The addressed paragraph's OWN style name, read through
+   `GetParaPr().GetStyle().GetName()` **after** the one `SetStyle`, equals the requested `Heading <n>` under
+   the same case- and space-folding `readsStyleName` applies. This is an exact, PER-OBJECT proof; it needs
+   neither identity nor text uniqueness.
+2. **SECONDARY (can only REFUTE, never establish)** — the addressed paragraph's TEXT is unchanged
+   (`textUnchanged`), the document's paragraph count is unchanged (`paragraphsStable`), and the heading count
+   grew by exactly one (re-derived from the two pushed counts by `exactHeadingDelta`).
+**An unusable readback is the decided UNCERTAIN path.** A build where `GetStyle()` answers nothing readable,
+or where `GetName()` is absent or throws, cannot establish the assignment — and the mutation has ALREADY
+happened by the time the post read is taken. The outcome is therefore `APPLY_UNCERTAIN` with the slot **HELD**:
+**never `ok` and never a known class**, and there is no fallback on identity (measured impossible) or on text
+(never sufficient). The measured `null` of a plain paragraph is deliberately NOT that case: it is a READABLE
+non-match (`styleRead: 1, styleMatches: 0`), and the body's three-way readback (`null` = unread, `''` = read
+and nameless, a name = read) keeps the two apart.
+
+**Level changes on an existing heading are STILL REFUSED**, now decided by the readback BEFORE the one
+`SetStyle`: a non-null style whose folded name is a heading name answers `ALREADY_HEADING` → `TOOL_ERROR` with
+ZERO writes and the slot RELEASED. The verifiable route a level change WOULD need is now describable — read
+the pre-name (the old heading style), require the post-name to match the request, with the counts and the text
+unchanged — and it is **not taken yet in one sentence**: the in-place effect of `SetStyle` on an EXISTING
+heading paragraph (as opposed to the newly created paragraph the append-side measurement used) was never
+measured on the target, so for a level change the expected heading delta of ZERO is itself an unmeasured
+expectation and the proof would rest on the readback pair alone. A NON-heading styled paragraph (`Title`,
+`Quote`) is NOT refused: only a heading name is the pre-state.
+
+**TDD: the exact RED, then GREEN.** The tests were rewritten FIRST and run against `8405bc8` (the identity
+leg's tree) → `node --test tests/unit/tools-word.test.js` → **212 tests, pass 203, fail 9**, every failure
+rooted in the two measured facts:
+`set_heading assigns the style through exactly ONE bridge call…`, `set_heading publishes ok ONLY for the exact
+proof…`, `bridge setHeading dispatches ONE command…`, `the heading body is self-contained…`,
+`set_heading is offered with policy auto…` (the envelope field is now `paragraphsStable`, so the old
+`targetAdded` shape is an uninterpretable envelope),
+`set_heading verifies through the readback although the two paragraph lists answer DIFFERENT objects` →
+`actual: { ok: false, code: 'APPLY_UNCERTAIN' }` (the identity leg cannot hold),
+`the measured readback of a plain paragraph is null…` → the body answered
+`['POST_INSERT', 0, 0, 0, 1, 0, 0]` instead of `[…, 1, 1, 1, 0]` (the readback was rejected as a non-string),
+`set_heading folds the readback name…` → `AssertionError: Heading 2 — false !== true` (the style OBJECT was
+not read at all), and `set_heading refuses a paragraph that is ALREADY a heading…` →
+`actual: { ok: false, code: 'APPLY_UNCERTAIN' }`/`expected: { ok: false, code: 'TOOL_ERROR' }` (the identity
+pre-check could not see it). Green on the final tree: **213/213** on that file.
+
+**Which legs changed, and which tests moved.** REMOVED: the `isAmong` identity helper and the identity leg
+(`targetAdded`) — replaced by the readback (now PRIMARY, not conditional) and by the paragraph-count flag
+`paragraphsStable`; `exactHeadingDelta` now REQUIRES `styleRead && styleMatches`; the handler's
+`if (result.styleRead && !styleMatches)` became `if (!result.styleRead || !styleMatches)`. MOVED (renamed and
+re-expressed, never weakened): the identity round's tests became `set_heading verifies through the readback
+although the two paragraph lists answer DIFFERENT objects` (the DISTINCT lists are now the double's DEFAULT —
+`freshHeadingWrappers` is deleted as dead scaffolding, and the test asserts the two lists share no object),
+`set_heading settles the duplicate-text reproduction BY the readback…` (the reviewer's reproduction is kept
+and now fails on the addressed paragraph's own `null`), `set_heading holds the slot when the style readback is
+UNUSABLE — there is no identity fallback` (the old "decides by the identity leg ALONE" contract is gone), and
+`an already-heading target whose readback is unusable is not refused by guesswork…` (the old
+"undetectable with fresh wrappers" residual no longer exists). ADDED: `the measured readback of a plain
+paragraph is null: a READABLE non-match, never an absent read` and `a paragraph carrying a NON-heading style
+is not refused: only a HEADING name is the pre-state`. The shared `headingDocument` double now answers
+`GetStyle()` in the MEASURED shape (a style OBJECT with `GetName()`, or `null` for a Normal paragraph) and its
+heading list is filtered to real heading names. The `package` integration classifier gained two pins for this
+leg: the body must read `GetParaPr()` and must never compare the two paragraph lists by identity.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js` →
+**234/234**, `fail 0` (233 → 234); full suite `node --test` → **845 tests, pass 845, fail 0, skipped 0**
+(844 → 845: one new measured case, one dead identity-scaffolding case removed, none weakened);
+`node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` → exit
+0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+cb566f681c647b4fbf8eae02783acd827c9425d3b35dbc81f1d9ff07f278d0c9`. The SHA **moved** from the `8405bc8` pin
+`c29676cfc6b7a53475b8227343adecbf693163b4affd8c40cbbba6774fc14962` because the authored body, one decoder,
+the bridge envelope and the descriptor changed (the builder runs with `minify: false`). The phase protocol and
+the slot discipline are UNCHANGED (**only `[PRE_INSERT, name]` releases this leg's slot**), `src/agent/*` is
+untouched, no dynamic execution was added to `src/`, and there is exactly ONE `SetStyle`.
+
+**Natively UNVERIFIED at this round's close, and fail-safe rather than fail-open.** What the host-side suite
+cannot prove is the SHIPPED carriage of this leg: (1) that `{ paragraph, level, styleName }` written into the
+page's `Asc.scope` reaches the body's `scope` binding; (2) that `paragraph.SetStyle(styleObject)` on an
+EXISTING paragraph of an R7-built document really applies the style and moves `GetAllHeadingParagraphs()` by
+exactly one — the append-side measurement is on a NEWLY created paragraph, and this tool's contract is the
+in-place case; (3) that the readback of the ADDRESSED paragraph, taken from the post `GetAllParagraphs()`
+array at the caller's index, reflects the applied style (the measurement above is on the arrays directly, not
+on that exact ordering); (4) that `GetAllParagraphs()` enumerates in the SAME order `SetStyle` addresses; and
+(5) that the native return validator passes the seven-member flat array of primitives unaltered. Each unknown
+lands on a closed path — a scope that does not arrive, a missing primitive or a style that does not resolve
+answers the body's own phase-marked refusal (`[PRE_INSERT, …]`, nothing styled, slot released); an unusable
+readback, a non-exact answer, a malformed one or a throwing mutation is `APPLY_UNCERTAIN` →
+`TOOL_UNCERTAIN` with the slot HELD and no retry — never an `ok` with the slot released.
 
 
 

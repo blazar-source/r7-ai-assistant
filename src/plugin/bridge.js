@@ -663,26 +663,30 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // THE PRE-DISPATCH BASELINE is the gate, exactly as in the other two legs: the document's paragraph
       // and heading counts, AND the addressed paragraph's own text. No baseline means no delta means no
       // evidence means no write.
-      // THE IDENTITY LEG, AND WHY IT REPLACED A TEXT COMPARISON. "The addressed paragraph is now a heading"
-      // is decided by REFERENCE: the object the body addressed (`afterTarget`) must BE one of the post
-      // heading paragraphs (`isAmong(afterHeadings, afterTarget)`). It used to be decided by the addressed
-      // paragraph's TEXT being among the post heading paragraphs' TEXTS, and an independent review drove the
-      // false success that leg admits through this very body: a document with TWO paragraphs of the SAME
-      // text whose `SetStyle` landed on the second one answered `{"ok":true, …, "targetAdded":true,
-      // "styleRead":false}` with the slot RELEASED, although the addressed paragraph was never restyled. The
-      // addressed object is the one handle a POSITION-addressed leg does have (it comes from the post
-      // `GetAllParagraphs()` array at the caller's index), so the body uses it. The addressed paragraph's
-      // TEXT is retained as a SECONDARY signal only (`textUnchanged`, the doc-side rule): it can refute an
-      // assignment, and it can never establish one.
-      // THE PRE-STATE IS REFUSED, NOT DISCOVERED AFTERWARDS. A paragraph that is ALREADY a heading is
-      // answered `ALREADY_HEADING` — the closed argument class, with ZERO writes and the slot RELEASED —
-      // BEFORE the one `SetStyle`, because a LEVEL CHANGE on an existing heading moves no count and no other
-      // measured signal this body can read would verify it (the same identity comparison decides it). The
-      // mutation used to be dispatched and then settle `APPLY_UNCERTAIN` with the slot HELD, which made a
-      // level change impossible AND left the write lock engaged for the rest of the session. It is recorded
-      // as a stated limitation of this tool in the descriptor and in §15 of docs/sprint-3-progress.md,
-      // together with the one route that could verify a level change (an object-identity readback, which
-      // this tool cannot rely on yet).
+      // THE PROOF IS THE ADDRESSED PARAGRAPH'S OWN STYLE, AND IT IS MEASURED. An earlier revision decided
+      // "the addressed paragraph is now a heading" by OBJECT IDENTITY — the object the body addressed had to
+      // BE an element of `GetAllHeadingParagraphs()` — and the LEAD MEASURED that leg to be impossible on the
+      // target (Astra / R7 2026.1.2.1942): on a three-paragraph document with one heading,
+      // `GetAllHeadingParagraphs()[0].GetText()` equalled the text of `GetAllParagraphs()[0]` while
+      // `GetAllHeadingParagraphs()[0] === GetAllParagraphs()[i]` was FALSE for EVERY i. The two lists hand
+      // out DIFFERENT wrapper objects, so no reference comparison can ever hold, and that leg would have
+      // turned every call into `APPLY_UNCERTAIN` with the write slot held (fail-safe, but the tool unusable).
+      // The SAME measurement supplied the replacement, which needs neither identity nor text uniqueness:
+      // `typeof p.GetParaPr === 'function'` and `typeof p.GetParaPr().GetStyle === 'function'`, and
+      // `GetStyle()` answers a STYLE OBJECT (`GetClassType()` = `'style'`) whose `GetName()` gives the
+      // canonical `'Heading 1'` for a paragraph carrying an explicit Heading style, and `null` for a plain
+      // Normal paragraph. The addressed paragraph's OWN name is therefore the PRIMARY proof, one-to-one for
+      // THAT object. Its TEXT and the document's two counts are kept as SECONDARY signals only: they can
+      // REFUTE an assignment and they can never establish one (two paragraphs of one document can carry the
+      // same text, which is the false success an earlier text-membership leg admitted).
+      // THE PRE-STATE IS REFUSED FROM THE SAME READBACK, BEFORE THE MUTATION. A paragraph whose own style
+      // name is a HEADING name is answered `ALREADY_HEADING` — the closed argument class, with ZERO writes
+      // and the slot RELEASED — because a LEVEL CHANGE on an existing heading moves no heading count (the
+      // document loses one heading and gains one), so the count legs cannot verify it. The mutation used to
+      // be dispatched and then settle `APPLY_UNCERTAIN` with the slot HELD, which made a level change
+      // impossible AND left the write lock engaged for the rest of the session. It is recorded as a stated
+      // limitation of this tool in the descriptor and in §15b of docs/sprint-3-progress.md, together with the
+      // route that could verify a level change and why it is NOT taken yet.
       // THE ONE ADDRESS THIS LEG HAS, AND WHAT IT CANNOT PROVE. The baseline paragraphs are read ONCE into
       // a local array and the target is taken from THAT array (through `paragraphAt`, an
       // authored-code-audit requirement as well as a correctness one: a member read with a NON-CONSTANT
@@ -700,25 +704,26 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // before its first `Push`: an unresolvable `Heading <n>` answers the closed `STYLE_UNAVAILABLE`
       // (decoded as `TOOL_ERROR`) with NOTHING styled. And the style name is the one the caller's LEVEL
       // named, carried as DATA — this body never derives a name from a text or a document language.
-      // THE STYLE READBACK IS A HYPOTHESIS, NOT A DEPENDENCY. The public `ApiParaPr` that
-      // `paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…), so the
-      // target's own style is LIKELY readable as `paragraph.GetParaPr().GetStyle()` — but THAT call was not
-      // measured, so it is attempted inside this body's own `try`, behind `typeof` checks on BOTH members,
-      // and its outcome is reported in a SEPARATE flag. An absent `GetParaPr`, an absent `GetStyle` or a
-      // throw costs the proof its confirming leg and nothing else: the body never fails on it and never
-      // invents a style it did not read (`styleRead` is 0 and `styleMatches` is then 0 by construction).
-      // THE DECIDED CONTRACT FOR `styleRead === false`, stated here so the code and this comment cannot
-      // drift: with no readback the outcome rests on the IDENTITY leg ALONE — `ok` when the addressed object
-      // really is the one new heading, `APPLY_UNCERTAIN` (slot HELD, no retry) when it is not. The text leg
-      // is NEVER sufficient on its own, in either direction. A readback that IS readable is compared under
-      // the module's own case- and space-folding (the spelling variants the setter's lookup was measured to
-      // accept); a name that differs by more than case and spaces is a genuine disagreement and settles
-      // `APPLY_UNCERTAIN`, which is a contradiction this body can see rather than a guess.
+      // THE READBACK IS ATTEMPTED, NEVER ASSUMED. Every member of the chain is a `typeof` function check
+      // before its call and the whole probe sits in its own `try`, so a build that does not expose
+      // `GetParaPr`, `GetStyle` or `GetName` answers NO measurement rather than failing the body. THE DECIDED
+      // CONTRACT FOR AN UNUSABLE READBACK, stated here so the code and this comment cannot drift: the
+      // mutation has ALREADY run by the time the post read is taken, so the outcome is `APPLY_UNCERTAIN`
+      // with the slot HELD — never `ok`, and never a known class. There is NO identity fallback and no text
+      // fallback: the identity leg was measured to be impossible on the target (see above). A readback that
+      // IS readable is compared under the module's own case- and space-folding (the spelling variants the
+      // setter's lookup was measured to accept); the measured `null` of a plain paragraph is a READABLE
+      // answer that is simply not the requested style, and a name that differs by more than case and spaces
+      // is a genuine disagreement — both settle `APPLY_UNCERTAIN`, a contradiction this body can SEE rather
+      // than a guess.
       // The answer is ONE flat array of primitives (the native return validator keeps those and strips a
-      // plain object): `[POST_INSERT, headingsBefore, headingsAfter, targetAdded, textUnchanged,
-      // styleRead, styleMatches]`, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT
-      // OF EVERY ANSWER, and the decoder turns a phase-less or post-insert refusal into the uncertain class —
-      // the name alone can never release a slot for a mutation that may already be in the document.
+      // plain object): `[POST_INSERT, headingsBefore, headingsAfter, paragraphsStable, textUnchanged,
+      // styleRead, styleMatches]`, or a TWO-slot refusal `[PRE_INSERT, name]`. `paragraphsStable` is the
+      // paragraph-count invariant, `textUnchanged` the addressed paragraph's text, `styleRead` whether a
+      // readable style name was answered at all, and `styleMatches` whether it is the requested one under
+      // the fold. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and the decoder turns a phase-less or
+      // post-insert refusal into the uncertain class — the name alone can never release a slot for a
+      // mutation that may already be in the document.
       heading(callback) {
         return plugin.callCommand(function () {
           // The phase, and the ONE place the two classes are distinguished: everything answered while it is
@@ -769,17 +774,27 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
               try { return item.GetText(); } catch (error) { return null; }
             }
-            // THE IDENTITY HELPER, and the leg this whole body now rests on. `isAmong` answers whether an
-            // OBJECT the body already holds is an element of a list the editor answered — by REFERENCE,
-            // never by a text or by any other property. A paragraph's TEXT is not its identity: two
-            // paragraphs of one document can carry exactly the same text, which is the false success an
-            // independent review drove through this body when the membership leg compared texts. The
-            // comparison itself is a plain indexed READ and a strict equality, so the module's name-based
-            // authored-code analysis has no member call to reach through a computed key here.
-            function isAmong(list, item) {
-              if (item === null || item === undefined) return false;
-              for (var position = 0; position < list.length; position++) if (list[position] === item) return true;
-              return false;
+            // THE ADDRESSED PARAGRAPH'S OWN STYLE, READ THROUGH THE MEASURED CHAIN
+            // `GetParaPr().GetStyle().GetName()`. The THREE answers are kept DISTINCT because they mean three
+            // different things, and the whole body's contract turns on the difference:
+            //   * a NAME is a measurement of a paragraph that CARRIES a style;
+            //   * the EMPTY STRING is a measurement too — of a paragraph that carries NONE. The target was
+            //     measured to answer `null` from `GetStyle()` for a Normal paragraph, and that `null` is a
+            //     READABLE non-match, never the absence of a measurement;
+            //   * `null` is the ABSENCE of a measurement: a member missing, not a function, or a throw.
+            // Every member is a function check before its call and the whole probe is inside its own `try`,
+            // so a build without the chain answers `null` here instead of failing the body.
+            function readOwnStyle(item) {
+              try {
+                if (item === null || item === undefined || typeof item.GetParaPr !== 'function') return null;
+                var paraPr = item.GetParaPr();
+                if (paraPr === null || paraPr === undefined || typeof paraPr.GetStyle !== 'function') return null;
+                var carried = paraPr.GetStyle();
+                if (carried === null || carried === undefined) return '';
+                if (typeof carried.GetName !== 'function') return null;
+                var ownName = carried.GetName();
+                return typeof ownName === 'string' ? ownName : null;
+              } catch (error) { return null; }
             }
             // THE STYLE-NAME FOLDING, and it is the SAME folding the module's own `readsStyleName` applies to
             // the same envelope field: case-insensitive and space-insensitive, because the editor's lookup
@@ -789,6 +804,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // the setter's lookup also accepts is NOT guessed at here, and is never treated as a match).
             function folded(spelling) {
               return typeof spelling === 'string' ? spelling.toLowerCase().replace(/ /g, '') : '';
+            }
+            // IS THIS PARAGRAPH'S OWN STYLE A HEADING ONE? The one pre-state question the readback can now
+            // answer: a non-null style whose folded name is `heading` followed by digits and nothing else. A
+            // different style (`Title`, `Quote`) is NOT a heading, and the measured `null` of a plain
+            // paragraph is not either — the readback's own shape carries that distinction.
+            function isHeadingName(spelling) {
+              var name = folded(spelling);
+              return name !== '' && /^heading[0-9]+$/.test(name);
             }
             // THE PRE-DISPATCH BASELINE: the two counts and the addressed paragraph's own text, all read
             // BEFORE anything is styled. The index is checked against the SAME snapshot the text is read
@@ -807,17 +830,19 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (baselineHeadings === null || baselineHeadings === undefined || typeof baselineHeadings.length !== 'number') return headingRefusal('CAPABILITY_UNAVAILABLE');
             var headingsBefore = baselineHeadings.length;
             if (!measured(headingsBefore)) return headingRefusal('CAPABILITY_UNAVAILABLE');
-            // THE PRE-STATE, DECIDED BEFORE THE MUTATION AND NOT AFTER IT. A paragraph that is ALREADY one
-            // of the document's heading paragraphs cannot be verified by this leg: the heading count is the
-            // ONE signal that moves for an assignment, and a LEVEL CHANGE on an existing heading moves it
-            // NOWHERE (the document loses one heading and gains one), so no measured signal could tell the
-            // applied level change from a route that did nothing at all. Refusing it here keeps the failure
-            // KNOWN (zero writes, the slot released) instead of settling the UNCERTAIN class with the slot
-            // HELD, which is what the same call used to do — and which left the tool's write lock engaged for
-            // the rest of the session on a mutation that had changed nothing. The comparison is the IDENTITY
-            // one (`isAmong`, the object `GetAllParagraphs()` answered against the objects
-            // `GetAllHeadingParagraphs()` answered), never a text and never a name.
-            if (isAmong(baselineHeadings, target)) return headingRefusal('ALREADY_HEADING');
+            // THE PRE-STATE, DECIDED BEFORE THE MUTATION AND NOT AFTER IT, and now read from the SAME
+            // measured proof the post-state uses — the addressed paragraph's OWN style name. A target whose
+            // own name is already a HEADING name is refused here: the heading count is the ONE signal that
+            // moves for an assignment, and a LEVEL CHANGE on an existing heading moves it NOWHERE (the
+            // document loses one heading and gains one), so the count legs cannot verify it. Refusing it here
+            // keeps the failure KNOWN (zero writes, the slot released) instead of settling the UNCERTAIN class
+            // with the slot HELD, which is what the same call used to do — and which left the tool's write
+            // lock engaged for the rest of the session on a mutation that had changed nothing. The check is
+            // BEST-EFFORT and says so: on a build whose readback is unusable it answers nothing (`null`) and
+            // the call proceeds to the mutation, where the same unusable readback settles `APPLY_UNCERTAIN`
+            // with the slot held rather than refusing a call this body cannot judge.
+            var baselineName = readOwnStyle(target);
+            if (isHeadingName(baselineName)) return headingRefusal('ALREADY_HEADING');
             // THE STYLE IS RESOLVED BEFORE THE MUTATION: an unresolvable `Heading <n>` refuses the whole
             // call with NOTHING styled — never an unstyled paragraph where a heading was asked for.
             var style = document.GetStyle(styleName);
@@ -847,38 +872,23 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var afterText = textAt(afterTarget);
             if (typeof afterText !== 'string') return headingRefusal('CAPABILITY_UNAVAILABLE');
             var textUnchanged = afterText === baselineText ? 1 : 0;
-            // `targetAdded` IS THE IDENTITY LEG, and it is the ONE leg that is about the ADDRESSED object:
-            // the document's paragraph count is an INVARIANT for a style assignment, its heading count grew
-            // by exactly one, AND the object this body addressed (`afterTarget`, taken from the post array at
-            // the caller's index) IS one of the post heading paragraphs — compared by REFERENCE, never by the
-            // text it carries. The text comparison this replaced answered `1` for a document whose addressed
-            // paragraph kept its text while the `SetStyle` landed on a DIFFERENT paragraph with the same text,
-            // which is a false success with the slot released (the independent review's reproduction).
-            var targetAdded = paragraphsAfter === paragraphsBefore && headingsAfter - headingsBefore === 1 && isAmong(afterHeadings, afterTarget) ? 1 : 0;
-            // THE STYLE READBACK, ATTEMPTED AND NOT ASSUMED. Both members are checked as functions, the
-            // whole probe sits in its own `try`, and the two flags say exactly what happened: `styleRead` is
-            // 1 only when a NAME was really read back, and `styleMatches` is 1 only when that name is the
-            // requested one under the SAME case- and space-folding the module's `readsStyleName` applies (a
-            // getter answering `'Heading1'` is a MATCH, not the false disagreement that used to hold the
-            // write lock on a mutation that had succeeded; a name that differs by more than case and spaces
-            // is still a disagreement). A build that does not expose the route sets `styleRead` to 0 and does
-            // NOT fail: the outcome is then decided by the IDENTITY leg (`targetAdded`) ALONE — `ok` when the
-            // addressed object really is the one new heading, `APPLY_UNCERTAIN` with the slot HELD when it is
-            // not — and the result says which of the two happened, so no text-based leg is ever sufficient.
-            var styleRead = 0;
-            var styleMatches = 0;
-            try {
-              if (afterTarget !== null && afterTarget !== undefined && typeof afterTarget.GetParaPr === 'function') {
-                var paraPr = afterTarget.GetParaPr();
-                if (paraPr !== null && paraPr !== undefined && typeof paraPr.GetStyle === 'function') {
-                  var readName = paraPr.GetStyle();
-                  if (typeof readName === 'string') {
-                    styleRead = 1;
-                    styleMatches = folded(readName) === folded(styleName) ? 1 : 0;
-                  }
-                }
-              }
-            } catch (error) { styleRead = 0; styleMatches = 0; }
+            // THE PARAGRAPH-COUNT INVARIANT, and it is a SECONDARY signal like the text: a style assignment
+            // creates and destroys nothing, so the document's paragraph count is unchanged. A count that MOVED
+            // means something else happened to the document, and that can only REFUTE this assignment — it can
+            // never establish one. (The heading delta is re-derived from the two pushed counts by the
+            // bridge's own outcome rule rather than folded into a flag here, so a forged answer cannot carry
+            // a delta the counts contradict.)
+            var paragraphsStable = paragraphsAfter === paragraphsBefore ? 1 : 0;
+            // THE PRIMARY PROOF: THE ADDRESSED PARAGRAPH'S OWN STYLE NAME, read back through the measured
+            // `GetParaPr().GetStyle().GetName()` chain and compared with the requested one under the SAME
+            // case- and space-folding the module's `readsStyleName` applies. `styleRead` is 1 whenever the
+            // readback was READABLE — including the measured `null` of a plain paragraph, which arrives here as
+            // the empty string and is therefore a readable NON-match — and 0 only when the chain answered
+            // nothing at all. A `styleRead` of 0 is NOT a licence to fall back on the counts or on the text:
+            // the mutation has already run, so the decoder settles `APPLY_UNCERTAIN` with the slot HELD.
+            var afterName = readOwnStyle(afterTarget);
+            var styleRead = afterName === null ? 0 : 1;
+            var styleMatches = styleRead === 1 && folded(afterName) === folded(styleName) ? 1 : 0;
             // The phase slot, the two counts and the four flags are APPENDED rather than spelled as one array
             // literal, for the authored-code-audit reason the block body states: the local alias analysis is
             // NAME-based and scope-insensitive over the whole bundle, so a literal built from identifier
@@ -888,7 +898,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             answer.push(phase);
             answer.push(headingsBefore);
             answer.push(headingsAfter);
-            answer.push(targetAdded);
+            answer.push(paragraphsStable);
             answer.push(textUnchanged);
             answer.push(styleRead);
             answer.push(styleMatches);
@@ -1251,8 +1261,13 @@ function exactTableDelta(outcome) {
 }
 // THE HEADING-STYLE answer, decoded with the same strictness as `decodeBlocks`/`decodeTable` and for the
 // same reason: the authored body encodes its proof as ONE flat array of primitives —
-// `[POST_INSERT, headingsBefore, headingsAfter, targetAdded, textUnchanged, styleRead, styleMatches]` —
+// `[POST_INSERT, headingsBefore, headingsAfter, paragraphsStable, textUnchanged, styleRead, styleMatches]` —
 // because the native return validator keeps arrays of primitives and STRIPS a plain object.
+// `paragraphsStable` is the paragraph-count invariant, `textUnchanged` the addressed paragraph's own text,
+// `styleRead` whether its own style name was READABLE at all (the measured `null` of a plain paragraph is
+// readable and arrives as `styleRead: 1, styleMatches: 0`), and `styleMatches` whether that name is the
+// requested one under the module's case- and space-folding. NONE of the first three can establish an
+// assignment: they are SECONDARY signals that can only refute one.
 // `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every member is
 // read through its own data descriptor, never through a getter. Four rules are this leg's own contract:
 //   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes
@@ -1322,38 +1337,33 @@ function decodeHeading(value) {
   if (flags.length !== HEADING_FLAGS) throw new SafeError(ERROR_CODES.INVALID_DATA);
   assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
   return Object.freeze({ headingsBefore: numbers[0], headingsAfter: numbers[1],
-    targetAdded: flags[0] === 1, textUnchanged: flags[1] === 1, styleRead: flags[2] === 1, styleMatches: flags[3] === 1 });
+    paragraphsStable: flags[0] === 1, textUnchanged: flags[1] === 1, styleRead: flags[2] === 1, styleMatches: flags[3] === 1 });
 }
 // THE EXACT OUTCOME RULE the heading assignment rests on, in ONE place so the decision and its comment
-// cannot drift apart. Four conditions, all required, and EVERY ONE of them is about the ADDRESSED
-// paragraph or about the document's own counts:
-//   1. `textUnchanged` — the paragraph at the requested index carries EXACTLY the text it carried before
-//      the one `SetStyle`. This is what makes a route that replaced text (§13.2's measured behaviour) and
-//      a STALE INDEX whose paragraph now holds something else both non-successes. It is a SECONDARY
-//      signal: it can refute an assignment and it can never establish one.
-//   2. `targetAdded` — the paragraph count is unchanged (a style assignment creates and destroys nothing),
-//      the heading count grew by EXACTLY one, and the ADDRESSED OBJECT is one of the post heading
-//      paragraphs (by reference — see the body's `isAmong`). This is the identity leg; the text comparison
-//      that used to sit here answered `1` for a duplicate-text document whose `SetStyle` landed on the
-//      OTHER paragraph, which was a false success with the slot released.
-//   3. the heading count ACTUALLY grew by exactly one, re-derived here from the two counts rather than
-//      trusted from the flag, so a forged `targetAdded` cannot carry a delta the counts contradict.
-//   4. THE STYLE LEG IS CONDITIONAL AND THAT IS STATED, NOT HIDDEN: when the body could read the target's
-//      own style name (`styleRead`), it MUST match the requested one under the module's own case- and
-//      space-folding — a readable contradiction is never a success. THE DECIDED BEHAVIOUR WHEN THE
-//      READBACK IS ABSENT (`styleRead: false`) IS `ok` ONLY IF THE IDENTITY LEG ABOVE HOLDS, and
-//      `APPLY_UNCERTAIN` with the slot HELD when it does not: a missing readback is not a failure by
-//      itself, a TEXT match is never sufficient, and `styleRead: false` travels in the result so a caller
-//      is never told an identity that was not established. The ambiguity the OLD text leg left — a
-//      pre-existing equal heading satisfying the membership half — is closed by condition 2's identity
-//      comparison; what remains is stated in §15 of docs/sprint-3-progress.md: on a build whose heading
-//      list answers a NEW wrapper object per call, no reference comparison can hold and the assignment
-//      settles UNCERTAIN with the slot held (fail-safe, never a false success).
+// cannot drift apart. FIVE conditions, all required, and the FIRST TWO are the PROOF while the rest are
+// SECONDARY signals that can only REFUTE it:
+//   1. `styleRead` — the addressed paragraph's OWN style name was really read, through the measured
+//      `GetParaPr().GetStyle().GetName()` chain. An UNREAD readback cannot establish an assignment, and it
+//      cannot release the slot either: the mutation has already run, so the outcome is `APPLY_UNCERTAIN`
+//      with the slot HELD. THE IDENTITY FALLBACK AN EARLIER REVISION USED IS GONE, because the Lead
+//      MEASURED that the two paragraph lists hand out DIFFERENT wrapper objects, so no reference comparison
+//      can ever hold — a fallback on it would have wedged every call.
+//   2. `styleMatches` — that name IS the requested one under the module's own case- and space-folding. The
+//      measured `null` of a plain paragraph arrives as a READABLE non-match (`styleRead: 1`,
+//      `styleMatches: 0`), and a name that differs by more than case and spaces is a genuine contradiction.
+//   3. `paragraphsStable` — the paragraph count is unchanged: a style assignment creates and destroys
+//      nothing, so a count that moved means something else happened to the document.
+//   4. `textUnchanged` — the paragraph at the requested index carries EXACTLY the text it carried before the
+//      one `SetStyle`, which makes a route that replaced text (§13.2's measured behaviour) and a STALE
+//      INDEX whose paragraph now holds something else both non-successes.
+//   5. the heading count ACTUALLY grew by exactly one, re-derived here from the two counts rather than
+//      trusted from a flag, so a forged answer cannot carry a delta the counts contradict.
 function exactHeadingDelta(outcome) {
+  if (!outcome.styleRead) return false;
+  if (!outcome.styleMatches) return false;
+  if (!outcome.paragraphsStable) return false;
   if (!outcome.textUnchanged) return false;
-  if (!outcome.targetAdded) return false;
   if (outcome.headingsAfter - outcome.headingsBefore !== 1) return false;
-  if (outcome.styleRead && !outcome.styleMatches) return false;
   return true;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
@@ -2154,20 +2164,21 @@ export function createR7Bridge(plugin, {
           // than a copy of theirs: this leg addresses a POSITION, not an owned TARGET, so there is no handle
           // whose identity a probe could establish — and a probe over a caret/document id could not make a
           // POSITION stable anyway, because a concurrent edit ABOVE the addressed index renumbers it without
-          // changing any id. What the leg does instead is measurable and stated: the body reads the
-          // addressed paragraph's TEXT before the one `SetStyle` and again after it, and the doc-side rule
-          // requires it unchanged, so a stale index whose paragraph now holds different text is a non-
-          // success (`APPLY_UNCERTAIN`, slot HELD, no retry) rather than a silent edit of the wrong
-          // paragraph. The addressed OBJECT — the paragraph this body took from the array at the caller's
-          // index — is the identity handle the leg DOES have, and it is what decides that the addressed
-          // paragraph became the heading (compared by reference against `GetAllHeadingParagraphs()`, never
-          // by its text: a duplicate-text document made the old text leg answer `ok` for a `SetStyle` that
-          // landed on the other paragraph). A target that is ALREADY a heading is refused BEFORE the one
-          // `SetStyle` as the closed argument class with the slot released, because a level change on an
-          // existing heading moves no count at all and could not be verified. The residual it cannot catch —
-          // a concurrent edit that lands a paragraph with EXACTLY the same text at that index, or a heading
-          // list answering a new wrapper object per call — is accepted and recorded in §15 of
-          // docs/sprint-3-progress.md with its structural remedy, never silently relied on.
+          // changing any id. What the leg does instead is MEASURED and stated: the body reads the addressed
+          // paragraph's OWN STYLE before the one `SetStyle` and again after it, through the measured
+          // `GetParaPr().GetStyle().GetName()` chain, and requires the AFTER name to be the requested one
+          // while the paragraph count, the heading count (+1) and the addressed text are all unchanged. Those
+          // three are SECONDARY signals that can only REFUTE — a stale index whose paragraph now holds
+          // different text is a non-success (`APPLY_UNCERTAIN`, slot HELD, no retry) rather than a silent edit
+          // of the wrong paragraph. THE ADDRESSED OBJECT'S IDENTITY IS NOT USED ANYWHERE: the two paragraph
+          // lists were MEASURED to hand out different wrapper objects, so an identity leg could never hold
+          // (a duplicate-text document made an even older text leg answer `ok` for a `SetStyle` that landed
+          // on the other paragraph, which is why the text is not the proof either). A target whose own style
+          // name is already a HEADING name is refused BEFORE the one `SetStyle` as the closed argument class
+          // with the slot released, because a level change on an existing heading moves no count at all. The
+          // residual it cannot catch — a concurrent edit that lands a paragraph with EXACTLY the same text at
+          // that index — is accepted and recorded in §15b of docs/sprint-3-progress.md with its structural
+          // remedy, never silently relied on.
           // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other
           // leg: a synchronous throw out of the transport must never release a slot whose work may already
           // be queued, and the body's own pre-insert refusals keep their known class through the callback
@@ -2567,23 +2578,24 @@ export function createR7Bridge(plugin, {
     // THE HEADING STYLE ASSIGNMENT behind `set_heading` — the THIRD MUTATION of Sprint 3 and the FIRST
     // write leg that appends NOTHING: it changes an EXISTING paragraph in place through ONE
     // `paragraph.SetStyle(style)` on an index the caller names. The body's own comment carries the
-    // mechanism (a pre-dispatch baseline of the two counts AND the addressed paragraph's text, the style
-    // RESOLVED before the mutation, then ONE `SetStyle`, then the post read and the style readback) and why
-    // no mutation primitive's boolean is the signal; what matters HERE is the shape: ONE command on the ONE
-    // entry point that owns the parameter wrapper, the validated `{ paragraph, level, styleName }` triple
-    // carried as DATA through `Asc.scope`, and ONE strict decoder that turns the authored flat array — an
-    // explicit phase slot, the delta's two heading counts, and four flags (the paragraph count invariant
-    // plus the identity of the addressed OBJECT among the post heading paragraphs plus the unchanged
-    // addressed text, and the style readback's availability and result) — into the envelope below. The
-    // OUTCOME rule is then decided inside the ticket, before the slot is released: a target whose text
-    // moved, a heading count that did not grow by exactly one, a paragraph count that moved, an addressed
-    // object that is NOT among the post heading paragraphs, a readable style that is not the requested one
-    // (under the module's case- and space-folding), an answer that cannot be interpreted and the body's own
-    // POST-insert uncertainty all settle `APPLY_UNCERTAIN` with the slot HELD and no retry, while the
-    // body's PRE-insert refusals (an unusable baseline, an index outside the document, a target that is
-    // ALREADY a heading, an unresolvable `Heading <n>`) settle their closed KNOWN class with the slot
-    // released, because nothing was styled — and they do so ONLY when the answer carries their phase, so a
-    // name alone can never release a slot.
+    // mechanism (a pre-dispatch baseline of the two counts AND the addressed paragraph's own style and text,
+    // the style RESOLVED before the mutation, then ONE `SetStyle`, then the post read and the style readback)
+    // and why no mutation primitive's boolean is the signal; what matters HERE is the shape: ONE command on
+    // the ONE entry point that owns the parameter wrapper, the validated `{ paragraph, level, styleName }`
+    // triple carried as DATA through `Asc.scope`, and ONE strict decoder that turns the authored flat array —
+    // an explicit phase slot, the delta's two heading counts, and four flags (the paragraph count invariant,
+    // the unchanged addressed text, and the addressed paragraph's OWN style readback: whether it was read at
+    // all and whether it is the requested one) — into the envelope below. The OUTCOME rule is then decided
+    // inside the ticket, before the slot is released, and the READBACK is the PRIMARY leg: an unread readback
+    // is `APPLY_UNCERTAIN` with the slot HELD (the mutation has already run — there is NO identity fallback,
+    // because the two paragraph lists were measured to hand out different wrapper objects), and so are a
+    // readable style that is not the requested one (under the module's case- and space-folding), a target
+    // whose text moved, a paragraph count that moved, a heading count that did not grow by exactly one, an
+    // answer that cannot be interpreted and the body's own POST-insert uncertainty — all with no retry, while
+    // the body's PRE-insert refusals (an unusable baseline, an index outside the document, a target whose own
+    // style name is already a heading name, an unresolvable `Heading <n>`) settle their closed KNOWN class
+    // with the slot released, because nothing was styled — and they do so ONLY when the answer carries their
+    // phase, so a name alone can never release a slot.
     // The request is a closed precondition, never an optional refinement: a caller that cannot name an
     // in-range index, a level in the heading family and the style name that level means gets a refusal
     // instead of an SDK call that styles an unnamed paragraph. The SHAPE rules are the closed argument
@@ -2617,7 +2629,7 @@ export function createR7Bridge(plugin, {
         // names a different one was produced for a request this caller did not make. It is the one field
         // here that is NOT a measurement of the document, and it is the request's own word.
         return Object.freeze({ ok: true, styleName, headingsBefore: outcome.headingsBefore, headingsAfter: outcome.headingsAfter,
-          targetAdded: outcome.targetAdded, textUnchanged: outcome.textUnchanged,
+          paragraphsStable: outcome.paragraphsStable, textUnchanged: outcome.textUnchanged,
           styleRead: outcome.styleRead, styleMatches: outcome.styleMatches });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
