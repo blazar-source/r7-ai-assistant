@@ -1161,29 +1161,39 @@ and `T.prototype.SetOutlineLvl` both measure **0**). A level derived from the st
 `properties: {}` — every dispatched primitive takes no model parameter, so no optional argument was added.
 Two new `LIMITS` entries: **`structureHeadingsMax = 32`** — the reported-heading cap AND the count the body
 extracts inside the editor (one value, so the native work and the report cannot disagree) — and
-**`structureHeadingBytes = 256`** — one heading TEXT (128 Cyrillic or 256 ASCII characters), a **refusal**
-boundary, never a trim. The result is
+**`structureHeadingBytes = 256`** — one heading TEXT (128 Cyrillic or 256 ASCII characters), a boundary that
+is never a trim and that is now an **explicit omission** rather than a whole-read refusal (§12a). The result
+is
 `ok({ pages, statistics, counts, headings, truncated })`: `statistics` republishes the measured object under
 the primitive's **own** field names, `counts` is `{ paragraphs, headings, tables, sections }` from the array
 lengths, `headings` is a bounded array of `{ index, text }`, and there is deliberately **no separate
 `tables`/`sections` result key** (the only honest facts are their counts, which `counts` already carries).
 The enforced bound is the **serialized entry** through the module's one `toolResultEntryBytes` (new
 `structureEntryBytes` wrapper): the worst realistic call at both maxima measures **9192** bytes against the
-16384-byte ceiling (7192 of slack), and the true maximum — every numeric field widened to
-`Number.MAX_SAFE_INTEGER`, which adds 123 bytes and nothing else — measures **9315** (7069 of slack). The
-two escape families are what cannot fit: 32 headings of 256 `\n` (TWO-character escapes) measure **17364**,
-and the same headings made of a C0 control with no short escape (SIX-character `\uXXXX`) measure **50132**;
-both are the closed `BYTE_LIMIT`, and no heading is ever shortened.
+16384-byte ceiling (7192 of slack). The earlier claim that the true maximum was **9315** (7069 of slack) was
+wrong in **both its label and its shape** — the shape was also unreachable, because `truncated` is derived
+from `counts.headings > headings.length` and a 16-digit `counts.headings` is therefore `truncated:true`,
+never the `false` that figure measured. §12a records the re-measurement: the family that binds is the
+**2×-escape** family (`"` → `\"`, `\` → `\\`), which this note never named while listing only families that
+cannot fit at all — 32 headings of 240 `"` measure **16341** (slack **43**, and they are SERVED), 241 `"`
+measure **16405** and are REFUSED, and the **true maximum over every publishable shape is the ceiling
+exactly: 16384, with zero slack**. The two families that cannot fit at all are 256 `\n` headings
+(TWO-character short escapes) at **17365** and the same headings made of a C0 control with no short escape
+(SIX-character `\uXXXX`) at **50133**; both figures belong to the 32-text array at its own 2-digit
+`counts.headings` width (32), and both are the closed `BYTE_LIMIT`.
 
-**Two documented decisions.** An **empty structure is `ok`** with `headings: []`, `counts.headings: 0` and
+**Three documented decisions.** An **empty structure is `ok`** with `headings: []`, `counts.headings: 0` and
 `truncated: false`: "this document has no headings" IS the complete answer to "what is the structure",
-deliberately unlike an empty **caret** context (`read_paragraph`). And a structure the decoder cannot
-interpret is the module's closed `known()` class, never a partial outline: a `headings` array longer than
-the cap the tool asked for, or shorter than `min(counts.headings, structureHeadingsMax)`, is not an answer
-this bridge can have produced. Failure classes: wrong editor / missing bridge method / unavailable command
-channel or namespace → `CAPABILITY_UNAVAILABLE`; any other closed bridge class republished through
-`refusalCode`; an uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` →
-`TOOL_UNCERTAIN`; a heading above its text bound or an over-ceiling entry → `BYTE_LIMIT`.
+deliberately unlike an empty **caret** context (`read_paragraph`). An **over-wide heading is an explicit
+omission**, not a refusal (§12a): `ok` with the measured `pages`/`statistics`/`counts`, `headings: []` and
+`truncated: true`. And a structure the decoder cannot interpret is the module's closed `known()` class, never
+a partial outline: a `headings` array longer than the cap the tool asked for, or shorter than
+`min(counts.headings, structureHeadingsMax)`, is not an answer this bridge can have produced. Failure
+classes: wrong editor / missing bridge method / unavailable command channel or namespace →
+`CAPABILITY_UNAVAILABLE`; any other closed bridge class republished through `refusalCode`; an
+uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN`; a heading
+above its text bound → `ok` with `headings: []` and `truncated: true`; an over-ceiling entry →
+`BYTE_LIMIT`.
 
 **Verification.** RED first, honestly counted: on the pre-implementation tree the focused set
 (`bridge-dispatch-api` + `tools-word` + `integration/package`) ran **159 cases / 137 pass / 22 fail**, and
@@ -1201,14 +1211,111 @@ new authored body. The `package` test's authored-command-leg classifier grew **3
 existing test was weakened or deleted. Read-only by construction and by test: exactly **one** bridge call
 (`readStructure`) and no write method reachable; `src/agent/*` untouched.
 
-**Unverified natively, and what only the target can prove.** The **primitive** measurements above are the
-Lead's. What the host-side suite cannot prove is the **shipped** carriage of this leg: that
-`{ maxHeadings }` written into the page's `Asc.scope` reaches the body's `scope` binding on the target
-build, that `GetStatistics()`/`GetAllHeadingParagraphs()` answer from **inside** this exact body, and that
-the native return validator passes the **10 + n** flat array unaltered. Each unknown is fail-safe rather
-than fail-open: a scope that does not arrive makes the body answer its own refusal sentinel
-(`CAPABILITY_UNAVAILABLE`), a primitive that is missing or answers a non-integer makes it refuse the same
-way, and an editor that never calls back settles `TIMEOUT` — never a structure. A heading `level` remains
-unavailable on this build because no **public** getter exists; rendering it would need a native probe of an
-internal-only member, which this tool deliberately does not reach for.
+**Unverified natively at this round's close — and since MEASURED on the target; see §12a.** What the
+host-side suite could not prove was the **shipped** carriage of this leg: that `{ maxHeadings }` written into
+the page's `Asc.scope` reaches the body's `scope` binding, that `GetStatistics()`/`GetAllHeadingParagraphs()`
+answer from **inside** this exact body, and that the native return validator passes the **10 + n** flat array
+unaltered. Each unknown was fail-safe rather than fail-open: a scope that does not arrive makes the body
+answer its own refusal sentinel (`CAPABILITY_UNAVAILABLE`), a primitive that is missing or answers a
+non-integer makes it refuse the same way, and an editor that never calls back settles `TIMEOUT` — never a
+structure. §12a records the native run that closed all three. A heading `level` remains unavailable because no
+**public** member exposes it — a **private** route does exist
+(`ApiParagraph.private_GetImpl().GetOutlineLvl()`), and this tool deliberately does not reach for it.
+
+## 12a. `read_structure` — the explicit heading omission, the arithmetic corrected, the native evidence recorded
+
+Three LOW conditions from the independent review of `7a57afa`. Exactly **one** is a behaviour change (D3); no
+limit VALUE moved, `src/agent/*` is untouched, the tool is still read-only with **one** dispatch, and only
+`src/tools/word.js`, `src/shared/limits.js`, `tests/unit/tools-word.test.js` and this document changed.
+`src/plugin/bridge.js` needed **no** change: the omission is a TOOL-side decision taken over the decoded
+envelope, and the authored body plus `decodeStructure` still carry exactly `min(counts.headings, maxHeadings)`
+texts and refuse an answer of any other length.
+
+**D3 — the per-heading bound is an EXPLICIT OMISSION, not a positional refusal.** The entry measurement is
+untouched (an over-ceiling entry is still the closed `BYTE_LIMIT`, and a heading is never shortened), but a
+heading above `structureHeadingBytes` no longer refuses the whole read. The handler now derives
+`overWide`, publishes `headings: []` in that case, and derives `truncated` from the array it actually
+published (`counts.headings > published.length`), so the flag needs no special case. An explicit omission beats
+a total refusal because `pages`, `statistics` and `counts` are measured facts about the document that no
+heading TEXT can make untrue, and because the old refusal was **POSITIONAL**: a 258-byte heading at index 0
+refused everything while the same heading at index 40 was never extracted and the read succeeded — two
+documents holding the same over-wide heading got opposite outcomes for a difference the model cannot see. The
+array must be **empty** rather than partially filled because a partial array with `truncated: true` already
+means "more headings exist than are reported" (the cap case): reusing that flag for the short texts beside an
+over-wide one would give one flag two meanings and leave the model unable to tell a withheld outline from a
+capped one. `counts.headings` keeps the **primitive's own total** in both cases — it is a count, not a text, so
+the omission neither narrows it nor invents a zero.
+
+**TDD, and the exact RED.** The over-wide test block was rewritten FIRST and run against the unmodified
+handler: `read_structure bounds ONE heading text and publishes an explicit EMPTY omission, never a shortened
+heading` failed at `assert.equal(omitted.ok, true)` — `false !== true`, the old `BYTE_LIMIT` refusal — while
+the other 138 cases in `tests/unit/tools-word.test.js` passed, so the only RED was the intended behaviour
+change. Green: **139/139** in that file. One existing test asserted the old whole-read refusal —
+`read_structure bounds ONE heading text and refuses rather than shortening it` — and it is the SURVIVOR of the
+rewrite rather than a deletion: the replacement asserts strictly more (ok with the scalars, an array that is
+`[]` and not merely absent, `truncated: true`, `counts.headings` at the primitive's total, no heading text in
+the payload, an over-wide heading at a LATER index withholding the array just the same, the capped case still
+publishing its texts under the same flag, the exact 256-byte boundary served verbatim, and the omission's own
+entry accepted by `toolResultMessages` with the document's counts at `Number.MAX_SAFE_INTEGER`). No test was
+weakened or deleted anywhere in this round.
+
+**D1/D2 — the arithmetic re-measured from the real published shape** (`JSON.stringify({tool, ok, data})`
+through `utf8ByteLength`, the same shape `stringifyToolResults` bounds; the refusal check is `> 16384`, so an
+entry of exactly 16384 publishes):
+
+| shape | measured | ceiling |
+| --- | --- | --- |
+| 32 × 128 Cyrillic, real-document digits, `truncated:false` (worst REALISTIC) | 9192 | slack 7192 |
+| 32 headings of 240 `"` (240 raw bytes) | 16341 | slack 43 — **SERVED** |
+| 32 headings of 241 `"` (241 raw bytes) | 16405 | refused |
+| **TRUE MAXIMUM**: 32 × (238 `"` + `a`) = 477 escaped bytes each, nine numeric fields at `MAX_SAFE_INTEGER`, `counts.headings` at 14 digits | **16384** | **slack 0** |
+| the same headings with a 16-digit `counts.headings` | 16386 | refused (its own widest shape: 16354) |
+| 32 × 256 `\n`, `counts.headings = 32` (2 digits) | 17365 | refused |
+| 32 × 256 U+0001, `counts.headings = 32` (2 digits) | 50133 | refused |
+
+So **9315 was wrong twice**: it was labelled "the true maximum" while the family that actually binds is the
+**2×-escape** family (`"` → `\"`, `\` → `\\`) the note never named, and the shape it measured was
+**unreachable** (`truncated` is derived, so 32 headings with a 16-digit `counts.headings` are
+`truncated:true`, never the `false` it used). The corrected statements are: `9192` is the worst **realistic**
+call; `16341`/slack 43 is the widest all-`"` heading and it IS served; `16384`/slack **0** is the true
+maximum over every shape this handler can publish (the odd escaped width 477 — not the 476 or 480 a uniform
+heading reaches — is what spends the last byte, and the widest 16-digit shape is 16354); and the two escape
+families that cannot fit are **17365** and **50133**, both at the 32-text array's OWN 2-digit
+`counts.headings` width (the earlier 17364/50132 were the same arrays with a bogus 1-digit
+`counts.headings = 3`, which the handler could never publish beside 32 texts). Both figures are pinned in
+`tests/unit/tools-word.test.js`, and the true maximum is pinned twice: once as arithmetic, and once through
+the REAL handler (which measures exactly 16384 for that envelope, refuses 16480 for the same headings at 240
+`"`, and never disables the entry measurement).
+
+**The wording correction.** `src/shared/limits.js` — and the same clause in `src/tools/word.js` — now says
+what was measured: **no PUBLIC member** exposes the outline level. That is not unreachability; a **private**
+route exists, `ApiParagraph.private_GetImpl().GetOutlineLvl()`, and the read deliberately does not take it
+because a document read through a private internal is a dependency the next build is free to break.
+
+**Natively measured, on the target (Astra / R7 2026.1.2.1942, shipped build).** The three unknowns listed at
+the end of §12 are now MEASURED, and no serialization refusal appears in the captured traffic:
+
+* the **`Asc.scope` carriage** of the validated `{ maxHeadings }` reaches the body's `scope` binding;
+* **`GetStatistics()` / `GetAllHeadingParagraphs()` answer from INSIDE this exact body** (and
+  `GetPageCount()`/`GetAllTables()` with them);
+* the native **return validator passes the flat `10 + n` array** unaltered, and the decoder reconstructs the
+  structure from it.
+
+The evidence is the panel action line **`read_structure: ok`** and the model answering
+`ЗАГОЛОВКИ=ГЛАВА ПЕРВАЯ;Раздел 1.1;ГЛАВА ВТОРАЯ|ТАБЛИЦ=1|СТРАНИЦ=1` on a purpose-built document — three
+heading texts, one table and one page, which is exactly the shape the body encodes and the decoder accepts.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js`
+→ **160/160**, `fail 0`; full suite `node --test` → **771**, `pass 771`, `fail 0` (770 → 771: the one added
+test block); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+eab165582c68d3cb3ba9ad5f5ffe5a5fa3ac725854a6219fbb41db4d162e926b`, re-measured twice on the final tree with
+the same value. With `minify: false` the comment text inside the descriptor is rebuilt into the bundle, so the
+SHA **moved** from the `7a57afa` pin
+`0b97e1ad46257a27e8f6901f68662f854229a62fdbe91522d67bba425bf7810f`; **the non-comment diff of `src/` is
+exactly the D3 change** — one removed line (the old `BYTE_LIMIT` return for an over-wide heading) and four
+added lines (`overWide`, `published`, and the two `published` substitutions) in `src/tools/word.js`, with
+`src/shared/limits.js` comment-only. Read-only by construction and by test: exactly **one** bridge call
+(`readStructure`) and no write method reachable; `src/agent/*` untouched.
 

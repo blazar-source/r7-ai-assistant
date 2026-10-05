@@ -3234,33 +3234,62 @@ test('read_structure advertises the closed schema and the two bounds it adds', (
     `${entry} <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - entry} bytes of slack`);
   assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result: { ok: true,
     data: { pages: 842, statistics, counts, headings, truncated: false } } }]));
-  // Every numeric field can be wider than a real document makes it, and the schema-side bounds are not
-  // what bounds the entry: widening all ten of them to `Number.MAX_SAFE_INTEGER` adds 123 bytes and
-  // nothing else, so the true maximum this shape can carry is 9315.
+  // 9192 IS NOT THE TRUE MAXIMUM, and the former claim that 9315 was is wrong in BOTH its label and its
+  // SHAPE. `JSON.stringify` escapes `"` as the TWO characters `\"` (and `\` as `\\`), so ONE raw heading
+  // byte can serialize as two, and the 256-byte per-heading bound admits a FAR wider serialized heading
+  // than 128 Cyrillic characters do: the escape family the earlier comment never named is the one that
+  // binds, while the two families it DID name cannot fit at all. The old figure was also UNREACHABLE:
+  // `truncated` is derived as `counts.headings > headings.length`, so 32 headings with a 16-digit
+  // `counts.headings` are `truncated:true`, never the `false` that shape used. Measured on the same entry:
+  //   * 32 headings of 240 `"` (240 raw bytes, inside the bound): 16341 bytes, 43 of slack, and SERVED;
+  //   * 32 headings of 241 `"` (241 raw bytes):                   16405 bytes — refused.
+  const quotes = (width) => new Array(LIMITS.structureHeadingsMax).fill('"'.repeat(width))
+    .map((text, index) => ({ index, text }));
+  const quoted = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true, data: { pages: 1,
+    statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: quotes(240), truncated: false } }));
+  assert.equal(quoted, 16341, 'the widest all-`"` heading, measured');
+  assert.equal(AGENT_CEILINGS.toolResultBytes - quoted, 43, 'and its own slack');
+  const quotedOver = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true, data: { pages: 1,
+    statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: quotes(241), truncated: false } }));
+  assert.equal(quotedOver, 16405, 'one more `"` per heading is outside the ceiling');
+  assert.ok(quotedOver > AGENT_CEILINGS.toolResultBytes);
+  // THE TRUE MAXIMUM IS THE CEILING EXACTLY, with ZERO slack. The widest publishable shape mixes ONE
+  // plain ASCII byte into each heading — 238 `"` plus `a` is 239 raw bytes, still inside the 256-byte
+  // bound, and its escaped width is an ODD 477 bytes instead of the 476 or 480 a uniform heading reaches
+  // — with the nine non-heading numeric fields at `Number.MAX_SAFE_INTEGER` and `counts.headings` at 14
+  // digits. That field cannot also be 16 digits: the same headings then measure 16386 and are refused,
+  // and the widest 16-digit shape is 16354. The boundary check is `> 16384`, so exactly 16384 publishes.
   const MAX = Number.MAX_SAFE_INTEGER;
+  const widest = new Array(LIMITS.structureHeadingsMax).fill('"'.repeat(238) + 'a')
+    .map((text, index) => ({ index, text }));
+  assert.equal(utf8ByteLength(widest[0].text), 239, 'the raw heading stays inside the 256-byte bound');
   const trueMax = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true, data: { pages: MAX,
     statistics: { PageCount: MAX, WordsCount: MAX, ParagraphCount: MAX, SymbolsCount: MAX, SymbolsWSCount: MAX },
-    counts: { paragraphs: MAX, headings: MAX, tables: MAX, sections: MAX },
-    headings, truncated: false } }));
-  assert.equal(trueMax, 9315, 'the true maximum: every numeric field at its widest, every heading at the text bound');
-  assert.ok(trueMax <= AGENT_CEILINGS.toolResultBytes,
-    `${trueMax} <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - trueMax} bytes of slack`);
-  // What cannot fit is the ESCAPE width, and there are TWO of them: a heading of 256 `\n` characters
-  // serializes each one as the TWO characters `"\n"` (measured 17364 for 32 such headings), while a
-  // heading of 256 C0 controls with no short escape serializes each as SIX characters `\uXXXX`
-  // (measured 50132) — the same two-escape bracket `find_text` documents. Both are REFUSED with the
-  // closed BYTE_LIMIT by the entry measurement: a heading is never shortened to fit.
+    counts: { paragraphs: MAX, headings: 10 ** 13, tables: MAX, sections: MAX },
+    headings: widest, truncated: true } }));
+  assert.equal(trueMax, 16384, 'the true maximum: the ceiling exactly, never above it');
+  assert.equal(AGENT_CEILINGS.toolResultBytes - trueMax, 0, 'zero slack, and the `> ceiling` check still passes it');
+  // What cannot fit is the ESCAPE width, and there are TWO of them, exactly as `find_text` documents: a
+  // heading of 256 `\n` characters serializes each one as the TWO characters `"\n"`, while a heading of
+  // 256 C0 controls with no short escape serializes each as SIX characters `\uXXXX`. Both figures below
+  // are the 32-text array at its OWN 2-digit `counts.headings` width (32) — the shape a served array
+  // really has. Both are REFUSED with the closed BYTE_LIMIT by the entry measurement: a heading is never
+  // shortened to fit.
   const escaped = new Array(LIMITS.structureHeadingsMax).fill('\n'.repeat(LIMITS.structureHeadingBytes))
     .map((text, index) => ({ index, text }));
   const shortEscape = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true,
-    data: { pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS }, headings: escaped, truncated: false } }));
-  assert.equal(shortEscape, 17364, 'the two-character-escape case, measured');
+    data: { pages: 1, statistics: { ...MEASURED_STATISTICS },
+      counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: escaped, truncated: false } }));
+  assert.equal(shortEscape, 17365, 'the two-character-escape case, measured at the array\u2019s own counts width');
   assert.ok(shortEscape > AGENT_CEILINGS.toolResultBytes, 'and it is outside the per-result ceiling');
   const sixEscaped = new Array(LIMITS.structureHeadingsMax).fill('\u0001'.repeat(LIMITS.structureHeadingBytes))
     .map((text, index) => ({ index, text }));
   const sixEscape = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true,
-    data: { pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS }, headings: sixEscaped, truncated: false } }));
-  assert.equal(sixEscape, 50132, 'the true six-character-escape worst case, measured');
+    data: { pages: 1, statistics: { ...MEASURED_STATISTICS },
+      counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: sixEscaped, truncated: false } }));
+  assert.equal(sixEscape, 50133, 'the true six-character-escape worst case, measured');
   assert.ok(sixEscape > AGENT_CEILINGS.toolResultBytes, 'and it is outside the per-result ceiling too');
 });
 
@@ -3333,28 +3362,73 @@ test('read_structure bounds how many headings it reports while counts stay the T
   assert.equal(exact.data.counts.headings, exact.data.headings.length);
 });
 
-test('read_structure bounds ONE heading text and refuses rather than shortening it', async () => {
-  // A heading longer than the advertised text bound is NOT trimmed to fit: a shortened heading presented
-  // as the heading is exactly the kind of approximation this module forbids for every other read. The
-  // whole answer is the closed BYTE_LIMIT, and only the one heading that made it unservable is withheld
-  // — nothing at all is published, so no partial outline can be mistaken for the document's own.
-  const over = 'Г'.repeat(LIMITS.structureHeadingBytes / 2 + 1);
-  const refused = await readStructure(structureBridge(structured({ headings: ['КОРОТКИЙ', over],
+test('read_structure bounds ONE heading text and publishes an explicit EMPTY omission, never a shortened heading', async () => {
+  // A heading longer than the advertised text bound is NOT trimmed to fit — and it no longer refuses the
+  // WHOLE read either. Pages, statistics and counts are measured facts about the document that no heading
+  // TEXT can make untrue, and the old refusal was POSITIONAL: a 258-byte heading at index 0 refused the
+  // whole answer while the same heading at index 40 was never extracted and the read succeeded, so two
+  // documents holding the same over-wide heading got opposite outcomes for a difference the model cannot
+  // see. The answer is `ok` with the scalars, `headings: []` and `truncated: true`: an UNREPRESENTABLE
+  // heading is an explicit omission, never a total refusal and never a trimmed title.
+  const over = 'Г'.repeat(LIMITS.structureHeadingBytes / 2 + 1);   // 258 bytes, two over the bound
+  const omitted = await readStructure(structureBridge(structured({ headings: ['КОРОТКИЙ', over],
     counts: { ...MEASURED_COUNTS, headings: 2 } })))
     .execute({}, { editor: 'word' });
-  assert.equal(refused.ok, false);
-  assert.equal(refused.code, 'BYTE_LIMIT');
-  assert.equal(refused.message, 'отказ');
-  assert.equal(refused.data, undefined, 'a refusal carries no structure at all');
-  assert.equal(JSON.stringify(refused).includes('КОРОТКИЙ'), false, 'no heading leaks through a refusal');
-  // The longest text the bound advertises IS served, verbatim, with the document's own characters.
+  assert.equal(omitted.ok, true, 'the scalars are still owed: an over-wide heading is an omission, not a refusal');
+  assert.deepEqual(omitted.data.headings, [], 'the array is EMPTY, never partially filled');
+  assert.equal(omitted.data.truncated, true, 'and the omission is stated');
+  assert.equal(omitted.data.counts.headings, 2, 'counts.headings keeps the primitive TOTAL: a count, not a text');
+  assert.equal(omitted.data.pages, 1);
+  assert.deepEqual(omitted.data.statistics, { ...MEASURED_STATISTICS });
+  assert.equal(JSON.stringify(omitted).includes('КОРОТКИЙ'), false, 'no heading text leaks into an omission');
+  assert.equal(JSON.stringify(omitted).includes('ГГГГ'), false, 'and no part of the over-wide heading either');
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result: omitted }]));
+  // POSITION NO LONGER DECIDES: the SAME over-wide heading in the middle of a longer outline omits the
+  // whole array just the same, and the short texts beside it are withheld rather than published as a
+  // PARTIAL outline. A partial array with `truncated: true` already means "more headings exist than are
+  // reported", so publishing one here would leave the model unable to tell a withheld outline from a
+  // capped one — the two states are kept distinguishable by the array being EMPTY.
+  const mid = await readStructure(structureBridge(structured({ headings: ['а', 'б', over, 'в'],
+    counts: { ...MEASURED_COUNTS, headings: 4 } })))
+    .execute({}, { editor: 'word' });
+  assert.equal(mid.ok, true);
+  assert.deepEqual(mid.data.headings, [], 'an over-wide heading anywhere withholds the array');
+  assert.equal(mid.data.truncated, true);
+  assert.equal(mid.data.counts.headings, 4);
+  assert.equal(JSON.stringify(mid).includes('"б"'), false, 'no partial outline is published');
+  // The CAPPED case keeps its own, older meaning: texts ARE reported and `truncated` says the document
+  // holds more of them. It is the non-empty array that distinguishes it from the omission above.
+  const capped = await readStructure(structureBridge(structured({
+    headings: new Array(LIMITS.structureHeadingsMax).fill('а'),
+    counts: { ...MEASURED_COUNTS, headings: 500 } })))
+    .execute({}, { editor: 'word' });
+  assert.equal(capped.ok, true);
+  assert.equal(capped.data.headings.length, LIMITS.structureHeadingsMax);
+  assert.equal(capped.data.truncated, true);
+  assert.equal(capped.data.counts.headings, 500);
+  // The boundary is exact: the longest text the bound ADVERTISES is served verbatim, one byte over it is
+  // the omission.
   const widest = 'Г'.repeat(LIMITS.structureHeadingBytes / 2);
   const served = await readStructure(structureBridge(structured({ headings: [widest],
     counts: { ...MEASURED_COUNTS, headings: 1 } })))
     .execute({}, { editor: 'word' });
   assert.equal(served.ok, true);
+  assert.equal(served.data.headings.length, 1);
   assert.equal(served.data.headings[0].text, widest, 'the document\u2019s own heading, unshortened');
   assert.equal(utf8ByteLength(served.data.headings[0].text), LIMITS.structureHeadingBytes);
+  // An omission is still MEASURED like every other publication, and it is small by construction: with
+  // the document's own counts at their widest it stays inside the entry ceiling the runtime applies.
+  const many = new Array(LIMITS.structureHeadingsMax).fill('а');
+  many[0] = over;
+  const huge = await readStructure(structureBridge(structured({ headings: many,
+    counts: { paragraphs: Number.MAX_SAFE_INTEGER, headings: Number.MAX_SAFE_INTEGER,
+      tables: Number.MAX_SAFE_INTEGER, sections: Number.MAX_SAFE_INTEGER } })))
+    .execute({}, { editor: 'word' });
+  assert.equal(huge.ok, true);
+  assert.deepEqual(huge.data.headings, []);
+  assert.equal(huge.data.counts.headings, Number.MAX_SAFE_INTEGER, 'the total is never narrowed to the report');
+  assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...huge })) <= AGENT_CEILINGS.toolResultBytes);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result: huge }]));
 });
 
 test('read_structure publishes an entry the runtime serializer accepts and refuses one it would refuse', async () => {
@@ -3371,7 +3445,8 @@ test('read_structure publishes an entry the runtime serializer accepts and refus
   assert.equal(over.code, 'BYTE_LIMIT');
   assert.equal(over.data, undefined);
   // Smaller headings of the SAME document are SERVED, escapes and all: the bound is a real measurement,
-  // not a blanket refusal. This is the advertised-maxima shape, and it carries 7069 bytes of slack.
+  // not a blanket refusal. This shape — 32 headings of 128 `\n`, whose short escapes double each heading
+  // to 256 serialized bytes — measures 9173 bytes, with 7211 of slack.
   const servedText = '\n'.repeat(LIMITS.structureHeadingBytes / 2);
   const served = await readStructure(structureBridge({ ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
     counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: new Array(LIMITS.structureHeadingsMax).fill(servedText) }))
@@ -3391,6 +3466,49 @@ test('read_structure publishes an entry the runtime serializer accepts and refus
     assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...result })) <= AGENT_CEILINGS.toolResultBytes, `width ${width}`);
     assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result }]), `width ${width}`);
   }
+});
+
+test('read_structure publishes an entry of exactly the ceiling at its true maximum, and refuses one byte more', async () => {
+  // THE TRUE MAXIMUM IS PINNED AGAINST THE REAL HANDLER, not against a hand-written JSON literal: the
+  // widest shape this tool can publish is exactly `AGENT_CEILINGS.toolResultBytes` (16384), with ZERO
+  // slack, and the check is `> 16384` — so it is still published. The shape is the 2x-escape family the
+  // earlier arithmetic never named: `JSON.stringify('"')` is the TWO characters `\"`, so 238 `"` plus one
+  // plain ASCII byte is 239 raw bytes (inside the 256-byte per-heading bound) whose escaped width is an
+  // ODD 477 bytes, and the document's own counts are at their widest — the nine non-heading fields at
+  // `Number.MAX_SAFE_INTEGER`, `counts.headings` at 14 digits.
+  const MAX = Number.MAX_SAFE_INTEGER;
+  const wide = { pages: MAX,
+    statistics: { PageCount: MAX, WordsCount: MAX, ParagraphCount: MAX, SymbolsCount: MAX, SymbolsWSCount: MAX },
+    counts: { paragraphs: MAX, headings: 10 ** 13, tables: MAX, sections: MAX } };
+  const widest = new Array(LIMITS.structureHeadingsMax).fill('"'.repeat(238) + 'a');
+  const published = await readStructure(structureBridge({ ok: true, ...wide, headings: widest }))
+    .execute({}, { editor: 'word' });
+  assert.equal(published.ok, true, 'the true maximum is published, not refused');
+  assert.equal(published.data.truncated, true, 'counts.headings is far past the reported array');
+  assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...published })), 16384,
+    'exactly the ceiling: the handler cannot publish a wider `ok`');
+  assert.equal(AGENT_CEILINGS.toolResultBytes - 16384, 0, 'zero slack');
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result: published }]));
+  // ONE MORE escaped byte per heading — 240 `"`, still inside the 256-byte per-heading bound, so the
+  // refusal here is the ENTRY measurement — measures 16480 and is the closed BYTE_LIMIT.
+  const oneMore = await readStructure(structureBridge({ ok: true, ...wide,
+    headings: new Array(LIMITS.structureHeadingsMax).fill('"'.repeat(240)) }))
+    .execute({}, { editor: 'word' });
+  assert.equal(oneMore.ok, false, 'one escaped byte per heading is over the ceiling');
+  assert.equal(oneMore.code, 'BYTE_LIMIT');
+  assert.equal(oneMore.data, undefined, 'and nothing of the over-ceiling entry is published');
+  // The 16-digit shape of the SAME headings refuses too (`counts.headings` at `MAX_SAFE_INTEGER`), which
+  // is why the true maximum spends 14 digits on that field and its own widest 16-digit shape is 16354.
+  const sixteen = await readStructure(structureBridge({ ok: true, ...wide,
+    counts: { ...wide.counts, headings: MAX }, headings: widest }))
+    .execute({}, { editor: 'word' });
+  assert.equal(sixteen.ok, false);
+  assert.equal(sixteen.code, 'BYTE_LIMIT');
+  const sixteenNarrow = await readStructure(structureBridge({ ok: true, ...wide,
+    counts: { ...wide.counts, headings: MAX }, headings: new Array(LIMITS.structureHeadingsMax).fill('"'.repeat(238)) }))
+    .execute({}, { editor: 'word' });
+  assert.equal(sixteenNarrow.ok, true);
+  assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...sixteenNarrow })), 16354);
 });
 
 test('read_structure republishes the closed class the bridge reported, never a raw failure', async () => {

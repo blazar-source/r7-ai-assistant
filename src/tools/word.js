@@ -670,14 +670,17 @@ export function createWordTools(bridge) {
       // (`s.prototype.GetOutlineLvl`), and the internal paragraph properties (`Mt`, registered as
       // `AscCommonWord.CParaPr`) — while the two PUBLIC builder classes an element of
       // `GetAllHeadingParagraphs()` can reach expose none: `AscBuilder.ApiParagraph` (`G`) registers no
-      // outline getter at all (its alias list runs `…GetParaPr…GetText…GetTextPr…` and never an outline
+      // PUBLIC outline getter (its alias list runs `…GetParaPr…GetText…GetTextPr…` and never an outline
       // member), and `AscBuilder.ApiParaPr` (`T`), which `G.GetParaPr()` returns, registers
       // `SetStyle`/`GetStyle`/`GetJc`/`GetIndLeft`/`GetIndRight`/`GetIndFirstLine`/`GetSpacing*`/… and NO
       // `GetOutlineLvl` (its measured method count is 0 for both `T.prototype.GetOutlineLvl` and
-      // `T.prototype.SetOutlineLvl`). Deriving a level from the style NAME would be a guess the document
-      // need not confirm (style names are localized), and deriving it from the array index is explicitly
-      // forbidden, so this tool publishes NO `level` field — and no `level: null` placeholder either,
-      // because a null would read as a measured "no outline level" the run never measured.
+      // `T.prototype.SetOutlineLvl`). That is a statement about PUBLIC members, not unreachability: a
+      // PRIVATE route does exist (`ApiParagraph.private_GetImpl().GetOutlineLvl()`), and this tool
+      // deliberately does not reach for it, because reading a document through a private internal is a
+      // dependency the next build is free to break. Deriving a level from the style NAME would be a guess
+      // the document need not confirm (style names are localized), and deriving it from the array index is
+      // explicitly forbidden, so this tool publishes NO `level` field — and no `level: null` placeholder
+      // either, because a null would read as a measured "no outline level" the run never measured.
       //
       // THE RESULT IS SHAPED BY WHAT WAS MEASURED, not by what a structure read might ideally carry:
       // `pages` is `GetPageCount()`'s own answer; `statistics` republishes the measured object under the
@@ -742,14 +745,30 @@ export function createWordTools(bridge) {
         if (!Array.isArray(headings) || headings.length > LIMITS.structureHeadingsMax) return known();
         if (headings.length !== Math.min(counts.headings, LIMITS.structureHeadingsMax)) return known();
         if (headings.some(text => typeof text !== 'string')) return known();
-        // THE PER-HEADING BOUND, and it is a REFUSAL boundary rather than a trim: a heading wider than
-        // `LIMITS.structureHeadingBytes` makes the outline unservable, so the answer is the closed
-        // BYTE_LIMIT and the model receives no structure at all. Shortening the heading would publish an
-        // approximation as the document's own title, which is the one direction this module never takes.
-        if (headings.some(text => utf8ByteLength(text) > LIMITS.structureHeadingBytes)) return known(ERROR_CODES.BYTE_LIMIT);
+        // THE PER-HEADING BOUND IS AN EXPLICIT OMISSION, not a trim and not a total refusal. A heading
+        // wider than `LIMITS.structureHeadingBytes` is never shortened — a shortened title presented as
+        // the document's own is the approximation this module refuses everywhere — but it must not refuse
+        // the whole READ either. `pages`, `statistics` and `counts` are measured facts about the document
+        // that no heading TEXT can make untrue, and the refusal that used to answer here was POSITIONAL:
+        // an over-wide heading at index 0 refused everything while the same heading at index 40 is never
+        // extracted and the read succeeded, so two documents holding the same over-wide heading got
+        // opposite outcomes for a difference the model cannot see. So the outline is WITHHELD whole:
+        // `headings: []` with `truncated: true` is an explicit, unambiguous omission the model can act on,
+        // and the scalars still arrive.
+        // THE ARRAY MUST BE EMPTY RATHER THAN PARTIALLY FILLED. A partial array with `truncated: true`
+        // already means "more headings exist than are reported" (the cap case), so publishing the short
+        // texts beside an over-wide one under the SAME flag would give one flag two meanings and leave the
+        // model unable to tell a withheld outline from a capped one. `truncated: true` with an EMPTY array
+        // has no competing reading: none of the outline is reported.
+        // `counts.headings` KEEPS THE PRIMITIVE'S OWN TOTAL in both cases: it is a COUNT, not a text, so
+        // the omission neither narrows it nor invents a zero, and the model still learns how many headings
+        // the document holds even though none of their texts can be published.
+        const overWide = headings.some(text => utf8ByteLength(text) > LIMITS.structureHeadingBytes);
+        const published = overWide ? [] : headings.map((text, index) => Object.freeze({ index, text }));
         // The published object is BUILT here field by field, so an envelope carrying an extra key cannot
-        // put an unmeasured field into the entry, and `truncated` is derived from the same two numbers the
-        // result shows: a list shorter than the primitive's own total is the only thing that makes it true.
+        // put an unmeasured field into the entry, and `truncated` is derived from the two numbers the
+        // result SHOWS — the primitive's total against the array actually published, which is EMPTY when
+        // the outline was withheld, so that omission is stated without a second meaning for the flag.
         const data = Object.freeze({
           pages,
           statistics: Object.freeze({ PageCount: statistics.PageCount, WordsCount: statistics.WordsCount,
@@ -757,18 +776,20 @@ export function createWordTools(bridge) {
             SymbolsWSCount: statistics.SymbolsWSCount }),
           counts: Object.freeze({ paragraphs: counts.paragraphs, headings: counts.headings,
             tables: counts.tables, sections: counts.sections }),
-          headings: Object.freeze(headings.map((text, index) => Object.freeze({ index, text }))),
-          truncated: counts.headings > headings.length
+          headings: Object.freeze(published),
+          truncated: counts.headings > published.length
         });
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the other four reads
         // measure it: the runtime bounds `JSON.stringify({tool, ...result})` by
         // `AGENT_CEILINGS.toolResultBytes` (16384) and replaces an entry above it with the model-visible
         // literal "the tool result could not be serialized" — the model would receive NO structure while
         // the action log recorded `ok`. The arithmetic is stated in `LIMITS.structureHeadingsMax`: the
-        // worst realistic call at the advertised maxima measures 9192 bytes and the true maximum, every
-        // numeric field widened to `Number.MAX_SAFE_INTEGER`, 9315 — with 7069 bytes of slack — while the
-        // two escape families (17364 for `\n`, 50132 for a C0 control with no short escape) cannot fit and
-        // are refused rather than shortened.
+        // worst realistic call at the advertised maxima measures 9192 bytes, the 2x-escape family the
+        // review caught (`"` → `\"`) binds far above it (16341 at 32 headings of 240 `"`, with 43 bytes of
+        // slack; 16405 at 241, refused), and the true maximum over every publishable shape is the ceiling
+        // EXACTLY — 16384, zero slack. The two families that cannot fit at all (17365 for `\n`, 50133 for a
+        // C0 control with no short escape) are refused rather than shortened. An over-wide heading is NOT
+        // refused here: the omission above already publishes an entry that fits.
         const entry = structureEntryBytes(data);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(data);

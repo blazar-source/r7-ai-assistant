@@ -151,34 +151,64 @@ export const LIMITS = Object.freeze({
   //     carries the primitive's own TOTAL — the model learns "32 of 500" from one call.
   //   * `structureHeadingBytes` bounds ONE heading TEXT, in UTF-8 bytes. A heading is a TITLE, not a
   //     paragraph: 256 bytes is 128 Cyrillic or 256 ASCII characters, longer than any realistic heading.
-  //     A heading above it is REFUSED with the closed BYTE_LIMIT, never trimmed: a shortened heading
-  //     presented as the heading is exactly the approximation every read in this module refuses.
+  //     A heading above it is never trimmed, and it no longer refuses the whole read either: the scalars
+  //     and the counts are published with `headings: []` and `truncated: true`, an explicit omission
+  //     explained with the arithmetic below.
   // THE ARITHMETIC, measured on the SERIALIZED entry the runtime bounds (`AGENT_CEILINGS.toolResultBytes`
   // = 16384 bytes of `JSON.stringify({ tool, ok, data })`, the shape `stringifyToolResults` measures and
   // `runtime.js:27-36` replaces with the literal "the tool result could not be serialized" when it is
-  // exceeded). The entry is
+  // exceeded; the check is `> 16384`, so an entry of EXACTLY 16384 still publishes). The entry is
   // `{"tool":"read_structure","ok":true,"data":{"pages":N,"statistics":{…5 fields…},"counts":{…4 fields…},"headings":[{"index":N,"text":T}…],"truncated":B}}`.
-  // At BOTH maxima — 32 headings of 128 Cyrillic characters, with the statistics and counts at the digit
-  // widths a real document makes them — the entry measures EXACTLY 9192 <= 16384, with 7192 bytes of
-  // slack. `truncated:false` is the wider of the two boolean forms, so that figure is the worst one.
-  // Every numeric field is the primitive's own total, so the true maximum is the SAME shape with all ten
-  // of them at `Number.MAX_SAFE_INTEGER`, which adds 123 bytes and nothing else:
-  //   9315 <= 16384, with 7069 bytes of slack.
+  // At BOTH advertised maxima — 32 headings of 128 Cyrillic characters, with the statistics and counts at
+  // the digit widths a real document makes them — the entry measures EXACTLY 9192 <= 16384, with 7192
+  // bytes of slack: the worst REALISTIC call. That is NOT the true maximum, and the earlier claim that
+  // 9315 was is wrong in both its label and its shape. `JSON.stringify` escapes `"` as the TWO characters
+  // `\"` (and `\` as `\\`), so ONE raw heading byte can serialize as two and the 256-byte per-heading
+  // bound admits a far wider serialized heading than 128 Cyrillic characters ever do — the 2x-escape
+  // family this comment used to skip while naming only families that CANNOT fit. The old figure was also
+  // an UNREACHABLE shape: `truncated` is derived as `counts.headings > published.length`, so 32 headings
+  // with a 16-digit `counts.headings` are `truncated:true`, never the `false` it measured. Measured:
+  //   * 32 headings of 240 `"` (240 raw bytes, inside the bound): 16341, with 43 bytes of slack — SERVED;
+  //   * 32 headings of 241 `"` (241 raw bytes):                  16405 — refused.
+  // THE TRUE MAXIMUM IS THE CEILING EXACTLY, with ZERO slack: 16384 bytes, reached by 32 headings of 239
+  // raw bytes each (238 `"` plus one plain ASCII byte, which makes the escaped width an ODD 477 bytes
+  // per heading rather than the 476 or 480 a uniform heading reaches) with the nine non-heading numeric
+  // fields at `Number.MAX_SAFE_INTEGER` and `counts.headings` at 14 digits. That field cannot also be 16
+  // digits — the same headings then measure 16386 and are refused, and the widest 16-digit shape is
+  // 16354 — and one escaped byte more per heading (480) measures 16480 and is refused.
   // That is a bound, not a promise about every character: `JSON.stringify` escapes C0 controls, and there
   // are TWO escape widths, exactly as `find_text` documents. An all-`\n` heading of 256 characters
-  // (TWO-character escapes) at the maxima measures 17364 and CANNOT fit; the same heading made of a C0
-  // control with no short escape (SIX-character `\uXXXX`) measures 50132 and CANNOT fit. The tool
-  // measures the entry it is about to publish and refuses either one with the closed BYTE_LIMIT — it
-  // never shortens a heading to fit.
+  // (TWO-character short escapes) measures 17365 and CANNOT fit; the same heading made of a C0 control
+  // with no short escape (SIX-character `\uXXXX`) measures 50133 and CANNOT fit. BOTH figures are the
+  // 32-text array at its OWN 2-digit `counts.headings` width (32) — the shape a served array really has,
+  // and the width the earlier figures got wrong. The tool measures the entry it is about to publish and
+  // refuses either one with the closed BYTE_LIMIT — it never shortens a heading to fit.
+  // AN OVER-WIDE HEADING IS AN OMISSION, NOT A REFUSAL. A heading above `structureHeadingBytes` is never
+  // trimmed, but it does not refuse the read either: the answer is `ok` with the measured
+  // `pages`/`statistics`/`counts`, `headings: []` and `truncated: true`. An explicit omission is better
+  // than a total refusal for two reasons: the scalars and the counts are facts about the document that no
+  // heading TEXT can make untrue, and the refusal was POSITIONAL — a 258-byte heading at index 0 refused
+  // everything while the same heading at index 40 is never extracted and the read succeeded, so two
+  // documents holding the same over-wide heading got opposite outcomes for a difference the model cannot
+  // see. The array must be EMPTY rather than partially filled because a partial array with
+  // `truncated: true` already means "more headings exist than are reported" (the cap case): publishing
+  // the short texts beside an over-wide one under the SAME flag would give one flag two meanings and
+  // leave the model unable to tell a withheld outline from a capped one. `counts.headings` reports the
+  // PRIMITIVE'S OWN TOTAL in both cases — it is a count, not a text, so the omission neither narrows it
+  // nor invents a zero.
   // NO `level` IS PUBLISHED, and that is a MEASURED decision rather than an omission. The vendored copy
   // of the installed build's SDK source (dev-only, `.local/stage-b-runtime/vendor-word-sdk-all.js`)
   // carries `GetOutlineLvl` 8 times, and EVERY one of the eight is on an INTERNAL class — the
   // document-outline manager, the internal paragraph (`s.prototype.GetOutlineLvl`) and the internal
-  // paragraph properties (`Mt`, registered as `AscCommonWord.CParaPr`) — while the two PUBLIC builder
-  // classes this read can reach expose none: `AscBuilder.ApiParagraph` (`G`) has no outline getter at
-  // all, and `AscBuilder.ApiParaPr` (`T`) publishes `SetStyle`/`GetStyle`/`GetJc`/`GetIndLeft`/… but no
-  // `GetOutlineLvl`. A level derived from the style NAME would be a guess (the names are localized), and
-  // one derived from the array index is forbidden, so no `level` field exists to drift from the truth.
+  // paragraph properties (`Mt`, registered as `AscCommonWord.CParaPr`). NO PUBLIC MEMBER exposes the
+  // outline level: `AscBuilder.ApiParagraph` (`G`) publishes no public outline getter (its alias list
+  // runs `…GetParaPr…GetText…GetTextPr…` and never an outline member), and `AscBuilder.ApiParaPr` (`T`)
+  // publishes `SetStyle`/`GetStyle`/`GetJc`/`GetIndLeft`/… but no `GetOutlineLvl`. That is NOT
+  // unreachability: a PRIVATE route exists (`ApiParagraph.private_GetImpl().GetOutlineLvl()`), and this
+  // read deliberately does not take it, because a document read through a private internal is a
+  // dependency the next build is free to break. A level derived from the style NAME would be a guess (the
+  // names are localized), and one derived from the array index is forbidden, so no `level` field exists
+  // to drift from the truth.
   structureHeadingsMax: 32,
   structureHeadingBytes: 256,
   requestBytes: 98304,
