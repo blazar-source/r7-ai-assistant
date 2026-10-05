@@ -958,7 +958,11 @@ export function createWordTools(bridge) {
       //
       // THE OUTCOME CONTRACT, in one sentence: `ok` is published ONLY when the post read shows the exact
       // expected delta — paragraphs grew by exactly the number of blocks, headings grew by exactly the
-      // number of blocks that asked for a heading, and every block's text is present in the document.
+      // number of blocks that asked for a heading, and every block carried its own text in the paragraph
+      // slot the append gave it. The third leg is ONE-TO-ONE OVER THE APPEND, not an existential match
+      // over the document: the body addresses the region the append added by the baseline count it took
+      // before the call, so a text the document already held somewhere cannot stand in for the block's
+      // own paragraph (an `indexOf` over the whole document verified exactly that, and was wrong).
       // Anything else is `TOOL_UNCERTAIN` (the runtime stops the run fail-safe), the bridge keeps its
       // callback slot HELD, and there is NO retry of the append.
       //
@@ -1050,10 +1054,11 @@ export function createWordTools(bridge) {
         if (!result || typeof result !== 'object') return known();
         if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
         // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own: the four
-        // counts are the document's own non-negative safe integers and `present` is EXACTLY one boolean
-        // per block. An answer of any other shape is not one this bridge can have produced — the real
-        // bridge's decoder guarantees this shape and turns its own uninterpretable answer into the
-        // uncertain class — so publishing it would let a forged envelope pass as a verified append.
+        // counts are the document's own non-negative safe integers and `present` is EXACTLY one boolean per
+        // block — block `i`'s flag says the paragraph the append gave that block carries EXACTLY its text.
+        // An answer of any other shape is not one this bridge can have produced — the real bridge's
+        // decoder guarantees this shape and turns its own uninterpretable answer into the uncertain class —
+        // so publishing it would let a forged envelope pass as a verified append.
         const before = result.paragraphsBefore;
         const after = result.paragraphsAfter;
         const headingsBefore = result.headingsBefore;
@@ -1075,12 +1080,15 @@ export function createWordTools(bridge) {
         }
         // THE EXACT-DELTA OUTCOME CONTRACT. Three independent conditions, all of them required, and none
         // of them the primitive's return value: the paragraphs grew by exactly the requested block count,
-        // the headings by exactly the blocks that asked for one, and every block's text is present in the
-        // document. A delta that is short, long, or accompanied by a missing text is NOT a verified
-        // append: the tool publishes the runtime's own uncertain class, the bridge has held its slot, and
-        // no retry is ever issued. The presence half is required in addition to the counts because the
-        // counts alone could describe an unrelated concurrent edit; the counts are required in addition
-        // to presence because a text that already existed in the document proves nothing by itself.
+        // the headings by exactly the blocks that asked for one, and every block carried its own text in
+        // the region the append added. A delta that is short, long, or accompanied by a block whose own
+        // paragraph does not carry its text is NOT a verified append: the tool publishes the runtime's own
+        // uncertain class, the bridge has held its slot, and no retry is ever issued. The region half is
+        // required in addition to the counts because the counts alone could describe an unrelated
+        // concurrent edit; the counts are required in addition to the region because the region is
+        // addressed by `paragraphsBefore`, and a baseline that moved would make the region meaningless.
+        // It is NOT "the text exists somewhere in the document": that existential form was satisfiable by
+        // a document that already held the block texts, so it verified an append that carried no text.
         const exact = after - before === blocks.length && headingsAfter - headingsBefore === headings &&
           everyBlockPresent;
         if (!exact) return known(ERROR_CODES.TOOL_UNCERTAIN);

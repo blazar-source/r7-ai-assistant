@@ -259,7 +259,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       //      first, so an unresolvable style refuses the whole call with NOTHING inserted — never a plain
       //      paragraph where a heading was asked for;
       //   3. ONE `document.InsertContent(paragraphs)` carrying the whole array, followed by the POST
-      //      read of the same counts plus each block's own text, so the delta and the presence flags are
+      //      read of the same counts plus each block's own text, so the delta and the REGION flags are
       //      measured INSIDE the editor by the two primitives the Lead measured.
       // `InsertContent`'s return value is DELIBERATELY NOT READ. Measured on the target: it answers `true`
       // even for `[]`, `[null]` and `'nonsense'`, so its boolean says nothing about what the document now
@@ -268,33 +268,48 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // `InsertContent` does and what the pilot's "add a chapter" needs; the body authors NO positioning
       // option, because no positioning primitive was measured.
       // The answer is ONE flat array of primitives (the native return validator keeps those and strips a
-      // plain object): `[paragraphsBefore, paragraphsAfter, headingsBefore, headingsAfter, present0, …]`,
-      // or a ONE-slot refusal sentinel whose NAME carries the PHASE the refusal was taken in — a
-      // PRE-insert sentinel means nothing was inserted, while `APPLY_UNCERTAIN` means the append was
-      // already dispatched and the post read could not be completed.
+      // plain object): `[POST_INSERT, paragraphsBefore, paragraphsAfter, headingsBefore, headingsAfter,
+      // flag0, …]`, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY
+      // ANSWER the body returns, never a property of a sentinel NAME: `PRE_INSERT` means nothing was
+      // inserted, `POST_INSERT` means the one mutation had already been dispatched when the answer was
+      // built. The decoder accepts a pre-insert refusal as a KNOWN class only for `PRE_INSERT`; an answer
+      // whose phase is absent (a bare `['CAPABILITY_UNAVAILABLE']`) or not pre-insert is treated as the
+      // post-insert uncertain class, so the name alone can never release a slot for an append that may
+      // already be in the document.
       blocks(callback) {
         return plugin.callCommand(function () {
-          // The phase, and the ONE place the two classes are distinguished: everything answered before
-          // `InsertContent` is a KNOWN refusal (nothing reached the document), everything after it is an
-          // UNCERTAIN outcome the bridge must hold a slot for.
-          var inserted = false;
-          function blocksRefusal() { return inserted ? ['APPLY_UNCERTAIN'] : ['CAPABILITY_UNAVAILABLE']; }
+          // The phase, and the ONE place the two classes are distinguished: everything answered while it
+          // is `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after
+          // the one call is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
+          // IMMEDIATELY BEFORE `InsertContent`, not after it, because a native that throws OUT of the call
+          // may already have applied part of the array.
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name. It is built by APPENDING to an array that starts as a literal, exactly like the answer
+          // below, and for the same authored-code-audit reason: a literal built from identifier names
+          // would make the receiver of every later call on it a computed value.
+          function blocksRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
           try {
             // The scope the vendor wrapper injected: `{ blocks }`, already validated and bounded by the
             // bridge. Anything else — a missing wrapper, a non-array — is the body's own closed refusal
             // rather than an append of `undefined`.
             var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
             var blocks = request !== null && request.blocks !== null && request.blocks !== undefined ? request.blocks : null;
-            if (blocks === null || typeof blocks.length !== 'number' || !(blocks.length >= 1)) return blocksRefusal();
+            if (blocks === null || typeof blocks.length !== 'number' || !(blocks.length >= 1)) return blocksRefusal('CAPABILITY_UNAVAILABLE');
             var available = typeof Api !== 'undefined' && Api !== null;
             var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
-            if (document === null || document === undefined) return blocksRefusal();
+            if (document === null || document === undefined) return blocksRefusal('CAPABILITY_UNAVAILABLE');
             // Every primitive this body authors is a FUNCTION CHECK before any call, exactly like the
             // structure body: an editor that does not expose one of them answers this body's own refusal
             // rather than an append of invented zeros.
-            if (!available || typeof Api.CreateParagraph !== 'function') return blocksRefusal();
-            if (typeof document.GetAllParagraphs !== 'function' || typeof document.GetAllHeadingParagraphs !== 'function') return blocksRefusal();
-            if (typeof document.GetStyle !== 'function' || typeof document.InsertContent !== 'function') return blocksRefusal();
+            if (!available || typeof Api.CreateParagraph !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetAllParagraphs !== 'function' || typeof document.GetAllHeadingParagraphs !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetStyle !== 'function' || typeof document.InsertContent !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
             // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check
             // reaches for NO global at all, so the stringified body depends on nothing but the two
             // bindings the vendor wrapper creates.
@@ -305,44 +320,45 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // means no evidence means no write.
             var baselineParagraphs = document.GetAllParagraphs();
             var baselineHeadings = document.GetAllHeadingParagraphs();
-            if (baselineParagraphs === null || baselineParagraphs === undefined || typeof baselineParagraphs.length !== 'number') return blocksRefusal();
-            if (baselineHeadings === null || baselineHeadings === undefined || typeof baselineHeadings.length !== 'number') return blocksRefusal();
+            if (baselineParagraphs === null || baselineParagraphs === undefined || typeof baselineParagraphs.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            if (baselineHeadings === null || baselineHeadings === undefined || typeof baselineHeadings.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
             var paragraphsBefore = baselineParagraphs.length;
             var headingsBefore = baselineHeadings.length;
-            if (!measured(paragraphsBefore) || !measured(headingsBefore)) return blocksRefusal();
+            if (!measured(paragraphsBefore) || !measured(headingsBefore)) return blocksRefusal('CAPABILITY_UNAVAILABLE');
             // EVERY paragraph is built — and every heading style RESOLVED — before anything is inserted,
             // so an unresolvable style cannot leave a half-applied append behind.
             var created = [];
             for (var index = 0; index < blocks.length; index++) {
               var block = blocks[index];
-              if (block === null || block === undefined || typeof block.text !== 'string') return blocksRefusal();
+              if (block === null || block === undefined || typeof block.text !== 'string') return blocksRefusal('CAPABILITY_UNAVAILABLE');
               var paragraph = Api.CreateParagraph();
               if (paragraph === null || paragraph === undefined || typeof paragraph.AddText !== 'function' ||
-                  typeof paragraph.SetStyle !== 'function') return blocksRefusal();
+                  typeof paragraph.SetStyle !== 'function') return blocksRefusal('CAPABILITY_UNAVAILABLE');
               paragraph.AddText(block.text);
               if (typeof block.heading === 'number') {
                 var style = document.GetStyle('Heading ' + block.heading);
-                if (style === null || style === undefined) return ['STYLE_UNAVAILABLE'];
+                if (style === null || style === undefined) return blocksRefusal('STYLE_UNAVAILABLE');
                 paragraph.SetStyle(style);
               }
               created.push(paragraph);
             }
-            if (created.length !== blocks.length) return blocksRefusal();
+            if (created.length !== blocks.length) return blocksRefusal('CAPABILITY_UNAVAILABLE');
             // THE ONE MUTATION of this leg, and the exact boundary the two refusal classes are split on:
-            // the phase turns UNCERTAIN IMMEDIATELY BEFORE the call, not after it, because a native that
-            // throws OUT of `InsertContent` may already have applied part of the array. From the moment
-            // this call is entered, nothing observed here proves the document was not touched, so every
-            // refusal below is the uncertain class and the bridge holds its slot.
-            inserted = true;
+            // the phase turns `POST_INSERT` IMMEDIATELY BEFORE the call, not after it, because a native
+            // that throws OUT of `InsertContent` may already have applied part of the array. From the
+            // moment this call is entered, nothing observed here proves the document was not touched, so
+            // every refusal below carries the post-insert phase and the decoder turns it into the
+            // uncertain class, for which the bridge holds its slot.
+            phase = 'POST_INSERT';
             document.InsertContent(created);
             var allParagraphs = document.GetAllParagraphs();
             var allHeadings = document.GetAllHeadingParagraphs();
-            if (allParagraphs === null || allParagraphs === undefined || typeof allParagraphs.length !== 'number') return blocksRefusal();
-            if (allHeadings === null || allHeadings === undefined || typeof allHeadings.length !== 'number') return blocksRefusal();
+            if (allParagraphs === null || allParagraphs === undefined || typeof allParagraphs.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            if (allHeadings === null || allHeadings === undefined || typeof allHeadings.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
             var paragraphsAfter = allParagraphs.length;
             var headingsAfter = allHeadings.length;
-            if (!measured(paragraphsAfter) || !measured(headingsAfter)) return blocksRefusal();
-            // The document's own paragraph texts, for the presence half of the contract. The elements are
+            if (!measured(paragraphsAfter) || !measured(headingsAfter)) return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            // The document's own paragraph texts, for the REGION half of the contract. The elements are
             // collected FIRST — an indexed read of editor DATA — and `GetText` is then invoked on the
             // callback PARAMETER, never through a computed lookup: the authored static boundary treats an
             // invocation reached by a computed key as a computed-execution sink, the same rule the search
@@ -353,26 +369,39 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               return item !== null && item !== undefined && typeof item.GetText === 'function' ? item.GetText() : null;
             });
             for (var scan = 0; scan < paragraphTexts.length; scan++) {
-              if (typeof paragraphTexts[scan] !== 'string') return blocksRefusal();
+              if (typeof paragraphTexts[scan] !== 'string') return blocksRefusal('CAPABILITY_UNAVAILABLE');
             }
             var answer = [];
-            // The four counts are APPENDED rather than spelled as one array literal, and that is not a
-            // style choice: the authored-code audit's local alias analysis is NAME-based and
-            // scope-insensitive over the whole bundle, so a literal built from identifier names that
-            // another scope happened to taint would make this array a "computed value" and every
-            // `answer.push` below a computed-execution finding. Appending to an array that starts as a
-            // literal keeps the receiver of every call provably untainted.
+            // The phase slot, the four counts and the flags are APPENDED rather than spelled as one array
+            // literal, and that is not a style choice: the authored-code audit's local alias analysis is
+            // NAME-based and scope-insensitive over the whole bundle, so a literal built from identifier
+            // names that another scope happened to taint would make this array a "computed value" and
+            // every `answer.push` below a computed-execution finding. Appending to an array that starts as
+            // a literal keeps the receiver of every call provably untainted.
+            answer.push(phase);
             answer.push(paragraphsBefore);
             answer.push(paragraphsAfter);
             answer.push(headingsBefore);
             answer.push(headingsAfter);
+            // THE REGION THE APPEND ADDED, addressed by the baseline this body ALREADY took before the
+            // call: the append begins at paragraph index `paragraphsBefore`, so block `which` OWNS the
+            // paragraph at `paragraphsBefore + which` and its flag is 1 only when THAT paragraph carries
+            // EXACTLY this block's text. One flag per block, one owned slot per flag. This is the
+            // character-region comparison made exact per paragraph, and it is strictly stronger than
+            // either alternative: a substring search over ALL paragraphs (what this replaced) is satisfied
+            // by an occurrence that was already in the document, so it verified an append that carried no
+            // text at all; and "the needle's occurrence count rose by exactly one" counts over the whole
+            // document, so it cannot tell the append's occurrence from an unrelated one and cannot express
+            // two blocks with the SAME text, whose total rise is two. Joining the region under a block
+            // separator would be weaker than per-slot equality for the same reason: it cannot distinguish
+            // two paragraph splits of one region text.
             for (var which = 0; which < blocks.length; which++) {
               var wanted = blocks[which].text;
-              var present = paragraphTexts.some(function (paragraphText) { return paragraphText.indexOf(wanted) !== -1; });
-              answer.push(present ? 1 : 0);
+              answer.push(paragraphsBefore + which < paragraphTexts.length &&
+                paragraphTexts[paragraphsBefore + which] === wanted ? 1 : 0);
             }
             return answer;
-          } catch (error) { return blocksRefusal(); }
+          } catch (error) { return blocksRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
       } });
   }
@@ -527,30 +556,39 @@ function decodeStructure(value, maxHeadings) {
 }
 // The BLOCK-APPEND answer, decoded with the same strictness as `decodeSearch`/`decodeStructure` and for
 // the same reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES —
-// `[paragraphsBefore, paragraphsAfter, headingsBefore, headingsAfter, present0, …]` — because the native
-// return validator keeps arrays of primitives and STRIPS a plain object. `Reflect.ownKeys` before any
-// indexed read closes symbols, holes and hidden extras, and every member is read through its own data
-// descriptor, never through a getter. Four rules are this leg's own contract:
-//   * a ONE-slot answer is the body's own refusal sentinel and nothing else, and the SENTINEL NAME IS
-//     THE PHASE: `CAPABILITY_UNAVAILABLE` and `STYLE_UNAVAILABLE` are taken BEFORE `InsertContent`
-//     (nothing was inserted, so they are KNOWN refusals whose codes the caller republishes), while
-//     `APPLY_UNCERTAIN` is taken AFTER it (the document may already hold the append, so the ticket must
-//     hold its slot and the caller reads the uncertain class). Any other single value is uninterpretable.
+// `[POST_INSERT, paragraphsBefore, paragraphsAfter, headingsBefore, headingsAfter, present0, …]` —
+// because the native return validator keeps arrays of primitives and STRIPS a plain object.
+// `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every member is
+// read through its own data descriptor, never through a getter. Four rules are this leg's own contract:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes
+//     are split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, <name>]` is a
+//     KNOWN refusal whose code the caller republishes (nothing was inserted), and `[POST_INSERT, <name>]`
+//     is the UNCERTAIN class (the document may already hold the append). A phase that is ABSENT — the
+//     one-slot `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real append —
+//     or a pre-insert phase over a measurement, or any other single value, can never be a known refusal:
+//     it is decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the marker does.
 //   * the four counts are NON-NEGATIVE SAFE INTEGERS — the document's own array lengths — and the flags
 //     are EXACTLY `0` or `1`: a count this bridge cannot trust is not a count, and an editor that
 //     answers anything else is not one this body can have read.
 //   * the body emits EXACTLY one flag per block it was handed, so an answer with a different number of
 //     flags is not one this body can have produced: publishing a shorter array would let a missing
-//     presence check pass as the tool's own cap, and a longer one would smuggle a flag no block owns.
-//   * the whole answer is still bounded by `LIMITS.editorResultBytes`, the one window every native read
-//     of this bridge is decoded under.
+//     region check pass as the tool's own cap, and a longer one would smuggle a flag no block owns.
+//   * the answer needs NO byte ceiling, and the `assertByteLimit` this used to carry was DELETED because
+//     no shape this decoder admits can approach one: the phase is one of two literals, each count is at
+//     most 16 characters as JSON, and there are at most `LIMITS.insertBlocksMax` (64) one-character
+//     flags, so the widest legal answer measures 211 bytes — against `LIMITS.editorResultBytes` (65536).
+//     The test row that was meant to exercise the bound was refused by the flag-type rule below before it
+//     could reach it, which is what an unreachable assertion leaves behind: a claim nothing can test.
 const BLOCKS_SLOTS = 4;
+const BLOCKS_PHASE_PRE = 'PRE_INSERT';
+const BLOCKS_PHASE_POST = 'POST_INSERT';
+const BLOCKS_HEAD = BLOCKS_SLOTS + 1;
 function decodeBlocks(value, blockCount) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
   if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const size = length.value;
-  if (!Number.isSafeInteger(size) || size < 1 || size > BLOCKS_SLOTS + blockCount) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!Number.isSafeInteger(size) || size < 1 || size > BLOCKS_HEAD + blockCount) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const members = [];
@@ -559,33 +597,41 @@ function decodeBlocks(value, blockCount) {
     if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
     members.push(descriptor.value);
   }
-  if (size === 1) {
-    if (members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-    if (members[0] === 'STYLE_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
-    if (members[0] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
-    throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // THE PHASE GATE. The two names the body emits only from its pre-insert half keep their KNOWN classes
+  // ONLY when the answer itself carries the pre-insert phase; a missing phase, a post-insert phase, or a
+  // pre-insert phase that cannot legally carry a measurement is the uncertain class, because the body ran
+  // and the document may already hold the append.
+  if (size === 2) {
+    if (members[0] !== BLOCKS_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (members[1] === 'STYLE_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   }
-  if (size < BLOCKS_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  const numbers = members.slice(0, BLOCKS_SLOTS);
+  // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal — the
+  // exact forgery this gate exists for.
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== BLOCKS_HEAD + blockCount) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== BLOCKS_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = members.slice(1, BLOCKS_HEAD);
   for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  const flags = members.slice(BLOCKS_SLOTS);
+  const flags = members.slice(BLOCKS_HEAD);
   for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (flags.length !== blockCount) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
   return Object.freeze({ paragraphsBefore: numbers[0], paragraphsAfter: numbers[1],
     headingsBefore: numbers[2], headingsAfter: numbers[3], present: Object.freeze(flags.map(flag => flag === 1)) });
 }
 // THE EXACT-DELTA RULE the block append's outcome rests on, in ONE place so the decision and its comment
 // cannot drift apart: the document's paragraph count must have grown by EXACTLY the number of blocks
-// asked for, its heading count by EXACTLY the number of blocks that asked for a heading, and every
-// block's text must be PRESENT among the document's own paragraph texts. Nothing else is evidence, and
-// `InsertContent`'s return value is not consulted anywhere: it answers `true` even for `[]`, `[null]`
-// and `'nonsense'` (measured on the target), so it carries no information at all — and a `false` is not
-// proof of failure either, so the rule cannot be written in terms of it in either direction.
+// asked for, its heading count by EXACTLY the number of blocks that asked for a heading, and EVERY block
+// must have carried its text in the paragraph slot the append gave it — the flag is one-to-one with the
+// append, not a substring match over the document. Nothing else is evidence, and `InsertContent`'s return
+// value is not consulted anywhere: it answers `true` even for `[]`, `[null]` and `'nonsense'` (measured on
+// the target), so it carries no information at all — and a `false` is not proof of failure either, so the
+// rule cannot be written in terms of it in either direction.
 function exactBlocksDelta(outcome, blocks) {
   let headings = 0;
   for (const block of blocks) if (Object.hasOwn(block, 'heading')) headings += 1;
-  // The presence flags are read by INDEX rather than through `outcome.present.every(...)`: this module's
+  // The region flags are read by INDEX rather than through `outcome.present.every(...)`: this module's
   // authored-code audit treats an invocation reached through a value its NAME-based alias analysis has
   // tainted as a computed-execution sink, and an indexed READ of a data array cannot be mistaken for one.
   let everyBlockPresent = true;
@@ -599,11 +645,11 @@ function exactBlocksDelta(outcome, blocks) {
 // The two PRE-insert refusals the block body can answer with, and the ONLY classes that keep a KNOWN code
 // once the ticket's dispatch flag is set. `blocksinsert` sets `owned.dispatched` BEFORE the command is
 // handed to the native (a synchronous throw out of the transport must never release a slot whose work may
-// already be queued), so that flag does NOT mean "InsertContent ran": the PHASE travels in the ANSWER's
-// sentinel, and these two names are the ones the body emits only from its pre-insert half. Everything
-// else a dispatched append can answer — the post-insert sentinel, a malformed array, a decode the
-// configured bound refuses — means the append may already be in the document, so it is the uncertain
-// class with the slot HELD.
+// already be queued), so that flag does NOT mean "InsertContent ran": the PHASE travels in the answer's
+// OWN SLOT, and `decodeBlocks` raises these two codes only for a `[PRE_INSERT, name]` answer. Everything
+// else a dispatched append can answer — a phase-less one-slot name, the post-insert phase, a malformed
+// array, a decode this bridge refuses — means the append may already be in the document, so it is the
+// uncertain class with the slot HELD.
 function blocksPreInsertRefusal(error) {
   return error instanceof SafeError &&
     (error.code === ERROR_CODES.CAPABILITY_UNAVAILABLE || error.code === ERROR_CODES.TOOL_ERROR);
@@ -1160,12 +1206,12 @@ export function createR7Bridge(plugin, {
           // decode and the extraction can never disagree about how many heading texts are owed.
           else if (kind === 'structureread') result = decodeStructure(value, params.maxHeadings);
           // THE BLOCK APPEND. Its answer is the authored flat array of primitives, decoded against the
-          // BLOCK COUNT this ticket carried — the same number the body built its one flag per block
-          // against — so the decode and the body can never disagree about how many blocks are owed. The
-          // exact-delta rule then decides the ticket HERE, while it still owns the slot: a delta that is
-          // not exact is the UNCERTAIN class with the slot HELD, never a known error about a document the
-          // append may already have changed. A decode that THROWS is classified by the catch below (the
-          // body's own pre-insert sentinels keep their known code; everything else is uncertain).
+          // BLOCK COUNT this ticket carried — the same number the body built its one region flag per
+          // block against — so the decode and the body can never disagree about how many blocks are owed.
+          // The exact-delta rule then decides the ticket HERE, while it still owns the slot: a delta that
+          // is not exact is the UNCERTAIN class with the slot HELD, never a known error about a document
+          // the append may already have changed. A decode that THROWS is classified by the catch below (a
+          // `[PRE_INSERT, name]` answer keeps its known code; everything else is uncertain).
           else if (kind === 'blocksinsert') {
             const outcome = decodeBlocks(value, params.blocks.length);
             if (!exactBlocksDelta(outcome, params.blocks)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
@@ -1193,8 +1239,8 @@ export function createR7Bridge(plugin, {
           // its POST-insert failure — is the UNCERTAIN class with the slot HELD: the command body ran
           // (its callback arrived), so the append may already be in the document and releasing the slot
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched
-          // append can still produce as KNOWN are the body's own PRE-insert sentinels, which is exactly
-          // what `blocksPreInsertRefusal` names, and they release the slot below.
+          // append can still produce as KNOWN are the body's own PRE-insert phase-marked refusals, which
+          // is exactly what `blocksPreInsertRefusal` names, and they release the slot below.
           if (kind === 'blocksinsert' && owned.dispatched && !blocksPreInsertRefusal(error)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
@@ -1337,7 +1383,7 @@ export function createR7Bridge(plugin, {
           // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other
           // leg: a synchronous throw out of the transport must never release a slot whose work may
           // already be queued, and the body's own pre-insert refusals keep their known class through the
-          // callback (they arrive as the answer's sentinel, not as a throw).
+          // callback (they arrive as a `[PRE_INSERT, name]` answer, not as a throw).
           if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
           let previousBlocks;
           try { previousBlocks = writeScope(params); }
@@ -1625,12 +1671,14 @@ export function createR7Bridge(plugin, {
     // resolved BEFORE the single `InsertContent`, then the post read) and why the primitive's boolean is
     // never the signal; what matters HERE is the shape: ONE command on the ONE entry point that owns the
     // parameter wrapper, the validated block array carried as DATA through `Asc.scope`, and ONE strict
-    // decoder that turns the authored flat array into the delta's four counts plus one presence flag per
-    // block. The EXACT-DELTA rule is then decided inside the ticket, before the slot is released: a delta
-    // that is not exact, an answer that cannot be interpreted, and the body's own POST-insert uncertainty
-    // all settle `APPLY_UNCERTAIN` with the slot HELD and no retry, while the body's PRE-insert refusals
-    // (an unusable baseline, an unresolvable heading style) settle their closed KNOWN class with the slot
-    // released, because nothing was inserted.
+    // decoder that turns the authored flat array — an explicit phase slot, the delta's four counts, and
+    // one REGION flag per block (the block's own paragraph in the region the append added, never a
+    // substring match over the document) — into the envelope below. The EXACT-DELTA rule is then decided
+    // inside the ticket, before the slot is released: a delta that is not exact, an answer that cannot be
+    // interpreted, and the body's own POST-insert uncertainty all settle `APPLY_UNCERTAIN` with the slot
+    // HELD and no retry, while the body's PRE-insert refusals (an unusable baseline, an unresolvable
+    // heading style) settle their closed KNOWN class with the slot released, because nothing was inserted
+    // — and they do so ONLY when the answer carries their phase, so a name alone can never release a slot.
     // The request is a closed precondition, never an optional refinement: a caller that cannot name a
     // bounded block array gets a refusal instead of an SDK call that appends an unbounded one. The SHAPE
     // rules are the closed argument class and the two BYTE bounds are the closed byte class — the same

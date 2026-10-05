@@ -1369,9 +1369,15 @@ nothing dispatched, and that is tested.
 
 **The outcome contract.** `ok` is published **only** when the post read shows the exact expected delta:
 paragraphs grew by **exactly** the number of blocks, headings grew by **exactly** the number of blocks
-that asked for one, and every block's text is **present** in the document. The third leg is not
-redundant — the counts alone could describe an unrelated concurrent edit, and a text that already existed
-proves nothing — and the counts are not redundant either. Anything else is `TOOL_UNCERTAIN`, the bridge
+that asked for one, and every block carried its own text **in the paragraph slot the append gave it**.
+The third leg is **one-to-one over the append**, and that is the correction an independent review forced
+(§13.1): the region the append added is addressed by the baseline count the body takes **before** the
+call, so block `i` owns the paragraph at index `paragraphsBefore + i`, and a text the document already
+held somewhere — even the very text of the block — can no longer stand in for it. The earlier existential
+form (`indexOf` over every paragraph) verified an append that created the right **number** of paragraphs
+and carried no text at all. The third leg is not redundant — the counts alone could describe an unrelated
+concurrent edit, and a text that already existed proves nothing — and the counts are not redundant
+either. Anything else is `TOOL_UNCERTAIN`, the bridge
 keeps its callback slot **HELD** (`getState()` keeps reporting `busy`/`uncertain`/`writePending`, the
 panel's write lock stays engaged, the next call is `EDITOR_BUSY`) and there is **no retry**. The
 exact-delta rule is decided **twice on purpose**: inside the ticket, while it still owns the slot (that
@@ -1386,12 +1392,13 @@ bridge entry point → `CAPABILITY_UNAVAILABLE`; an **unusable baseline** → `C
 would misname the failure; what the document does not define is the requested `Heading <n>`; and it is
 not uncertain, because the body resolves every style before it inserts); a bridge refusal → its own
 closed `refusalCode`; an uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` →
-`TOOL_UNCERTAIN`; an over-ceiling result entry → `BYTE_LIMIT`. The body's own sentinel **name carries the
-phase** of the refusal (`CAPABILITY_UNAVAILABLE`/`STYLE_UNAVAILABLE` = before the mutation,
-`APPLY_UNCERTAIN` = after it), which is what lets the bridge keep a *known* class for a refusal that
-inserted nothing while turning any answer it cannot interpret — after a callback that proved the body
-ran — into the uncertain class **with the slot held**. `owned.dispatched` alone cannot decide this: it is
-set before the command is handed to the native, so it does not mean "`InsertContent` ran".
+`TOOL_UNCERTAIN`; an over-ceiling result entry → `BYTE_LIMIT`. The refusal's **phase is an explicit slot
+of the answer**, not a property of its name (§13.1): the body answers `[PRE_INSERT, name]` before its one
+mutation and `[POST_INSERT, name]` after it, and `decodeBlocks` raises the two known classes **only** for
+a `[PRE_INSERT, name]` answer. A phase-less one-slot `['CAPABILITY_UNAVAILABLE']` — the forgery the review
+reproduced — is therefore `APPLY_UNCERTAIN` with the slot held: the body ran, and the document may already
+hold the append. `owned.dispatched` alone cannot decide this: it is set before the command is handed to
+the native, so it does not mean "`InsertContent` ran".
 
 **The mutation boundary is the call, not its return.** The body's phase turns uncertain
 **immediately before** `InsertContent(created)`, so a native that **throws out of** the mutation is
@@ -1451,14 +1458,91 @@ for the whole run; `src/agent/*` untouched.
 the host-side suite cannot prove is the **shipped** carriage of this leg: (1) that `{ blocks }` written
 into the page's `Asc.scope` reaches the body's `scope` binding, (2) that `Api.CreateParagraph()` /
 `paragraph.AddText` / `document.GetStyle('Heading <n>')` / `document.InsertContent([…])` answer from
-**inside** this exact body, (3) that the native return validator passes a flat array of `4 + n`
+**inside** this exact body, (3) that the native return validator passes a flat array of `5 + n`
 primitives unaltered, and (4) that the post read inside the same body observes the append (i.e. that the
 two document reads around a synchronous `InsertContent` really differ). Each unknown lands on a closed
-path: a scope that does not arrive makes the body answer its own refusal sentinel
-(`CAPABILITY_UNAVAILABLE`, nothing inserted, slot released); a missing primitive does the same; a style
-the document does not define answers `STYLE_UNAVAILABLE` → `TOOL_ERROR` with nothing inserted; an
+path: a scope that does not arrive makes the body answer its own phase-marked refusal
+(`[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']`, nothing inserted, slot released); a missing primitive does the
+same; a style the document does not define answers `[PRE_INSERT, 'STYLE_UNAVAILABLE']` → `TOOL_ERROR`
+with nothing inserted; an
 uninterpretable or non-exact answer is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot held and no
 retry; and an editor that never calls back settles `APPLY_UNCERTAIN` (a dispatched write-class ticket),
 never a verified append. A native run on the target is required before this tool's delta can be called
 measured; it is recorded here as PENDING NATIVE VERIFICATION.
+
+### 13.1 Independent-review follow-up — two fail-open defects closed, one dead assertion removed
+
+An independent review of `2fdaa45` (the revision §13 describes) found two fail-open defects in
+`insert_blocks` and one unreachable bound. Nothing in §13's mechanism changed; what changed is where the
+verifier is anchored and how the refusal phase travels. `src/agent/*` is untouched, the tool is still a
+mutation with the exact-delta contract, there is still exactly **one** `InsertContent` per body, and
+anything unprovable is still `TOOL_UNCERTAIN` + held slot + no retry.
+
+**D1 (fail-open) — the presence check was existential, not one-to-one over the append.** The body asked
+`paragraphTexts.some(text => text.indexOf(block.text) !== -1)` over the WHOLE document, so a document that
+already held the block texts satisfied it. The reviewer's reproduction: a document already holding
+`['Глава','Текст']`, an `InsertContent` that creates the right NUMBER of paragraphs and writes no text,
+and the bridge published `{ok:true, paragraphsBefore:2, paragraphsAfter:4, present:[true,true]}` while the
+document ended `['Глава','Текст','','']`. **The method chosen is per-slot equality over the region the
+append added**, addressed by the baseline the body already takes: `flag_i = 1` **iff**
+`paragraphTexts[paragraphsBefore + i] === blocks[i].text`. It is exact because one flag owns exactly one
+paragraph of the appended region, and that is why it was chosen over the two alternatives — an `indexOf`
+over the document (the defect) is satisfied by a pre-existing occurrence, and "the needle's occurrence
+count rose by exactly one" counts over the whole document, cannot tell the append's occurrence from an
+unrelated one, and cannot express two blocks with the SAME text (whose total rise is two) without
+per-needle multiplicity bookkeeping; joining the region under a separator is weaker than per-slot equality
+because one region text can be split into paragraphs two ways. The exact count deltas are unchanged.
+
+**D2 (fail-open, latent) — the decoder trusted a one-slot sentinel without checking the phase.** The body
+flipped its phase immediately before `InsertContent`, but the decoder mapped the pre-insert NAMES
+unconditionally, so a forged post-insert `['CAPABILITY_UNAVAILABLE']` or `['STYLE_UNAVAILABLE']` produced a
+false KNOWN refusal with the slot RELEASED and `writePending` false. **The phase is now an explicit slot
+of every answer**: `[PRE_INSERT, name]` / `[POST_INSERT, name]` for a refusal, and
+`[POST_INSERT, before, after, hBefore, hAfter, flag0, …]` for a measurement. `decodeBlocks` raises the two
+known classes only for `[PRE_INSERT, name]`; a missing phase, a post-insert phase, a pre-insert phase over
+a measurement, and every other single value are `APPLY_UNCERTAIN` with the slot HELD. Both genuine
+pre-insert refusals (an unusable baseline, an unresolvable style) still map to their known classes with
+ZERO `InsertContent`.
+
+**D3 (info) — the decoder's byte assertion was unreachable, and it was DELETED rather than kept as a claim
+nothing can test.** The wire shape is closed to one of two phase literals, four safe integers of at most
+16 JSON characters, and at most `LIMITS.insertBlocksMax` (64) one-character flags, so the widest legal
+answer measures **211** bytes against `LIMITS.editorResultBytes` (**65536**) — three hundred times inside
+the ceiling, and no legal shape approaches it. The test row that was meant to exercise it (a 40 000
+character member) is refused by the **flag-type** rule before any measurement, which is exactly what an
+unreachable bound leaves behind; the row is kept for the flag-type rule it really exercises, and the
+assertion is gone with its arithmetic stated in `decodeBlocks`.
+
+**TDD, and the exact RED.** The two reproduction tests were written FIRST and run against `2fdaa45`:
+D1's `the outcome contract is ONE-TO-ONE over the APPENDED REGION…` failed with
+`AssertionError [ERR_ASSERTION]: an append that carried no text is NEVER verified…  true !== false` —
+the bridge really did publish `ok:true` for the silent append; D2's `the refusal PHASE is explicit in the
+protocol…` failed with `actual: 'CAPABILITY_UNAVAILABLE', expected: 'APPLY_UNCERTAIN'` for the forged
+one-slot answer. Both pass on the final tree, together with the two cases the region anchor must not
+break: a block whose text already exists elsewhere in the document still verifies (the append carried it),
+and two blocks with the SAME text still verify.
+
+**Two existing test rows moved, and the replacement is strictly stronger.** The shape table in
+`bridge insertBlocks decodes ONLY the authored shapes…` asserted the OLD unconditional mapping with
+`[['CAPABILITY_UNAVAILABLE'], 'CAPABILITY_UNAVAILABLE', false]` and
+`[['STYLE_UNAVAILABLE'], 'TOOL_ERROR', false]`. Those rows now read `'APPLY_UNCERTAIN', true` (phase
+absent), and the same name→class mapping is still asserted — with the pre-insert phase, through
+`[['PRE_INSERT', 'CAPABILITY_UNAVAILABLE']]` and `[['PRE_INSERT', 'STYLE_UNAVAILABLE']]` — plus the new
+rows that a `[POST_INSERT, …]` answer naming a pre-insert class is still not a known refusal. The
+replacement therefore covers everything the old rows covered **and** the forgery they could not see. The
+other three moved assertions are shape updates, not weakenings: the body's own answer now carries the
+phase slot (`['POST_INSERT', 10, 12, 3, 4, 1, 1]`), and the malformed rows were re-expressed in the new
+5-slot head.
+
+**Verification (this round, final tree).** Focused `node --test tests/unit/tools-word.test.js` →
+**157/157**; full suite `node --test` → **789**, `pass 789`, `fail 0` (787 → 789: two added test blocks,
+none removed or weakened); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+2072b90e0e8f1fb78b480dfcd73c669691adb90c20e44e27bb072dbb5262e65b` — the SHA **moved** from the `2fdaa45`
+pin `0fb625d4057ec938a8f7156375c2ad5c9ae3ce75fe02c6ba7723fb2f9ef73e25`, because the authored body and
+`decodeBlocks` both changed (the bundle's bytes are code: rebuilt fresh, mtime after the last source edit,
+and it carries `BLOCKS_PHASE_PRE`/`BLOCKS_PHASE_POST`/`BLOCKS_HEAD` and the per-slot flag expression; a
+comment-only edit did not move the SHA, so esbuild does drop some comments). The audit trap §13 records
+was respected: `build-plugin.mjs` was run (not only the audit), and the bundle audits with
+**0 findings**.
 

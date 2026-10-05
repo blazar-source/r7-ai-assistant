@@ -4189,11 +4189,32 @@ function blocksDocument({ paragraphs = 10, headings = 3, styles = true, appends 
     }
   } };
 }
+// A SECOND document double, for the one shape the default cannot express: a document that ALREADY holds
+// the block texts, and an `InsertContent` whose number of created paragraphs is right while the text it
+// writes is not. `write: false` pushes an empty paragraph per item, `write: 'Другое'` pushes a text that
+// is not the block's, and `write: true` is the real append. The texts are the ONLY state this double
+// keeps, so a test can state exactly what the document holds after the call.
+function blocksDocumentFromTexts(texts, { write = true } = {}) {
+  const state = { texts: [...texts], inserts: 0 };
+  return { state, document: {
+    GetAllParagraphs() { return state.texts.map(text => ({ GetText() { return text; } })); },
+    GetAllHeadingParagraphs() { return []; },
+    GetStyle(name) { return { GetName() { return name; } }; },
+    InsertContent(items) {
+      state.inserts += 1;
+      for (const item of items) state.texts.push(write === true ? item.state.text : (write === false ? '' : write));
+      return true;
+    }
+  } };
+}
 function evaluateBlocksBody(body, api, scope) {
   return new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(api, scope);
 }
+// `forge` hands the bridge a REPLACEMENT for the answer the body really produced, after that body has
+// run to completion against the document double — a real append included. It is the only way to model a
+// hostile or damaged native answer for a dispatched append without weakening the body itself.
 function blocksRig({ paragraphs = 10, headings = 3, styles = true, appends = true, answer = true,
-  command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined } = {}) {
+  command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined, forge = undefined } = {}) {
   const commands = [];
   const measured = blocksDocument({ paragraphs, headings, styles, appends, answer });
   const api = { GetDocument() { return document === undefined ? measured.document : document; },
@@ -4204,7 +4225,7 @@ function blocksRig({ paragraphs = 10, headings = 3, styles = true, appends = tru
       const scope = namespace?.scope;
       const answered = evaluateBlocksBody(body, api, scope);
       commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
-      callback(answered);
+      callback(forge === undefined ? answered : forge);
       return false;
     } : undefined };
   const options = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
@@ -4228,7 +4249,8 @@ test('bridge insertBlocks dispatches ONE command, carries the blocks as DATA and
   assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no blocks outlive their dispatch');
   assert.equal(r.doc.calls.inserts, 1, 'ONE InsertContent call carries the whole array, and only one exists');
   assert.deepEqual(r.doc.calls.styleNames, ['Heading 1'], 'the level is mapped to the measured style name');
-  assert.deepEqual(carried.answered, [10, 12, 3, 4, 1, 1], 'the body encodes the four counts and one flag per block');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 10, 12, 3, 4, 1, 1],
+    'the body encodes the explicit phase slot, the four counts and one flag per block');
   assert.deepEqual(await pending, { ok: true, paragraphsBefore: 10, paragraphsAfter: 12, headingsBefore: 3, headingsAfter: 4,
     present: [true, true] });
   assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
@@ -4249,7 +4271,8 @@ test('the blocks body is self-contained: it answers the measured shapes in a fre
   const fresh = blocksDocument({ paragraphs: 2, headings: 0 });
   const freshApi = { GetDocument() { return fresh.document; }, CreateParagraph() { return paragraphDouble(); } };
   const evaluated = evaluateBlocksBody(carried.body, freshApi, carried.scope);
-  assert.deepEqual(evaluated, [2, 4, 0, 1, 1, 1], 'the blocks arrived as DATA and the counts are the document\'s own');
+  assert.deepEqual(evaluated, ['POST_INSERT', 2, 4, 0, 1, 1, 1],
+    'the blocks arrived as DATA and the counts are the document\'s own');
   assert.equal(fresh.calls.inserts, 1, 'and the ONE InsertContent call is where the mutation happens');
   assert.deepEqual(fresh.texts, ['абзац-1', 'абзац-2', 'Один', 'Два']);
   assert.deepEqual(fresh.styled, ['Два'], 'only the block that asked for a heading became one');
@@ -4292,6 +4315,57 @@ test('the InsertContent boolean is never the signal: a false that appended verif
   assert.equal(threw.bridge.getState().writePending, true);
   assert.equal(JSON.stringify(await threw.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] })).includes('СЕКРЕТ'), false);
   assert.equal(calls.inserts, 1, 'and the uncertain append is never retried');
+});
+
+test('the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an existential match over the document', async () => {
+  // THE REVIEWER'S REPRODUCTION. The document ALREADY holds both block texts, and `InsertContent`
+  // creates the right NUMBER of paragraphs while writing no text at all. An existential substring search
+  // over the whole document is satisfied by the pre-existing occurrences, so the old check verified an
+  // append that carried nothing: `{ok:true, paragraphsBefore:2, paragraphsAfter:4, present:[true,true]}`
+  // while the document ended `['Глава','Текст','','']`. The verifier must be anchored to the REGION the
+  // append added — the paragraphs at indices `paragraphsBefore …` — so a text that was already in the
+  // document cannot stand in for the block's own paragraph.
+  const silent = blocksDocumentFromTexts(['Глава', 'Текст'], { write: false });
+  const quiet = blocksRig({ document: silent.document });
+  const result = await quiet.bridge.insertBlocks({ blocks: [{ text: 'Глава' }, { text: 'Текст' }] });
+  assert.equal(silent.state.inserts, 1, 'the mutation was dispatched exactly once');
+  assert.deepEqual(silent.state.texts, ['Глава', 'Текст', '', ''],
+    'the double created two paragraphs and carried no text — the count delta is exact and the text is not');
+  assert.equal(result.ok, false, 'an append that carried no text is NEVER verified, whatever the document already held');
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
+  assert.equal(result.data, undefined);
+  const held = quiet.bridge.getState();
+  assert.equal(held.busy, true, 'the slot is HELD for an append whose text did not arrive');
+  assert.equal(held.uncertain, true);
+  assert.equal(held.writePending, true);
+  assert.deepEqual(await quiet.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
+    'no retry of an append whose outcome is unknown');
+  assert.equal(silent.state.inserts, 1, 'and the refused call dispatches nothing');
+  // The same region anchor closes the OTHER wrong-text shape: the paragraphs are created and filled with
+  // something that is not the block's own text. The old existential rule could also be fed by a document
+  // that merely CONTAINS the block's text somewhere else.
+  const wrongText = blocksDocumentFromTexts(['Глава', 'Текст'], { write: 'Другое' });
+  assert.deepEqual(await blocksRig({ document: wrongText.document }).bridge.insertBlocks({ blocks: [{ text: 'Глава' }] }),
+    { ok: false, code: 'APPLY_UNCERTAIN' }, 'a paragraph that carries a different text is not this block\'s append');
+  // THE TWO CASES THE ANCHOR MUST NOT BREAK. A block whose text ALREADY occurs elsewhere in the document
+  // still verifies, because the append carried it in the slot the block owns.
+  const elsewhere = blocksDocumentFromTexts(['Глава', 'Текст'], { write: true });
+  const again = blocksRig({ document: elsewhere.document });
+  assert.deepEqual(await again.bridge.insertBlocks({ blocks: [{ text: 'Глава' }] }),
+    { ok: true, paragraphsBefore: 2, paragraphsAfter: 3, headingsBefore: 0, headingsAfter: 0, present: [true] },
+    'the append really carried it, even though the document already held the same text');
+  assert.deepEqual(elsewhere.state.texts, ['Глава', 'Текст', 'Глава']);
+  // And DUPLICATE block texts verify: two blocks with the SAME text are two paragraphs, each in its own
+  // slot. This is the case that rules out "each needle\'s occurrence count rose by exactly one" as the
+  // implemented rule — that count rises by TWO for one duplicate needle, so a per-needle rule would have
+  // to bookkeep multiplicity, while the per-slot rule can only be satisfied by two real paragraphs.
+  const duplicates = blocksDocumentFromTexts(['старт'], { write: true });
+  const twice = blocksRig({ document: duplicates.document });
+  assert.deepEqual(await twice.bridge.insertBlocks({ blocks: [{ text: 'Дубль' }, { text: 'Дубль' }] }),
+    { ok: true, paragraphsBefore: 1, paragraphsAfter: 3, headingsBefore: 0, headingsAfter: 0, present: [true, true] },
+    'two blocks with the same text are two appended paragraphs, and both verify');
+  assert.deepEqual(duplicates.state.texts, ['старт', 'Дубль', 'Дубль']);
+  assert.equal(duplicates.state.inserts, 1);
 });
 
 test('bridge insertBlocks refuses an unusable baseline or an unresolvable style with a closed class and NO InsertContent', async () => {
@@ -4394,18 +4468,44 @@ test('bridge insertBlocks decodes ONLY the authored shapes and never publishes a
   // The two PRE-insert sentinels are KNOWN refusals with the slot released (nothing was inserted); the
   // POST-insert sentinel and every other uninterpretable answer are the UNCERTAIN class with the slot
   // HELD, because the command body ran and the document may already hold the append.
+  // THE PHASE IS AN EXPLICIT SLOT, and these rows pin the protocol in both directions:
+  //   * a TWO-slot answer whose first slot is the PRE-insert phase is a KNOWN refusal — the two names the
+  //     body emits only from its pre-insert half keep their closed class, and the slot is released;
+  //   * a ONE-slot name (the forgery, phase ABSENT), a POST-insert phase, a phase-marked name that does
+  //     not belong to that phase, and every other uninterpretable answer are the UNCERTAIN class with the
+  //     slot HELD, because the command body ran and the document may already hold the append.
+  // The two rows that used to assert the unconditional mapping of `['CAPABILITY_UNAVAILABLE']` and
+  // `['STYLE_UNAVAILABLE']` are replaced by this pairing: the same name→class mapping is still asserted
+  // (with the pre-insert phase), and the phase-less form is now asserted to be REFUSED as unprovable. The
+  // replacement is strictly stronger: it covers the old mapping AND the forgery it could not see.
   const table = [
-    [['CAPABILITY_UNAVAILABLE'], 'CAPABILITY_UNAVAILABLE', false],
-    [['STYLE_UNAVAILABLE'], 'TOOL_ERROR', false],
+    [['PRE_INSERT', 'CAPABILITY_UNAVAILABLE'], 'CAPABILITY_UNAVAILABLE', false],
+    [['PRE_INSERT', 'STYLE_UNAVAILABLE'], 'TOOL_ERROR', false],
+    [['POST_INSERT', 'APPLY_UNCERTAIN'], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 'CAPABILITY_UNAVAILABLE'], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 'STYLE_UNAVAILABLE'], 'APPLY_UNCERTAIN', true],
+    [['PRE_INSERT', 'APPLY_UNCERTAIN'], 'APPLY_UNCERTAIN', true],
+    [['CAPABILITY_UNAVAILABLE'], 'APPLY_UNCERTAIN', true],
+    [['STYLE_UNAVAILABLE'], 'APPLY_UNCERTAIN', true],
     [['APPLY_UNCERTAIN'], 'APPLY_UNCERTAIN', true],
     [['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ'], 'APPLY_UNCERTAIN', true],
     [null, 'APPLY_UNCERTAIN', true], [undefined, 'APPLY_UNCERTAIN', true], [7, 'APPLY_UNCERTAIN', true],
     ['текст', 'APPLY_UNCERTAIN', true], [{}, 'APPLY_UNCERTAIN', true], [[true], 'APPLY_UNCERTAIN', true],
-    [[], 'APPLY_UNCERTAIN', true], [[1], 'APPLY_UNCERTAIN', true], [[10, 11, 3, 4], 'APPLY_UNCERTAIN', true],
-    [[10, 11, 3, 4, 1, 0], 'APPLY_UNCERTAIN', true], [[10.5, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
-    [[-1, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true], [[10, 11, 3, 4, 2], 'APPLY_UNCERTAIN', true],
-    [[10, 11, 3, 4, '1'], 'APPLY_UNCERTAIN', true], [['10', 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
-    [[10, 10, 3, 3, 0], 'APPLY_UNCERTAIN', true], [[10, 11, 3, 4, 'я'.repeat(40000)], 'APPLY_UNCERTAIN', true]
+    [[], 'APPLY_UNCERTAIN', true], [[1], 'APPLY_UNCERTAIN', true],
+    [[10, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 10, 11, 3, 4], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 10, 11, 3, 4, 1, 0], 'APPLY_UNCERTAIN', true],
+    [['PRE_INSERT', 10, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 10.5, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', -1, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 10, 11, 3, 4, 2], 'APPLY_UNCERTAIN', true],
+    // The 40 000-character member is a FLAG of the wrong TYPE, and that is the rule it exercises: the
+    // flag check runs before any byte measurement, and the byte bound this leg used to carry was
+    // UNREACHABLE (four safe integers plus at most 64 one-character flags measure 211 bytes at their
+    // widest, against a 65 536-byte ceiling), so it was deleted rather than left as an untested claim.
+    [['POST_INSERT', 10, 11, 3, 4, 'я'.repeat(40000)], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', '10', 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 10, 10, 3, 3, 0], 'APPLY_UNCERTAIN', true]
   ];
   for (const [raw, code, held] of table) {
     const result = await poisoned(raw).insertBlocks({ blocks: [{ text: 'а' }] });
@@ -4422,11 +4522,51 @@ test('bridge insertBlocks decodes ONLY the authored shapes and never publishes a
   }
   // The authored MEASUREMENT is the one shape that publishes, and it publishes exactly the decoded delta.
   // The probe's single block asks for NO heading, so the document's heading count must not move either.
-  assert.deepEqual(await poisoned([10, 11, 3, 3, 1]).insertBlocks({ blocks: [{ text: 'а' }] }),
+  assert.deepEqual(await poisoned(['POST_INSERT', 10, 11, 3, 3, 1]).insertBlocks({ blocks: [{ text: 'а' }] }),
     { ok: true, paragraphsBefore: 10, paragraphsAfter: 11, headingsBefore: 3, headingsAfter: 3, present: [true] });
-  const headingProbe = await poisoned([10, 11, 3, 4, 1]).insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] });
+  const headingProbe = await poisoned(['POST_INSERT', 10, 11, 3, 4, 1]).insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] });
   assert.deepEqual(headingProbe, { ok: true, paragraphsBefore: 10, paragraphsAfter: 11, headingsBefore: 3, headingsAfter: 4, present: [true] },
     'the same answer is UNCERTAIN for a heading-less block set and verified for this one: the expected delta is derived from the blocks, never from the answer');
+});
+
+test('the refusal PHASE is explicit in the protocol: a forged one-slot sentinel answered after a real append is uncertain, never a known class', async () => {
+  // THE REVIEWER'S FORGERY. `blocksRefusal` flips the phase immediately before `InsertContent`, but the
+  // decoder used to map the PRE-insert sentinel NAMES unconditionally — so a forged post-insert answer
+  // `['CAPABILITY_UNAVAILABLE']` (or `['STYLE_UNAVAILABLE']`) produced a false KNOWN refusal with the slot
+  // RELEASED and `writePending` false, even though the body had really appended. The phase now travels IN
+  // THE ANSWER, and a pre-insert refusal is a known class ONLY when the answer carries the pre-insert
+  // phase. Every rig below evaluates the REAL body — one real append — and then hands the bridge the
+  // forged answer in its place, which is exactly the shape the reviewer reproduced.
+  for (const forged of [['CAPABILITY_UNAVAILABLE'], ['STYLE_UNAVAILABLE'], ['APPLY_UNCERTAIN'], ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ']]) {
+    const r = blocksRig({ paragraphs: 10, headings: 3, forge: forged });
+    const result = await r.bridge.insertBlocks({ blocks: [{ text: 'Глава' }] });
+    assert.equal(r.doc.calls.inserts, 1, `${JSON.stringify(forged)}: the body really appended before the answer`);
+    assert.equal(result.ok, false, JSON.stringify(forged));
+    assert.equal(result.code, 'APPLY_UNCERTAIN',
+      `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, JSON.stringify(forged));
+    assert.equal(state.uncertain, true, JSON.stringify(forged));
+    assert.equal(state.writePending, true, `${JSON.stringify(forged)}: the write lock stays engaged`);
+    assert.deepEqual(await r.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
+      `${JSON.stringify(forged)}: no retry of the append`);
+    assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
+  }
+  // THE GENUINE PRE-INSERT REFUSALS ARE UNCHANGED: the body answers them BEFORE the one mutation, with the
+  // pre-insert phase, so each keeps its KNOWN class with the slot RELEASED and ZERO `InsertContent`.
+  const baseline = blocksRig({ document: { ...blocksDocument().document, GetAllParagraphs: null } });
+  assert.deepEqual(await baseline.bridge.insertBlocks({ blocks: [{ text: 'а' }] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(baseline.doc.calls.inserts, 0, 'an unusable baseline never reaches the mutation');
+  assert.equal(baseline.bridge.getState().busy, false, 'and the slot is RELEASED: nothing was inserted');
+  const style = blocksRig({ styles: false });
+  assert.deepEqual(await style.bridge.insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] }), { ok: false, code: 'TOOL_ERROR' });
+  assert.equal(style.doc.calls.inserts, 0, 'an unresolvable style never reaches the mutation');
+  assert.equal(style.bridge.getState().busy, false);
+  // A PHASE-MARKED answer that names a pre-insert class from the POST-insert half is still not a known
+  // refusal: only the PRE-insert phase makes those names known.
+  const postNamed = blocksRig({ paragraphs: 2, headings: 0, forge: ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'] });
+  assert.equal((await postNamed.bridge.insertBlocks({ blocks: [{ text: 'а' }] })).code, 'APPLY_UNCERTAIN');
+  assert.equal(postNamed.bridge.getState().busy, true);
 });
 
 test('insert_blocks is offered with policy auto and a model call appends exactly one block batch', async () => {
