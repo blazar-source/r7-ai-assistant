@@ -25,6 +25,20 @@ function missingBridgeMethod(bridge, name) {
 function refusalCode(code, fallback) {
   return typeof code === 'string' && ERROR_CODES[code] === code ? code : fallback;
 }
+// THE CLOSED VOCABULARY A DISPATCHED WRITE LEG OF THIS MODULE MAY REPUBLISH. A bridge that answers an `ok:false`
+// envelope names a failure this module classified for it, so only the classes a WRITE leg can legitimately
+// report cross back: `APPLY_UNCERTAIN` is classified before this rule ever sees it (see `uncertainResult`), and
+// everything else a mutation can honestly report is the capability class, the closed argument class, the
+// serialized-entry class, a caller cancellation and a deadline. Anything else — a shape error a READ decoder
+// would raise (`INVALID_DATA`), a class this leg cannot produce, or an invented string — is republished as this
+// module's own tool-error class rather than passing a foreign code to the runtime. This is the leg's own
+// vocabulary rather than a global one: `insert_comment` reads no export, so a `BYTE_LIMIT` reaching it can only
+// be the serialized-entry bound, and no other class of this list is reachable from it at all.
+function commentRefusalCode(code) {
+  if (code === ERROR_CODES.CAPABILITY_UNAVAILABLE || code === ERROR_CODES.TOOL_ERROR ||
+      code === ERROR_CODES.BYTE_LIMIT || code === ERROR_CODES.CANCELLED || code === ERROR_CODES.TIMEOUT) return code;
+  return ERROR_CODES.TOOL_ERROR;
+}
 // Word is the only editor this module describes, and the descriptor says so explicitly: a tool
 // offered outside Word refuses before any dispatch.
 function wrongEditor(ctx, fallback) {
@@ -534,6 +548,47 @@ function imageRequest(value) {
   const address = insertImageAddress(value.paragraph);
   if (dataUrl === null || widthPx === null || heightPx === null || address === null) return null;
   return Object.freeze({ dataUrl, widthPx, heightPx, appended: address.appended, paragraph: address.index });
+}
+
+// `insert_comment`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the two comment counts, the identified comment's own id and the two measured text lengths. The
+// measurement is NOT a formality here either — it is the module's single ENFORCED bound, and a field added to
+// this result later must not be able to widen the entry unmeasured — even though every field is a bounded
+// scalar or `null` and `LIMITS.insertCommentIdChars`/`insertCommentTextBytes` state the arithmetic.
+// THE COMMENT TEXT IS NOT PART OF IT: it is the caller's own request and is never republished, so the entry
+// carries the proof (the counts, the id, and the identified comment's own length) rather than a copy of the
+// payload that would put a second copy of a multi-line comment into the transcript.
+function insertCommentEntryBytes(data) {
+  return toolResultEntryBytes('insert_comment', data);
+}
+// THE CLOSED COMMENT TEXT, in ONE place so the schema advertises what it can, the precondition refuses, the
+// handler dispatches and the bridge re-decides the SAME rule (its twin sits beside `insertComment` in
+// src/plugin/bridge.js, because the two modules cannot import each other and both read the SAME `LIMITS`
+// table). The three clauses, in this order, are the whole request:
+//   * a NON-EMPTY string — an empty comment is nothing `AddComment` was measured to create (the measurement
+//     passed the text `КОММЕНТАРИЙ-ИЗМЕРЕНИЕ`, and a comment with no text has no `GetText()` to match);
+//   * inside its own BYTE bound (`LIMITS.insertCommentTextBytes`, the same measure the schema applies, so the
+//     two cannot disagree about which text is over the bound);
+//   * NO CONTROL CHARACTER except TAB, LF and CR. This leg has NO export needle and NO count arithmetic to
+//     protect: the rule is stated for the reason the measured proof gives it — the stored comment is compared
+//     against the requested text through the comment's OWN `GetText()`, character for character, so a
+//     character the editor would normalise or drop (a C0 control other than the three whitespace ones, or
+//     DEL) could be written and then never matched. TAB, LF and CR are explicitly SERVED because a multi-line
+//     comment is ordinary document text and the measured readback returns those three verbatim; refusing them
+//     would refuse a legitimate comment rather than protect a proof.
+function insertCommentText(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.insertCommentTextBytes) return null;
+  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) ? null : value;
+}
+// THE RESOLVED REQUEST, in ONE place: a call this tool serves resolves to the exact text that is dispatched
+// and its own UTF-8 byte length, measured ONCE on the value that crosses. The handler publishes that same
+// length, so the result can never describe a different string than the one `AddComment` was handed.
+function commentRequest(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const text = insertCommentText(value.text);
+  if (text === null) return null;
+  return Object.freeze({ text, bytes: utf8ByteLength(text) });
 }
 
 export function createWordTools(bridge) {
@@ -2760,6 +2815,143 @@ export function createWordTools(bridge) {
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the six
         // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
         const entry = insertImageEntryBytes(published);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(published);
+      }
+    }),
+    // --- THE EIGHTH MUTATION OF SPRINT 3: `insert_comment`, the THIRTEENTH Word tool, the LAST tool of the
+    // Sprint 3 catalogue, and the FIRST leg whose proof is the COMMENT COLLECTION's own identity ------------
+    //
+    // THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942, in the native session
+    // that produced this round's brief):
+    //   * `doc.AddComment('КОММЕНТАРИЙ-ИЗМЕРЕНИЕ')` returned an OBJECT and `doc.GetAllComments()` went
+    //     0 -> 1 — the ONE write route this leg takes;
+    //   * the created comment answers `GetClassType() === 'comment'` (a MEASUREMENT of what the factory
+    //     answers, not a read this leg needs: the identity of the added comment rests on its own `GetId()` and
+    //     its own `GetText()`, so no class read is authored anywhere on this leg), `GetText()` = the EXACT text
+    //     that was passed, and `GetId()` = a numeric-looking string, and `doc.GetCommentById(id)` answers the
+    //     same text — so a comment is identified by its OWN id and proven by its OWN text readback;
+    //   * the document's comment surface is `AddComment`, `GetAllComments`, `GetCommentById`,
+    //     `GetCommentsReport`, and a comment's own readable members include `GetText`/`SetText`,
+    //     `GetAuthorName`/`SetAuthorName`, `GetUserId`, `GetTimeUTC`/`GetTime`, `GetQuoteText` — the author
+    //     reader is `GetAuthorName`, NOT `GetAuthor`, which is why this leg calls NEITHER;
+    //   * `ToMarkdown(...)` does NOT contain the comment text: the export length was unchanged and the text was
+    //     absent. THIS LEG THEREFORE BUILDS NO EXPORT PROOF AT ALL — the opposite of `insert_image`, whose
+    //     whole proof is a needle in that same export — and it reads no export, no HTML and no file export;
+    //   * `Api.CreateComment` does NOT exist on this build (undefined), so the document's own `AddComment` is
+    //     the only measured route and the nonexistent factory is authored nowhere;
+    //   * NO TARGETED FORM WAS MEASURED. `AddComment` took the text ALONE and the comment was created at
+    //     document/selection level. THIS TOOL THEREFORE HAS NO TARGET ARGUMENT IN v1 — no `paragraph`, no
+    //     `index`, no range — and its schema refuses every unknown key rather than accepting a target it would
+    //     silently ignore. That is a LIMITATION OF THE MEASURED ROUTE, stated here and in the docs so a later
+    //     round does not mistake it for an oversight.
+    //
+    // THE OUTCOME PROOF, per object and without any export:
+    //   1. the comment COUNT is read from the document BEFORE the one write and again after it, and it must
+    //      have grown by EXACTLY one;
+    //   2. the added comment is IDENTIFIED — by the id the object `AddComment` returned where that id is
+    //      usable, and otherwise by the DIFFERENCE of the two id sets read through `GetAllComments()`, or, when
+    //      the pre set was empty, by the single post comment;
+    //   3. THAT comment's own `GetText()` must equal the requested text EXACTLY, and its own character count is
+    //      what the result publishes.
+    // EVERY member the body calls is function-checked first, and the split is the phase protocol: a missing or
+    // throwing PRE member (`GetAllComments`, `AddComment`) is the closed `CAPABILITY_UNAVAILABLE` with ZERO
+    // writes, while an absent or throwing POST member is the UNCERTAIN class with the slot HELD — a comment
+    // does not exist before the write, so nothing about it can ever be a pre-write refusal.
+    // THE FAILURE MAP, each class closed: wrong editor / missing bridge entry point / missing `GetAllComments`
+    // or `AddComment` / a pre-write collection that is unreadable or empty-shaped → `CAPABILITY_UNAVAILABLE`
+    // with ZERO writes; an empty, over-bound or control-character text → the closed argument class with ZERO
+    // writes, decided BEFORE the mutation (by the schema, the precondition, the handler and the body alike); a
+    // bridge refusal → `refusalCode`; an uninterpretable envelope → `known()`; `APPLY_UNCERTAIN` or any
+    // non-exact proof (a count that did not grow by one, an unidentifiable comment, a `GetText()` that disagrees,
+    // a null id) → `TOOL_UNCERTAIN` with the slot HELD and NO retry; an over-ceiling result entry → `BYTE_LIMIT`.
+    defineTool({
+      name: 'insert_comment', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['text'],
+        properties: {
+          // THE ONE AND ONLY ARGUMENT. The schema expresses the two rules it can — non-empty and inside the
+          // byte bound — and the third, the control-character rule, is re-decided by `insertCommentText` in the
+          // precondition, the handler and the bridge body, because the schema's closed keyword set has no way
+          // to say "no C0 except TAB, LF and CR".
+          text: { type: 'string', minBytes: 1, maxBytes: LIMITS.insertCommentTextBytes }
+        } },
+      precondition: (args, ctx) => {
+        if (ctx?.editor !== 'word') return { code: ERROR_CODES.CAPABILITY_UNAVAILABLE, message: REFUSAL };
+        // The closed request is re-checked HERE and not only by the schema, because a descriptor is also
+        // executable when it is held directly and nothing this mutation cannot interpret may reach the bridge.
+        return commentRequest(args) === null ? { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL } : null;
+      },
+      execute: async (args, ctx) => {
+        // The editor is re-checked HERE as well as in the precondition, for the reason the seven mutations
+        // before this one state: a descriptor is also executable when it is held directly, and a Word mutation
+        // offered to a spreadsheet must never reach the bridge.
+        if (ctx?.editor !== 'word') return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (missingBridgeMethod(bridge, 'insertComment')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The closed request is resolved ONCE and carried to the bridge, so the text the editor stores and the
+        // byte length this handler later judges the answer against cannot be two different values. The
+        // dispatched scope carries the TEXT ALONE — plus the caller's own signal — because this leg has no
+        // target, no form and no caller-composed bound: the only other value the body reads is its own
+        // `maxBytes`, applied by the tool and re-decided by the body from the module's own table.
+        const request = commentRequest(args);
+        if (request === null) return known();
+        const dispatched = { text: request.text, ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let result;
+        try { result = await bridge.insertComment(dispatched); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops the
+          // run. Every other bridge throw is a closed local failure, and only this leg's own refusal
+          // vocabulary is republished (`commentRefusalCode`).
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(commentRefusalCode(error?.code));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing it)
+        // when the ticket has already been created, so the class is classified here — before `commentRefusalCode`
+        // can treat it as an ordinary known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(commentRefusalCode(result.code));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own. The order of
+        // these checks is the CONTRACT and not a style choice: everything a real run of this bridge cannot
+        // produce is the module's unknown class (`known()`, the closed tool-error class), while the shapes it
+        // CAN produce and yet not stand behind are the runtime's own `TOOL_UNCERTAIN`.
+        if (!measuredCount(result.commentsBefore) || !measuredCount(result.commentsAfter)) return known();
+        // THE ID IS READ BACK FROM A DOCUMENT AND MAY HONESTLY BE ABSENT: `null` is the body's own report that
+        // nothing could identify the added comment, and it is published as the absent value it is. The KEY
+        // ITSELF, however, must be there — an envelope without this slot is a shape this bridge cannot have
+        // published, while an envelope that carries it as `null` is a truthful statement this handler turns
+        // into the uncertain class below.
+        if (!Object.hasOwn(result, 'id')) return known();
+        const identified = result.id === null || result.id === undefined ? null : result.id;
+        if (identified !== null && typeof identified !== 'string') return known();
+        // THE TWO LENGTHS ARE THE BODY'S OWN MEASUREMENT of the comment it identified: `chars` is that
+        // comment's own `GetText()` length and `bytes` is the length of the text this call dispatched. A
+        // missing or non-integer one is a shape this bridge cannot have produced.
+        if (!measuredCount(result.chars) || !measuredCount(result.bytes)) return known();
+        // THE EXPECTATION IS RE-DERIVED HERE FROM THE REQUEST, exactly as the bridge's own outcome rule does,
+        // so an `ok` envelope whose own counts contradict this call is never republished as its proof.
+        //   * THE COUNT GREW BY EXACTLY ONE: anything else is a document this call cannot explain, and the
+        //     write has already run — the uncertain class, with the slot HELD on the bridge side.
+        //   * THE IDENTIFIED COMMENT'S OWN TEXT IS THE REQUEST'S OWN: `chars` must be the dispatched text's own
+        //     character count AND `bytes` its own UTF-8 byte length, both re-derived from the value this
+        //     handler resolved, so a comment carrying anything else is refuted HERE as well as in the body.
+        //   * THE IDENTIFICATION MUST HAVE HAPPENED: a `null` id means the body could not name the comment it
+        //     measured, and an unnamed proof is not a proof.
+        if (result.commentsAfter !== result.commentsBefore + 1) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.chars !== request.text.length || result.bytes !== request.bytes) {
+          return known(ERROR_CODES.TOOL_UNCERTAIN);
+        }
+        if (identified === null) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE PUBLISHED SHAPE echoes the resolved request's own measurement and reports ONLY what was proven:
+        // the two counts the delta was decided on, the identified comment's own id, and the two lengths. THE
+        // COMMENT TEXT IS NOT REPUBLISHED — it is the caller's own argument, and the entry stays a proof rather
+        // than a second copy of the payload.
+        const published = Object.freeze({ commentsBefore: result.commentsBefore, commentsAfter: result.commentsAfter,
+          id: identified, chars: result.chars, bytes: result.bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the seven
+        // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
+        const entry = insertCommentEntryBytes(published);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(published);
       }

@@ -3252,3 +3252,101 @@ the image` asserts the exact argument list of BOTH reads (the pre-write baseline
 proof (`GetAllImages` +1 AND `GetAllDrawingObjects` +1 AND the request's own paragraph delta AND the exact data
 URL needle present exactly once after and absent before), the phase protocol, the closed failure classes, the
 zero-write pre-insert refusals, the export size bound and the result bound are all as they were.
+
+## 20. `insert_comment` — the THIRTEENTH Word tool, the EIGHTH MUTATION of Sprint 3, the LAST tool of the Sprint 3 catalogue, and the FIRST proof built from the COMMENT COLLECTION's own identity
+
+`insert_comment` (`src/tools/word.js`, `insertComment` in `src/plugin/bridge.js`) creates one comment in the
+document from the model's own text and proves the outcome PER OBJECT: the document's own comment count grew by
+exactly one AND the comment this call added was IDENTIFIED and its own `GetText()` equals the requested text.
+
+**The measured facts, on the target (Astra / R7 2026.1.2.1942), inside a `callCommand` body.**
+
+* `doc.AddComment('КОММЕНТАРИЙ-ИЗМЕРЕНИЕ')` answered an **object** and `doc.GetAllComments()` went **0 → 1**.
+  That is the ONE write route this leg takes.
+* The created comment answers `GetClassType() === 'comment'`, `GetText()` = the **EXACT** text that was passed,
+  and `GetId()` = a numeric-looking string; `doc.GetCommentById(id)` answers the same text.
+* The document's comment surface is `AddComment`, `GetAllComments`, `GetCommentById`, `GetCommentsReport`, and a
+  comment's own readable members include `GetText`/`SetText`, `GetAuthorName`/`SetAuthorName`, `GetUserId`,
+  `GetTimeUTC`/`GetTime`, `GetQuoteText`. **The author reader is `GetAuthorName`, NOT `GetAuthor`** — and this
+  leg calls neither, because no author is part of its proof.
+* **`ToMarkdown(...)` does NOT contain the comment text**: the export length was unchanged and the text was
+  absent. **THIS LEG THEREFORE READS NO EXPORT AT ALL** — the exact opposite of `insert_image`, whose whole proof
+  is a needle in that same export — so `ToMarkdown`, `ToHtml` and `GetFileHTML` are authored nowhere on it.
+* **`Api.CreateComment` does not exist on this build (measured `undefined`)**, which is why the document's own
+  `AddComment` is the only measured route and the nonexistent factory is authored nowhere.
+* **NO TARGETED FORM WAS MEASURED.** `AddComment` took the **text alone** and the comment was created at
+  document/selection level. **This tool therefore has NO target argument in v1** — no `paragraph`, no index, no
+  range — and its schema refuses every unknown key rather than accepting a target it would silently ignore.
+  **This is a limitation of the measured route**, stated here so a later round does not mistake it for an
+  oversight: a targeted comment needs its own measurement round before an address can be advertised.
+
+**The schema** is closed (`additionalProperties: false`) and requires exactly ONE argument, `text`: a non-empty
+string bounded in BYTES by `LIMITS.insertCommentTextBytes` (**2048** — this module's established text-PAYLOAD
+scale, a quarter of `AGENT_CEILINGS.argumentsBytes` (8192), the ceiling the runtime applies to one action's
+arguments, so a comment inside it cannot push a legal one-action call past that ceiling) and free of every control
+character **except TAB, LF and CR**. The three whitespace control characters are SERVED deliberately: a
+multi-line comment is ordinary document text and the measured `GetText()` returns them verbatim, so refusing them
+would refuse a legitimate comment rather than protect a proof. Every other C0 control and DEL is the closed
+argument class with ZERO writes. The comment's own id is **not** a model argument: it is read back out of the
+document and published, so its width is a defensive entry bound (`LIMITS.insertCommentIdChars`, **128**).
+
+**The outcome proof, per object and without any export.**
+
+1. The comment **count** is read from the document BEFORE the one write (`GetAllComments()`) and AGAIN after it,
+   from a **FRESH** collection — never the pre-write array, so a document that caches its collection cannot hide
+   the new comment. It must have grown by **exactly one**.
+2. The **added comment is identified**: by the id the object `AddComment` returned where that id is usable (a
+   non-empty string inside the id bound and **not already present in the pre-write id set** — an id the document
+   already held cannot name a comment THIS call added), and otherwise by the **DIFFERENCE of the two id sets**
+   read through `GetAllComments()`, or, when the pre set was empty, by the single post comment.
+3. **THAT comment's own `GetText()` must equal the requested text exactly**, and its own character count is what
+   the result publishes beside the request's own byte count. The text is read from the SAME comment the
+   identification selected, so the id and the text leg can never describe two different objects.
+
+**The failure map**, each class closed and split by the phase protocol. A function check is made on every member
+the body calls, and the split is at the ONE `AddComment`: a missing or throwing **PRE** member (`GetAllComments`,
+`AddComment`) is the closed `CAPABILITY_UNAVAILABLE` with ZERO writes and the slot RELEASED, while an absent or
+throwing **POST** member is the UNCERTAIN class with the slot HELD — a comment does not exist before the write,
+so nothing about it can ever be a pre-write refusal. Wrong editor / missing bridge entry point →
+`CAPABILITY_UNAVAILABLE`; an empty, over-bound or control-character text → the closed argument class with ZERO
+writes, decided BEFORE the mutation (by the schema, the precondition, the handler and the body alike); a bridge
+refusal → the leg's own closed vocabulary (`commentRefusalCode`, so a foreign or read-shaped code such as
+`INVALID_DATA` is republished as the module's own tool-error class); an uninterpretable envelope → `known()`; a
+count that did not grow by exactly one, an unidentifiable comment, a null id, or a `GetText()` that disagrees →
+`TOOL_UNCERTAIN` with the slot HELD and NO retry; an over-ceiling result entry → `BYTE_LIMIT`. **There is no
+byte-gated pre-write refusal on this leg** (no export is read), so `preInsertRefusal` keeps no `BYTE_LIMIT`
+carve-out for it: a phase-marked `BYTE_LIMIT` here can only be a forged or damaged answer about a dispatch that
+wrote.
+
+**Result bound.** `ok({ commentsBefore, commentsAfter, id, chars, bytes })`, measured through
+`insertCommentEntryBytes` → `toolResultEntryBytes('insert_comment', …)`, so the ENFORCED bound is the actual
+serialized tool-result entry against `AGENT_CEILINGS.toolResultBytes`. The comment text is **never republished**:
+it is the caller's own argument, and the entry carries the proof (the two counts, the identified id, and the two
+lengths) rather than a second copy of the payload.
+
+**RED.** The tests were written FIRST and run against the untouched tree: the focused set reported **16
+failures** — the three descriptor/catalogue lists (a 16th descriptor, `insert_comment`) and all **13** new
+`insert_comment` tests, every one failing on the missing descriptor or the missing bridge entry point
+(`r.bridge.insertComment is not a function`, `Cannot read properties of undefined`). **GREEN.** Focused set
+`tests/unit/tools-word.test.js` → **316/316**, `fail 0`.
+
+**Verification (this round, final tree).** Focused set
+`node --test tests/unit/tools-word.test.js tests/integration/package.test.js` → **321 tests, pass 321, fail 0,
+cancelled 0, skipped 0** (316 + 5). Full suite `node --test` → **948 tests, pass 948, fail 0, cancelled 0,
+skipped 0, todo 0** (**934 → 948**, never shrunk); `node scripts/static-audit.mjs` → **`Authored-code audit
+PASS`**, exit 0; `node scripts/build-plugin.mjs` → exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE
+SHA-256 16280cb5194c44b771bc0e041aed8438acd3fee3c4c39ed3bc9c6cccad5b23e2`**. The package classifier counts
+**TWELVE** inline legs, and the comment branch is placed FIRST on purpose: this body authors NONE of the
+primitives every later branch recognises, so without its own branch it would have been blessed as the read-only
+CAPABILITY probe. `src/agent/*` is untouched and no dynamic execution was added to `src/`.
+
+**What only a native run can settle.** (1) That the object `AddComment` really answers on the target carries the
+id of the comment it created — the brief's measurement is the evidence, and a build whose return is unusable
+falls back to the id-set route, which the unit double pins separately. (2) That `GetAllComments()` really answers
+**fresh** wrappers whose `GetText()` reflects the post-write state (the body deliberately re-reads it; a stale
+collection can only cost a false `TOOL_UNCERTAIN`, never a false `ok`). (3) That `AddComment` really takes the
+text ALONE and creates at document/selection level — the reason this tool has no v1 target. (4) That the
+`Asc.scope` parameter carriage delivers `{ text, maxBytes, idMax }` to an editor that has `callCommand` — the same
+carriage every command leg of this sprint already uses. (5) That a comment's `GetId()` is stable across the two
+collection reads (an id that changed between them would make the id-set route report `null` and settle
+uncertain).

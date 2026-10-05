@@ -64,7 +64,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_image', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
+  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_comment', 'insert_image', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.equal(tools.find(tool => tool.name === 'add_hyperlink').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_text').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_text').kind, 'mutate');
@@ -106,7 +106,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading'],
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_comment', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -324,7 +324,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_comment', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -10538,3 +10538,702 @@ test('the image body is self-contained: it answers the measured shapes in a fres
   assert.equal((await pending).appended, true);
 });
 
+
+// --- Sprint 3, tool 13: `insert_comment` — the EIGHTH MUTATION of Sprint 3, the THIRTEENTH Word tool, and
+// the FIRST leg whose proof is the COMMENT COLLECTION's own identity rather than a count, a needle or an
+// occurrence arithmetic ---------------------------------------------------------------------------------------
+//
+// THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942, in the native session
+// that produced this round's brief):
+//   * `doc.AddComment('КОММЕНТАРИЙ-ИЗМЕРЕНИЕ')` answered an OBJECT and `doc.GetAllComments()` went 0 -> 1;
+//   * the created comment answers `GetClassType() === 'comment'`, `GetText()` = the EXACT text that was
+//     passed, and `GetId()` = a numeric-looking string; `doc.GetCommentById(id)` answers the same text;
+//   * the document's comment surface is `AddComment`, `GetAllComments`, `GetCommentById`, `GetCommentsReport`;
+//     a comment's OWN readable members include `GetText`/`SetText`, `GetAuthorName`/`SetAuthorName`,
+//     `GetUserId`, `GetTimeUTC`/`GetTime`, `GetQuoteText` — the author reader is `GetAuthorName`, NOT
+//     `GetAuthor`;
+//   * `ToMarkdown(...)` does NOT contain the comment text — the export length was unchanged and the text was
+//     absent — so this leg builds NO export proof at all (the opposite of `insert_image`);
+//   * `Api.CreateComment` does NOT exist on this build (undefined), which is why the ONE measured route is
+//     the DOCUMENT's own `AddComment`;
+//   * NO TARGETED FORM WAS MEASURED: `AddComment` took only the text and the comment was created at
+//     document/selection level, so this tool has NO target argument in v1 — the limitation is stated in the
+//     descriptor's own comment and in `docs/sprint-3-progress.md` rather than hidden behind an optional key.
+// THE PROOF IS THEREFORE PER OBJECT, and it is the only honest one this build offers: the comment COUNT is
+// read before and after, and the ADDED comment is IDENTIFIED — by the id the object `AddComment` returned
+// where that is usable, and otherwise by the DIFFERENCE of the two id sets — and THAT comment's own
+// `GetText()` must equal the requested text exactly. Every member the body calls is function-checked first;
+// a missing or throwing PRE member is the closed capability class with ZERO writes, while an absent or
+// throwing POST member is the uncertain class with the slot HELD, because a comment does not exist before
+// the write and can never be a pre-write refusal.
+
+const COMMENT_TEXT = 'КОММЕНТАРИЙ-ИЗМЕРЕНИЕ';
+// The scope the bridge really composes: the request text and the module's own byte bound, nothing else.
+function commentScope(overrides = {}) { return { text: COMMENT_TEXT, maxBytes: LIMITS.insertCommentTextBytes, idMax: LIMITS.insertCommentIdChars, ...overrides }; }
+function insertCommentTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'insert_comment'); }
+function insertCommentBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, insertComment: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+// The envelope the REAL bridge publishes for a verified insert.
+function commentProof(overrides = {}) {
+  const text = overrides.text ?? COMMENT_TEXT;
+  const proof = { ok: true, commentsBefore: overrides.commentsBefore ?? 0, commentsAfter: overrides.commentsAfter ?? 1,
+    id: overrides.id === undefined ? '101' : overrides.id,
+    chars: overrides.chars ?? text.length, bytes: overrides.bytes ?? utf8ByteLength(text) };
+  // A NAMED OVERRIDE MAY DELETE A FIELD, which is how the malformed-envelope cases are built: assigning
+  // `undefined` would be read back by the `??` defaults above and silently repaired.
+  for (const key of overrides.absent ?? []) delete proof[key];
+  return proof;
+}
+// The tool-result entry the handler publishes, in the shape the runtime serializes.
+function insertCommentEntry(data) { return JSON.stringify({ tool: 'insert_comment', ok: true, data }); }
+// THE DOCUMENT DOUBLE, built only on the measured primitives. Every mutation is REAL state: `AddComment`
+// really appends a comment (and really requires a string), `GetAllComments` answers FRESH wrappers over that
+// state exactly as the measured editor does, and the write count is recorded so a test can pin the route
+// rather than only its effect.
+function commentDocument(options = {}) {
+  const state = { adds: 0, lists: 0 };
+  const comments = (options.comments ?? []).map(entry => ({ id: entry.id, text: entry.text }));
+  const nextId = options.nextId ?? 101;
+  function wrapperFor(comment) {
+    if (comment === null || comment === undefined) return null;
+    return {
+      GetId() {
+        if (options.idThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+        return comment.id;
+      },
+      GetText() {
+        if (options.textThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+        if (options.textAfterAdd !== undefined && state.adds > 0) return options.textAfterAdd;
+        return comment.text;
+      }
+    };
+  }
+  const document = {
+    GetAllComments() {
+      state.lists += 1;
+      if (options.listThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (options.listThrowsAfterAdd === true && state.adds > 0) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (options.listNull === true) return null;
+      // A STALE-LIST FAULT WOULD BE MODELLED HERE, and it is NOT: a body that kept the PRE-write array would
+      // read the old length after the write and settle uncertain, which is the fail-safe direction this leg
+      // already documents. What IS pinned instead is the ROUTE — the collection is really asked twice.
+      return comments.map(comment => wrapperFor(comment));
+    },
+    AddComment(text) {
+      if (options.addThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (typeof text !== 'string') throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      state.adds += 1;
+      // A document that stores something other than what it was handed: the id route still resolves and the
+      // TEXT leg is the one that must refuse.
+      const stored = options.storeText === undefined ? text : options.storeText;
+      const comment = { id: String(nextId), text: stored };
+      comments.push(comment);
+      // THE THREE MEASURED-RETURN SHAPES: the wrapper the target really answered (`self`), an object that is
+      // not a usable handle (`true`), and the `undefined` a missing return would leave (`null`).
+      if (options.addReturns === 'self') return wrapperFor(comment);
+      if (options.addReturns === true) return { kind: 'comment' };
+      return null;
+    },
+    GetCommentById(id) {
+      const found = comments.find(comment => comment.id === id);
+      return wrapperFor(found ?? null);
+    }
+  };
+  return { state, comments, document, get ids() { return comments.map(comment => comment.id); },
+    get commentsLength() { return comments.length; } };
+}
+// The IN-EDITOR rig, exactly the carriage `imageRig` reproduces: the vendor wrapper reads `Asc.scope`
+// SYNCHRONOUSLY and evaluates the body in a fresh, module-free scope whose only bindings are `Api` and
+// `scope`. `forge` replaces the answer the body really produced AFTER that body ran to completion — the one
+// real write included — which is the only way to model a hostile native answer for a dispatched write.
+function commentRig(options = {}) {
+  const commands = [];
+  const methods = [];
+  const measured = commentDocument(options);
+  const api = { GetDocument: () => measured.document };
+  const carrier = options.namespace ?? { scope: commentScope() };
+  const plugin = { info: { editorType: 'word' },
+    executeMethod: (...args) => { methods.push(args); return false; },
+    callCommand: options.command === false ? undefined : function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = carrier.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(options.forge === undefined ? answered : options.forge);
+      return false;
+    } };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  const bridge = bridgeWith(plugin, bridgeOptions);
+  return { bridge, plugin, commands, methods, namespace: carrier, api, doc: measured };
+}
+// AN IN-EDITOR RIG AROUND A RAW `Api` FACADE, for the cases whose document exposes only SOME of the measured
+// members: the same carriage as `commentRig`, with the facade supplied by the caller.
+function bareCommentRig(api, options = {}) {
+  const commands = [];
+  const carrier = options.namespace ?? { scope: commentScope() };
+  const plugin = { info: { editorType: 'word' }, executeMethod: () => false,
+    callCommand(body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, carrier.scope);
+      commands.push({ source, answered });
+      callback(answered);
+      return false;
+    } };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  return { bridge: bridgeWith(plugin, bridgeOptions), commands };
+}
+
+test('insert_comment advertises the closed schema: ONE required text, bounded in bytes and free of control characters', () => {
+  const tool = insertCommentTool(insertCommentBridge(commentProof()));
+  assert.equal(tool.name, 'insert_comment');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  // NO TARGET ARGUMENT EXISTS IN v1, and that is a MEASURED limitation rather than a design choice: the only
+  // measured form is `doc.AddComment(text)`, which creates the comment at document/selection level.
+  assert.deepEqual([...schema.required], ['text']);
+  assert.deepEqual(Object.keys(schema.properties), ['text']);
+  assert.equal(schema.properties.text.type, 'string');
+  assert.equal(schema.properties.text.minBytes, 1);
+  assert.equal(schema.properties.text.maxBytes, LIMITS.insertCommentTextBytes);
+  // THE BOUND IS ITS OWN CONSTANT AND IT IS ARITHMETIC: 2048 is this module's established text-PAYLOAD scale
+  // (`insertBlockBytes`/`addHyperlinkUrlBytes`/`replaceTextReplaceBytes`), a QUARTER of
+  // `AGENT_CEILINGS.argumentsBytes` (8192), so a comment inside it cannot push a legal one-action call past
+  // the runtime's own argument ceiling.
+  assert.equal(LIMITS.insertCommentTextBytes, 2048);
+  assert.ok(LIMITS.insertCommentTextBytes < AGENT_CEILINGS.argumentsBytes);
+  assert.notEqual(LIMITS.insertCommentTextBytes, AGENT_CEILINGS.argumentsBytes);
+  // THE COMMENT'S OWN ID IS NOT A MODEL ARGUMENT: it is read back and published, so its bound is a defensive
+  // entry-width bound rather than a request rule — and it is a constant of its own.
+  assert.equal(LIMITS.insertCommentIdChars, 128);
+  assert.notEqual(LIMITS.insertCommentIdChars, LIMITS.insertCommentTextBytes);
+  // EVERY LEGAL REQUEST SHAPE THE SCHEMA ADVERTISES.
+  assert.equal(validateArguments(schema, { text: COMMENT_TEXT }).text, COMMENT_TEXT);
+  assert.equal(validateArguments(schema, { text: 'я' }).text, 'я');
+  assert.equal(tool.precondition({ text: COMMENT_TEXT }, { editor: 'word' }), null);
+  assert.equal(tool.precondition({ text: COMMENT_TEXT }, { editor: 'cell' }).code, 'CAPABILITY_UNAVAILABLE');
+});
+
+test('insert_comment refuses every illegal argument with nothing dispatched', async () => {
+  // CYRILLIC IS TWO UTF-8 BYTES PER CHARACTER, so the CHARACTER count that sits exactly AT the byte bound is
+  // half of it — and this is the same measure the schema applies, not the string's `length`.
+  const atBound = 'А'.repeat(LIMITS.insertCommentTextBytes / 2);
+  const overBound = atBound + 'А';
+  assert.equal(utf8ByteLength(atBound), LIMITS.insertCommentTextBytes);
+  assert.ok(utf8ByteLength(overBound) > LIMITS.insertCommentTextBytes);
+  const legal = { text: COMMENT_TEXT };
+  const illegal = [
+    ['no argument object', null],
+    ['missing text', {}],
+    ['an unknown top-level key', { ...legal, target: 'выделение' }],
+    ['a paragraph target', { ...legal, paragraph: 0 }],
+    ['a null text', { text: null }],
+    ['a non-string text', { text: 7 }],
+    ['an empty text', { text: '' }],
+    // THE CONTROL-CHARACTER RULE, which this leg does NOT inherit from any export: the stored text is
+    // compared against `GetText()` exactly, so a character the editor would normalise could be written and
+    // never matched. TAB, LF AND CR ARE THE EXCEPTION, stated in the descriptor: a multi-line comment is
+    // ordinary document text and those three survive the round trip.
+    ['a C0 control character', { text: 'текст \u0001 комментария' }],
+    ['a NUL', { text: 'текст \u0000' }],
+    ['a vertical tab', { text: 'текст \u000b' }],
+    ['a form feed', { text: 'текст \u000c' }],
+    ['a DEL', { text: 'текст \u007f' }],
+    ['a text over the advertised bound', { text: overBound }]
+  ];
+  const bridge = insertCommentBridge(commentProof());
+  const tool = insertCommentTool(bridge);
+  for (const [label, args] of illegal) {
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', `schema: ${label}`); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+  }
+  assert.equal((await tool.execute(legal, { editor: 'cell' })).code, 'CAPABILITY_UNAVAILABLE',
+    'a Word mutation offered to another editor refuses before any dispatch');
+  assert.equal(bridge.seen.length, 0, 'NOTHING was dispatched for any refused argument');
+  // THE THREE WHITESPACE CONTROL CHARACTERS ARE SERVED, and the exact bound is legal: a comment may
+  // legitimately run over several lines. The answer the fake bridge gives must be the REAL measurement of the
+  // text it was handed — the handler re-derives both lengths from its own request, so a stub that answers a
+  // made-up length is a stub this leg is right to refuse.
+  const multiline = 'первая строка\nвторая строка\tс табуляцией\r\n';
+  const atBoundText = 'А'.repeat(LIMITS.insertCommentTextBytes / 2);
+  const carried = insertCommentBridge((args) => commentProof({ text: args.text }));
+  assert.equal((await insertCommentTool(carried).execute({ text: multiline }, { editor: 'word' })).ok, true);
+  assert.equal((await insertCommentTool(carried).execute({ text: atBoundText }, { editor: 'word' })).ok, true);
+  assert.equal(carried.seen.length, 2);
+});
+
+test('insert_comment publishes the count delta, the identified id and the measured text lengths', async () => {
+  const bridge = insertCommentBridge(commentProof());
+  const result = await insertCommentTool(bridge).execute({ text: COMMENT_TEXT }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { commentsBefore: 0, commentsAfter: 1, id: '101',
+    chars: COMMENT_TEXT.length, bytes: utf8ByteLength(COMMENT_TEXT) });
+  // THE PUBLISHED SHAPE REPUBLISHES NO TEXT: the comment's own text is the caller's request, and the entry
+  // carries the proof rather than a copy of the payload.
+  assert.equal(JSON.stringify(result).includes(COMMENT_TEXT), false,
+    'the caller\u2019s own comment text is not republished');
+  assert.equal(bridge.seen.length, 1);
+  assert.deepEqual(Object.keys(bridge.seen[0]), ['text'],
+    'and the dispatched scope is the closed request, with no caller-supplied key reaching the body');
+  // THE SIGNAL CROSSES AS DATA when the caller supplies one, exactly like every other leg.
+  const signalled = insertCommentBridge(commentProof());
+  const controller = new AbortController();
+  const carried = await insertCommentTool(signalled).execute({ text: COMMENT_TEXT },
+    { editor: 'word', signal: controller.signal });
+  assert.equal(carried.ok, true);
+  assert.deepEqual(Object.keys(signalled.seen[0]).sort(), ['signal', 'text']);
+  assert.equal(signalled.seen[0].signal, controller.signal);
+});
+
+test('insert_comment maps every refusal class it can receive, and never invents a proof', async () => {
+  const legal = { text: COMMENT_TEXT };
+  assert.equal((await insertCommentTool({}).execute(legal, { editor: 'word' })).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal((await createWordTools(undefined).find(entry => entry.name === 'insert_comment').execute(legal, { editor: 'word' })).code,
+    'CAPABILITY_UNAVAILABLE');
+  // A bridge RETURNING its own closed refusal keeps that class; an unrecognised code falls back to TOOL_ERROR.
+  for (const [code, expected] of [['CAPABILITY_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR', 'TOOL_ERROR'],
+    ['BYTE_LIMIT', 'BYTE_LIMIT'], ['INVALID_DATA', 'TOOL_ERROR'], ['НЕ-КЛАСС', 'TOOL_ERROR']]) {
+    const result = await insertCommentTool(insertCommentBridge({ ok: false, code })).execute(legal, { editor: 'word' });
+    assert.equal(result.code, expected, code);
+    assert.equal(result.data, undefined, code);
+  }
+  // A bridge THROWING a closed error is classified the same way, and the thrown message never crosses.
+  const thrown = new Error('СЕКРЕТ-ДОКУМЕНТА');
+  thrown.code = 'TOOL_ERROR';
+  const crashed = await insertCommentTool(insertCommentBridge(() => { throw thrown; })).execute(legal, { editor: 'word' });
+  assert.equal(crashed.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(crashed).includes('СЕКРЕТ-ДОКУМЕНТА'), false);
+  const raw = await insertCommentTool(insertCommentBridge(() => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); })).execute(legal, { editor: 'word' });
+  assert.equal(raw.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(raw).includes('СЕКРЕТ-ДОКУМЕНТА'), false);
+  // THE UNCERTAIN CLASS ARRIVES IN BOTH SHAPES: a thrown SafeError and a RETURNED envelope.
+  const returned = await insertCommentTool(insertCommentBridge({ ok: false, code: 'APPLY_UNCERTAIN' })).execute(legal, { editor: 'word' });
+  assert.equal(returned.code, 'TOOL_UNCERTAIN');
+  assert.equal(returned.data, undefined);
+  const uncertain = new Error('СЕКРЕТ-ДОКУМЕНТА');
+  uncertain.code = 'APPLY_UNCERTAIN';
+  const raised = await insertCommentTool(insertCommentBridge(() => { throw uncertain; })).execute(legal, { editor: 'word' });
+  assert.equal(raised.code, 'TOOL_UNCERTAIN');
+  assert.equal(JSON.stringify(raised).includes('СЕКРЕТ-ДОКУМЕНТА'), false);
+  // AN ENVELOPE THIS HANDLER CANNOT INTERPRET is the module's unknown class, never a success.
+  for (const [label, answer] of [
+    ['a non-object envelope', 'готово'],
+    ['a null envelope', null],
+    ['no ok flag', { commentsBefore: 0, commentsAfter: 1 }],
+    ['a boolean count', commentProof({ commentsBefore: true })],
+    ['a missing before count', commentProof({ absent: ['commentsBefore'] })],
+    ['a missing after count', commentProof({ absent: ['commentsAfter'] })],
+    ['a fractional count', commentProof({ commentsAfter: 1.5 })],
+    ['a missing id', commentProof({ absent: ['id'] })],
+    ['a non-string id', commentProof({ id: 7 })],
+    ['a missing chars', commentProof({ absent: ['chars'] })],
+    ['a non-integer chars', commentProof({ chars: 1.5 })],
+    ['a missing bytes', commentProof({ absent: ['bytes'] })],
+    ['a negative bytes', commentProof({ bytes: -1 })]
+  ]) {
+    const result = await insertCommentTool(insertCommentBridge(answer)).execute(legal, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_ERROR', label);
+  }
+  // A NULL ID IS NOT AN UNINTERPRETABLE ENVELOPE: it is the honest report of a body that could not identify
+  // the added comment, so it settles the uncertain class instead.
+  const unidentified = await insertCommentTool(insertCommentBridge(commentProof({ id: null }))).execute(legal, { editor: 'word' });
+  assert.equal(unidentified.code, 'TOOL_UNCERTAIN');
+});
+
+test('insert_comment holds the slot whenever the count or the identified comment\u2019s own text is not exact', async () => {
+  const legal = { text: COMMENT_TEXT };
+  for (const [label, proof] of [
+    ['a count that did not grow', commentProof({ commentsAfter: 0 })],
+    ['a count that grew by two', commentProof({ commentsAfter: 2 })],
+    ['a count that fell', commentProof({ commentsBefore: 1, commentsAfter: 0 })],
+    // THE TEXT LEG IS THE WHOLE PROOF: a comment created carrying something else can never be republished as
+    // this call's proof, whatever the count says. `chars` is the comment's OWN measured character count, so a
+    // shorter or longer one is a different text.
+    ['a comment whose text is short', commentProof({ chars: COMMENT_TEXT.length - 1 })],
+    ['a comment whose text is long', commentProof({ chars: COMMENT_TEXT.length + 1 })],
+    ['a comment carrying an entirely different text', commentProof({ chars: 3, bytes: 6 })],
+    ['a byte count that contradicts the request', commentProof({ bytes: utf8ByteLength(COMMENT_TEXT) + 2 })]
+  ]) {
+    const result = await insertCommentTool(insertCommentBridge(proof)).execute(legal, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  // AND THE BRIDGE'S OWN `APPLY_UNCERTAIN` IS THE SAME CLASS, dispatched exactly ONCE, with no retry.
+  const calls = [];
+  const counting = { insertComment: async (args) => { calls.push(args); return { ok: false, code: 'APPLY_UNCERTAIN' }; } };
+  const held = await insertCommentTool(counting).execute(legal, { editor: 'word' });
+  assert.equal(held.code, 'TOOL_UNCERTAIN');
+  assert.equal(calls.length, 1, 'exactly ONE dispatch, and no retry of a mutation whose effect is unknown');
+});
+
+test('insert_comment measures the exact entry it publishes, and its bounded fields cannot reach the ceiling', async () => {
+  const bridge = insertCommentBridge(commentProof());
+  const result = await insertCommentTool(bridge).execute({ text: COMMENT_TEXT }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  const entry = insertCommentEntry(result.data);
+  assert.ok(utf8ByteLength(entry) <= AGENT_CEILINGS.toolResultBytes,
+    'the measured entry fits the ceiling the runtime bounds every tool result by');
+  // THE WIDEST ENTRY THIS MODULE CAN PUBLISH, measured on the values the handler can really produce: the
+  // longest id the decoder admits (`insertCommentIdChars` CHARACTERS, each up to 4 UTF-8 bytes when
+  // `JSON.stringify` emits a lone surrogate's `\uXXXX` escape) and the four bounded numbers at their widest.
+  const widest = insertCommentEntry({ commentsBefore: Number.MAX_SAFE_INTEGER, commentsAfter: Number.MAX_SAFE_INTEGER,
+    id: '\ud800'.repeat(LIMITS.insertCommentIdChars), chars: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER });
+  assert.ok(utf8ByteLength(widest) <= AGENT_CEILINGS.toolResultBytes,
+    'and EVERY entry this handler can publish stays inside it');
+  // THE COMMENT TEXT ITSELF IS BOUNDED BY THE TOOL, and the two lengths this leg publishes are the identified
+  // comment's OWN measurement, re-derived by the handler from the request it dispatched.
+  assert.equal(result.data.bytes, utf8ByteLength(COMMENT_TEXT));
+  assert.equal(result.data.chars, COMMENT_TEXT.length);
+  // The entry is measured, never assumed: the same data measured twice is the same entry.
+  assert.equal(utf8ByteLength(insertCommentEntry({ ...result.data })), utf8ByteLength(entry));
+});
+
+test('insert_comment is offered by the catalogue and served from the loop in ONE verified command', async () => {
+  const r = commentRig();
+  const registry = createRegistry(createWordTools(r.bridge));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'insert_comment');
+  assert.ok(offered, 'the offered catalogue contains insert_comment');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.deepEqual([...offered.requires], ['document.write']);
+  assert.equal(offered.schema.properties.text.maxBytes, LIMITS.insertCommentTextBytes);
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' })
+    .some(entry => entry.name === 'insert_comment'), false, 'no write capability, no mutation tool');
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' })
+    .some(entry => entry.name === 'insert_comment'), false, 'ASK exposes no mutation tool');
+  // THE MODEL'S OWN CALL, through the registry's batch validation and ONE command dispatch.
+  const batch = validateBatch(catalogue, [{ tool: 'insert_comment', arguments: { text: COMMENT_TEXT } }]);
+  assert.equal(batch[0].descriptor.name, 'insert_comment');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"insert_comment","arguments":{"text":"' + COMMENT_TEXT +
+    '"}}]}', '{"type":"final","message":"комментарий добавлен"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '20202020-2020-4020-8020-202020202020', request: 'добавь комментарий',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_comment', 'ok']]);
+  // The model really RECEIVES the proof through the runtime's own per-result serialization.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'insert_comment');
+  assert.equal(published.data.commentsBefore, 0);
+  assert.equal(published.data.commentsAfter, 1);
+  assert.equal(published.data.id, '101');
+  assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
+  assert.equal(r.doc.state.adds, 1, 'and the measured AddComment really ran exactly once');
+  assert.equal(r.doc.commentsLength, 1);
+  assert.equal(r.doc.comments[0].text, COMMENT_TEXT, 'carrying the exact requested text');
+});
+
+test('bridge insertComment dispatches ONE command on the measured route and proves it per object', async () => {
+  const r = commentRig();
+  const result = await r.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(result.ok, true);
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole insert');
+  assert.equal(r.methods.length, 0, 'and the executeMethod route is never taken');
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 0, 1, '101', COMMENT_TEXT.length, utf8ByteLength(COMMENT_TEXT)],
+    'the answer is the flat array its own decoder expects');
+  assert.deepEqual(result, { ok: true, commentsBefore: 0, commentsAfter: 1, id: '101',
+    chars: COMMENT_TEXT.length, bytes: utf8ByteLength(COMMENT_TEXT) });
+  // THE MEASURED ROUTE, pinned on the body's own source as well as on its effect.
+  const code = withoutComments(r.commands[0].source);
+  assert.equal((code.match(/AddComment\s*\(/g) ?? []).length, 1, 'the ONE mutation is authored exactly once');
+  assert.equal((code.match(/GetAllComments\s*\(/g) ?? []).length, 2,
+    'and the collection is read exactly twice: once BEFORE the write and once after it');
+  assert.match(code, /GetText\(\)/, 'and the identified comment is read back through its own GetText');
+  assert.match(code, /GetId\(\)/, 'and identified through its own GetId');
+  assert.equal(/GetClassType|GetCommentById|GetCommentsReport/.test(code), false,
+    'the class read, the by-id read and the report are all authored nowhere: none of them is needed here');
+  assert.equal(/ToMarkdown|ToHtml|GetFileHTML/.test(code), false,
+    'NO EXPORT IS READ AT ALL: the measured export does not contain the comment text');
+  assert.equal(/CreateComment/.test(code), false,
+    'Api.CreateComment does not exist on this build and is authored nowhere');
+  assert.equal(/InsertContent|CreateParagraph|\.Push\(/.test(code), false,
+    'nothing is constructed or appended on this leg');
+  assert.equal(/executeMethod/.test(code), false, 'and the executeMethod route is authored nowhere');
+  // A COMMENT ALREADY IN THE DOCUMENT IS SERVED THE SAME WAY: the count delta is still exactly one and the
+  // added comment is still identified.
+  const loaded = commentRig({ comments: [{ id: '100', text: 'старый' }], nextId: 101 });
+  const appended = await loaded.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(appended.ok, true);
+  assert.deepEqual(appended, { ok: true, commentsBefore: 1, commentsAfter: 2, id: '101',
+    chars: COMMENT_TEXT.length, bytes: utf8ByteLength(COMMENT_TEXT) });
+  assert.deepEqual(loaded.doc.ids, ['100', '101']);
+});
+
+test('bridge insertComment identifies the added comment by the RETURNED id when it is usable, and by the id SET when it is not', async () => {
+  // THE PREFERRED ROUTE, and the two routes are made DISTINGUISHABLE here: the document stores the right
+  // text, while the object `AddComment` answered reports a DIFFERENT text through its own `GetText` — the
+  // shape a document whose returned wrapper is not the stored comment would have. A body that took the
+  // id-set route would read the document's real comment and claim a proof; a body that reads the comment the
+  // RETURNED id names sees the disagreement and settles uncertain. The returned id WINS.
+  const wrongText = commentRig({ comments: [{ id: '100', text: 'старый' }], nextId: 101, textAfterAdd: 'СОВСЕМ ДРУГОЙ ТЕКСТ' });
+  const result = await wrongText.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
+  assert.equal(wrongText.bridge.getState().busy, true, 'and the slot is HELD');
+  assert.equal(wrongText.doc.state.adds, 1, 'after exactly ONE real write');
+  // THE FALLBACK ROUTE, in the shape the contract names: `AddComment` answers something with NO usable id —
+  // the `undefined` a missing return leaves — so the added comment is the ONE post id the pre set did not
+  // hold, and THAT comment's own text is what gets measured.
+  const fallback = commentRig({ comments: [{ id: '100', text: 'старый' }], nextId: 101, addReturns: null });
+  const identified = await fallback.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(identified.ok, true);
+  assert.deepEqual(identified, { ok: true, commentsBefore: 1, commentsAfter: 2, id: '101',
+    chars: COMMENT_TEXT.length, bytes: utf8ByteLength(COMMENT_TEXT) },
+  'the id-set route names the ONE id the pre-write set did not hold, and THAT comment\u2019s own text is the proof');
+  // AND WHEN THE PRE SET WAS EMPTY, the ONE post comment is the new one — the same route, one branch simpler.
+  const empty = commentRig({ addReturns: null });
+  const first = await empty.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(first.ok, true);
+  assert.equal(first.id, '101');
+  assert.equal(first.commentsAfter, 1);
+  // A BUILD WHERE NO ID CAN BE READ AT ALL leaves the id-set route with nothing to difference, so the body
+  // reports `null` and the CALLER settles the uncertain class — the fail-safe direction, never a guessed id.
+  const allUnreadable = commentRig({ nextId: 202, addReturns: 'self', idThrows: true });
+  const noIds = await allUnreadable.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(noIds.code, 'APPLY_UNCERTAIN', 'a document whose ids are all unreadable proves no identity');
+  assert.equal(allUnreadable.bridge.getState().busy, true, 'and the slot is HELD');
+  assert.equal(allUnreadable.doc.state.adds, 1, 'after exactly ONE real write');
+  // THE HONEST `null` IS THE BODY'S OWN REPORT WHEN NOTHING CAN IDENTIFY THE COMMENT AT ALL: two ids that were
+  // not in the pre-write set (a document this single call cannot attribute) leave the body with no usable
+  // handle, so the id slot carries `null` and the CALLER settles the uncertain class.
+  const ambiguous = commentRig({ comments: [{ id: '100', text: 'старый' }, { id: '777', text: 'чужой' }],
+    nextId: 101, addReturns: null, idThrows: false });
+  const ambiguousDocument = ambiguous.api.GetDocument();
+  const originalAdd = ambiguousDocument.AddComment;
+  ambiguousDocument.AddComment = function (text) {
+    const created = originalAdd.call(this, text);
+    // A second comment appears during the same write, which is exactly the ambiguity the id-set route cannot
+    // resolve: the ONE call's own addition is no longer the only new id.
+    ambiguous.doc.comments.push({ id: '999', text: 'появился сам' });
+    return created;
+  };
+  const unidentified = await ambiguous.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(unidentified.code, 'APPLY_UNCERTAIN');
+  assert.equal(ambiguous.bridge.getState().busy, true, 'and the slot is HELD on an identification it could not make');
+  // THE ID-SET ROUTE IS A REAL MEASUREMENT: when the document's new comment carries the WRONG text, the
+  // fallback route refuses exactly as the returned-id route does.
+  const wrongFallback = commentRig({ comments: [{ id: '100', text: 'старый' }], nextId: 101, addReturns: null,
+    textAfterAdd: 'СОВСЕМ ДРУГОЙ ТЕКСТ' });
+  const refused = await wrongFallback.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(refused.code, 'APPLY_UNCERTAIN');
+  assert.equal(wrongFallback.bridge.getState().busy, true);
+  // A RETURNED ID THAT IS ALREADY IN THE PRE SET IS NOT USABLE — it cannot name the comment THIS call added —
+  // so the id-set route identifies the new one instead of trusting a colliding handle. The document double is
+  // rigged so the factory answers a handle carrying `'100'`, an id the document ALREADY had, while the comment
+  // the call really adds is `'101'`: a body that trusted the handle would measure the OLD comment.
+  const collided = commentRig({ comments: [{ id: '100', text: 'старый' }], nextId: 101, addReturns: 'self' });
+  const collidedDocument = collided.api.GetDocument();
+  const staleHandle = collidedDocument.GetAllComments();
+  const realAdd = collidedDocument.AddComment;
+  collidedDocument.AddComment = function (text) {
+    realAdd.call(this, text);
+    return staleHandle[0];
+  };
+  const collision = await collided.bridge.insertComment({ text: COMMENT_TEXT });
+  assert.equal(collision.ok, true);
+  assert.deepEqual(collided.doc.ids, ['100', '101']);
+  assert.equal(collision.id, '101', 'the colliding handle is ignored and the ONE new id is what was proven');
+  assert.equal(collision.commentsBefore, 1);
+  assert.equal(collision.commentsAfter, 2);
+  assert.equal(collision.chars, COMMENT_TEXT.length);
+});
+
+test('bridge insertComment settles the closed class BEFORE the write and the uncertain class AFTER it', async () => {
+  // EVERY PRE-WRITE MEMBER, one at a time, with ZERO writes and the slot RELEASED.
+  for (const [label, options] of [
+    ['GetAllComments throws', { listThrows: true }],
+    ['GetAllComments answers nothing', { listNull: true }],
+    ['AddComment throws', { addThrows: true }]
+  ]) {
+    const r = commentRig(options);
+    const result = await r.bridge.insertComment({ text: COMMENT_TEXT });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', label);
+    assert.equal(r.doc.state.adds, 0, `${label}: NOTHING was written`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: and the slot is released, because nothing was written`);
+    assert.equal(r.commands.length, 1, label);
+    assert.equal(r.commands[0].answered[0], 'PRE_INSERT', `${label}: answered before the phase turned`);
+  }
+  // A MEMBER A BUILD DOES NOT HAVE AT ALL is the same closed, pre-write class.
+  for (const [label, api] of [
+    ['no GetAllComments', { GetDocument: () => ({ AddComment() { return null; } }) }],
+    ['no AddComment', { GetDocument: () => ({ GetAllComments() { return []; } }) }],
+    ['no document at all', { GetDocument: () => null }]
+  ]) {
+    const r = bareCommentRig(api);
+    const result = await r.bridge.insertComment({ text: COMMENT_TEXT });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', label);
+    assert.equal(r.commands[0].answered[0], 'PRE_INSERT', `${label}: answered before the phase turned`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: and released`);
+  }
+  // EVERY POST-WRITE READ, one at a time, with the slot HELD and NO retry.
+  for (const [label, options] of [
+    ['GetId throws AFTER the write', { addReturns: 'self', idThrows: true }],
+    ['GetText throws AFTER the write', { textThrows: true }],
+    ['the post collection throws', { listThrowsAfterAdd: true }]
+  ]) {
+    const r = commentRig(options);
+    const result = await r.bridge.insertComment({ text: COMMENT_TEXT });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    assert.equal(r.doc.state.adds, 1, `${label}: the write really ran`);
+    assert.equal(r.bridge.getState().busy, true, `${label}: the slot is HELD and no retry is possible`);
+    assert.equal(r.commands[0].answered[0], 'POST_INSERT', `${label}: the answer carries the post-insert phase`);
+  }
+  // THE COLLECTION IS ASKED TWICE, NEVER REUSED ACROSS THE WRITE: the pre-write read is a baseline, not the
+  // evidence, and this is the route half of the object proof.
+  const twice = commentRig();
+  assert.equal((await twice.bridge.insertComment({ text: COMMENT_TEXT })).ok, true);
+  assert.equal(twice.doc.state.lists, 2);
+});
+
+test('bridge insertComment decodes ONLY the authored shapes and never publishes a malformed or mis-phased answer', async () => {
+  const authored = ['POST_INSERT', 0, 1, '101', COMMENT_TEXT.length, utf8ByteLength(COMMENT_TEXT)];
+  for (const [label, forge] of [
+    ['a phase-less answer', [COMMENT_TEXT]],
+    ['a one-slot name', ['CAPABILITY_UNAVAILABLE']],
+    ['a POST_INSERT refusal name', ['POST_INSERT', 'TOOL_ERROR']],
+    ['a pre-insert phase over an unknown name', ['PRE_INSERT', 'СЕКРЕТ-КЛАСС']],
+    ['a PRE_INSERT answer over a measurement', ['PRE_INSERT', ...authored.slice(1)]],
+    ['a three-slot answer', ['POST_INSERT', 0, 1]],
+    ['a short answer', ['POST_INSERT', 0, 1, '101']],
+    ['an answer with an extra slot', [...authored, 'лишний']],
+    ['a count that is not a whole number', ['POST_INSERT', 0, 1.5, ...authored.slice(3)]],
+    ['a count that is a string', ['POST_INSERT', '0', ...authored.slice(2)]],
+    ['a negative count', ['POST_INSERT', -1, ...authored.slice(2)]],
+    ['a non-string id', ['POST_INSERT', 0, 1, 101, ...authored.slice(4)]],
+    ['an empty id string', ['POST_INSERT', 0, 1, '', ...authored.slice(4)]],
+    ['an over-long id', ['POST_INSERT', 0, 1, '9'.repeat(LIMITS.insertCommentIdChars + 1), ...authored.slice(4)]],
+    ['a chars slot that is not a whole number', ['POST_INSERT', 0, 1, '101', 1.5, 3]],
+    ['a bytes slot that is negative', ['POST_INSERT', 0, 1, '101', 3, -1]],
+    ['a plain object', { ok: true }],
+    ['a forged answer that never grew', ['POST_INSERT', 0, 0, '101', COMMENT_TEXT.length, utf8ByteLength(COMMENT_TEXT)]],
+    ['a forged answer that grew twice', ['POST_INSERT', 0, 2, '101', COMMENT_TEXT.length, utf8ByteLength(COMMENT_TEXT)]]
+  ]) {
+    const r = commentRig({ forge });
+    const result = await r.bridge.insertComment({ text: COMMENT_TEXT });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    assert.equal(r.bridge.getState().busy, true, `${label}: the slot is HELD, never released on a dispatched write`);
+  }
+  // THE TWO-SLOT PRE-INSERT NAMES ARE DECODED AS THEIR OWN CLOSED CLASSES, with the slot RELEASED.
+  for (const [name, code] of [['CAPABILITY_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR', 'TOOL_ERROR']]) {
+    const r = commentRig({ forge: ['PRE_INSERT', name] });
+    const result = await r.bridge.insertComment({ text: COMMENT_TEXT });
+    assert.equal(result.code, code, name);
+    assert.equal(r.bridge.getState().busy, false, `${name}: a pre-write refusal releases the slot`);
+  }
+  // A REAL BODY'S OWN ANSWER IS NEVER UNPROVABLE, and the slot it releases is its own.
+  const verified = commentRig();
+  assert.equal((await verified.bridge.insertComment({ text: COMMENT_TEXT })).ok, true);
+  assert.equal(verified.bridge.getState().busy, false);
+});
+
+test('bridge insertComment refuses a request this module never measured, with NOTHING dispatched', async () => {
+  const overText = 'А'.repeat(LIMITS.insertCommentTextBytes / 2 + 1);
+  for (const [label, raw] of [
+    ['no request at all', undefined],
+    ['a null request', null],
+    ['a non-object request', 'текст'],
+    ['a missing text', {}],
+    ['a null text', { text: null }],
+    ['a non-string text', { text: 7 }],
+    ['an empty text', { text: '' }],
+    ['a text over the bound', { text: overText }],
+    ['a control character in the text', { text: 'текст\u0007' }]
+  ]) {
+    const r = commentRig();
+    const result = await r.bridge.insertComment(raw);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_ERROR', label);
+    assert.equal(r.commands.length, 0, `${label}: NOTHING was dispatched`);
+    assert.equal(r.bridge.getState().busy, false);
+  }
+  // A CALLER THAT GUESSED THE BODY'S OWN KEY CANNOT NARROW ANYTHING, and the extra key is IGNORED rather than
+  // honoured: the bound crosses as the MODULE's own value, so a request naming a byte budget the body never
+  // reads is served with the module's ceiling. The scope the BODY sees is composed by the bridge, not by the
+  // caller — the namespace is restored after the dispatch, so what a test can observe afterwards is the
+  // caller's own object, and the body's closed rule is proven directly below.
+  const guessed = commentRig();
+  const served = await guessed.bridge.insertComment({ text: COMMENT_TEXT, maxBytes: 1, idMax: 1, target: 'выделение' });
+  assert.equal(served.ok, true, 'the caller\u2019s invented keys neither narrow the bound nor reach the body');
+  assert.equal(served.bytes, utf8ByteLength(COMMENT_TEXT), 'the module\u2019s own ceiling served the text');
+  assert.equal(guessed.doc.comments.length, 1);
+  // THE BODY'S OWN SCOPE IS CLOSED, and that is where an unknown key is refused: the same stringified body the
+  // rig just carried is run against a scope carrying a key this module never composes, and it answers the
+  // closed argument class BEFORE the write — with ZERO writes, because the guard is the first thing it runs.
+  const fresh = commentRig();
+  const forgedAnswer = new Function('Api', 'scope', 'return (' + guessed.commands[0].source + ')();')(
+    fresh.api, { ...commentScope(), target: 'выделение' });
+  assert.deepEqual(forgedAnswer, ['PRE_INSERT', 'TOOL_ERROR']);
+  assert.equal(fresh.doc.state.adds, 0, 'NOTHING was written on the forged scope');
+  // THE EXACT BOUND IS LEGAL AT THE PUBLIC ENTRY POINT TOO.
+  const atBoundText = 'А'.repeat(LIMITS.insertCommentTextBytes / 2);
+  const atBound = commentRig({ namespace: { scope: commentScope({ text: atBoundText }) } });
+  assert.equal((await atBound.bridge.insertComment({ text: atBoundText })).ok, true);
+  // A BUILD WITHOUT THE COMMAND CHANNEL, OR WITHOUT THE PARAMETER CARRIER, refuses BEFORE any dispatch.
+  const noCarrier = commentRig({ omitCarrier: true });
+  assert.equal((await noCarrier.bridge.insertComment({ text: COMMENT_TEXT })).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(noCarrier.commands.length, 0);
+  const noCommand = commentRig({ command: false });
+  assert.equal((await noCommand.bridge.insertComment({ text: COMMENT_TEXT })).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(noCommand.commands.length, 0);
+});
+
+test('the comment body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  // The native never CALLS the function: it stringifies it and evaluates the text inside the editor, where
+  // none of this module's bindings exist. The answer the rig captured is therefore re-evaluated in a scope
+  // whose ONLY bindings are `Api` and `scope` — a forward to a module-scope name would die right here.
+  const r = commentRig();
+  const pending = r.bridge.insertComment({ text: COMMENT_TEXT });
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|decodeHeading|decodeRange|decodeHyperlink|decodeReplace|decodeImage|decodeComment|exactImageDelta|exactReplaceDelta|exactHyperlinkDelta|exactCommentDelta|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== ['"]undefined['"]/, 'and it builds the public Api facade itself');
+  const code = withoutComments(carried.source);
+  assert.equal((code.match(/AddComment\s*\(/g) ?? []).length, 1, 'the ONE mutation is authored exactly once');
+  assert.equal((code.match(/GetAllComments\s*\(/g) ?? []).length, 2, 'the collection is read once on each side');
+  assert.match(code, /GetText\(\)/, 'the identified comment is read back through its own GetText');
+  assert.match(code, /GetId\(\)/, 'and identified through its own GetId');
+  assert.match(code, /PRE_INSERT/, 'the refusal phase is an explicit slot the body builds');
+  assert.match(code, /POST_INSERT/, 'and so is the phase it turns at its one write');
+  assert.equal(/ToMarkdown|ToHtml/.test(code), false,
+    'no export is read: the measured export does not contain the comment text');
+  assert.equal(/CreateComment/.test(code), false, 'and the nonexistent factory is authored nowhere');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it.
+  const fresh = commentRig();
+  const evaluated = new Function('Api', 'scope', 'return (' + carried.source + ')();')(fresh.api, carried.scope);
+  assert.deepEqual(evaluated, ['POST_INSERT', 0, 1, '101', COMMENT_TEXT.length, utf8ByteLength(COMMENT_TEXT)],
+    'the request arrived as DATA and the count, the id and the lengths are the document\u2019s own');
+  assert.equal(fresh.doc.state.adds, 1, 'and the ONE AddComment is where the comment was created');
+  assert.equal(fresh.doc.commentsLength, 1);
+  assert.equal(fresh.doc.comments[0].text, COMMENT_TEXT);
+  assert.equal((await pending).id, '101');
+  // A REQUEST THE BODY CANNOT INTERPRET ANSWERS A PHASE-MARKED REFUSAL IN A MODULE-FREE SCOPE, not a crash.
+  const foreign = new Function('Api', 'scope', 'return (' + carried.source + ')();')(fresh.api, { text: 'текст\u0001' });
+  assert.deepEqual(foreign, ['PRE_INSERT', 'TOOL_ERROR']);
+});

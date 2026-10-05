@@ -34,8 +34,11 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // `paragraph.AddDrawing` of an `Api.CreateImage` into an EXISTING paragraph, or — for its OTHER form — ONE
 // `Api.CreateParagraph` plus the same `AddDrawing` plus ONE `document.Push` that lands the created paragraph
 // at the END of the document. It is therefore BOTH an in-place write and an append, exactly like the
-// hyperlink insert, and it is named here explicitly for that leg's reason.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert']));
+// hyperlink insert, and it is named here explicitly for that leg's reason. `commentinsert` is the comment
+// insert: it creates ONE comment through the DOCUMENT's own `AddComment`, which joins the document's comment
+// collection — an APPEND, but of a comment rather than of a block — and it is named here explicitly for the
+// same reason.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -2148,6 +2151,266 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return imageRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE COMMENT INSERT behind `insert_comment` — the EIGHTH MUTATION of Sprint 3, the THIRD write leg that
+      // APPENDS (a comment joins the document's own comment collection), and the FIRST whose proof is the
+      // COMMENT COLLECTION'S OWN IDENTITY rather than a count, a needle or an occurrence arithmetic. It has ONE
+      // form and NO target: `AddComment` was measured taking the TEXT ALONE, and the comment it created was
+      // created at document/selection level, so this body takes `{ text, maxBytes }` from the injected command
+      // scope — DATA, never composed into source (ADR 0002) — and nothing else.
+      //
+      // THE MEASURED ROUTE, all on the target (Astra / R7 2026.1.2.1942) INSIDE a `callCommand` body:
+      //   * `doc.AddComment(text)` answered an OBJECT and `doc.GetAllComments()` went 0 -> 1;
+      //   * the created comment answers `GetClassType() === 'comment'`, `GetText()` = the EXACT text passed,
+      //     and `GetId()` = a numeric-looking string, and `doc.GetCommentById(id)` answers the same text. The
+      //     class read and the by-id read are MEASUREMENTS OF THE SURFACE, not calls this body makes: the added
+      //     comment is identified by its own `GetId()` and proven by its own `GetText()`, both taken from the
+      //     collection the write really changed, so neither reader is authored here;
+      //   * the document's comment surface is `AddComment`, `GetAllComments`, `GetCommentById`,
+      //     `GetCommentsReport`; a comment's own readable members include `GetText`/`SetText`,
+      //     `GetAuthorName`/`SetAuthorName`, `GetUserId`, `GetTimeUTC`/`GetTime`, `GetQuoteText`. The author
+      //     reader is `GetAuthorName`, NOT `GetAuthor`, and this body calls NEITHER: no author was measured and
+      //     no id beyond the comment's own `GetId()` crosses.
+      //   * `ToMarkdown(...)` DOES NOT CONTAIN THE COMMENT TEXT — the export length was unchanged and the text
+      //     was absent — so THIS BODY READS NO EXPORT AT ALL. That is the leg's defining difference from the
+      //     image insert beside it, whose entire proof is a needle in that same export, and it is why this body
+      //     authors neither `ToMarkdown` nor `ToHtml` nor `GetFileHTML`.
+      //   * `Api.CreateComment` DOES NOT EXIST on this build (undefined), so the DOCUMENT's own `AddComment` is
+      //     the only measured route and the nonexistent factory is authored nowhere.
+      //
+      // THE OUTCOME PROOF, per object: the document's OWN comment count is read BEFORE the one write through
+      // `GetAllComments()`, and read AGAIN after it — a FRESH call, never the pre-write array, so a document
+      // that caches its collection cannot hide the new comment. The count must have grown by exactly ONE, and
+      // the ADDED comment is IDENTIFIED — by the id the object `AddComment` returned where that id is usable
+      // (a non-empty string inside the caller-composed `idMax`, and NOT already present in the pre-write id
+      // set, which would mean it cannot name the comment THIS call added), and otherwise by the DIFFERENCE of
+      // the two id sets, or, when the pre set was EMPTY, by the single post comment — and THAT comment's own
+      // `GetText()` must equal the requested text EXACTLY. Only the derived facts cross: the two counts, the
+      // identified id (or `null`), and the identified comment's own character count beside the request's own
+      // byte count. THE COMMENT TEXT ITSELF NEVER CROSSES BACK: it is the caller's own payload.
+      //
+      // THE PHASE SPLIT, and it is the whole of the failure classification. `PRE_INSERT` covers everything up
+      // to the call that can change the document, so a missing `GetAllComments`/`AddComment`, an unreadable or
+      // null pre-write collection, an unusable baseline and a request this body cannot interpret are all
+      // closed refusals with ZERO writes and the slot RELEASED. The phase turns at — and immediately BEFORE —
+      // the ONE `AddComment`: everything after it (a throwing or null post-write collection, an unreadable id
+      // or text, a count that did not grow by one, a text that disagrees) is the UNCERTAIN class with the slot
+      // HELD and no retry, because the write has already run and nothing observed afterwards proves it did not
+      // apply. THE REQUEST IS A CLOSED PRECONDITION, re-checked HERE rather than taken on trust: this is a
+      // PUBLIC ENTRY POINT, and a text the tool's own schema would have refused — empty, over-bound, or
+      // carrying a control character other than TAB, LF and CR — must not be writable by a caller that reached
+      // the bridge directly. The bound and the character rule are the SAME ones the descriptor advertises,
+      // spelled beside their twins in `src/tools/word.js` because the two modules cannot import each other.
+      comment(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
+          // bodies state: the alias analysis is NAME-based and scope-insensitive over the whole bundle, so an
+          // array literal built from identifier names could make the receiver of every later call on it a
+          // computed value.
+          function commentRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check reaches
+          // for NO global at all, so the stringified body depends on nothing but the two bindings the vendor
+          // wrapper creates.
+          function isCount(value) {
+            return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+          }
+          // THE COMMENT COLLECTION'S OWN LENGTH, taken through the measured `GetAllComments`. A missing
+          // primitive, a null answer and a throw are all the ABSENCE of a measurement (`null`), which the
+          // caller settles as a closed refusal BEFORE the write or as the uncertain class after it.
+          function commentsSize(list) {
+            if (list === null || list === undefined) return null;
+            var size = list.length;
+            return isCount(size) ? size : null;
+          }
+          // ONE comment's OWN id, read only where the measured primitive exists. An id this body cannot read
+          // is folded to `null` — the honest "not identified" value — rather than destroying the whole answer,
+          // so a single damaged wrapper degrades its own slot and the outcome rule then settles the ticket
+          // uncertain instead of turning a verifiable write into a phase-less uncertainty.
+          function commentIdAt(item, max) {
+            if (item === null || item === undefined || typeof item.GetId !== 'function') return null;
+            var read = null;
+            try { read = item.GetId(); } catch (error) { return null; }
+            if (typeof read !== 'string' || read.length === 0 || read.length > max) return null;
+            return read;
+          }
+          // ONE comment's OWN text, read through the measured `GetText`. A non-string answer and a throw are
+          // the same absence (`null`), which can never equal a requested string.
+          function commentTextAt(item) {
+            if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
+            try { var read = item.GetText(); return typeof read === 'string' ? read : null; }
+            catch (error) { return null; }
+          }
+          // THE IDS ONLY, for the pre-write pass: the baseline this body needs is the SET of ids the document
+          // already held, so that an id it already carried can never be used to name a comment THIS call adds.
+          function collectCommentIds(list, wanted) {
+            var ids = [];
+            for (var index = 0; index < list.length; index += 1) ids.push(commentIdAt(list[index], wanted.idMax));
+            return ids;
+          }
+          // THE POST-WRITE PASS, and the ONLY pass that reads text. `keep` is the id the write RETURNED, where
+          // that id is usable; this pass stops at it. With no usable returned id it looks for the ONE id the
+          // pre-write set did not hold, which is exactly the DIFFERENCE of the two id sets — and when the pre
+          // set was EMPTY that is the single post comment, the same rule one branch simpler. The result is
+          // `[id, chars]` for the identified comment, `['AMBIGUOUS', 0]` when the id-set route cannot single
+          // one out, or `null` when the identified comment's own text could not be read. `textAt` holds the
+          // matched text so the caller can compare it against the request.
+          function identifyComment(list, wanted, beforeIds, keep, textAt) {
+            var candidate = null;
+            var candidates = 0;
+            var kept = null;
+            for (var index = 0; index < list.length; index += 1) {
+              var id = commentIdAt(list[index], wanted.idMax);
+              if (keep !== null && id === keep) {
+                var keptText = commentTextAt(list[index]);
+                if (keptText === null) return null;
+                if (kept !== null) return null;
+                kept = [id, keptText.length];
+                textAt[0] = keptText;
+              }
+              if (id !== null && !inCommentIds(wanted, beforeIds, id)) {
+                candidates += 1;
+                if (candidate === null) {
+                  var candidateText = commentTextAt(list[index]);
+                  if (candidateText === null) return null;
+                  candidate = [id, candidateText.length];
+                  textAt[0] = candidateText;
+                }
+              }
+            }
+            // THE RETURNED ID WINS, and the scan above proves it names EXACTLY ONE comment: two candidates
+            // carrying it is a document this body cannot attribute, so it settles `null` (the caller's
+            // uncertainty) rather than trusting either handle.
+            if (keep !== null) return kept;
+            return candidates === 1 ? candidate : null;
+          }
+          function inCommentIds(wanted, list, id) {
+            for (var index = 0; index < list.length; index += 1) if (list[index] === id) return true;
+            return false;
+          }
+          // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The scope is the ONE thing that crosses, so
+          // a text this leg would never compose — an empty one, one outside the bound the caller composed, one
+          // carrying a control character other than TAB, LF and CR — is this body's own closed refusal, never a
+          // comment written on the strength of `undefined`. The three whitespace control characters are SERVED
+          // because a multi-line comment is ordinary document text and the measured readback returns them.
+          function measureCommentRequest(given) {
+            if (given === null || given === undefined || typeof given !== 'object') return null;
+            var text = given.text;
+            var idMax = given.idMax;
+            var max = given.maxBytes;
+            // THE SCOPE IS CLOSED: the three keys below are composed by the caller of this BODY and by nothing
+            // else, so a fourth key is a request this module never composes — a caller that reached the
+            // parameter channel directly and invented a bound or a target. It is refused rather than silently
+            // ignored, so a caller can never believe it widened or narrowed something. The count is taken over
+            // the OWN enumerable keys and every one of them is named, so neither an extra key nor a missing one
+            // can pass.
+            var keys = 0;
+            for (var key in given) {
+              if (Object.hasOwn(given, key)) keys += 1;
+              if (key !== 'text' && key !== 'maxBytes' && key !== 'idMax') return null;
+            }
+            if (keys !== 3) return null;
+            if (typeof text !== 'string' || text.length === 0) return null;
+            if (!(isCount(idMax) && idMax >= 1)) return null;
+            if (!(isCount(max) && max >= 1)) return null;
+            var bytes = 0;
+            for (var index = 0; index < text.length; index += 1) {
+              var code = text.charCodeAt(index);
+              if (code < 0x80) bytes += 1;
+              else if (code < 0x800) bytes += 2;
+              else if (code >= 0xd800 && code <= 0xdbff) {
+                var next = text.charCodeAt(index + 1);
+                if (isCount(next) && next >= 0xdc00 && next <= 0xdfff) { bytes += 4; index += 1; }
+                else bytes += 3;
+              } else bytes += 3;
+              // NO C0 CONTROL AND NO DEL except the three whitespace ones the measured readback preserves.
+              if (code < 0x20 && code !== 9 && code !== 10 && code !== 13) return null;
+              if (code === 0x7f) return null;
+            }
+            if (bytes > max) return null;
+            return [text, bytes, idMax];
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var measured = measureCommentRequest(request);
+            if (measured === null) return commentRefusal('TOOL_ERROR');
+            var wanted = { text: measured[0], textBytes: measured[1], idMax: measured[2] };
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return commentRefusal('CAPABILITY_UNAVAILABLE');
+            // THE PRIMITIVES ARE CHECKED BEFORE ANY WRITE: a build missing the collection read or the factory
+            // is a closed capability refusal with ZERO writes rather than a comment written into a document
+            // whose proof could never be read.
+            if (typeof document.GetAllComments !== 'function') return commentRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.AddComment !== 'function') return commentRefusal('CAPABILITY_UNAVAILABLE');
+            // THE PRE-DISPATCH BASELINE: the document's own comment count and the id of every comment it
+            // already holds. A collection the body cannot read as a list is a closed refusal with ZERO writes,
+            // because it is the baseline the whole delta is judged against.
+            var before = document.GetAllComments();
+            var countBefore = commentsSize(before);
+            if (countBefore === null) return commentRefusal('CAPABILITY_UNAVAILABLE');
+            var beforeIds = collectCommentIds(before, wanted);
+            // THE MUTATION. THIS BODY'S REFUSALS ARE MADE BY ITS OWN CODE, AND THAT IS A DELIBERATE
+            // RESTRICTION OF THE PHASE PROTOCOL: a synchronous THROW out of `AddComment` cannot have written
+            // anything — a native that threw never returned a created comment — so it is the honest closed
+            // CAPABILITY class with ZERO writes and a RELEASED slot, and the frozen `PRE_INSERT` phase is what
+            // says so. An ASYNCHRONOUS failure is not expressible here at all (this body is one synchronous
+            // function), so nothing that really wrote can take this arm, and the mutation has no post-return
+            // step that could fail. The property this buys is stated for a later reader: THE PHASE IS A
+            // STATEMENT ABOUT THIS BODY'S OWN CONTROL FLOW, not about a value that crossed the wire.
+            var created = null;
+            try { created = document.AddComment(wanted.text); }
+            catch (error) { return commentRefusal('CAPABILITY_UNAVAILABLE'); }
+            phase = 'POST_INSERT';
+            // THE POST READ, and NOTHING is taken from the pre-write snapshot: a FRESH `GetAllComments()` is
+            // asked for its own length and its own ids, and the identified comment's own text is read from
+            // that same fresh collection. A count that cannot be read is folded to the uncertain class
+            // IMMEDIATELY rather than invented as a zero: the write has already run, so "the total could not be
+            // read" and "the total is zero" must never be the same answer.
+            var after = document.GetAllComments();
+            var countAfter = commentsSize(after);
+            if (countAfter === null || after === null || after === undefined) return commentRefusal('CAPABILITY_UNAVAILABLE');
+            // THE RETURNED HANDLE, read behind `typeof` checks: a factory that answered nothing, a non-object,
+            // or an object with no usable `GetId` folds to `null` and the id-set route identifies the comment
+            // instead. A returned id the document ALREADY held is not usable either — it cannot name a comment
+            // THIS call added — so it falls through to the same id-set route.
+            var returnedId = null;
+            if (created !== null && created !== undefined && typeof created === 'object') {
+              var readId = commentIdAt(created, wanted.idMax);
+              if (readId !== null && !inCommentIds(wanted, beforeIds, readId)) returnedId = readId;
+            }
+            // THE IDENTIFICATION, in the ONE order the contract names, and BOTH facts come from the SAME
+            // comment: the returned id does not merely supply a name, it SELECTS the object whose own
+            // `GetText()` is then the text leg. The id-set route selects the one post id the pre set did not
+            // hold (or, for an empty pre set, the single post comment).
+            var textAt = [null];
+            var identified = identifyComment(after, wanted, beforeIds, returnedId, textAt);
+            // AN IDENTIFICATION THIS BODY COULD NOT MAKE IS ITS OWN ANSWER, not a zero and not an invented id:
+            // a `null` id is the honest "the added comment could not be identified" report, which the caller's
+            // outcome rule settles as the uncertain class with the slot HELD. The text slots stay at their
+            // absent values beside it.
+            var answer = [];
+            answer.push(phase);
+            answer.push(countBefore);
+            answer.push(countAfter);
+            if (identified === null) {
+              answer.push(null);
+              answer.push(0);
+              answer.push(wanted.textBytes);
+              return answer;
+            }
+            answer.push(identified[0]);
+            answer.push(identified[1]);
+            answer.push(wanted.textBytes);
+            return answer;
+          } catch (error) { return commentRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -2447,6 +2710,12 @@ function preInsertRefusal(error, kind) {
   // ARGUMENT class, a primitive or baseline the body cannot read is the capability class), and both are
   // decided before the phase turns, so they are known refusals.
   if (kind === 'rangeformat' || kind === 'imageinsert') return error.code === ERROR_CODES.BYTE_LIMIT;
+  // THE COMMENT INSERT HAS NO CARVE-OUT AT ALL, and that is a statement about its body rather than an
+  // omission: it reads NO export (the measured `ToMarkdown(...)` does not contain the comment text), so it has
+  // no byte-gated refusal to make — a phase-marked `BYTE_LIMIT` here can only be a forged or damaged native
+  // answer about a dispatch that wrote, exactly like the text replace above. Its two pre-write classes are the
+  // closed ARGUMENT class (a request the body cannot interpret) and the CAPABILITY class (a primitive or a
+  // baseline it could not read), both already returned by the two lines above.
   return false;
 }
 // The TABLE-INSERT answer, decoded with the same strictness as `decodeBlocks` and for the same reason: the
@@ -3098,6 +3367,17 @@ function requestedDataUrl(value) {
 function requestedDimension(value) {
   return Number.isSafeInteger(value) && value >= 1 && value <= LIMITS.insertImageDimensionPx ? value : null;
 }
+// THE CLOSED COMMENT TEXT at this public entry point, re-applied rather than taken on trust and spelled in the
+// same three clauses the descriptor applies (the twin is `insertCommentText` in `src/tools/word.js`): a
+// NON-EMPTY string, inside `LIMITS.insertCommentTextBytes`, and free of every C0 control and DEL EXCEPT tab,
+// line feed and carriage return. The two modules cannot import each other, so each side reads the SAME `LIMITS`
+// table in the same words. A non-string, an empty text, an over-bound one and a control-character one are all
+// the closed argument class with ZERO writes.
+function requestedCommentText(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.insertCommentTextBytes) return null;
+  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) ? null : value;
+}
 // THE IMAGE INSERT'S ANSWER, decoded with the same strictness as every decoder before it and for the same
 // reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES — `[POST_INSERT,
 // imagesBefore, imagesAfter, drawingsBefore, drawingsAfter, paragraphsBefore, paragraphsAfter,
@@ -3212,6 +3492,97 @@ function exactImageDelta(outcome, requested) {
   }
   if (outcome.imagesAfter !== outcome.imagesBefore + 1) return false;
   return outcome.drawingsAfter === outcome.drawingsBefore + 1;
+}
+// THE COMMENT INSERT'S ANSWER, decoded with the same strictness as every decoder before it and for the same
+// reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES — `[POST_INSERT,
+// commentsBefore, commentsAfter, id, chars, bytes]`, SIX slots — because the native return validator keeps
+// arrays of primitives (it accepts deep arrays, `null` and strings, and STRIPS a plain object).
+// `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every member is read
+// through its own data descriptor, never through a getter. Four rules are this leg's own contract:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes are
+//     split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a KNOWN
+//     refusal whose code the caller republishes (nothing was written), and `[POST_INSERT, name]` — or any
+//     phase that is not the pre-insert one — is the UNCERTAIN class. A phase that is ABSENT (the one-slot
+//     answer a forged or damaged native can give AFTER a real write) or a pre-insert phase over a
+//     measurement can never be a known refusal either: the NAME does not carry the phase, only the marker.
+//   * THIS BODY HAS NO BYTE-GATED REFUSAL AT ALL. It reads no export — the measured `ToMarkdown(...)` does
+//     not contain the comment text — so the only pre-write names it can answer are the closed ARGUMENT class
+//     (a request this body cannot interpret) and the CAPABILITY class (a primitive or a baseline it could not
+//     read), both decided before the write. That is why this decoder admits NO three-slot answer and why
+//     `preInsertRefusal` keeps no `BYTE_LIMIT` carve-out for this kind: a phase-marked `BYTE_LIMIT` here can
+//     only be a forged or damaged answer about a dispatch that wrote, and it settles uncertain.
+//   * the two counts are NON-NEGATIVE SAFE INTEGERS — the document's own comment-list lengths — the id is a
+//     NON-EMPTY STRING inside `LIMITS.insertCommentIdChars` (or the body's own `UNIDENTIFIED` marker, which can
+//     never equal a real id because it holds no digit), and the two lengths are non-negative safe integers.
+//     Nothing else can cross this decoder.
+//   * the answer needs no byte ceiling beyond the one every native read passes, because at most four bounded
+//     numbers and one id of at most `insertCommentIdChars` characters can cross; `assertByteLimit` is still
+//     applied, so the one window every read of this bridge is decoded under holds for this leg too.
+const COMMENT_PHASE_PRE = 'PRE_INSERT';
+const COMMENT_PHASE_POST = 'POST_INSERT';
+const COMMENT_LENGTH = 6;
+function decodeComment(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > COMMENT_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  // THE PHASE GATE, and the ONE place the two refusal classes are split. This leg has NO byte-gated refusal,
+  // so its pre-write names are exactly the closed argument class and the capability class.
+  if (size === 2) {
+    if (members[0] !== COMMENT_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (members[1] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== COMMENT_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== COMMENT_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  for (const count of [members[1], members[2]]) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  }
+  const id = members[3];
+  // THE ID SLOT HAS TWO LEGAL SHAPES AND THEY MEAN DIFFERENT THINGS: a NON-EMPTY STRING inside
+  // `LIMITS.insertCommentIdChars` is the identified comment's own id, while `null` is the body's honest report
+  // that the added comment could not be identified. A phase-less or otherwise damaged answer cannot smuggle a
+  // third shape through this slot, and the caller's outcome rule settles the `null` one as uncertain.
+  if (id !== null && (typeof id !== 'string' || id.length === 0 || id.length > LIMITS.insertCommentIdChars)) {
+    throw new SafeError(ERROR_CODES.INVALID_DATA);
+  }
+  for (const chars of [members[4], members[5]]) {
+    if (!Number.isSafeInteger(chars) || chars < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  }
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({ commentsBefore: members[1], commentsAfter: members[2],
+    id, chars: members[4], bytes: members[5] });
+}
+// THE EXACT OUTCOME RULE the comment insert rests on, in ONE place so the decision and its comment cannot
+// drift apart. It is judged against the SCOPE this ticket carried (`requested`), never against a value read
+// back out of the answer:
+//   1. THE COMMENT COUNT GREW BY EXACTLY ONE. It is the document's own `GetAllComments()` length on both
+//      sides of the ONE write, so anything else — no growth, a growth of two, or a fall — describes a document
+//      this single call cannot explain.
+//   2. THE COMMENT WAS IDENTIFIED. A `null` id is the body's own honest report that nothing named the added
+//      comment; an unnamed count is not a proof of THIS call.
+//   3. THE IDENTIFIED COMMENT'S OWN TEXT IS THE REQUEST'S OWN. `chars` is that comment's own `GetText()`
+//      length and `bytes` the dispatched text's own UTF-8 length — the same measure the tool re-derives from
+//      the request — so a comment carrying anything else is refuted, and so is an answer whose `bytes` slot
+//      disagrees with the text this ticket dispatched.
+// A false one is a mutation this tool cannot stand behind, and the mutation has already run, so the ticket
+// settles `APPLY_UNCERTAIN` with the slot HELD.
+function exactCommentDelta(outcome, requested) {
+  if (outcome.commentsAfter !== outcome.commentsBefore + 1) return false;
+  if (outcome.id === null || outcome.id === undefined) return false;
+  if (outcome.bytes !== utf8ByteLength(requested.text)) return false;
+  return outcome.chars === requested.text.length;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -3867,6 +4238,20 @@ export function createR7Bridge(plugin, {
             if (!exactImageDelta(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE COMMENT INSERT. Its answer is the authored flat array of primitives, decoded against the fixed
+          // SIX-slot shape — this leg addresses NO target and the document's OWN comment count is the
+          // evidence — so the phase gate is the whole of the length rule. The outcome rule then decides the
+          // ticket HERE, while it still owns the slot, and it is judged against the SCOPE (`params`) this
+          // ticket carried: a comment count that did not grow by exactly one, a comment the body could not
+          // identify and a `GetText()` that is not the requested text are all the UNCERTAIN class with the slot
+          // HELD, never a known error about a document this call may already carry the comment in. A decode
+          // that THROWS is classified by the catch below (a `[PRE_INSERT, name]` answer keeps its known code;
+          // everything else is uncertain).
+          else if (kind === 'commentinsert') {
+            const outcome = decodeComment(value);
+            if (!exactCommentDelta(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -3891,7 +4276,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -4211,6 +4596,32 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.image(callback); }
           finally { clearScope(previousImage); }
+        } else if (kind === 'commentinsert') {
+          // THE COMMENT INSERT: ONE command, and the SAME parameter channel the other read and write legs use —
+          // the validated `{ text, maxBytes, idMax }` scope written into the page's `Asc.scope`, never composed
+          // into source (ADR 0002). It needs the entry point that OWNS that wrapper (`callCommand`); a build
+          // whose command channel is the bare `executeCommand` transport has no sanctioned parameter channel at
+          // all, so it refuses HERE, before any dispatch, and releases the slot because nothing reached the
+          // editor.
+          // It carries NO document-identity probe, for the image insert's reason: this leg targets NOTHING at
+          // all — the measured `AddComment` took the text alone and created the comment at document/selection
+          // level — so there is no handle whose identity a probe could establish. What it does instead is the
+          // subject of the body's own comment: the document's own comment count AND the ids it already holds
+          // are read BEFORE the ONE `AddComment`, the same two reads are taken from a FRESH collection after
+          // it, the added comment is identified through the returned id or the difference of the two id sets,
+          // and THAT comment's own `GetText()` is the text leg. THERE IS NO EXPORT ON THIS LEG: the measured
+          // `ToMarkdown(...)` does not contain the comment text, so this body authors neither export reader.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a
+          // synchronous throw out of the transport must never release a slot whose work may already be queued,
+          // and the body's own pre-insert refusals keep their known class through the callback (they arrive as
+          // a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousComment;
+          try { previousComment = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.comment(callback); }
+          finally { clearScope(previousComment); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -4879,6 +5290,57 @@ export function createR7Bridge(plugin, {
           textEmpty: outcome.textEmpty, textUnchanged: outcome.textUnchanged,
           imageAppended: outcome.imageAppended, drawingAppended: outcome.drawingAppended,
           markdownBeforeChars: outcome.markdownBeforeChars, markdownNeedle: outcome.markdownNeedle });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // THE COMMENT INSERT behind `insert_comment` — the EIGHTH MUTATION of Sprint 3, the THIRD write leg that
+    // APPENDS, and the FIRST leg whose proof is the COMMENT COLLECTION'S own identity. It has ONE form and NO
+    // target: `AddComment` was measured taking the text alone, and the comment it created was created at
+    // document/selection level, so this entry point takes the TEXT and nothing else. The body's own comment
+    // carries the mechanism (the document's own comment count AND the ids it already holds before the ONE
+    // write, then the same reads plus the identified comment's own `GetText()` after it) and why no export is
+    // read at all; what matters HERE is the shape: ONE command on the ONE entry point that owns the parameter
+    // wrapper, the validated scope carried as DATA through `Asc.scope`, and ONE strict decoder that turns the
+    // authored flat array — an explicit phase slot, two counts, the identified comment's own id (or the
+    // `UNIDENTIFIED` marker) and the two length slots — into the envelope below. The OUTCOME rule is then
+    // decided inside the ticket, before the slot is released: the DOCUMENT'S OWN COUNT DELTA and the
+    // identified comment's OWN TEXT are the evidence, and a count that did not grow by exactly one, an
+    // identification the body could not make, an answer that cannot be interpreted and the body's own
+    // POST-write uncertainty are all `APPLY_UNCERTAIN` with the slot HELD and no retry, while the body's
+    // PRE-write refusals (an unusable request, a missing primitive, a baseline it could not read) settle their
+    // closed KNOWN class with the slot released, because nothing was written — and they do so ONLY when the
+    // answer carries their phase. THERE IS NO EXPORT AND NO BYTE-GATED REFUSAL ON THIS LEG: the measured
+    // `ToMarkdown(...)` does not contain the comment text, so the body reads no export and a phase-marked
+    // `BYTE_LIMIT` can only be a forged or damaged answer about a dispatch that wrote.
+    // THE TWO COMPOSED BOUNDS ARE NEVER READ FROM THE CALLER: `maxBytes` is `LIMITS.insertCommentTextBytes`
+    // (the same number the descriptor's schema advertises) and `idMax` is `LIMITS.insertCommentIdChars` (the
+    // defensive width of the ONE id this bridge republishes), so a descriptor held directly, or a caller that
+    // guessed a key, cannot widen either. No caller-supplied key reaches the body at all.
+    // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather
+    // than taken on trust: the bridge is a PUBLIC ENTRY POINT, and a text this module never measured — empty,
+    // over the bound, or carrying a control character other than TAB, LF and CR — must not be writable by a
+    // caller that reached this method directly. The bound and the three permitted whitespace control
+    // characters are the SAME ones the descriptor applies, spelled beside their twins in `src/tools/word.js`
+    // because the two modules cannot import each other.
+    async insertComment(raw) {
+      const text = requestedCommentText(raw?.text);
+      const signal = raw?.signal;
+      if (text === null) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // THE SCOPE, and every value in it is composed HERE rather than read from the caller.
+        const outcome = await start('commentinsert', signal, {},
+          Object.freeze({ text, maxBytes: LIMITS.insertCommentTextBytes, idMax: LIMITS.insertCommentIdChars }));
+        // THE COUNT DELTA AND THE IDENTITY ARE ECHOED, not dropped, exactly as the form and the dimensions are
+        // on the image leg: the outcome rule already required the count to grow by exactly one and the
+        // identified comment's own text to be the requested one, so what crosses back is the proof rather than
+        // the payload. THE COMMENT TEXT IS NOT REPUBLISHED by this envelope or by the tool above it.
+        return Object.freeze({ ok: true, commentsBefore: outcome.commentsBefore, commentsAfter: outcome.commentsAfter,
+          id: outcome.id, chars: outcome.chars, bytes: outcome.bytes });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

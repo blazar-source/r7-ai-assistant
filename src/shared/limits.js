@@ -538,6 +538,33 @@ export const LIMITS = Object.freeze({
   insertImageDimensionPx: 4096,
   insertImageIndexMax: 128,
   insertImageMarkdownChars: 262144,
+  // The bounded COMMENT INSERT (`insert_comment`) — the THIRTEENTH Word tool, the EIGHTH MUTATION of Sprint 3,
+  // and the FIRST leg whose proof is the COMMENT COLLECTION's own identity. It adds TWO static bounds and NO
+  // vocabulary, and it takes NO target argument at all:
+  //   * `insertCommentTextBytes` bounds the COMMENT TEXT. 2048 is this module's established text-PAYLOAD scale
+  //     (`insertBlockBytes`, `addHyperlinkUrlBytes` and `replaceTextReplaceBytes` are the same number) because
+  //     a comment becomes document text, and it is a QUARTER of `AGENT_CEILINGS.argumentsBytes` (8192) — the
+  //     ceiling the runtime applies to ONE action's arguments (`JSON.stringify` of the call's `arguments`) —
+  //     so a comment inside it cannot on its own push a legal one-action call past that ceiling. It is a
+  //     CEILING, never a truncation: a text above it is the closed argument class with ZERO writes, decided
+  //     before the mutation. THE CONTROL-CHARACTER RULE IS THE TOOL'S, not this table's: every C0 control and
+  //     DEL is refused by `insertCommentText` in `src/tools/word.js` (with TAB, LF and CR allowed, because a
+  //     multi-line comment is ordinary document text and those three are what the measured `GetText()` answers
+  //     back verbatim), while the schema can express only the byte bound.
+  //   * `insertCommentIdChars` is NOT a model argument and NOT a request rule: the comment's own id is READ
+  //     BACK out of the document and published as the identity of the comment this call added, so this is a
+  //     defensive width bound on ONE published field. The target answered a numeric-looking string; 128
+  //     characters is room for any plausible id (a decimal, a GUID, a `word/comments.xml`-style serialized
+  //     reference) and it is also what makes the entry arithmetic of this leg STATIC: at most 128 characters
+  //     (a lone surrogate serializing to six ASCII characters apiece) plus four numbers of at most 16 digits
+  //     keeps the entry far inside `AGENT_CEILINGS.toolResultBytes` (16384). An id longer than it is folded to
+  //     `null` by the body — the honest "could not identify" report — which falls back to the id-set route and,
+  //     failing that, settles the UNCERTAIN class with the slot HELD. Widening it later is safe; narrowing it
+  //     can only cost a false `TOOL_UNCERTAIN`, never a false `ok`.
+  // THE COMMENT TEXT IS NOT BOUNDED IN THE ENTRY: it is the caller's own request and is NEVER republished —
+  // only the identified comment's own CHARACTER count and the request's own BYTE count cross.
+  insertCommentTextBytes: 2048,
+  insertCommentIdChars: 128,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
