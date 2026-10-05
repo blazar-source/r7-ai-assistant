@@ -192,6 +192,15 @@ function structureEntryBytes(data) {
 function insertBlocksEntryBytes(data) {
   return toolResultEntryBytes('insert_blocks', data);
 }
+// `insert_table`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the matrix geometry, the two table counts the delta was decided on, and the dispatched
+// payload's own byte size. The measurement is NOT a formality here either, even though FIVE bounded
+// integers cannot approach the ceiling (`LIMITS.insertTableBytes` states the arithmetic and the tool's own
+// test pins it): it is the module's single ENFORCED bound, and a field added to this result later must not
+// be able to widen the entry unmeasured.
+function insertTableEntryBytes(data) {
+  return toolResultEntryBytes('insert_table', data);
+}
 // A count this module publishes is a NON-NEGATIVE SAFE INTEGER and nothing else. The bridge decodes the
 // same rule, and the handler re-applies it because a descriptor is also executable when it is held
 // directly: publishing a fractional, negative, NaN or stringified count as "the document's own number"
@@ -1125,6 +1134,165 @@ export function createWordTools(bridge) {
         const entry = insertBlocksEntryBytes(data);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(data);
+      }
+    }),
+    defineTool({
+      // Sprint 3 Word tool 6: the TABLE INSERT — the SECOND MUTATION, and the first creation primitive
+      // whose success is a claim about a STRUCTURE rather than only about a count. It is the same machinery
+      // as `insert_blocks` (§13/§13.2 of docs/sprint-3-progress.md): a pre-dispatch baseline read, ONE
+      // self-contained static command body that builds the `Api` facade itself and receives the model's
+      // data as `Asc.scope` DATA, a write through the route MEASURED to append at the END (`document.Push`),
+      // a post read, and an outcome that is `ok` ONLY on an exact proof.
+      //
+      // THE MEASURED PRIMITIVES, all established on the target (Astra / R7 2026.1.2.1942) for this round:
+      // `Api.CreateTable(rows, columns)` builds the structure; `table.GetCell(r, c).GetContent()
+      // .GetElement(0).AddText(text)` fills a cell (measured: the cell text appears in the document);
+      // `document.GetAllTables()` answers the tables (measured 0 → 1 after one insert); `doc.Push(element)`
+      // APPENDS AT THE END while `doc.InsertContent([...])` lands at the BEGINNING and can replace existing
+      // text under a selection; and `GetRowCount`/`GetColumnCount` are `undefined`, so this tool uses them
+      // NOWHERE — the geometry is the matrix the caller sent, and the count the delta is decided on is the
+      // document's own table count. Neither mutation primitive's return value is read: `Push` answered
+      // `true` for a paragraph and `false` for an image host, so no boolean says anything about what the
+      // document now holds.
+      //
+      // THE PROOF IS ONE-TO-ONE OVER THE APPEND, and for a table that is TWO conditions that cannot
+      // substitute for each other: the table count grew by EXACTLY one, AND the table the append added
+      // carries EXACTLY the requested matrix in its OWN cells, read back cell by cell in row-major order
+      // through the symmetric read of the measured fill chain (`...GetContent().GetElement(0).GetText()`).
+      // The appended table is addressed by the baseline the body took BEFORE the one `Push` — `Push`
+      // appends, so the insert's table is at index `tablesBefore` — which is what makes the check
+      // non-existential: a document that already held the same texts in another table cannot stand in for
+      // the insert's own cells, and a table built without `Push` (or a start-landing mutation) can only
+      // produce flags of 0.
+      //
+      // THE SCHEMA is closed. `data` is required — a non-empty 2D array of strings whose SHAPE IS DERIVED
+      // FROM THE DATA, which is what "rows, columns and data at once" means: the tool has no separate
+      // `rows`/`columns` arguments to disagree with the matrix. `LIMITS.insertTableRowsMax`,
+      // `insertTableColumnsMax`, `insertTableCellBytes` and `insertTableBytes` bound the row count, the
+      // column count, each cell and the whole payload, each with its reasoning stated in limits.js. The
+      // lower bound of the array, the lower bound of a row and the RECTANGULARITY are NOT schema keywords:
+      // this module's closed schema vocabulary (src/tools/schemas.js) carries no `minItems` and no
+      // rectangularity at all, so they are refused by THIS handler and by the bridge as the closed argument
+      // class with nothing dispatched — the same treatment every other deep rule of this schema gets.
+      // There is deliberately NO `header` option: no measured primitive applies header formatting, so
+      // advertising one would promise what the tool cannot do.
+      //
+      // THE FAILURE MAP, each class closed: a wrong editor is `CAPABILITY_UNAVAILABLE` (precondition); a
+      // missing bridge entry point is `CAPABILITY_UNAVAILABLE`; a bridge refusal keeps the closed class it
+      // reported (`refusalCode`); an envelope this handler cannot interpret is the module's unknown
+      // convention, `known()`; a returned or thrown `APPLY_UNCERTAIN` is `TOOL_UNCERTAIN`; an argument the
+      // tool cannot serve (an empty, ragged or over-bound matrix) is the closed argument/byte class with
+      // ZERO writes; an over-ceiling result entry is `BYTE_LIMIT`. The refusal PHASE is an explicit slot of
+      // the answer, exactly as `insert_blocks` states it: the body answers `[PRE_INSERT, name]` while
+      // nothing has been pushed, and it turns `POST_INSERT` IMMEDIATELY BEFORE the one `Push`. A throw OUT
+      // OF the push is therefore never a known refusal with the slot released; a throw while the table is
+      // being created or filled is a known refusal (the phase is still pre-insert, and provably nothing
+      // reached the document). The bridge holds its slot for anything unprovable and issues NO retry.
+      name: 'insert_table', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['data'],
+        properties: { data: { type: 'array', maxItems: LIMITS.insertTableRowsMax,
+          items: { type: 'array', maxItems: LIMITS.insertTableColumnsMax,
+            items: { type: 'string', maxBytes: LIMITS.insertTableCellBytes } } } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'insertTable')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also
+        // executable when it is held directly, and a matrix this insert cannot interpret must be a closed
+        // refusal with NOTHING dispatched, never an insert of whatever a coercion produced. The SHAPE
+        // family (the non-empty matrix, the non-empty row, the rectangularity, the geometry bounds) is the
+        // module's argument class and the BYTE family (one cell, then the sum) is its byte class, the same
+        // two the bridge reports for the same two families.
+        const data = args?.data;
+        if (!Array.isArray(data) || data.length < 1 || data.length > LIMITS.insertTableRowsMax) return known();
+        const forwarded = [];
+        let columns = null;
+        let bytes = 0;
+        for (const row of data) {
+          if (!Array.isArray(row) || row.length < 1 || row.length > LIMITS.insertTableColumnsMax) return known();
+          if (columns === null) columns = row.length;
+          else if (row.length !== columns) return known();
+          const shapedRow = [];
+          for (const cell of row) {
+            if (typeof cell !== 'string') return known();
+            const cellBytes = utf8ByteLength(cell);
+            if (cellBytes > LIMITS.insertTableCellBytes) return known(ERROR_CODES.BYTE_LIMIT);
+            bytes += cellBytes;
+            shapedRow.push(cell);
+          }
+          forwarded.push(Object.freeze(shapedRow));
+        }
+        // The advertised whole-payload bound, applied to the payload the bridge actually dispatches: the
+        // SAME ceiling the runtime applies to one action's arguments (`AGENT_CEILINGS.argumentsBytes`), so
+        // this bound can only refuse a call the runtime would have refused anyway. `columns` cannot be null
+        // here: `data` is non-empty and every row is non-empty, which is what the two checks above establish
+        // — and a null would make the flag count below meaningless rather than silently wrong.
+        if (columns === null || columns < 1) return known();
+        if (bytes > LIMITS.insertTableBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        const request = { data: Object.freeze(forwarded),
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let result;
+        try { result = await bridge.insertTable(request); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops
+          // the run. Every other bridge throw is a closed local failure.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing it)
+        // when the ticket has already been created, so the class is classified here before any
+        // ordinary-refusal path can treat it as a known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own: the two
+        // counts are the document's own non-negative safe integers and `present` is EXACTLY one boolean per
+        // cell of THIS matrix — cell `[r][c]`'s flag says the inserted table's own cell `(r, c)` carries
+        // exactly the requested text. An answer of any other shape is not one this bridge can have produced
+        // — the real bridge's decoder guarantees this shape and turns its own uninterpretable answer into
+        // the uncertain class — so publishing it would let a forged envelope pass as a verified insert.
+        const rows = data.length;
+        const before = result.tablesBefore;
+        const after = result.tablesAfter;
+        const present = result.present;
+        if (!measuredCount(before) || !measuredCount(after)) return known();
+        if (!Array.isArray(present) || present.length !== rows * columns) return known();
+        // The flags are read by INDEX, never through `present.some(...)`/`present.every(...)`. That is not a
+        // style choice: this module's authored-code audit treats an invocation reached through a value its
+        // local alias analysis has tainted as a computed-execution sink, the analysis is NAME-based and
+        // scope-insensitive over the whole bundle, and this local's name is derived from a `result` that
+        // another leg taints. An indexed READ of a data array is exactly what it is, and every argument rule
+        // below is still checked one flag at a time.
+        let everyCellPresent = true;
+        for (let index = 0; index < present.length; index += 1) {
+          if (typeof present[index] !== 'boolean') return known();
+          if (present[index] !== true) everyCellPresent = false;
+        }
+        // THE EXACT-DELTA OUTCOME CONTRACT. Two independent conditions, both required, and neither of them
+        // the primitive's return value: the document's table count grew by EXACTLY one, and EVERY cell of
+        // the table the append added carries EXACTLY the requested text in the slot this matrix owns. A
+        // delta that is short, long, or accompanied by a cell whose own text is not the requested one is
+        // NOT a verified insert: the tool publishes the runtime's own uncertain class, the bridge has held
+        // its slot, and no retry is ever issued. The cell half is required in addition to the count because
+        // the count alone could describe an unrelated concurrent edit; the count is required in addition to
+        // the cells because the cells are addressed by `tablesBefore`, and a baseline that moved would make
+        // the address meaningless. It is NOT "the matrix exists somewhere in the document": that existential
+        // form was satisfiable by a document that already held the same texts in another table.
+        const exact = after - before === 1 && everyCellPresent;
+        if (!exact) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        const published = Object.freeze({ rows, columns, tablesBefore: before, tablesAfter: after, bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads measure it:
+        // the runtime bounds `JSON.stringify({tool, ...result})` by `AGENT_CEILINGS.toolResultBytes` (16384)
+        // and replaces an entry above it with the model-visible literal "the tool result could not be
+        // serialized" — the model would receive NO result while the action log recorded `ok`. Every field
+        // here is a non-negative safe integer, so this guard cannot fire for any shape this handler can
+        // publish (`LIMITS.insertTableBytes` states the arithmetic: 181 bytes at every field's widest legal
+        // width); it is retained because it is the module's ONE entry measurement, and the failure class for
+        // it is closed regardless of reachability.
+        const entry = insertTableEntryBytes(published);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(published);
       }
     }),
     defineTool({

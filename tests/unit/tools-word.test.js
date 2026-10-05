@@ -28,10 +28,12 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['find_text', 'insert_blocks', 'insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+  assert.deepEqual(names, ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').kind, 'mutate');
+  assert.equal(tools.find(tool => tool.name === 'insert_table').policy, 'auto');
+  assert.equal(tools.find(tool => tool.name === 'insert_table').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
     'an unverified public read may be neither offered nor executed');
@@ -62,7 +64,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['find_text', 'insert_blocks', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection'],
+    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -280,7 +282,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['find_text', 'insert_blocks', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -4289,7 +4291,7 @@ test('the blocks body is self-contained: it answers the measured shapes in a fre
   const r = blocksRig({ paragraphs: 2, headings: 0 });
   const pending = r.bridge.insertBlocks({ blocks: [{ text: 'Один' }, { text: 'Два', heading: 2 }] });
   const carried = r.commands[0];
-  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|exactBlocksDelta|blocksPreInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|exactBlocksDelta|exactTableDelta|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
     false, 'the stringified body names no module binding of bridge.js');
   assert.match(carried.source, /typeof Api !== 'undefined'/, 'and it builds the public Api facade itself');
   // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
@@ -4734,6 +4736,799 @@ test('insert_blocks is offered with policy auto and a model call appends exactly
   assert.equal(published.ok, true);
   assert.deepEqual(published.data, { inserted: 1, headings: 1, paragraphsBefore: 10, paragraphsAfter: 11, bytes: 10 },
     'the tool publishes the five fields it names; the four counts are the ones the bridge measured');
+});
+
+
+// --- Sprint 3, tool 6: `insert_table` — the SECOND MUTATION, an exact-delta contract over an APPEND ---
+//
+// A table is the first creation primitive whose SUCCESS is a claim about a STRUCTURE: the appended table
+// must carry the requested MATRIX in its OWN cells. The mechanism is `insert_blocks`' (§13/§13.2) — a
+// pre-dispatch baseline read, ONE authored static command body that builds the `Api` facade itself, the
+// model data carried as `Asc.scope` DATA, the write through the route MEASURED to append at the END
+// (`document.Push`), a post read, and an outcome that is `ok` ONLY on an exact proof — with the measured
+// table primitives: `Api.CreateTable(rows, columns)` builds the structure, every cell is filled through
+// `table.GetCell(r, c).GetContent().GetElement(0).AddText(text)` (measured: the cell text appears in the
+// document), and the appended table's own cells are read back through the SAME element's `GetText()` —
+// the symmetric read of the measured fill chain. `GetRowCount`/`GetColumnCount` were measured as
+// `undefined` and are used NOWHERE; `GetAllTables()` (measured 0 → 1 after one insert) is the count the
+// delta is decided on; and the legacy whole-array `InsertContent` primitive — measured to land at the
+// BEGINNING and to replace existing text under a selection — is authored nowhere, because this tool's
+// promise is an APPEND.
+function tablesBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, insertTable: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+function insertTableTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'insert_table'); }
+// The envelope the REAL bridge publishes for ONE `rows × columns` table inserted into a document that
+// held `before` tables: the two counts the delta is decided on, and one presence flag per CELL in
+// row-major order — cell `[r][c]` owns the appended table's cell `(r, c)`.
+function inserted(before, rows, columns, overrides = {}) {
+  return { ok: true, tablesBefore: before, tablesAfter: before + 1,
+    present: new Array(rows * columns).fill(true), ...overrides };
+}
+const TWO_BY_TWO = Object.freeze([['а', 'б'], ['в', 'г']]);
+const TWO_BY_THREE = Object.freeze([['а', 'б', 'в'], ['г', 'д', 'е']]);
+
+test('insert_table advertises the closed bounded schema and the four bounds it names', () => {
+  const tool = insertTableTool(tablesBridge(inserted(1, 2, 2)));
+  assert.equal(tool.name, 'insert_table');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ['data']);
+  // NO `header` OPTION EXISTS, and that is a MEASURED decision rather than an omission: no measured
+  // primitive applies header formatting (nor is a header row distinguishable once it is in the
+  // document), so advertising one would promise what this tool cannot do.
+  assert.deepEqual(Object.keys(schema.properties), ['data']);
+  const data = schema.properties.data;
+  assert.equal(data.type, 'array');
+  assert.equal(data.maxItems, LIMITS.insertTableRowsMax);
+  assert.equal(data.minItems, undefined,
+    'the closed schema vocabulary has no minItems keyword (src/tools/schemas.js allowlists every keyword), so the non-empty lower bound is enforced by the handler AND by the bridge, both tested below');
+  assert.equal(data.items.type, 'array');
+  assert.equal(data.items.maxItems, LIMITS.insertTableColumnsMax);
+  assert.equal(data.items.minItems, undefined, 'the same rule one level down: a row with no cell is refused by the handler and by the bridge');
+  assert.equal(data.items.items.type, 'string');
+  assert.equal(data.items.items.maxBytes, LIMITS.insertTableCellBytes);
+  assert.equal(data.items.items.minBytes, undefined,
+    'a BLANK cell is a real table cell, so the schema advertises no lower bound on a cell text');
+  // The four named bounds, pinned as NUMBERS and as distinct quantities: none is an alias of another
+  // tool's scope, and the whole-payload bound is the per-action argument ceiling the runtime applies.
+  assert.deepEqual([LIMITS.insertTableRowsMax, LIMITS.insertTableColumnsMax, LIMITS.insertTableCellBytes, LIMITS.insertTableBytes],
+    [64, 16, 1024, 8192]);
+  assert.equal(LIMITS.insertTableBytes, AGENT_CEILINGS.argumentsBytes, 'the whole payload IS the per-action argument ceiling');
+  assert.notEqual(LIMITS.insertTableCellBytes, LIMITS.insertBlockBytes, 'a cell is not a paragraph, so it is not `insert_blocks`\' bound');
+  assert.notEqual(LIMITS.insertTableColumnsMax, LIMITS.insertTableRowsMax, 'a column is not a row');
+  assert.equal(validateArguments(schema, { data: TWO_BY_TWO }).data.length, 2);
+});
+
+test('insert_table refuses every illegal argument with nothing dispatched, at the schema or in the handler', async () => {
+  // The closed schema vocabulary expresses the geometry bounds (`maxItems` twice) and the per-cell byte
+  // bound, but NOT the non-empty array, NOT the non-empty row and NOT the rectangularity: those three
+  // deep rules are refused by THIS handler (and by the bridge) as the closed argument class with nothing
+  // dispatched — the same treatment every other deep rule of this schema gets.
+  const illegal = [
+    ['no argument object', null], ['missing data', {}], ['data is not an array', { data: 'а' }],
+    ['an unknown top-level key', { data: TWO_BY_TWO, header: true }],
+    ['an EMPTY data array (the handler owns the lower bound)', { data: [] }],
+    ['too many rows', { data: new Array(LIMITS.insertTableRowsMax + 1).fill(['а']) }],
+    ['a ragged matrix (a SHORT second row)', { data: [['а', 'б'], ['в']] }],
+    ['a ragged matrix (a LONG second row)', { data: [['а'], ['б', 'в']] }],
+    ['a row that is not an array', { data: ['а'] }], ['a null row', { data: [null] }],
+    ['an EMPTY row (the handler owns the row lower bound)', { data: [[]] }],
+    ['a row above the column bound', { data: [new Array(LIMITS.insertTableColumnsMax + 1).fill('а')] }],
+    ['a cell that is not a string', { data: [[7]] }], ['a null cell', { data: [[null]] }],
+    ['a nested array as a cell', { data: [[['а']]] }], ['an unknown key inside a row', { data: [{ '0': 'а' }] }]
+  ];
+  for (const [label, args] of illegal) {
+    const bridge = tablesBridge(inserted(1, 1, 1));
+    const tool = insertTableTool(bridge);
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', label); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+    assert.deepEqual(bridge.seen, [], `${label}: nothing is dispatched for an illegal argument`);
+  }
+  // The two BYTE families are the closed byte class, not the argument-shape class, on both sides of the
+  // boundary: ONE cell above its own bound (which the schema can already refuse), and a matrix whose cells
+  // are each legal while their SUM is not (which only the handler can see).
+  const single = tablesBridge(inserted(1, 1, 1));
+  assert.throws(() => validateArguments(insertTableTool(single).schema, { data: [['я'.repeat(LIMITS.insertTableCellBytes)]] }),
+    /TOOL_ERROR/, 'a single cell above its own bound is refused at the schema, before the handler');
+  const sumBridge = tablesBridge(inserted(1, 3, 3));
+  const sumTool = insertTableTool(sumBridge);
+  const nineLegal = { data: new Array(3).fill(new Array(3).fill('я'.repeat(LIMITS.insertTableCellBytes / 2))) };
+  assert.equal(validateArguments(sumTool.schema, nineLegal).data.length, 3,
+    'the schema bounds ONE cell and the geometry: it cannot sum a payload, which is why the handler does');
+  assert.equal(utf8ByteLength('я'.repeat(LIMITS.insertTableCellBytes / 2)) * 9, 9216, 'nine cells of 1024 bytes');
+  const sumResult = await sumTool.execute(nineLegal, { editor: 'word' });
+  assert.equal(sumResult.code, 'BYTE_LIMIT', 'nine legal cells whose sum exceeds the payload bound');
+  const overCell = tablesBridge(inserted(1, 1, 1));
+  const cellResult = await insertTableTool(overCell).execute({ data: [['я'.repeat(LIMITS.insertTableCellBytes)]] }, { editor: 'word' });
+  assert.equal(cellResult.code, 'BYTE_LIMIT', 'one cell above insertTableCellBytes is the closed byte class');
+  assert.deepEqual([...overCell.seen, ...sumBridge.seen], [],
+    'neither over-bound payload reaches the bridge, and the handler owns the sum the schema cannot see');
+});
+
+test('insert_table inserts through exactly ONE bridge call and publishes the measured delta', async () => {
+  const bridge = tablesBridge(inserted(1, 2, 2));
+  const controller = new AbortController();
+  const result = await insertTableTool(bridge).execute({ data: TWO_BY_TWO }, { editor: 'word', signal: controller.signal });
+  assert.equal(result.ok, true);
+  // `bytes` is the dispatched payload's own size — the sum of every cell's UTF-8 bytes — so the result
+  // reports what crossed to the editor and not the result's own size.
+  assert.deepEqual(result.data, { rows: 2, columns: 2, tablesBefore: 1, tablesAfter: 2, bytes: 8 });
+  assert.deepEqual(Object.keys(result.data), ['rows', 'columns', 'tablesBefore', 'tablesAfter', 'bytes'],
+    'the five measured fields and nothing else: an envelope cannot smuggle a field into the entry');
+  assert.equal(bridge.seen.length, 1, 'EXACTLY one bridge call: the insert is dispatched once and never retried');
+  assert.deepEqual(bridge.seen[0].data, TWO_BY_TWO);
+  assert.equal(bridge.seen[0].signal, controller.signal, 'the caller\'s signal crosses with the matrix so a Stop cancels before the dispatch');
+  assert.equal(utf8ByteLength('а') * 4, 8, 'four one-letter Cyrillic cells are eight bytes');
+});
+
+test('insert_table publishes a verified insert ONLY for the exact delta, and never retries otherwise', async () => {
+  // THE PROOF IS ONE-TO-ONE OVER THE APPEND, and it has TWO halves that cannot substitute for each other:
+  // the table list grew by EXACTLY one, and every cell flag of the table the append added is true. The
+  // rows below break one half at a time.
+  const wrong = [
+    ['the table list did not grow', inserted(1, 2, 2, { tablesAfter: 1 })],
+    ['two tables arrived', inserted(1, 2, 2, { tablesAfter: 3 })],
+    ['the document shrank', inserted(1, 2, 2, { tablesAfter: 0 })],
+    ['a cell of the appended table carries something else', inserted(1, 2, 2, { present: [true, false, true, true] })],
+    ['the FIRST cell of the appended table is not the requested one', inserted(1, 2, 2, { present: [false, true, true, true] })],
+    ['the appended table is empty', inserted(1, 2, 2, { present: [false, false, false, false] })]
+  ];
+  const run = async (answer, data = TWO_BY_TWO) => {
+    const bridge = tablesBridge(answer);
+    return { result: await insertTableTool(bridge).execute({ data }, { editor: 'word' }), bridge };
+  };
+  const verified = await run(inserted(1, 2, 2));
+  assert.equal(verified.result.ok, true);
+  assert.equal(verified.bridge.seen.length, 1);
+  for (const [label, answer] of wrong) {
+    const { result, bridge } = await run(answer);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.message, 'отказ', label);
+    assert.equal(result.data, undefined, `${label}: an uncertain outcome publishes no delta`);
+    assert.equal(bridge.seen.length, 1, `${label}: NO retry — the insert was dispatched exactly once`);
+  }
+  // A flag list of the wrong LENGTH cannot describe THIS matrix, and a flag that is not a boolean — or a
+  // count that is not a non-negative safe integer — is not a cell check or a count at all: all of them are
+  // envelopes this handler cannot interpret, so they are the module's unknown convention (`known()`) exactly
+  // as for a missing count. The real bridge cannot produce any of them (its decoder pins the flag count to
+  // the same matrix and admits only two counts and 0/1 flags), so this closes the direct-descriptor path.
+  for (const answer of [inserted(1, 2, 2, { present: [true] }), inserted(1, 2, 2, { present: new Array(5).fill(true) }),
+    inserted(1, 2, 2, { present: [1, 1, 1, 1] }), inserted(1, 2, 2, { present: 'true' }),
+    inserted(1, 2, 2, { tablesAfter: 1.5 }), inserted(1, 2, 2, { tablesBefore: '1' })]) {
+    const bridge = tablesBridge(answer);
+    const result = await insertTableTool(bridge).execute({ data: TWO_BY_TWO }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(answer));
+    assert.equal(bridge.seen.length, 1, JSON.stringify(answer));
+  }
+});
+
+test('insert_table refuses an unusable baseline with zero writes and republishes the closed class it was given', async () => {
+  // THE BASELINE GATE. A bridge that cannot establish how many tables the document held cannot establish
+  // the delta either, so it refuses BEFORE the insert: the closed capability class, and no `data` at all.
+  const gated = await insertTableTool(tablesBridge({ ok: false, code: 'CAPABILITY_UNAVAILABLE' }))
+    .execute({ data: TWO_BY_TWO }, { editor: 'word' });
+  assert.equal(gated.ok, false);
+  assert.equal(gated.code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(gated.data, undefined);
+  // Every closed class the bridge can report is republished unchanged; a code the closed vocabulary does
+  // not define is never republished, and a raw throw never leaks its message.
+  for (const code of ['CAPABILITY_UNAVAILABLE', 'TOOL_ERROR', 'BYTE_LIMIT', 'EDITOR_BUSY', 'TIMEOUT', 'CANCELLED', 'INVALID_DATA']) {
+    const bridge = tablesBridge({ ok: false, code });
+    const result = await insertTableTool(bridge).execute({ data: TWO_BY_TWO }, { editor: 'word' });
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code, code);
+    assert.equal(result.message, 'отказ', code);
+    assert.equal(result.data, undefined, code);
+    assert.equal(bridge.seen.length, 1, code);
+  }
+  const forged = await insertTableTool(tablesBridge({ ok: false, code: 'СЕКРЕТ-ДОКУМЕНТА' }))
+    .execute({ data: TWO_BY_TWO }, { editor: 'word' });
+  assert.equal(forged.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(forged).includes('СЕКРЕТ'), false);
+  const thrown = await insertTableTool(tablesBridge(null, { insertTable: async () => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); } }))
+    .execute({ data: TWO_BY_TWO }, { editor: 'word' });
+  assert.equal(thrown.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(thrown).includes('СЕКРЕТ'), false);
+  // An envelope this tool cannot interpret is refused rather than published as a verified insert.
+  for (const answer of [null, undefined, 7, 'текст', [], { ok: true }, { ok: true, tablesBefore: 1 },
+    inserted(1, 2, 2, { tablesAfter: null })]) {
+    const bridge = tablesBridge(answer);
+    const result = await insertTableTool(bridge).execute({ data: TWO_BY_TWO }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(answer));
+    assert.equal(bridge.seen.length, 1, JSON.stringify(answer));
+  }
+});
+
+test('insert_table maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run', async () => {
+  // Both legs the bridge expresses one class in: a THROWN SafeError (a decode that could not interpret a
+  // dispatched insert) and a RETURNED envelope (the bridge's own settlement form). They classify
+  // identically, and neither is retried.
+  const returned = await insertTableTool(tablesBridge({ ok: false, code: 'APPLY_UNCERTAIN' }))
+    .execute({ data: TWO_BY_TWO }, { editor: 'word' });
+  assert.deepEqual({ ...returned }, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' });
+  const seen = [];
+  const thrown = await insertTableTool({ insertTable: async (args) => { seen.push(args); throw Object.assign(new Error('x'), { code: 'APPLY_UNCERTAIN' }); } })
+    .execute({ data: TWO_BY_TWO }, { editor: 'word' });
+  assert.equal(thrown.code, 'TOOL_UNCERTAIN');
+  assert.equal(seen.length, 1, 'no retry of an uncertain insert');
+  // TOOL_UNCERTAIN is the runtime-facing class this handler already produces: a bridge that returns it
+  // must NOT have it laundered into an ordinary known error.
+  const passthrough = await insertTableTool(tablesBridge({ ok: false, code: 'TOOL_UNCERTAIN' }))
+    .execute({ data: TWO_BY_TWO }, { editor: 'word' });
+  assert.equal(passthrough.code, 'TOOL_UNCERTAIN');
+  // ...and the runtime really records the outcome as the uncertain one that stops the run fail-safe.
+  const registry = createRegistry([insertTableTool(tablesBridge({ ok: false, code: 'APPLY_UNCERTAIN' }))]);
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '88888888-8888-4888-8888-888888888888', request: 'вставь таблицу',
+    transport: async () => ({ content: '{"type":"tool_calls","calls":[{"tool":"insert_table","arguments":{"data":[["а","б"]]}}]}' }) });
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_table', 'uncertain']]);
+});
+
+test('insert_table refuses a non-Word editor and a bridge that cannot serve the insert, before any dispatch', async () => {
+  const tool = insertTableTool(tablesBridge(inserted(1, 1, 1)));
+  assert.equal(tool.precondition({ data: TWO_BY_TWO }, { editor: 'word' }), null);
+  for (const editor of ['cell', 'slide', 'unknown', undefined, null]) {
+    const refusal = tool.precondition({ data: TWO_BY_TWO }, { editor });
+    assert.equal(refusal.code, 'CAPABILITY_UNAVAILABLE', String(editor));
+    assert.equal(refusal.message, 'отказ', String(editor));
+  }
+  for (const bridge of [{}, { insertTable: 7 }, { insertTable: null }, null, undefined]) {
+    const result = await insertTableTool(bridge).execute({ data: TWO_BY_TWO }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(bridge));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(bridge));
+    assert.equal(result.data, undefined);
+  }
+});
+
+test('insert_table measures the exact entry it publishes, and its five bounded integers cannot reach the ceiling', async () => {
+  const bridge = tablesBridge(inserted(1, 2, 2));
+  const data = [['я'.repeat(512), 'я'.repeat(512)], ['я'.repeat(512), 'я'.repeat(512)]];
+  const result = await insertTableTool(bridge).execute({ data }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.bytes, 4096, 'four cells of 1024 bytes');
+  // The measurement is the entry the runtime PUBLISHES — `JSON.stringify({ tool, ...result })` — and it
+  // must be inside the same ceiling `stringifyToolResults` enforces, so the model receives the delta
+  // instead of the literal "the tool result could not be serialized".
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'insert_table', ...result }));
+  assert.equal(entry, 109, 'the measured entry of a real insert');
+  assert.ok(entry <= AGENT_CEILINGS.toolResultBytes);
+  const messages = toolResultMessages([{ tool: 'insert_table', result }]);
+  assert.equal(messages.length, 1);
+  const modelVisible = JSON.parse(messages[0].content);
+  assert.equal(modelVisible.results[0].tool, 'insert_table');
+  assert.deepEqual(modelVisible.results[0].data, { rows: 2, columns: 2, tablesBefore: 1, tablesAfter: 2, bytes: 4096 });
+  // THE ENFORCED BOUND IS THE MEASUREMENT, and this test states exactly how much room it has: every field
+  // of this result is a non-negative safe integer, so even the WIDEST shape the handler can publish — all
+  // five at `Number.MAX_SAFE_INTEGER` — is far inside the 16384-byte ceiling. The `BYTE_LIMIT` branch is
+  // retained because it is the module's ONE entry measurement (a field added to this result later must not
+  // widen the entry unmeasured), and it is unreachable for the five integers this handler publishes.
+  const widest = utf8ByteLength(JSON.stringify({ tool: 'insert_table', ok: true,
+    data: { rows: Number.MAX_SAFE_INTEGER, columns: Number.MAX_SAFE_INTEGER, tablesBefore: Number.MAX_SAFE_INTEGER,
+      tablesAfter: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER } }));
+  assert.equal(widest, 181);
+  assert.ok(AGENT_CEILINGS.toolResultBytes - widest > 16000, `${AGENT_CEILINGS.toolResultBytes - widest} bytes of slack`);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'insert_table', result: { ...result, data: { rows: Number.MAX_SAFE_INTEGER,
+    columns: Number.MAX_SAFE_INTEGER, tablesBefore: Number.MAX_SAFE_INTEGER, tablesAfter: Number.MAX_SAFE_INTEGER,
+    bytes: Number.MAX_SAFE_INTEGER } } }]));
+});
+
+// --- the real bridge: the SIXTH authored command body, and the SECOND one that mutates -----------------
+// One TABLE double, modelling the MEASURED creation/fill chain. `Api.CreateTable(rows, columns)` answers
+// this object, `GetCell(r, c)` answers a cell whose `GetContent().GetElement(0)` carries the measured
+// `AddText(text)` AND the symmetric `GetText()` the readback needs, and every cell keeps the text it was
+// given, so a test can state exactly what the appended table holds. `write: false` fills every cell with
+// NOTHING and `write: 'Другое'` fills every cell with a text that is not the requested one; both model an
+// insert whose table really arrived while its content did not.
+function tableDouble(rows, columns, { write = true, initial = () => '' } = {}) {
+  const cells = [];
+  for (let row = 0; row < rows; row += 1) {
+    const line = [];
+    for (let column = 0; column < columns; column += 1) line.push({ text: initial(row, column) });
+    cells.push(line);
+  }
+  function cellAt(row, column) {
+    const line = cells[row];
+    if (line === undefined) return null;
+    const holder = line[column];
+    if (holder === undefined) return null;
+    const element = {
+      AddText(text) { holder.text = write === true ? text : (write === false ? '' : write); },
+      GetText() { return holder.text; }
+    };
+    return { GetContent() { return { GetElement(index) { return index === 0 ? element : null; } }; } };
+  }
+  return { cells, GetCell: cellAt };
+}
+function tableTexts(table) { return table.cells.map(line => line.map(holder => holder.text)); }
+// The DOCUMENT double, modelling the MEASURED route: `doc.Push(table)` answers and APPENDS AT THE END, so
+// the table list really grows by one and counts one call per table. `grow: 0` models a primitive that
+// answered and changed nothing and `grow: 2` a mutation that landed twice; `prepends: true` models a
+// mutation that lands at the START. `InsertContent` is offered ONLY as a trap that records any call and
+// lands its content at the BEGINNING — the measured behaviour of the legacy route — which is why this
+// tool must never call it.
+function tablesDocument({ tables = [], grow = 1, prepends = false, answer = true } = {}) {
+  const state = { tables: [...tables], pushes: 0, created: [], insertContents: 0 };
+  return { state, document: {
+    GetAllTables() { return state.tables.slice(); },
+    Push(table) {
+      state.pushes += 1;
+      state.created.push(table);
+      for (let count = 0; count < grow; count += 1) { if (prepends) state.tables.unshift(table); else state.tables.push(table); }
+      return answer;
+    },
+    InsertContent(items) { state.insertContents += 1; for (const item of items) state.tables.unshift(item); return answer; }
+  } };
+}
+function evaluateTableBody(body, api, scope) {
+  return new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(api, scope);
+}
+// `forge` hands the bridge a REPLACEMENT for the answer the body really produced, after that body has run
+// to completion against the document double — a real insert included. It is the only way to model a
+// hostile or damaged native answer for a dispatched insert without weakening the body itself.
+function tablesRig({ existing = 1, existingShape = [2, 2], grow = 1, prepends = false, answer = true, write = true,
+  command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined, forge = undefined,
+  createThrows = false, cellThrows = false, createTable = undefined } = {}) {
+  const commands = [];
+  const createdShapes = [];
+  const tables = [];
+  for (let index = 0; index < existing; index += 1) {
+    tables.push(tableDouble(existingShape[0], existingShape[1], { initial: (row, column) => `старая-${index}-${row}-${column}` }));
+  }
+  const measured = tablesDocument({ tables, grow, prepends, answer });
+  const api = { GetDocument() { return document === undefined ? measured.document : document; },
+    CreateTable(rows, columns) {
+      if (createThrows) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      createdShapes.push([rows, columns]);
+      if (typeof createTable === 'function') return createTable(rows, columns);
+      const table = tableDouble(rows, columns, { write });
+      if (cellThrows) table.GetCell = () => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); };
+      return table;
+    } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: command ? function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = namespace?.scope;
+      const answered = evaluateTableBody(body, api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(forge === undefined ? answered : forge);
+      return false;
+    } : undefined };
+  const options = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (!omitCarrier) options.ascNamespace = namespace;
+  const bridge = bridgeWith(plugin, options);
+  return { bridge, plugin, commands, namespace, api, doc: measured, createdShapes };
+}
+
+test('bridge insertTable dispatches ONE command, carries the matrix as DATA and verifies the exact delta', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = tablesRig({ namespace });
+  const data = [['Глава', 'Текст'], ['Ещё', 'Строка']];
+  const pending = r.bridge.insertTable({ data });
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole insert');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, { data }, 'the matrix crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no matrix outlives its dispatch');
+  assert.deepEqual(r.createdShapes, [[2, 2]], 'the measured factory is called with (rows, columns)');
+  assert.equal(r.doc.state.pushes, 1, 'ONE Push for the whole table: a table is ONE element, not one per cell');
+  assert.equal(r.doc.state.insertContents, 0, 'the legacy whole-array primitive — which lands at the START — is never called');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 1, 2, 1, 1, 1, 1],
+    'the body encodes the explicit phase slot, the two counts and one flag per CELL, in row-major order');
+  assert.deepEqual(await pending, { ok: true, tablesBefore: 1, tablesAfter: 2, present: [true, true, true, true] });
+  // The DOCUMENT really holds the table, and the table really holds the matrix: the double is state, not a
+  // stub, so the assertion is about what the append left behind.
+  assert.equal(r.doc.state.tables.length, 2);
+  assert.deepEqual(tableTexts(r.doc.state.tables[1]), data, 'the appended table carries the requested matrix, cell for cell');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('the table body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  const r = tablesRig({ existing: 0 });
+  const data = [['Один', 'Два'], ['Три', 'Четыре']];
+  const pending = r.bridge.insertTable({ data });
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeTable|decodeSearch|decodeStructure|exactBlocksDelta|exactTableDelta|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== ['"]undefined['"]/, 'and it builds the public Api facade itself');
+  assert.match(carried.source, /CreateTable\s*\(/, 'the table is created through the measured factory');
+  assert.match(carried.source, /\.Push\s*\(/, 'the mutation is the measured append primitive');
+  assert.equal(/\.InsertContent\s*\(/.test(carried.source), false, 'and the route that lands at the START is authored nowhere');
+  assert.equal(/GetRowCount|GetColumnCount/.test(carried.source), false,
+    'the two row/column getters measured as `undefined` are used nowhere');
+  // The EDITOR'S own evaluation, in a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it. Only `Api` and `scope` are bound here, so a body that closed over
+  // a module binding would raise ReferenceError exactly as it did natively on 2026.3.1.
+  const fresh = tablesDocument({ tables: [] });
+  const shapes = [];
+  const freshApi = { GetDocument() { return fresh.document; },
+    CreateTable(rows, columns) { shapes.push([rows, columns]); return tableDouble(rows, columns); } };
+  const evaluated = evaluateTableBody(carried.body, freshApi, carried.scope);
+  assert.deepEqual(shapes, [[2, 2]], 'the matrix arrived as DATA and decided the geometry');
+  assert.deepEqual(evaluated, ['POST_INSERT', 0, 1, 1, 1, 1, 1],
+    'the phase slot, the two counts and one true flag per cell — the counts are the document\'s own');
+  assert.equal(fresh.state.pushes, 1, 'and the ONE Push is where the mutation happens');
+  assert.equal(fresh.state.insertContents, 0, 'never through the legacy whole-array primitive');
+  assert.deepEqual(tableTexts(fresh.state.tables[0]), data, 'the appended table carries the matrix');
+  assert.deepEqual(carried.scope, { data }, 'the matrix crossed as scope data');
+  assert.deepEqual((await pending).present, [true, true, true, true]);
+});
+
+test('the Push boolean is never the signal: a false that appended verifies, a true that appended nothing does not', async () => {
+  // BOTH halves of a mutation primitive's uselessness, on the MEASURED route: `Push` answered `true` for a
+  // paragraph and `false` for an image host, so a `true` proves nothing and a `false` is not proof of
+  // failure either. The document's own delta is the only evidence, and it is what these two rigs vary.
+  const lied = tablesRig({ existing: 1, answer: false });
+  assert.deepEqual(await lied.bridge.insertTable({ data: [['Новое']] }),
+    { ok: true, tablesBefore: 1, tablesAfter: 2, present: [true] },
+    'the document really grew by one table, so the insert IS verified although the primitive answered false');
+  assert.equal(lied.bridge.getState().busy, false);
+  const noop = tablesRig({ existing: 1, grow: 0 });
+  assert.deepEqual(await noop.bridge.insertTable({ data: [['Новое']] }),
+    { ok: false, code: 'APPLY_UNCERTAIN' },
+    'the primitive answered true and the table list did not move: never a verified insert');
+  assert.equal(noop.doc.state.pushes, 1, 'the mutation was dispatched exactly once and is never retried');
+  const state = noop.bridge.getState();
+  assert.equal(state.busy, true, 'the slot is HELD for an uncertain insert');
+  assert.equal(state.uncertain, true);
+  assert.equal(state.writePending, true, 'and the write lock stays engaged, so no second mutation can start');
+  assert.deepEqual(await noop.bridge.insertTable({ data: [['Ещё']] }), { ok: false, code: 'EDITOR_BUSY' },
+    'no retry: the held slot refuses the next insert');
+  assert.equal(noop.commands.length, 1, 'and the refused call dispatches nothing at all');
+});
+
+test('the table outcome contract is ONE-TO-ONE over the APPENDED TABLE, never a match over the document', async () => {
+  // THE EXISTENTIAL TRAP, on the measured route. The document ALREADY holds the requested matrix in a
+  // pre-existing table, and the insert creates its table while writing no cell text at all. A verifier
+  // that searched the document for the cell texts — or read any table but the one the append added —
+  // would be satisfied by the pre-existing occurrence and publish `ok` for an insert that carried
+  // nothing. The anchor is the baseline the body took BEFORE `Push`: `Push` appends at the END, so the
+  // insert's OWN table is the one at index `tablesBefore`, and its cells are read back cell by cell.
+  const data = [['Глава', 'Текст']];
+  const existing = tableDouble(1, 2, { initial: (row, column) => data[row][column] });
+  const silentDocument = tablesDocument({ tables: [existing], grow: 1 });
+  const api = { GetDocument() { return silentDocument.document; },
+    CreateTable(rows, columns) { return tableDouble(rows, columns, { write: false }); } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand(body, close, recalculate, callback) { callback(evaluateTableBody(body, api, { data })); return false; } };
+  const quiet = bridgeWith(plugin, { editorType: 'word', ascNamespace: { scope: undefined },
+    clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
+  const result = await quiet.insertTable({ data });
+  assert.equal(silentDocument.state.pushes, 1, 'the mutation was dispatched exactly once');
+  assert.equal(silentDocument.state.tables.length, 2, 'the table list really grew by exactly one');
+  assert.deepEqual(tableTexts(silentDocument.state.tables[1]), [['', '']],
+    'the created table carries NO text — the count delta is exact and the content is not, while the PRE-EXISTING table holds the very matrix');
+  assert.equal(result.ok, false, 'an insert whose own cells are empty is NEVER verified, whatever the document already held');
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
+  assert.equal(result.data, undefined);
+  const held = quiet.getState();
+  assert.equal(held.busy, true, 'the slot is HELD for an insert whose content did not arrive');
+  assert.equal(held.uncertain, true);
+  assert.equal(held.writePending, true);
+  // The same anchor closes the other wrong-content shape: the cells are filled with something that is not
+  // the requested text.
+  const wrong = tablesRig({ existing: 0, write: 'Другое' });
+  assert.deepEqual(await wrong.bridge.insertTable({ data: [['Глава']] }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a cell that carries a different text is not this matrix\'s cell');
+  assert.deepEqual(tableTexts(wrong.doc.state.tables[0]), [['Другое']], 'the double really wrote the other text');
+  // THE TWO CASES THE ANCHOR MUST NOT BREAK. A matrix whose texts ALREADY occur in another table still
+  // verifies, because the append carried them in the cells the matrix owns.
+  const duplicateText = tableDouble(1, 2, { initial: (row, column) => data[row][column] });
+  const elsewhere = tablesRig({ existing: 0 });
+  elsewhere.doc.state.tables.push(duplicateText);
+  assert.deepEqual(await elsewhere.bridge.insertTable({ data }),
+    { ok: true, tablesBefore: 1, tablesAfter: 2, present: [true, true] },
+    'the append really carried the matrix, even though the document already held the same texts');
+  assert.deepEqual(tableTexts(elsewhere.doc.state.tables[1]), data);
+  // And DUPLICATE cell texts verify: two cells with the SAME text are two cells, each in its own slot.
+  const duplicates = tablesRig({ existing: 0 });
+  assert.deepEqual(await duplicates.bridge.insertTable({ data: [['Дубль', 'Дубль']] }),
+    { ok: true, tablesBefore: 0, tablesAfter: 1, present: [true, true] });
+  assert.deepEqual(tableTexts(duplicates.doc.state.tables[0]), [['Дубль', 'Дубль']]);
+});
+
+test('a table insert that lands at the START is TOOL_UNCERTAIN with the slot HELD: the anchor catches it', async () => {
+  // THE OLD ASSUMED ROUTE, modelled: the mutation answers and the table lands at the BEGINNING. The table
+  // count really grows by one, so the count delta ALONE would call this a verified insert; only reading
+  // the table the baseline addresses — the one at index `tablesBefore` — can see that the insert does not
+  // own it.
+  const r = tablesRig({ existing: 1, prepends: true });
+  const result = await r.bridge.insertTable({ data: [['МАРКЕР-ТАБЛИЦА']] });
+  assert.equal(r.doc.state.pushes, 1, 'the mutation was dispatched exactly once');
+  assert.deepEqual(tableTexts(r.doc.state.tables[0]), [['МАРКЕР-ТАБЛИЦА']], 'it landed at the START, not the END');
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 1, 2, 0],
+    'the count grew by exactly one and the table at index 1 (the baseline address) is NOT the inserted one — its flag is 0');
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, 'a start-landing insert is NEVER a verified append');
+  const held = r.bridge.getState();
+  assert.equal(held.busy, true, 'the slot is HELD: the write really happened, just not where it was promised');
+  assert.equal(held.uncertain, true);
+  assert.equal(held.writePending, true);
+  assert.deepEqual(await r.bridge.insertTable({ data: [['Ещё']] }), { ok: false, code: 'EDITOR_BUSY' },
+    'and there is NO retry');
+  assert.equal(r.commands.length, 1, 'the refused call dispatches nothing at all');
+});
+
+test('a throw between the create and the push is a KNOWN refusal with zero writes; a throw in the push is UNCERTAIN', async () => {
+  // THE MUTATION BOUNDARY IS THE ONE `Push`, NOT THE EARLIER WORK. A body that threw while CREATING or
+  // FILLING the table provably dispatched nothing, so its refusal is a KNOWN class with the slot
+  // RELEASED; a body that threw out of `Push` may already have applied it, so the phase has already
+  // turned `POST_INSERT` and the outcome is `APPLY_UNCERTAIN` with the slot HELD and no retry.
+  const created = tablesRig({ createThrows: true });
+  assert.deepEqual(await created.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(created.doc.state.pushes, 0, 'a factory that threw never reaches the mutation');
+  assert.equal(created.bridge.getState().busy, false, 'and the slot is RELEASED: nothing was inserted');
+  const filled = tablesRig({ cellThrows: true });
+  assert.deepEqual(await filled.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(filled.doc.state.pushes, 0, 'a throw BETWEEN the create and the push never reaches the mutation');
+  assert.equal(filled.bridge.getState().busy, false);
+  const base = tablesDocument({ tables: [tableDouble(1, 1, { initial: () => 'старая' })] });
+  const calls = { pushes: 0 };
+  const document = { ...base.document, Push() { calls.pushes += 1; throw new Error('СЕКРЕТ-ДОКУМЕНТА'); } };
+  const threw = tablesRig({ document });
+  assert.deepEqual(await threw.bridge.insertTable({ data: [['Новое']] }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a primitive that threw out of the mutation is the uncertain class');
+  assert.equal(calls.pushes, 1);
+  assert.equal(JSON.stringify(await threw.bridge.insertTable({ data: [['Ещё']] })).includes('СЕКРЕТ'), false);
+  assert.equal(calls.pushes, 1, 'and the uncertain insert is never retried');
+  assert.equal(threw.bridge.getState().busy, true, 'the slot is HELD: a throwing mutation may still have applied');
+  assert.equal(threw.bridge.getState().writePending, true);
+});
+
+test('a document that offers ONLY the legacy primitive is refused up-front with NOTHING inserted', async () => {
+  // The route `insert_blocks` must not use is not a fallback here either, and neither is a table built
+  // without the measured append primitive: a document that does not expose `Push` gets the body's own
+  // closed refusal, answered BEFORE any write.
+  const legacy = { tables: [], pushes: 0, insertContents: 0 };
+  const document = {
+    GetAllTables() { return legacy.tables.slice(); },
+    InsertContent(items) { legacy.insertContents += 1; for (const item of items) legacy.tables.unshift(item); return true; }
+  };
+  const r = tablesRig({ document });
+  assert.deepEqual(await r.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(legacy.insertContents, 0, 'the legacy primitive is never called');
+  assert.deepEqual(legacy.tables, [], 'and nothing reached the document');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is RELEASED: nothing was inserted');
+});
+
+test('bridge insertTable refuses an unusable baseline with a closed class and NO Push', async () => {
+  // THE PRE-DISPATCH GATE. Every shape below is a document whose BASELINE cannot be established, so the
+  // delta the outcome rests on can never be computed: the body answers before it inserts.
+  const gated = (override, shape = [2, 2]) => {
+    const base = tablesDocument({ tables: [tableDouble(shape[0], shape[1], { initial: () => 'старая' })] });
+    const calls = { pushes: 0 };
+    const document = { ...base.document, Push() { calls.pushes += 1; return true; }, ...override };
+    return { r: tablesRig({ document }), calls };
+  };
+  for (const [label, override, shape] of [
+    ['no GetAllTables at all', { GetAllTables: null }, [2, 2]],
+    ['GetAllTables is not a function', { GetAllTables: 7 }, [2, 2]],
+    ['GetAllTables answers no array', { GetAllTables: () => 7 }, [2, 2]],
+    ['GetAllTables answers a fractional length', { GetAllTables: () => ({ length: 1.5 }) }, [2, 2]],
+    ['no Push at all', { Push: null }, [2, 2]],
+    ['no Api.CreateTable', {}, [2, 2]]
+  ]) {
+    const { r, calls } = gated(override, shape);
+    if (label === 'no Api.CreateTable') r.api.CreateTable = null;
+    const result = await r.bridge.insertTable({ data: [['а']] });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', label);
+    assert.equal(calls.pushes, 0, `${label}: the measured append primitive is never reached`);
+    assert.equal(r.bridge.getState().busy, false, label);
+  }
+  // A table double whose CELL CHAIN is not the measured one is the same closed capability class, answered
+  // BEFORE the one Push: the body checks every step of `GetCell(...).GetContent().GetElement(0)` — and the
+  // symmetric `GetText()` the proof reads back through — as a function before it fills a cell.
+  for (const [label, createTable] of [
+    ['no GetCell on the created table', () => ({})],
+    ['GetCell answers null', () => ({ GetCell: () => null })],
+    ['GetContent is not a function', () => ({ GetCell: () => ({}) })],
+    ['GetElement is not a function', () => ({ GetCell: () => ({ GetContent: () => ({}) }) })],
+    ['AddText is not a function', () => ({ GetCell: () => ({ GetContent: () => ({ GetElement: () => ({ GetText: () => '' }) }) }) })],
+    ['the readback GetText is not a function (the symmetric read is missing)', () => ({ GetCell: () => ({ GetContent: () => ({ GetElement: () => ({ AddText() {} }) }) }) })]
+  ]) {
+    const r = tablesRig({ existing: 0, createTable });
+    assert.deepEqual(await r.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, label);
+    assert.equal(r.doc.state.pushes, 0, `${label}: never a half-filled table pushed into the document`);
+    assert.equal(r.bridge.getState().busy, false, label);
+  }
+});
+
+test('bridge insertTable refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const noCommand = tablesRig({ command: false });
+  assert.deepEqual(await noCommand.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(noCommand.commands, [], 'no command is dispatched by a facade that has none');
+  for (const shape of [{ omitCarrier: true }, { namespace: null }, { namespace: Object.freeze({}) },
+    { namespace: Object.freeze({ scope: 'предыдущая-область' }) }]) {
+    const r = tablesRig(shape);
+    assert.deepEqual(await r.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' },
+      JSON.stringify(shape));
+    assert.deepEqual(r.commands, [], 'nothing is dispatched when the scope cannot cross');
+    assert.equal(r.bridge.getState().busy, false, 'and the slot is released');
+  }
+  // A request this bridge cannot interpret is refused with the closed argument class and NO SDK work: the
+  // shape rules (the non-empty matrix, the rectangularity, the geometry bounds) and the two byte bounds
+  // are closed preconditions, not optional refinements.
+  const malformed = [undefined, null, {}, { data: [] }, { data: 'а' }, { data: ['а'] }, { data: [null] },
+    { data: [[]] }, { data: [['а', 'б'], ['в']] }, { data: [['а'], ['б', 'в']] }, { data: [[7]] }, { data: [[null]] },
+    { data: new Array(LIMITS.insertTableRowsMax + 1).fill(['а']) },
+    { data: [new Array(LIMITS.insertTableColumnsMax + 1).fill('а')] }];
+  for (const raw of malformed) {
+    const r = tablesRig({ existing: 0 });
+    const result = await r.bridge.insertTable(raw);
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(raw));
+    assert.deepEqual(r.commands, [], JSON.stringify(raw));
+    assert.equal(r.bridge.getState().busy, false, JSON.stringify(raw));
+  }
+  for (const raw of [{ data: [['я'.repeat(LIMITS.insertTableCellBytes)]] },
+    { data: new Array(3).fill(new Array(3).fill('я'.repeat(LIMITS.insertTableCellBytes / 2))) }]) {
+    const r = tablesRig({ existing: 0 });
+    const result = await r.bridge.insertTable(raw);
+    assert.equal(result.code, 'BYTE_LIMIT', JSON.stringify(raw));
+    assert.deepEqual(r.commands, []);
+    assert.equal(r.bridge.getState().busy, false);
+  }
+  // Exactly at both byte bounds is served, so the bound is a boundary and not an off-by-one.
+  const atCell = tablesRig({ existing: 0 });
+  assert.equal((await atCell.bridge.insertTable({ data: [['я'.repeat(LIMITS.insertTableCellBytes / 2)]] })).ok, true,
+    'one cell of exactly insertTableCellBytes is served');
+  const controller = new AbortController();
+  controller.abort();
+  const aborted = tablesRig();
+  assert.deepEqual(await aborted.bridge.insertTable({ data: [['а']], signal: controller.signal }),
+    { ok: false, code: 'CANCELLED' });
+  assert.deepEqual(aborted.commands, [], 'a pre-aborted signal never reaches the editor');
+  assert.equal(aborted.bridge.getState().busy, false);
+});
+
+test('bridge insertTable decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const poisoned = (raw) => {
+    const plugin = { info: { editorType: 'word' }, callCommand: (_body, _close, _recalculate, callback) => { callback(raw); return false; } };
+    return bridgeWith(plugin, { editorType: 'word', ascNamespace: { scope: undefined }, clock: { now: () => 0 },
+      timers: { schedule() { return {}; }, clear() {} } });
+  };
+  // THE PHASE IS AN EXPLICIT SLOT, and these rows pin the protocol in both directions:
+  //   * a TWO-slot answer whose first slot is the PRE-insert phase is a KNOWN refusal — the one name the
+  //     body emits only from its pre-insert half keeps its closed class, and the slot is released;
+  //   * a ONE-slot name (the forgery, phase ABSENT), a POST-insert phase, a phase-marked name that does
+  //     not belong to that phase, and every other uninterpretable answer are the UNCERTAIN class with the
+  //     slot HELD, because the command body ran and the document may already hold the insert.
+  // The matrix is 1×1, so the authored measurement is `[POST_INSERT, tablesBefore, tablesAfter, flag]`.
+  const table = [
+    [['PRE_INSERT', 'CAPABILITY_UNAVAILABLE'], 'CAPABILITY_UNAVAILABLE', false],
+    [['POST_INSERT', 'APPLY_UNCERTAIN'], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 'CAPABILITY_UNAVAILABLE'], 'APPLY_UNCERTAIN', true],
+    [['PRE_INSERT', 'APPLY_UNCERTAIN'], 'APPLY_UNCERTAIN', true],
+    [['PRE_INSERT', 'НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ'], 'APPLY_UNCERTAIN', true],
+    [['CAPABILITY_UNAVAILABLE'], 'APPLY_UNCERTAIN', true],
+    [['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ'], 'APPLY_UNCERTAIN', true],
+    [null, 'APPLY_UNCERTAIN', true], [undefined, 'APPLY_UNCERTAIN', true], [7, 'APPLY_UNCERTAIN', true],
+    ['текст', 'APPLY_UNCERTAIN', true], [{}, 'APPLY_UNCERTAIN', true], [[true], 'APPLY_UNCERTAIN', true],
+    [[], 'APPLY_UNCERTAIN', true], [[1], 'APPLY_UNCERTAIN', true],
+    [[1, 2, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 1, 2], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 1, 2, 1, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 1, 1, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 1.5, 2, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', -1, 2, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', '1', 2, 1], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 1, 2, 2], 'APPLY_UNCERTAIN', true],
+    [['POST_INSERT', 1, 2, 'я'.repeat(40000)], 'APPLY_UNCERTAIN', true]
+  ];
+  for (const [raw, code, held] of table) {
+    const result = await poisoned(raw).insertTable({ data: [['а']] });
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, code, JSON.stringify(raw));
+    assert.equal(JSON.stringify(result).includes('НЕИЗВЕСТНЫЙ'), false, 'no native text leaks through a refusal');
+  }
+  for (const [raw, code, held] of table) {
+    const bridge = poisoned(raw);
+    await bridge.insertTable({ data: [['а']] });
+    const state = bridge.getState();
+    assert.equal(state.busy, held, `busy for ${JSON.stringify(raw)}`);
+    assert.equal(state.writePending, held, `writePending for ${JSON.stringify(raw)}`);
+  }
+  // The authored MEASUREMENT is the one shape that publishes, and it publishes exactly the decoded delta.
+  assert.deepEqual(await poisoned(['POST_INSERT', 4, 5, 1]).insertTable({ data: [['а']] }),
+    { ok: true, tablesBefore: 4, tablesAfter: 5, present: [true] });
+  // The same answer is UNCERTAIN for a matrix whose cell flag is 0: the expected proof is derived from the
+  // REQUEST, never from the answer.
+  assert.equal((await poisoned(['POST_INSERT', 4, 5, 0]).insertTable({ data: [['а']] })).code, 'APPLY_UNCERTAIN');
+  // And the flag count is pinned to the SAME matrix the ticket carried: a 2×2 ticket cannot be answered by
+  // a one-flag answer.
+  assert.equal((await poisoned(['POST_INSERT', 4, 5, 1]).insertTable({ data: [['а', 'б'], ['в', 'г']] })).code, 'APPLY_UNCERTAIN');
+});
+
+test('the refusal PHASE is explicit in the table protocol: a forged one-slot sentinel answered after a real insert is uncertain', async () => {
+  // THE SAME FORGERY `insert_blocks` was caught by (§13.1), on the table body: the body flips the phase
+  // immediately before the one `Push`, so a phase-less answer cannot release a slot for an insert that may
+  // already be in the document. Every rig below evaluates the REAL body — one real insert — and then hands
+  // the bridge the forged answer in its place.
+  for (const forged of [['CAPABILITY_UNAVAILABLE'], ['APPLY_UNCERTAIN'], ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ']]) {
+    const r = tablesRig({ existing: 1, forge: forged });
+    const result = await r.bridge.insertTable({ data: [['Глава']] });
+    assert.equal(r.doc.state.pushes, 1, `${JSON.stringify(forged)}: the body really inserted before the answer`);
+    assert.equal(result.ok, false, JSON.stringify(forged));
+    assert.equal(result.code, 'APPLY_UNCERTAIN',
+      `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, JSON.stringify(forged));
+    assert.equal(state.uncertain, true, JSON.stringify(forged));
+    assert.equal(state.writePending, true, `${JSON.stringify(forged)}: the write lock stays engaged`);
+    assert.deepEqual(await r.bridge.insertTable({ data: [['Ещё']] }), { ok: false, code: 'EDITOR_BUSY' },
+      `${JSON.stringify(forged)}: no retry of the insert`);
+    assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
+  }
+  // THE GENUINE PRE-INSERT REFUSALS ARE UNCHANGED: the body answers them BEFORE the one mutation, with the
+  // pre-insert phase, so the one name keeps its KNOWN class with the slot RELEASED and ZERO `Push`.
+  const baseline = tablesRig({ document: { ...tablesDocument().document, GetAllTables: null } });
+  assert.deepEqual(await baseline.bridge.insertTable({ data: [['а']] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(baseline.doc.state.pushes, 0, 'an unusable baseline never reaches the mutation');
+  assert.equal(baseline.bridge.getState().busy, false, 'and the slot is RELEASED: nothing was inserted');
+  // A PHASE-MARKED answer that names a pre-insert class from the POST-insert half is still not a known
+  // refusal: only the PRE-insert phase makes that name known.
+  const postNamed = tablesRig({ existing: 1, forge: ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'] });
+  assert.equal((await postNamed.bridge.insertTable({ data: [['а']] })).code, 'APPLY_UNCERTAIN');
+  assert.equal(postNamed.bridge.getState().busy, true);
+});
+
+test('insert_table is offered with policy auto and a model call inserts exactly one table', async () => {
+  const r = tablesRig();
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'insert_table');
+  assert.ok(offered, 'the offered catalogue contains insert_table');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.equal(offered.requires.includes('document.write'), true);
+  assert.equal(offered.schema.properties.data.maxItems, LIMITS.insertTableRowsMax);
+  const batch = validateBatch(catalogue, [{ tool: 'insert_table', arguments: { data: [['Заголовок', 'Значение']] } }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'insert_table');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"insert_table","arguments":{"data":[["Заголовок","Значение"]]}}]}',
+    '{"type":"final","message":"таблица вставлена"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '99999999-9999-4999-8999-999999999999', request: 'добавь таблицу в конец',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_table', 'ok']]);
+  assert.equal(r.commands.length, 1, 'one command for the whole run, and no read/write path touched');
+  assert.equal(r.doc.state.pushes, 1, 'the one table of the call became exactly one Push, at the END');
+  assert.deepEqual(tableTexts(r.doc.state.tables[1]), [['Заголовок', 'Значение']]);
+  assert.equal(r.bridge.getState().busy, false);
+  assert.equal(r.bridge.getState().writePending, false);
+  // The model really RECEIVES the measured delta through the runtime's own per-result serialization.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'insert_table');
+  assert.equal(published.ok, true);
+  assert.deepEqual(published.data, { rows: 1, columns: 2, tablesBefore: 1, tablesAfter: 2,
+    bytes: utf8ByteLength('Заголовок') + utf8ByteLength('Значение') },
+  'the tool publishes the five fields it names; the two counts are the ones the bridge measured');
 });
 
 

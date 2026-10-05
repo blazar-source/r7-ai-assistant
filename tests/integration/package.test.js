@@ -45,6 +45,14 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // what distinguishes it from the structure body it shares
   // `GetAllParagraphs`/`GetAllHeadingParagraphs` with; the legacy whole-array insert primitive — measured
   // to land at the START and to replace existing text under a selection — is authored nowhere.
+  // SIX legs are carried inline, and the last one is the TABLE INSERT: the second body that MUTATES the
+  // document through the `Api` builder. Like the block append it builds the facade itself and receives DATA
+  // — here the whole matrix — from the `scope` binding the vendor's `callCommand` wrapper injects (never
+  // from source text), and it is classified by its own CREATION primitive (`CreateTable`, which no other
+  // leg authors) BEFORE the `.Push(` branch, because it shares the measured append primitive with the block
+  // body. It reads the document's own table count around the insert (`GetAllTables`) and the legacy
+  // whole-array insert primitive — measured to land at the START and to replace existing text under a
+  // selection — is authored nowhere.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -57,7 +65,13 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(carried), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(carried, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      if (carried.includes('.Push(')) {
+      if (carried.includes('CreateTable')) {
+        assert.match(carried, /\bscope\b/, 'the table body takes its matrix from the injected command scope');
+        assert.match(carried, /GetAllTables/, 'and reads the document\u2019s own table count around the insert');
+        assert.match(carried, /GetCell/, 'and fills and re-reads every cell through the measured cell chain');
+        assert.equal(carried.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        legs.push('table');
+      } else if (carried.includes('.Push(')) {
         assert.match(carried, /\bscope\b/, 'the append body takes its blocks from the injected command scope');
         assert.match(carried, /CreateParagraph/, 'and builds each paragraph through the measured factory');
         assert.match(carried, /GetAllParagraphs/, 'and reads the document\u2019s own counts around the append');
@@ -76,8 +90,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 5, 'the adapter dispatches exactly the five authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'search', 'structure'],
+  assert.equal(commands, 6, 'the adapter dispatches exactly the six authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'search', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

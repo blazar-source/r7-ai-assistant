@@ -259,6 +259,53 @@ export const LIMITS = Object.freeze({
   insertBlockBytes: 2048,
   insertBlocksBytes: 8192,
   insertHeadingMax: 9,
+  // The bounded TABLE INSERT (`insert_table`) — the SIXTH Sprint 3 Word tool, the SECOND MUTATION, and the
+  // only leg that both CREATES a structure and FILLS it inside ONE command. It adds FOUR static per-call
+  // bounds, and none of them is a bound reused from another scope, because a table is neither a paragraph
+  // nor a read:
+  //   * `insertTableRowsMax` bounds the ROW count of the requested matrix. Every row becomes one
+  //     `GetCell(row, column)` walk the authored body performs BEFORE the single `Push`, and every cell one
+  //     region flag in the answer, so this cap bounds both the editor-side work and the answer's width. 64
+  //     is the same scale as `insertBlocksMax` — a long table and a chapter of paragraphs are the same
+  //     amount of authored content — and it is deliberately NOT an alias of it: a row is not a paragraph.
+  //   * `insertTableColumnsMax` bounds the COLUMN count. 16 columns is a wide but real data table, and
+  //     64 × 16 = 1024 cells is the absolute worst case the geometry bounds admit: the answer's 1024
+  //     one-character flags measure about 2 KiB of the 65536-byte `editorResultBytes` window, and the
+  //     fill + readback loops stay bounded. The common four-column layout table costs 256 cells at most.
+  //   * `insertTableCellBytes` bounds ONE CELL's text in UTF-8 bytes. A cell is a table cell, not a
+  //     paragraph: 1024 bytes is 512 Cyrillic or 1024 ASCII characters, longer than any realistic cell,
+  //     and it is deliberately NOT an alias of `insertBlockBytes` (half its width, because a written
+  //     paragraph and a written cell are different quantities).
+  //   * `insertTableBytes` bounds the WHOLE payload — the sum of every cell's text bytes — and its value is
+  //     `AGENT_CEILINGS.argumentsBytes` (8192; the two are pinned equal by a test, because this table is
+  //     declared before that one and cannot name it). The reasoning is `insertBlocksBytes`': the matrix IS
+  //     the action's arguments, the bridge writes that very array into `Asc.scope` (which the vendor
+  //     wrapper serializes with `JSON.stringify`), and JSON escaping never shrinks a text, so the sum of
+  //     cell bytes can never EXCEED the serialized arguments the runtime already bounds. The handler
+  //     applies the same number, so a descriptor held directly — where no runtime bound runs — is bounded
+  //     too, and the bound can only refuse a call the runtime would also have refused.
+  // A BLANK CELL IS LEGAL and no lower bound is advertised for a cell text: an empty cell is a real table
+  // cell, and unlike the non-empty matrix (enforced by the handler and the bridge where `minItems` cannot
+  // be advertised) there is nothing for a lower bound to protect.
+  // NO `header` OPTION EXISTS. No measured primitive applies header formatting — the R7 public `ApiTable`
+  // surface this module reads exposes no header/row-style member — and once a table is in the document a
+  // header row is not distinguishable from a body row, so advertising one would promise what the tool
+  // cannot do.
+  // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
+  // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({tool, ok, data})`, the shape
+  // `stringifyToolResults` measures and `runtime.js:27-36` replaces with the literal "the tool result
+  // could not be serialized" when it is exceeded). The entry is
+  // `{"tool":"insert_table","ok":true,"data":{"rows":N,"columns":N,"tablesBefore":N,"tablesAfter":N,"bytes":N}}`
+  // and EVERY field is a non-negative safe integer: three of them bounded by the limits above and two by
+  // the document's own table count (decoded as a non-negative safe integer). Five integers cannot fill
+  // 16384 bytes: with all five at `Number.MAX_SAFE_INTEGER` the entry measures 181 bytes — measured in the
+  // tool's own test — so this guard cannot fire for any shape this handler can publish. The measurement is
+  // nevertheless the ENFORCED bound: it is the module's ONE entry measurement, and a field added to this
+  // result later must not be able to widen the entry unmeasured.
+  insertTableRowsMax: 64,
+  insertTableColumnsMax: 16,
+  insertTableCellBytes: 1024,
+  insertTableBytes: 8192,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,

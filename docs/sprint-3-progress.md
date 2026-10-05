@@ -1616,3 +1616,134 @@ audits with **0 findings**. The `package` test's authored-command-leg classifier
 untouched, no dynamic execution added, and the tool is still a mutation under the exact-delta contract,
 `TOOL_UNCERTAIN` + held slot + no retry on anything unprovable.
 
+## 14. Sprint 3, tool 6 — `insert_table`, the SECOND MUTATION, an exact-delta contract over an append
+
+The second creation tool of Sprint 3, and the first one whose success is a claim about a **structure**: the
+appended table must carry the requested **matrix** in its **own cells**. It reuses the machinery §13/§13.2
+hardened rather than inventing a second outcome contract. Exactly **one** bridge entry point was added
+(`insertTable`), **one** authored command body (`command.table`), **one** decoder (`decodeTable`), **one**
+ticket kind (`tableinsert`), **one** result wrapper (`insertTableEntryBytes`) and **four** limits. No
+existing limit VALUE moved, `src/agent/*` is untouched, and only `src/tools/word.js`,
+`src/plugin/bridge.js`, `src/shared/limits.js`, two test files and this document changed.
+
+**The measured primitives.** On the target (Astra / R7 2026.1.2.1942, this round):
+`Api.CreateTable(rows, columns)` creates a table object whose public methods include `GetCell(row, column)`,
+`GetRow(i)` and `SetWidth`; **`GetRowCount` and `GetColumnCount` are `undefined`** and are therefore named
+**nowhere** in this tool — the geometry is the matrix the caller sent. `table.GetCell(r, c).GetContent()
+.GetElement(0).AddText(text)` fills a cell (measured: the cell text appears in the document).
+`document.GetAllTables()` answers the tables (measured **0 → 1** after one insert) and is the count the
+delta is decided on. `doc.Push(element)` **appends at the END** while `doc.InsertContent([...])` lands at
+the **BEGINNING** and, under a selection, replaces existing text (§13.2) — so the legacy whole-array
+primitive is authored **nowhere** here either, and neither is select-then-insert. No mutation primitive's
+return value is read.
+
+**The proof is one-to-one over the append, and it has two halves that cannot substitute for each other:**
+the document's table count grew by **exactly one**, **and** every cell of the table the append **added**
+carries exactly the requested text. The added table is addressed by the baseline the body took **before**
+the one `Push` — `Push` appends, so the insert's own table is at index `tablesBefore` — and its cells are
+read back **cell by cell, in row-major order**, through the symmetric read of the measured fill chain,
+`appended.GetCell(r, c).GetContent().GetElement(0).GetText()`, each compared with `data[r][c]`. That is
+what makes it non-existential: a document that already held the very same texts in **another** table cannot
+stand in for the insert's own cells, and a start-landing mutation (the inserted table at index 0) can only
+produce flags of `0`. Searching the document for the cell texts is exactly the rule that was **rejected**,
+and a test drives the rejection: a document already holding the matrix, plus an insert that creates the
+right number of tables and writes **no** text, is `APPLY_UNCERTAIN` with the slot held.
+
+**The mechanism is ONE self-contained static body** (`command.table`), the same carriage as the block
+append: the matrix crosses as the `Asc.scope` parameter channel (`{ data }`), never interpolated into
+source (ADR 0002); a **pre-dispatch baseline** read gates the whole call; the table is created and **every
+cell is filled — and every step of the cell chain, including the readback's `GetText()`, is checked as a
+function — BEFORE the one `document.Push`**, so an editor whose cell chain is not the measured one refuses
+with **NOTHING inserted** instead of pushing a half-filled table; then the post read. The refusal phase
+turns `POST_INSERT` **immediately before that one push**.
+
+**The schema is closed** (`additionalProperties: false`, `required: ['data']`): `data` is a non-empty 2D
+array of strings whose **shape is derived from the data** — there are no separate `rows`/`columns`
+arguments that could disagree with the matrix. Four bounds are named in `src/shared/limits.js` with their
+reasoning: **64** rows (the same scale as `insertBlocksMax`; every cell is one `GetCell` walk before the
+push and one flag in the answer), **16** columns (a wide but real data table; 64 × 16 = 1024 is the worst
+case, whose 1024 one-character flags measure ~2 KiB against the 65536-byte `editorResultBytes` window),
+**1024** bytes per cell (deliberately not an alias of `insertBlockBytes`: half its width, because a written
+cell is not a written paragraph) and **8192** bytes for the whole payload — `AGENT_CEILINGS.argumentsBytes`,
+because the matrix *is* the action's arguments and JSON escaping never shrinks a text. A **blank cell is
+legal** and no lower bound is advertised for a cell text. The non-empty array, the non-empty row and the
+**rectangularity** are deep rules the closed schema vocabulary cannot express (no `minItems`), so they are
+refused by the handler **and** by the bridge as the closed argument class with **nothing dispatched**.
+There is deliberately **no `header` option**: no measured primitive applies header formatting, and once a
+table is in the document a header row is not distinguishable from a body row, so advertising one would
+promise what the tool cannot do.
+
+**The failure map**, each class closed: wrong editor → `CAPABILITY_UNAVAILABLE` (precondition); missing
+bridge entry point → `CAPABILITY_UNAVAILABLE`; an **unusable baseline**, a **missing `Push`** or an
+**unusable cell chain** → `CAPABILITY_UNAVAILABLE` with **zero `Push`** (the body answers before the one
+mutation, with the pre-insert phase, so the slot is **released**); a bridge refusal → its own closed
+`refusalCode`; an uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` →
+`TOOL_UNCERTAIN`; an argument the tool cannot serve (empty, ragged, non-string or over-bound) → the closed
+argument/byte class with **ZERO writes**; an over-ceiling result entry → `BYTE_LIMIT`. The refusal **phase
+is an explicit slot of the answer** and `decodeTable` raises the known class **only** for
+`[PRE_INSERT, name]`; a phase-less one-slot sentinel answered after a real insert is `APPLY_UNCERTAIN` with
+the slot held. `owned.dispatched` alone cannot decide this — it is set before the command is handed to the
+native, so it does not mean "the push ran".
+
+**The result entry is measured** through the module's one `toolResultEntryBytes` shape
+(`insertTableEntryBytes`): `ok({ rows, columns, tablesBefore, tablesAfter, bytes })`, exactly those five
+fields. The arithmetic is pinned by measurement: a real insert measures **109** bytes, and the **widest
+shape the handler can publish** — all five fields at `Number.MAX_SAFE_INTEGER` — measures **181** bytes,
+i.e. more than sixteen thousand bytes inside the 16384-byte ceiling. The `BYTE_LIMIT` branch is retained as
+the module's **one enforced bound** and is **unreachable** for five non-negative safe integers.
+
+**TDD, and the exact RED.** The new test blocks were written FIRST and run against `1aece06` →
+`node --test tests/unit/tools-word.test.js` → **tests 181, pass 158, fail 23** (`fail 0` on that file
+before the round), every failure rooted in one cause: `insert_table` is missing from the descriptor set and
+`bridge.insertTable` does not exist (`TypeError: Cannot read properties of undefined (reading 'execute')`,
+`r.bridge.insertTable is not a function`, `the offered catalogue contains insert_table`). The 23 are exactly
+the **20** new blocks plus the **3** existing enumerations, which grew by the new name rather than being
+weakened. Green on the final tree: **181/181** on that file.
+
+**A NEW SHAPE OF THE RECORDED AUDIT TRAP, found by the BUILDER and not by the source audit.** The first
+build after the body was written failed with `BUNDLE_AUDIT_FAILED` — four `DYNAMIC_PROPERTY` findings, all
+of them the readback chain (`GetCell`/`GetContent`/`GetElement`/`GetText`). The cause was neither a tainted
+name nor a collision: `allTables[tablesBefore]` is a member read with a **non-constant key**, which the
+analysis treats as a computed value, so the local holding it became "computed" and **every call on it** was
+a finding. The repair is a `tableAt(list, index)` helper: a **call's result** is not tainted by that
+analysis, so the value the body invokes the measured chain on is clean. `node scripts/static-audit.mjs`
+passed on `src/` throughout; only the bundle saw it. The general rule §13 states is unchanged and now has a
+third shape: audit the **bundle**, and never invoke through a value that came out of an array under a
+non-constant index.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js` →
+**202/202**, `fail 0` (182 → 202); full suite `node --test` → **813**, `pass 813`, `fail 0` (793 → 813: the
+same 20 added test blocks, none removed or weakened); `node scripts/static-audit.mjs` → `Authored-code audit
+PASS`, exit 0; `node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE
+SHA-256 2450bbe24749f03b524352892586112c488ff260bc5224707271c3942d24ef1f`, re-measured twice on the final
+tree with the same value. The SHA **moved** from the
+`1aece06` pin `27c99d41c90d2bbc1ee74b6672c716ef7c3a75d0454fb855536df110b00aa432` because a new authored body,
+a new decoder and four new limits are in the bundle; the builder runs with `minify: false`, the build was
+run (not only the audit), and the bundle audits with **0 findings**. The `package` test's authored-command
+leg classifier grew **5 → 6** (`['blocks', 'capability', 'context', 'search', 'structure', 'table']`): the
+table leg is recognised by `CreateTable` — a primitive no other leg authors — **before** the `.Push(`
+branch, because it shares the measured append primitive with the block body, and the classifier also pins
+that it reads `GetAllTables`, uses `GetCell` and authors no `InsertContent`. The registry offers the tool in
+`EDIT` only (`kind: 'mutate'`), with `policy: 'auto'` and `requires: ['document.write']`, and a model batch
+dispatches exactly **one** command for the whole run; `src/agent/*` untouched.
+
+**Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What the
+host-side suite cannot prove is the **shipped** carriage of this leg: (1) that `{ data }` written into the
+page's `Asc.scope` reaches the body's `scope` binding; (2) that `Api.CreateTable(rows, columns)` takes the
+rows FIRST and answers a table whose `GetCell` exists; (3) that the element at
+`GetCell(r, c).GetContent().GetElement(0)` answers **both** `AddText` and `GetText` — the fill half is
+measured, the readback half is the symmetric mate of it and the **one** primitive this round did not
+measure directly, which is why the body checks it as a function **before** the one push: an absent
+`GetText` costs a closed `CAPABILITY_UNAVAILABLE` with nothing inserted, never a false success; (4) that the
+native return validator passes a flat array of `3 + rows × columns` primitives unaltered (up to 1027 members
+at the widest legal geometry); and (5) that `GetAllTables()` inside the same synchronous body observes the
+push. Each unknown lands on a closed path: a scope that does not arrive, a missing primitive or a cell chain
+that is not the measured one makes the body answer its own phase-marked refusal
+(`[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']`, nothing inserted, slot released); a non-exact answer, a
+malformed one or a throwing push is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot held and no retry;
+and an editor that never calls back settles `APPLY_UNCERTAIN` (a dispatched write-class ticket), never a
+verified insert. A native run on the target is required before this tool's delta can be called measured; it
+is recorded here as PENDING NATIVE VERIFICATION.
+
+

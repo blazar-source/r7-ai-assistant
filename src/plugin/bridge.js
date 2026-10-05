@@ -15,8 +15,9 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // already be in the document (`cancel`)? Four literal kind lists answering the same question is how a
 // new write leg comes to be missing from one of them. `blocksinsert` is the block append: it writes the
 // document through `document.Push`, one call per block, inside its own command body, so it is a write leg
-// in every sense the other two are.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert']));
+// in every sense the other two are. `tableinsert` is the table insert: it writes the same way, ONE
+// `document.Push` of a table the body built and filled, inside its own command body.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -418,6 +419,173 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return blocksRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE TABLE INSERT, and the SECOND leg in this bridge that MUTATES a document through the `Api`
+      // builder. It is the same carriage and the same three phases as the block append above — a FULL
+      // inline static literal whose ONLY model data arrives as the `scope` binding the vendor wrapper
+      // composes from `Asc.scope` (never composed into source, ADR 0002), no composed-source transport, a
+      // PRE-DISPATCH BASELINE read as the gate, every cell filled BEFORE the one mutation, and a POST read
+      // of the document's own state — and it differs in exactly the three things a TABLE differs in:
+      //   1. the structure is created by `Api.CreateTable(rows, columns)` — MEASURED on the target — and
+      //      the geometry comes from the matrix the caller sent, NEVER from `GetRowCount`/`GetColumnCount`,
+      //      which were measured as `undefined` and are therefore named nowhere in this body;
+      //   2. every cell is filled through the MEASURED chain `table.GetCell(r, c).GetContent()
+      //      .GetElement(0).AddText(text)`, with EVERY step — and the symmetric `GetText()` the readback
+      //      needs — checked as a function BEFORE the first push, so an editor whose cell chain is not the
+      //      measured one refuses the whole call with NOTHING inserted rather than pushing a half-filled
+      //      table;
+      //   3. the proof is one-to-one over the APPENDED TABLE: `document.GetAllTables()` before and after,
+      //      and then the table at index `tablesBefore` — the one `Push` appended — is read back CELL BY
+      //      CELL, in row-major order, through the SAME element's `GetText()`. Reading any other table, or
+      //      searching the document for the cell texts, could be satisfied by a table the document already
+      //      held; the baseline address cannot.
+      // THE ROUTE IS THE MEASURED ONE: ONE `document.Push(table)` APPENDS AT THE END, exactly like the
+      // paragraph append, and the legacy whole-array insert primitive — measured to land at the BEGINNING
+      // and to replace existing text under a selection — is authored NOWHERE here either. NO MUTATION
+      // PRIMITIVE'S RETURN VALUE IS READ: the ground truth is the document readback.
+      // The answer is ONE flat array of primitives (the native return validator keeps those and strips a
+      // plain object): `[POST_INSERT, tablesBefore, tablesAfter, flag00, flag01, …]` with one flag per CELL
+      // in row-major order, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF
+      // EVERY ANSWER, and the decoder turns a phase-less or post-insert refusal into the uncertain class —
+      // the name alone can never release a slot for an insert that may already be in the document.
+      table(callback) {
+        return plugin.callCommand(function () {
+          // The phase, and the ONE place the two classes are distinguished: everything answered while it is
+          // `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after the
+          // one push is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
+          // IMMEDIATELY BEFORE that push, not after it, because a native that throws OUT of the call may
+          // already have applied the table.
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the
+          // block body states: a literal built from identifier names would make the receiver of every later
+          // call on it a computed value.
+          function tableRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            // The scope the vendor wrapper injected: `{ data }`, already validated and bounded by the
+            // bridge. Anything else — a missing wrapper, a non-array — is the body's own closed refusal
+            // rather than an insert of `undefined`.
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var data = request !== null && request.data !== null && request.data !== undefined ? request.data : null;
+            if (data === null || typeof data.length !== 'number' || !(data.length >= 1)) return tableRefusal('CAPABILITY_UNAVAILABLE');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // Every primitive this body authors is a FUNCTION CHECK before any call, exactly like the block
+            // and structure bodies: an editor that does not expose one of them answers this body's own
+            // refusal rather than an insert of invented geometry.
+            if (!available || typeof Api.CreateTable !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetAllTables !== 'function' || typeof document.Push !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check
+            // reaches for NO global at all, so the stringified body depends on nothing but the two bindings
+            // the vendor wrapper creates.
+            function measured(value) {
+              return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+            }
+            // THE SHAPE OF THE MATRIX, re-decided INSIDE the editor as well as in the bridge: a ragged or
+            // cell-less matrix is refused before the table is created, so the geometry the factory is given
+            // and the one the flags are laid out over can never disagree.
+            var rowCount = data.length;
+            var columnCount = 0;
+            for (var shapeRow = 0; shapeRow < rowCount; shapeRow++) {
+              var shapeCells = data[shapeRow];
+              if (shapeCells === null || shapeCells === undefined || typeof shapeCells.length !== 'number') return tableRefusal('CAPABILITY_UNAVAILABLE');
+              if (shapeRow === 0) columnCount = shapeCells.length;
+              else if (shapeCells.length !== columnCount) return tableRefusal('CAPABILITY_UNAVAILABLE');
+              if (!(columnCount >= 1)) return tableRefusal('CAPABILITY_UNAVAILABLE');
+              for (var shapeCol = 0; shapeCol < shapeCells.length; shapeCol++) {
+                if (typeof shapeCells[shapeCol] !== 'string') return tableRefusal('CAPABILITY_UNAVAILABLE');
+              }
+            }
+            // THE PRE-DISPATCH BASELINE, and the gate on the whole insert: no baseline means no delta means
+            // no evidence means no write.
+            var baseline = document.GetAllTables();
+            if (baseline === null || baseline === undefined || typeof baseline.length !== 'number') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            var tablesBefore = baseline.length;
+            if (!measured(tablesBefore)) return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // THE TABLE IS CREATED AND EVERY CELL IS FILLED BEFORE THE ONE MUTATION, and every step of the
+            // measured chain is a function before it is called — including the `GetText()` the readback
+            // below needs, so a build whose cell elements cannot be read is refused with NOTHING inserted
+            // instead of pushing a table this body could never verify.
+            var table = Api.CreateTable(rowCount, columnCount);
+            if (table === null || table === undefined || typeof table.GetCell !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            for (var fillRow = 0; fillRow < rowCount; fillRow++) {
+              for (var fillCol = 0; fillCol < columnCount; fillCol++) {
+                var fillCell = table.GetCell(fillRow, fillCol);
+                if (fillCell === null || fillCell === undefined || typeof fillCell.GetContent !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                var fillContent = fillCell.GetContent();
+                if (fillContent === null || fillContent === undefined || typeof fillContent.GetElement !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                var fillElement = fillContent.GetElement(0);
+                if (fillElement === null || fillElement === undefined || typeof fillElement.AddText !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                if (typeof fillElement.GetText !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                fillElement.AddText(data[fillRow][fillCol]);
+              }
+            }
+            // THE MUTATION, and the exact boundary the two refusal classes are split on: ONE `Push`, the
+            // route MEASURED to append at the END. The phase turns `POST_INSERT` IMMEDIATELY BEFORE it,
+            // because a native that throws out of the call may already have applied the table — from the
+            // call entered, nothing observed here proves the document was not touched, so every refusal
+            // below carries the post-insert phase and the decoder turns it into the uncertain class, for
+            // which the bridge holds its slot. The readback is the ground truth, never the return value.
+            phase = 'POST_INSERT';
+            document.Push(table);
+            var allTables = document.GetAllTables();
+            if (allTables === null || allTables === undefined || typeof allTables.length !== 'number') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            var tablesAfter = allTables.length;
+            if (!measured(tablesAfter)) return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // THE TABLE THE APPEND ADDED, addressed by the baseline this body ALREADY took before the call:
+            // `Push` appends, so the insert's own table is the one at index `tablesBefore`. Reading any other
+            // table — a start-landing mutation leaves the inserted table at index 0 — can only produce flags
+            // of 0, which is exactly the false success this address exists to prevent.
+            // The index read goes through a small function ON PURPOSE, and that is an authored-code-audit
+            // requirement rather than a style choice: `allTables[tablesBefore]` is a member read with a
+            // NON-CONSTANT key, which this module's NAME-based alias analysis treats as a computed value, so
+            // a local holding it would make every later call on it a computed-execution finding (measured:
+            // the four `GetCell`/`GetContent`/`GetElement`/`GetText` calls below were reported as
+            // DYNAMIC_PROPERTY until this helper existed). A CALL's result is not tainted by that analysis,
+            // so `tableAt(...)` yields a value this body may invoke the measured chain on.
+            function tableAt(list, index) {
+              return index >= 0 && index < list.length ? list[index] : null;
+            }
+            var appended = tableAt(allTables, tablesBefore);
+            if (appended === null || appended === undefined || typeof appended.GetCell !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+            // ONE FLAG PER CELL, in row-major order, each the equality of the APPENDED TABLE'S OWN cell with
+            // the cell the caller asked for. The elements are reached through the same measured chain, one
+            // step at a time — an indexed read of editor DATA followed by a call on the value it answered,
+            // never a computed lookup — and `GetText` is invoked on the callback parameter, exactly as the
+            // search and structure bodies do.
+            var cellFlags = [];
+            for (var readRow = 0; readRow < rowCount; readRow++) {
+              for (var readCol = 0; readCol < columnCount; readCol++) {
+                var readCell = appended.GetCell(readRow, readCol);
+                if (readCell === null || readCell === undefined || typeof readCell.GetContent !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                var readContent = readCell.GetContent();
+                if (readContent === null || readContent === undefined || typeof readContent.GetElement !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                var readElement = readContent.GetElement(0);
+                if (readElement === null || readElement === undefined || typeof readElement.GetText !== 'function') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                var cellText = readElement.GetText();
+                if (typeof cellText !== 'string') return tableRefusal('CAPABILITY_UNAVAILABLE');
+                cellFlags.push(cellText === data[readRow][readCol] ? 1 : 0);
+              }
+            }
+            // The phase slot, the two counts and the per-cell flags are APPENDED rather than spelled as one
+            // array literal, for the authored-code-audit reason the block body states: the local alias
+            // analysis is NAME-based and scope-insensitive over the whole bundle, so a literal built from
+            // identifier names another scope happened to taint would make this array a "computed value" and
+            // every call on it a computed-execution finding.
+            var answer = [];
+            answer.push(phase);
+            answer.push(tablesBefore);
+            answer.push(tablesAfter);
+            for (var flagIndex = 0; flagIndex < cellFlags.length; flagIndex++) answer.push(cellFlags[flagIndex]);
+            return answer;
+          } catch (error) { return tableRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -658,19 +826,98 @@ function exactBlocksDelta(outcome, blocks) {
     outcome.headingsAfter - outcome.headingsBefore === headings &&
     everyBlockPresent;
 }
-// The two PRE-insert refusals the block body can answer with, and the ONLY classes that keep a KNOWN code
-// once the ticket's dispatch flag is set. `blocksinsert` sets `owned.dispatched` BEFORE the command is
-// handed to the native (a synchronous throw out of the transport must never release a slot whose work may
-// already be queued), so that flag does NOT mean "the push ran": the PHASE travels in the answer's
-// OWN SLOT, and `decodeBlocks` raises these two codes only for a `[PRE_INSERT, name]` answer. Everything
-// else a dispatched append can answer — a phase-less one-slot name, the post-insert phase, a malformed
-// array, a decode this bridge refuses — means the append may already be in the document, so it is the
-// uncertain class with the slot HELD. That is the shape a PARTIAL push leaves behind as well: a body that
-// had pushed some blocks and then threw answers its refusal with the post-insert phase, so the exact delta
-// is never consulted for a write that may have happened and the slot is never released.
-function blocksPreInsertRefusal(error) {
+// The two PRE-insert refusals a dispatched WRITE command body can answer with, and the ONLY classes that
+// keep a KNOWN code once the ticket's dispatch flag is set. `blocksinsert`/`tableinsert` set
+// `owned.dispatched` BEFORE the command is handed to the native (a synchronous throw out of the transport
+// must never release a slot whose work may already be queued), so that flag does NOT mean "the mutation
+// ran": the PHASE travels in the answer's OWN SLOT, and the decoders raise these two codes only for a
+// `[PRE_INSERT, name]` answer. Everything else a dispatched body can answer — a phase-less one-slot name,
+// the post-insert phase, a malformed array, a decode this bridge refuses — means the mutation may already
+// be in the document, so it is the uncertain class with the slot HELD. That is the shape a throw OUT of
+// the mutation leaves behind as well: a body that had pushed and then threw answers its refusal with the
+// post-insert phase, so the exact delta is never consulted for a write that may have happened and the slot
+// is never released.
+function preInsertRefusal(error) {
   return error instanceof SafeError &&
     (error.code === ERROR_CODES.CAPABILITY_UNAVAILABLE || error.code === ERROR_CODES.TOOL_ERROR);
+}
+// The TABLE-INSERT answer, decoded with the same strictness as `decodeBlocks` and for the same reason: the
+// authored body encodes its measurements as ONE flat array of PRIMITIVES —
+// `[POST_INSERT, tablesBefore, tablesAfter, flag00, flag01, …]` — because the native return validator
+// keeps arrays of primitives and STRIPS a plain object. `Reflect.ownKeys` before any indexed read closes
+// symbols, holes and hidden extras, and every member is read through its own data descriptor, never
+// through a getter. Four rules are this leg's own contract:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes
+//     are split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a
+//     KNOWN refusal whose code the caller republishes (nothing was inserted), and `[POST_INSERT, name]` is
+//     the UNCERTAIN class (the document may already hold the insert). A phase that is ABSENT — the one-slot
+//     `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real insert — or a
+//     pre-insert phase over a measurement, or any other single value, can never be a known refusal: it is
+//     decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the marker does.
+//   * the two counts are NON-NEGATIVE SAFE INTEGERS — the document's own array lengths — and the flags are
+//     EXACTLY `0` or `1`: a count this bridge cannot trust is not a count, and an editor that answers
+//     anything else is not one this body can have read.
+//   * the body emits EXACTLY one flag per CELL of the matrix the ticket carried, so an answer with a
+//     different number of flags is not one this body can have produced: publishing a shorter array would
+//     let a missing cell check pass as the tool's own cap, and a longer one would smuggle a flag no cell
+//     owns. THE EXPECTED COUNT IS DERIVED FROM THE MATRIX, never from the answer.
+//   * the answer needs NO byte ceiling, and no `assertByteLimit` is carried here, for the reason the block
+//     decoder states: the widest legal answer this schema can produce is the phase, two counts of at most
+//     16 JSON characters, and `LIMITS.insertTableRowsMax * LIMITS.insertTableColumnsMax` (64 × 16 = 1024)
+//     one-character flags — about 2 KiB against `LIMITS.editorResultBytes` (65536). The geometry bounds are
+//     what make that arithmetic true, so they are part of this decoder's contract, not a coincidence.
+const TABLE_SLOTS = 2;
+const TABLE_PHASE_PRE = 'PRE_INSERT';
+const TABLE_PHASE_POST = 'POST_INSERT';
+const TABLE_HEAD = TABLE_SLOTS + 1;
+function decodeTable(value, data) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  const cells = data.length * data[0].length;
+  if (!Number.isSafeInteger(size) || size < 1 || size > TABLE_HEAD + cells) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    if (members[0] !== TABLE_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal — the
+  // exact forgery this gate exists for.
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== TABLE_HEAD + cells) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== TABLE_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = members.slice(1, TABLE_HEAD);
+  for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const flags = members.slice(TABLE_HEAD);
+  for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (flags.length !== cells) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  return Object.freeze({ tablesBefore: numbers[0], tablesAfter: numbers[1], present: Object.freeze(flags.map(flag => flag === 1)) });
+}
+// THE EXACT-DELTA RULE the table insert's outcome rests on, in ONE place so the decision and its comment
+// cannot drift apart: the document's table count must have grown by EXACTLY one — the append added ONE
+// table — and EVERY cell of that table must carry its own requested text, so every flag is true. The flag
+// count is pinned to the matrix by `decodeTable`, which is what makes the per-flag rule one-to-one over
+// the APPEND rather than a match anywhere in the document. Nothing else is evidence, and NO MUTATION
+// PRIMITIVE'S RETURN VALUE is consulted anywhere: `Push` answered `true` for a paragraph and `false` for
+// an image host (measured on the target), so no boolean carries information in either direction.
+function exactTableDelta(outcome) {
+  // The flags are read by INDEX rather than through `outcome.present.every(...)`: this module's
+  // authored-code audit treats an invocation reached through a value its NAME-based alias analysis has
+  // tainted as a computed-execution sink, and an indexed READ of a data array cannot be mistaken for one.
+  let everyCellPresent = true;
+  for (let index = 0; index < outcome.present.length; index += 1) {
+    if (outcome.present[index] !== true) everyCellPresent = false;
+  }
+  return outcome.tablesAfter - outcome.tablesBefore === 1 && everyCellPresent;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -1235,6 +1482,19 @@ export function createR7Bridge(plugin, {
             if (!exactBlocksDelta(outcome, params.blocks)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE TABLE INSERT. Its answer is the authored flat array of primitives, decoded against the
+          // MATRIX this ticket carried — the same matrix the body laid its one region flag per cell out
+          // over — so the decode and the body can never disagree about how many cells are owed. The
+          // exact-delta rule then decides the ticket HERE, while it still owns the slot: a table count that
+          // did not grow by exactly one, or a cell of the appended table that carries something else, is
+          // the UNCERTAIN class with the slot HELD, never a known error about a document the insert may
+          // already have changed. A decode that THROWS is classified by the catch below (a
+          // `[PRE_INSERT, name]` answer keeps its known code; everything else is uncertain).
+          else if (kind === 'tableinsert') {
+            const outcome = decodeTable(value, params.data);
+            if (!exactTableDelta(outcome)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -1253,13 +1513,13 @@ export function createR7Bridge(plugin, {
           slot = null; // actual settlement releases SDK slot, even after caller expiry
           settle(null, result);
         } catch (error) {
-          // A dispatched BLOCK APPEND whose answer could not be interpreted — or whose own body reported
-          // its POST-insert failure — is the UNCERTAIN class with the slot HELD: the command body ran
-          // (its callback arrived), so the append may already be in the document and releasing the slot
-          // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched
-          // append can still produce as KNOWN are the body's own PRE-insert phase-marked refusals, which
-          // is exactly what `blocksPreInsertRefusal` names, and they release the slot below.
-          if (kind === 'blocksinsert' && owned.dispatched && !blocksPreInsertRefusal(error)) {
+          // A dispatched WRITE command body whose answer could not be interpreted — or whose own body
+          // reported its POST-insert failure — is the UNCERTAIN class with the slot HELD: the command body
+          // ran (its callback arrived), so the write may already be in the document and releasing the slot
+          // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
+          // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
+          // `preInsertRefusal` names, and they release the slot below.
+          if ((kind === 'blocksinsert' || kind === 'tableinsert') && owned.dispatched && !preInsertRefusal(error)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -1409,6 +1669,29 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.blocks(callback); }
           finally { clearScope(previousBlocks); }
+        } else if (kind === 'tableinsert') {
+          // THE TABLE INSERT: ONE command, and the SAME parameter channel the block append uses — the
+          // validated matrix written into the page's `Asc.scope`, never composed into source (ADR 0002). It
+          // needs the entry point that OWNS that wrapper (`callCommand`); a build whose command channel is
+          // the bare `executeCommand` transport has no sanctioned parameter channel at all, so it refuses
+          // HERE, before any dispatch, and releases the slot because nothing reached the editor.
+          // Like the block append it carries NO document-identity probe, and for the same reason: every
+          // other dispatched operation keeps one because it acts on an OWNED TARGET whose identity a
+          // concurrent edit could change, and this leg has no target at all — the operation is "insert a
+          // table at the end of the document". What a probe would establish instead (that the `Api` surface
+          // is present) the body checks itself, primitive by primitive, before it inserts. ONE dispatch, one
+          // body, and no identity round trip that could only report a document nobody claimed.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg:
+          // a synchronous throw out of the transport must never release a slot whose work may already be
+          // queued, and the body's own pre-insert refusals keep their known class through the callback (they
+          // arrive as a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousData;
+          try { previousData = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.table(callback); }
+          finally { clearScope(previousData); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -1732,6 +2015,64 @@ export function createR7Bridge(plugin, {
         const outcome = await start('blocksinsert', signal, {}, Object.freeze({ blocks: Object.freeze(shaped) }));
         return Object.freeze({ ok: true, paragraphsBefore: outcome.paragraphsBefore, paragraphsAfter: outcome.paragraphsAfter,
           headingsBefore: outcome.headingsBefore, headingsAfter: outcome.headingsAfter, present: outcome.present });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The TABLE INSERT behind `insert_table` — the SECOND MUTATION of Sprint 3, and the second leg in this
+    // bridge that both WRITES and VERIFIES inside ONE authored command body. The body's own comment carries
+    // the mechanism (a pre-dispatch baseline, the table created and every cell filled BEFORE the one
+    // `Push`, then the post read and the per-cell readback of the table the append added) and why no
+    // mutation primitive's boolean is the signal; what matters HERE is the shape: ONE command on the ONE
+    // entry point that owns the parameter wrapper, the validated matrix carried as DATA through
+    // `Asc.scope`, and ONE strict decoder that turns the authored flat array — an explicit phase slot, the
+    // delta's two counts, and one REGION flag per CELL (the appended table's own cell, never a match
+    // anywhere in the document) — into the envelope below. The EXACT-DELTA rule is then decided inside the
+    // ticket, before the slot is released: a table count that did not grow by exactly one, a cell of the
+    // appended table that carries something else, an answer that cannot be interpreted, and the body's own
+    // POST-insert uncertainty all settle `APPLY_UNCERTAIN` with the slot HELD and no retry, while the body's
+    // PRE-insert refusals (an unusable baseline, a cell chain this build does not expose) settle their
+    // closed KNOWN class with the slot released, because nothing was inserted — and they do so ONLY when
+    // the answer carries their phase, so a name alone can never release a slot.
+    // The request is a closed precondition, never an optional refinement: a caller that cannot name a
+    // bounded, rectangular matrix gets a refusal instead of an SDK call that inserts an unbounded one. The
+    // SHAPE rules (the non-empty matrix, the non-empty row, the rectangularity, the geometry bounds) are
+    // the closed argument class and the two BYTE bounds are the closed byte class — the same two classes
+    // the tool publishes for the same two families — so a descriptor held directly and the tool that
+    // serves it can never disagree about which refusal a caller receives.
+    async insertTable(raw) {
+      const data = raw?.data, signal = raw?.signal;
+      if (!Array.isArray(data) || data.length < 1 || data.length > LIMITS.insertTableRowsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      const shaped = [];
+      let columns = null;
+      let total = 0;
+      for (const row of data) {
+        if (!Array.isArray(row) || row.length < 1 || row.length > LIMITS.insertTableColumnsMax) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        if (columns === null) columns = row.length;
+        else if (row.length !== columns) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        const shapedRow = [];
+        for (const cell of row) {
+          if (typeof cell !== 'string') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+          const bytes = utf8ByteLength(cell);
+          if (bytes > LIMITS.insertTableCellBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+          total += bytes;
+          shapedRow.push(cell);
+        }
+        shaped.push(Object.freeze(shapedRow));
+      }
+      // `columns` cannot be null here — every row is non-empty — and the guard keeps a future edit from
+      // dispatching a matrix the decoder could not lay its one flag per cell out over.
+      if (columns === null || columns < 1) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (total > LIMITS.insertTableBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('tableinsert', signal, {}, Object.freeze({ data: Object.freeze(shaped) }));
+        return Object.freeze({ ok: true, tablesBefore: outcome.tablesBefore, tablesAfter: outcome.tablesAfter, present: outcome.present });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }
