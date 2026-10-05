@@ -164,6 +164,15 @@ function publishedChunk(document, start, end, offset, totalChars) {
 function paragraphEntryBytes(text, bytes) {
   return toolResultEntryBytes('read_paragraph', { scope: 'sentence', text, bytes });
 }
+// `find_text`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's one
+// measurement: the echoed query, the resolved case flag, the primitive's own TOTAL, the bounded
+// matches array and its `truncated` flag. The measurement is what decides whether this search can be
+// delivered at all — `JSON.stringify` escapes every C0 control character to six characters, so a
+// needle INSIDE `LIMITS.findQueryBytes` can still produce an entry the runtime refuses — and it is
+// taken on the exact object the handler returns, never on a competing shape.
+function findEntryBytes(data) {
+  return toolResultEntryBytes('find_text', data);
+}
 
 export function createWordTools(bridge) {
   return [
@@ -503,6 +512,103 @@ export function createWordTools(bridge) {
         const entry = paragraphEntryBytes(response.text, bytes);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok({ scope: 'sentence', text: response.text, bytes });
+      }
+    }),
+    defineTool({
+      // Sprint 3 Word tool 3: the bounded document SEARCH. It is a READ — a search answers a question
+      // about the document and changes nothing — so it needs no delta and no readback, and no mutate
+      // path is reachable from this descriptor. It adds ONE editor primitive and no capability beyond
+      // the read channel every other leg already uses.
+      //
+      // THE PRIMITIVE EVIDENCE, measured on the target (Astra / R7 2026.1.2.1942, this round) and
+      // treated as established: `Api.GetDocument().Search(query, matchCase)` returns a REAL Array of
+      // range objects — `count = 4` for the strict `'МАРКЕР-ПОИСК'`, `count = 5` for the
+      // case-insensitive `'маркер-поиск'` over the same document (the fifth occurrence is the lowercase
+      // one), `count = 0` — an EMPTY array, never null — for a needle the document does not hold — and
+      // `GetText()` on one element is that match's own text. This is the first READ in this repo that
+      // builds the `Api` facade itself: the dispatch is ONE static authored command body (bridge
+      // `findText` → `command.search`), evaluated inside the editor, where the ONLY model data it can
+      // see is the `scope` binding the vendor's `callCommand` wrapper composes from `Asc.scope`.
+      // `Start`/`End` exist on those range objects but their UNIT IS UNVERIFIED, so this tool publishes
+      // NO position and no ordering claim beyond the occurrence ORDER the array itself has: what the
+      // caller receives is each match's own text and its 0-based index.
+      //
+      // THE TWO DECISIONS THE RESULT CARRIES, both documented where they are made:
+      //   * `matchCase` defaults to FALSE — the case-insensitive search, a SUPERSET of the strict one,
+      //     which is also the editor's own Find default — and the result ECHOES the resolved flag, so
+      //     the model always knows which question was answered and can ask the other one. The measured
+      //     4-vs-5 pair is exactly why the echo is not optional.
+      //   * ZERO matches is `ok` with `count: 0` and an empty `matches`, not a refusal: "the document
+      //     holds no occurrence" IS the complete answer to a search, deliberately unlike an empty CARET
+      //     context (`read_paragraph`), where `''` means there was nothing to answer.
+      name: 'find_text', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      // CLOSED and bounded. `query` is required and is bounded by `LIMITS.findQueryBytes` — a search
+      // string, not a document read — and `limit` is bounded by `LIMITS.findMatchesMax`, which is ALSO
+      // the default: the advertised space is a size a default call really returns. An omitted
+      // `matchCase` resolves to `false` in the handler and is echoed in the result.
+      schema: { type: 'object', additionalProperties: false, required: ['query'],
+        properties: { query: { type: 'string', minBytes: 1, maxBytes: LIMITS.findQueryBytes },
+          matchCase: { type: 'boolean' },
+          limit: { type: 'integer', minimum: 1, maximum: LIMITS.findMatchesMax } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'findText')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The defaults, resolved ONCE: the bridge is told what was decided (`matchCase:false`,
+        // `limit:findMatchesMax`) rather than being left to guess an omitted key, so the request the
+        // editor executes and the result the model reads describe the SAME search.
+        const query = args.query;
+        const matchCase = args.matchCase ?? false;
+        const limit = args.limit ?? LIMITS.findMatchesMax;
+        // Re-checked HERE and not only by the schema: a descriptor is also executable when it is held
+        // directly, and a needle or a bound this read cannot interpret must be a closed refusal with
+        // NOTHING dispatched, never a silent search of whatever a coercion produced.
+        if (typeof query !== 'string' || query === '' || utf8ByteLength(query) > LIMITS.findQueryBytes) return known();
+        if (typeof matchCase !== 'boolean') return known();
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIMITS.findMatchesMax) return known();
+        // The caller's signal is forwarded so a Stop cancels the in-flight search: an abort before the
+        // dispatch prevents it, while an abort after dispatch invalidates the caller and leaves the
+        // queued SDK work owning the bridge slot until its own callback.
+        const request = { query, matchCase, limit,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let response;
+        try { response = await bridge.findText(request); }
+        catch (error) {
+          // A bridge that reports its own UNCERTAIN class means the search's outcome is unknown: that is
+          // the one case which stops the run, and it is classified before any ordinary refusal path.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // An answer this tool cannot interpret is the module's unknown convention (`known()`, the closed
+        // tool-error class), while a bridge REFUSAL in between keeps the closed class it reported. Only a
+        // class from the closed vocabulary is republished.
+        if (!response || typeof response !== 'object') return known();
+        const uncertain = uncertainResult(response);
+        if (uncertain) return uncertain;
+        if (response.ok !== true) return known(refusalCode(response.code, ERROR_CODES.TOOL_ERROR));
+        // The bridge's own envelope contract, re-checked here because the descriptor is executable on
+        // its own: a non-negative safe-integer TOTAL, and EXACTLY `min(count, limit)` texts — the count
+        // the authored body extracted. An answer with a different number of texts is not one this bridge
+        // can have produced, and publishing it would let the tool present a short report as its own cap.
+        const count = response.count;
+        const texts = response.texts;
+        if (!Number.isSafeInteger(count) || count < 0) return known();
+        if (!Array.isArray(texts) || texts.length > limit) return known();
+        if (texts.length !== Math.min(count, limit)) return known();
+        if (texts.some(text => typeof text !== 'string')) return known();
+        const matches = Object.freeze(texts.map((text, index) => Object.freeze({ index, text })));
+        const data = Object.freeze({ query, matchCase, count, matches, truncated: count > matches.length });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the other three
+        // reads measure it: the runtime bounds `JSON.stringify({tool, ...result})` by
+        // `AGENT_CEILINGS.toolResultBytes` (16384) and replaces an entry above it with the model-visible
+        // literal "the tool result could not be serialized" — the model would receive NO search result
+        // while the action log recorded `ok`. The worst REALISTIC call at the advertised maxima measures
+        // 9283 bytes (see `LIMITS.findQueryBytes`); a needle whose every character JSON-escapes to six
+        // bytes is the one shape that cannot fit, and it is REFUSED here rather than shortened: a
+        // shortened match text presented as the match would be an approximation this module forbids.
+        const entry = findEntryBytes(data);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
       }
     }),
     defineTool({

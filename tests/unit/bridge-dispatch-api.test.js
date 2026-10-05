@@ -362,3 +362,104 @@ test('the executeCommand fallback source is self-contained as well', async () =>
     assert.deepEqual(evaluateCarried(body, commandApi()), expected, `the composed ${label} body is self-contained`);
   }
 });
+
+// --- the SEARCH leg's command body: the `Api` builder inside a static authored literal ------------
+// `find_text` is the first READ that goes through the `Api` builder inside a command body, and it is
+// the first body that must carry MODEL DATA. Both facts are pinned here:
+//   * the body is a SELF-CONTAINED static literal. `callCommand` does not call it — it stringifies it
+//     and evaluates the text inside the editor, where none of bridge.js's module bindings exist
+//     (`ReferenceError: contextBody is not defined`, measured natively on 2026.3.1, commit 273d70e).
+//     The rig below therefore evaluates `Function.prototype.toString` of the carried body in a FRESH
+//     scope whose only bindings are the two the vendor's own wrapper creates: `Api` (the editor's
+//     global facade) and `scope` (the JSON of `Asc.scope`).
+//   * the model data crosses as the SCOPE, never interpolated into the source (ADR 0002). There is no
+//     composed-source transport for this leg at all: the wrapper that turns `Asc.scope` into the body's
+//     `scope` binding belongs to `callCommand`, so a build without it refuses before any dispatch.
+const SEARCH_MARKER = 'МАРКЕР-ПОИСК';
+const SEARCH_MARKER_LOWER = 'маркер-поиск';
+// The MEASURED primitive (Astra / R7 2026.1.2.1942): `Api.GetDocument().Search(needle, matchCase)`
+// returns a REAL Array of range-shaped objects whose `GetText()` is the match's own text.
+function searchApi(occurrences) {
+  return { GetDocument() { return { Search(needle, matchCase) { return occurrences
+    .filter(text => matchCase ? text === needle : text.toLowerCase() === needle.toLowerCase())
+    .map(text => ({ GetClassType() { return 'range'; }, GetText() { return text; } })); } }; } };
+}
+const searchOccurrences = [SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER_LOWER];
+function searchCarriedRig() {
+  const commands = [];
+  // The plugin page's OWN namespace object: the vendor wrapper reads `window.Asc.scope` from it.
+  const namespace = { scope: undefined };
+  const api = searchApi(searchOccurrences);
+  const plugin = { info: { editorType: 'word' },
+    callCommand: function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = namespace.scope;
+      commands.push({ by: 'callCommand', source, scope, close, recalculate });
+      callback(new Function('Api', 'scope', 'return (\n' + source + '\n)();')(api, scope));
+      return false;
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', ascNamespace: namespace, platform: platformBoundary });
+  return { bridge, commands, namespace, api };
+}
+
+test('the search body handed to callCommand runs in the editor scope and reads the needle from the scope', async () => {
+  const r = searchCarriedRig();
+  const pending = r.bridge.findText({ query: SEARCH_MARKER, matchCase: true, limit: 8 });
+  assert.equal(r.commands.length, 1, 'ONE command carries the whole search');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand');
+  assert.equal(carried.close, false, 'the wrapper arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, { query: SEARCH_MARKER, matchCase: true, limit: 8 },
+    'the model data is the SCOPE the vendor wrapper injects, never source text');
+  // Structural: the text that reaches the editor names no module-scope binding of bridge.js.
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeSearch|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body must be self-contained, not a closure over bridge.js');
+  // The editor's own evaluation, FIRST and independently of the bridge: a free module identifier
+  // resolves to nothing in this scope and the whole call dies, exactly as it did on 2026.3.1.
+  let value;
+  try { value = new Function('Api', 'scope', 'return (\n' + carried.source + '\n)();')(r.api, carried.scope); }
+  catch (error) { assert.fail(`the search body must run in the editor's scope (no module bindings), but evaluating it raised: ${error}`); }
+  assert.deepEqual(value, [4, SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER],
+    'the body answers the measured strict count and each match\u2019s own text');
+  assert.deepEqual(await pending, { ok: true, count: 4, texts: [SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER] });
+});
+
+test('the search body answers the measured native shapes in a fresh, module-free scope', async () => {
+  const body = async (query, matchCase, limit) => {
+    const r = searchCarriedRig();
+    const pending = r.bridge.findText({ query, matchCase, limit });
+    return { carried: r.commands[0], result: await pending };
+  };
+  // The strict needle: four occurrences. The case-insensitive one: five — the fifth is the document's
+  // own lowercase spelling, which the body republishes verbatim. A needle the document does not hold:
+  // an EMPTY array, which the body turns into `[0]` — the count alone, with no texts to extract.
+  const strict = await body(SEARCH_MARKER, true, 8);
+  assert.deepEqual(strict.result.texts, [SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER, SEARCH_MARKER]);
+  const loose = await body(SEARCH_MARKER_LOWER, false, 8);
+  assert.equal(loose.result.count, 5);
+  assert.equal(loose.result.texts[4], SEARCH_MARKER_LOWER);
+  const missing = await body('НЕТ-ТАКОГО-СЛОВА-12345', true, 8);
+  assert.deepEqual(missing.result, { ok: true, count: 0, texts: [] });
+  const evaluated = new Function('Api', 'scope', 'return (\n' + missing.carried.source + '\n)();')(searchApi([]), missing.carried.scope);
+  assert.deepEqual(evaluated, [0], 'the empty answer is the count alone, never a null the decoder must guess at');
+  // The LIMIT is enforced INSIDE the editor: the body extracts at most `limit` texts while the count it
+  // reports stays the primitive's own total, so a thousand-match search never crosses a thousand texts.
+  const bounded = await body(SEARCH_MARKER, true, 2);
+  assert.deepEqual(bounded.result, { ok: true, count: 4, texts: [SEARCH_MARKER, SEARCH_MARKER] });
+});
+
+test('a search on a build without callCommand refuses before any dispatch: no composed-source transport', async () => {
+  // The `executeCommand` transport cannot carry a parameter scope the sanctioned way (it takes a source
+  // STRING, and composing model data into command source is forbidden by ADR 0002), and the wrapper
+  // that turns `Asc.scope` into a binding belongs to `callCommand`. The refusal is therefore the closed
+  // capability class, taken BEFORE anything is dispatched — never a search of the wrong needle.
+  const carried = [];
+  const plugin = { info: { editorType: 'word' }, executeCommand(name, source) { carried.push({ name, source }); return false; } };
+  const bridge = createR7Bridge(plugin, { editorType: 'word', ascNamespace: { scope: undefined }, platform: platformBoundary });
+  assert.equal(bridge.getState().editorType, 'word');
+  assert.deepEqual(await bridge.findText({ query: SEARCH_MARKER, matchCase: true, limit: 8 }),
+    { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(carried, [], 'nothing at all reaches the bare transport');
+  assert.equal(bridge.getState().busy, false, 'and the slot is released');
+});

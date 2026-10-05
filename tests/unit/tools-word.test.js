@@ -28,7 +28,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
+  assert.deepEqual(names, ['find_text', 'insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
@@ -60,7 +60,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection'],
+    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -278,8 +278,8 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
-  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph']);
+    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
+  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text']);
 });
 
 test('replace_selection advertises the argument ceiling its handler enforces', async () => {
@@ -2606,5 +2606,536 @@ test('read_paragraph is offered with policy auto and a model call dispatches one
   assert.deepEqual(r.calls.map(call => call.name), ['GetCurrentSentence'],
     'one caret read for the whole run, and no write path touched');
   assert.equal(r.bridge.getState().busy, false);
+});
+
+// ==================================================================================================
+// Sprint 3, tool 3 — `find_text`, the bounded document SEARCH.
+//
+// THE PRIMITIVE, measured on the target (Astra / R7 2026.1.2.1942, this round) and treated as
+// established: `Api.GetDocument().Search(query, matchCase)` returns a REAL Array of range objects —
+// `count = 4` for the strict `'МАРКЕР-ПОИСК'`, `count = 5` for the case-insensitive `'маркер-поиск'`
+// on the same document (the fifth occurrence is the lowercase one), `count = 0` (an EMPTY array, never
+// null) for a needle the document does not hold — and `GetText()` on one element is that match's own
+// text. `Start`/`End` exist but their UNIT is UNVERIFIED, so this tool publishes NO position: what a
+// caller receives is the 0-based occurrence ORDER and each match's own text, and nothing else.
+//
+// The measurements are reproduced here at the boundary the TOOL actually sees (the bridge's
+// `{ok:true, count, texts}` envelope); the native array itself is decoded by the real bridge below,
+// and the command body that builds it is measured in tests/unit/bridge-dispatch-api.test.js.
+// ==================================================================================================
+const MARKER = 'МАРКЕР-ПОИСК';
+const MARKER_LOWER = 'маркер-поиск';
+// The measured document: four strict occurrences plus one lowercase occurrence.
+const MEASURED_OCCURRENCES = Object.freeze([MARKER, MARKER, MARKER, MARKER, MARKER_LOWER]);
+
+function searchBridge(answer, extras = {}) {
+  const requests = [];
+  return { requests, findText: async (request) => { requests.push(request); return typeof answer === 'function' ? answer(request) : answer; }, ...extras };
+}
+function findText(bridge) { return createWordTools(bridge).find(entry => entry.name === 'find_text'); }
+const found = (count, texts) => ({ ok: true, count, texts });
+
+test('find_text advertises the closed bounded schema and states the two bounds it adds', () => {
+  const tool = findText(searchBridge(found(0, [])));
+  assert.equal(tool.kind, 'read');
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual(tool.editors, ['word']);
+  assert.deepEqual(tool.requires, ['document.read']);
+  assert.equal(tool.schema.type, 'object');
+  assert.equal(tool.schema.additionalProperties, false, 'the schema is CLOSED');
+  assert.deepEqual(tool.schema.required, ['query'], 'only the needle is required');
+  assert.deepEqual(Object.keys(tool.schema.properties).sort(), ['limit', 'matchCase', 'query']);
+  assert.equal(tool.schema.properties.query.type, 'string');
+  assert.equal(tool.schema.properties.query.minBytes, 1, 'an empty needle is not a search');
+  assert.equal(tool.schema.properties.query.maxBytes, LIMITS.findQueryBytes);
+  assert.equal(tool.schema.properties.matchCase.type, 'boolean');
+  assert.equal(tool.schema.properties.limit.type, 'integer');
+  assert.equal(tool.schema.properties.limit.minimum, 1);
+  assert.equal(tool.schema.properties.limit.maximum, LIMITS.findMatchesMax);
+  // WHY 256 BYTES AND WHY 32 MATCHES — arithmetic, not taste. The needle is a SEARCH STRING, not a
+  // document, so its bound is not derived from any document ceiling: 256 bytes is 128 Cyrillic or 256
+  // ASCII characters, longer than any realistic needle, and it is the same number the schema advertises
+  // and the handler enforces. The match bound is the second one, and it is ALSO the default, so the
+  // advertised space is a size a default call really returns: a search may match thousands of ranges,
+  // and the tool must bound how many it reports (the TOTAL count still crosses in `count`).
+  assert.equal(LIMITS.findQueryBytes, 256, 'a search string, never a document read');
+  assert.equal(LIMITS.findMatchesMax, 32, 'the default and the hard cap are one value');
+  // The worst REALISTIC call at those maxima, measured on the SERIALIZED entry the runtime bounds
+  // (`JSON.stringify({ tool, ok, data })`, exactly what `stringifyToolResults` measures against
+  // `AGENT_CEILINGS.toolResultBytes` = 16384): a Cyrillic needle at the byte maximum whose text is
+  // reported for every one of the 32 matches. Every field is at its widest here — `matchCase:false`
+  // and `truncated:false` are both one byte wider than their `true` forms.
+  const query = 'я'.repeat(LIMITS.findQueryBytes / 2);
+  const wide = (index, text) => ({ index, text });
+  const matches = new Array(LIMITS.findMatchesMax).fill(query).map((text, index) => wide(index, text));
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
+    data: { query, matchCase: false, count: LIMITS.findMatchesMax, matches, truncated: false } }));
+  assert.equal(entry, 9283, 'the measured worst case at the advertised maxima');
+  assert.ok(entry <= AGENT_CEILINGS.toolResultBytes,
+    `${entry} + nothing else <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - entry} bytes of slack`);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'find_text',
+    result: { ok: true, data: { query, matchCase: false, count: LIMITS.findMatchesMax, matches, truncated: false } } }]));
+  // The ONE shape that cannot fit even at the maxima: a needle whose every character JSON-escapes to
+  // six bytes (`\n` → `\u000a`). The entry is measured, not guessed, and it is REFUSED — the tool never
+  // shortens a match's text silently. This is the arithmetic the limits module states.
+  const escapedQuery = '\n'.repeat(LIMITS.findQueryBytes);
+  const escapedMatches = new Array(LIMITS.findMatchesMax).fill(escapedQuery).map((text, index) => wide(index, text));
+  const escapedEntry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
+    data: { query: escapedQuery, matchCase: false, count: LIMITS.findMatchesMax, matches: escapedMatches, truncated: false } }));
+  assert.equal(escapedEntry, 17731, 'the escape-worst case, measured');
+  assert.ok(escapedEntry > AGENT_CEILINGS.toolResultBytes, 'and it is outside the per-result ceiling');
+});
+
+test('find_text accepts its closed argument set and rejects everything else at the schema', () => {
+  const tool = findText(searchBridge(found(0, [])));
+  assert.doesNotThrow(() => validateArguments(tool.schema, { query: MARKER }), 'the minimal legal call');
+  assert.doesNotThrow(() => validateArguments(tool.schema, { query: MARKER, matchCase: true, limit: 1 }));
+  assert.doesNotThrow(() => validateArguments(tool.schema, { query: 'a'.repeat(LIMITS.findQueryBytes) }));
+  for (const args of [
+    {},                                     // the needle is required
+    { matchCase: true },                    // ...and no other key replaces it
+    { query: MARKER, extra: 1 },            // CLOSED: an unknown key never reaches the handler
+    { query: MARKER, scope: 'sentence' },   // including one another tool's result names
+    { query: MARKER, matchCase: 'true' },   // a truthy string is not a boolean
+    { query: MARKER, matchCase: 1 },
+    { query: MARKER, limit: 0 },            // below the minimum
+    { query: MARKER, limit: LIMITS.findMatchesMax + 1 },
+    { query: MARKER, limit: 1.5 },
+    { query: MARKER, limit: '2' },
+    { query: '' },                          // minBytes 1
+    { query: 'я'.repeat(LIMITS.findQueryBytes / 2 + 1) }, // 258 bytes, past maxBytes
+    { query: 7 }, [], null, 'найти', 5
+  ]) assert.throws(() => validateArguments(tool.schema, args), /TOOL_ERROR/, JSON.stringify(args));
+});
+
+test('find_text defaults matchCase to case-insensitive and limit to the schema maximum', async () => {
+  // THE DOCUMENTED DEFAULT. The measured pair is the discriminator: on one document the strict needle
+  // matches 4 ranges and the case-insensitive one matches 5. The default is the CASE-INSENSITIVE
+  // search, for two reasons that are both observable to the caller:
+  //   * it is the SUPERSET — a caller that wants the strict question passes `matchCase: true`;
+  //   * the result ECHOES `matchCase`, so the model always knows which question was answered and can
+  //     re-ask the other one. This deliberately mirrors the editor's own Find dialogue, where "match
+  //     case" is unchecked by default, and it is not a fail-open: the tool reports the DOCUMENT's own
+  //     text for every match, so a differently-cased occurrence is SEEN, never silently normalized.
+  const bridge = searchBridge(found(5, MEASURED_OCCURRENCES));
+  const result = await findText(bridge).execute({ query: MARKER_LOWER }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(bridge.requests, [{ query: MARKER_LOWER, matchCase: false, limit: LIMITS.findMatchesMax }],
+    'the resolved default is what crosses to the bridge, never an omitted key');
+  assert.deepEqual(result.data, { query: MARKER_LOWER, matchCase: false, count: 5,
+    matches: MEASURED_OCCURRENCES.map((text, index) => ({ index, text })), truncated: false });
+  // An EXPLICIT limit is the caller's, and it narrows the request rather than being applied in the tool
+  // alone: the bridge is told how many texts to extract, so the native work is bounded too.
+  const bounded = searchBridge(found(5, MEASURED_OCCURRENCES));
+  await findText(bounded).execute({ query: MARKER_LOWER, matchCase: false, limit: 2 }, { editor: 'word' });
+  assert.deepEqual(bounded.requests, [{ query: MARKER_LOWER, matchCase: false, limit: 2 }]);
+});
+
+test('find_text reports the MEASURED primitive shapes faithfully', async () => {
+  const tool = findText(searchBridge((request) => request.matchCase
+    ? found(4, [MARKER, MARKER, MARKER, MARKER])
+    : found(5, MEASURED_OCCURRENCES)));
+  // 1. The STRICT needle: four occurrences, every one of them the strict spelling.
+  const strict = await tool.execute({ query: MARKER, matchCase: true }, { editor: 'word' });
+  assert.equal(strict.ok, true);
+  assert.deepEqual(strict.data, { query: MARKER, matchCase: true, count: 4,
+    matches: [0, 1, 2, 3].map(index => ({ index, text: MARKER })), truncated: false });
+  // 2. The case-insensitive needle: five occurrences, and the FIFTH is the document's own lowercase
+  //    spelling — republished verbatim, never normalized to the needle. This is the measured 4-vs-5
+  //    pair, and it is the reason the result echoes `matchCase`.
+  const loose = await tool.execute({ query: MARKER_LOWER, matchCase: false }, { editor: 'word' });
+  assert.equal(loose.ok, true);
+  assert.deepEqual(loose.data, { query: MARKER_LOWER, matchCase: false, count: 5,
+    matches: MEASURED_OCCURRENCES.map((text, index) => ({ index, text })), truncated: false });
+  assert.equal(loose.data.matches[4].text, MARKER_LOWER, 'the document\u2019s own text, not the needle');
+  assert.equal(loose.data.query, MARKER_LOWER, 'the query is echoed exactly as it was sent');
+  assert.equal(strict.data.matches.some(match => match.text === MARKER_LOWER), false);
+  assert.equal(Object.isFrozen(loose.data), true);
+});
+
+test('find_text treats a zero-match search as the COMPLETE answer, not as a refusal', async () => {
+  // THE STATED DECISION. `Search` answers an EMPTY array (never null) for a needle the document does
+  // not hold, and "the document holds no occurrence of this needle" IS the complete answer to the
+  // question that was asked — deliberately unlike an empty CARET context (`read_paragraph`), where `''`
+  // means there was nothing to reason about and the read is a closed refusal. `ok` with `count: 0` and
+  // an empty `matches` is therefore published, and `truncated:false` says the empty list is not a cap.
+  const bridge = searchBridge(found(0, []));
+  const result = await findText(bridge).execute({ query: 'НЕТ-ТАКОГО-СЛОВА-12345', matchCase: true }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { query: 'НЕТ-ТАКОГО-СЛОВА-12345', matchCase: true, count: 0, matches: [], truncated: false });
+  assert.deepEqual(bridge.requests, [{ query: 'НЕТ-ТАКОГО-СЛОВА-12345', matchCase: true, limit: LIMITS.findMatchesMax }]);
+  // The empty answer is small enough to cross for any needle inside the byte bound, and the runtime
+  // serializer accepts it. The entry is measured, not assumed: 144 bytes for THIS 41-byte Cyrillic
+  // needle — the echoed query and the envelope, with no match text at all.
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ...result }));
+  assert.equal(entry, 144, 'the measured entry of a zero-match answer');
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'find_text', result }]));
+});
+
+test('find_text bounds how many matches it reports while count stays the TOTAL', async () => {
+  // A narrow needle can match thousands of ranges. The request tells the bridge how many TEXTS to
+  // extract, `matches` is capped there, and `count` still carries the primitive's own total, so the
+  // model can tell "three occurrences" from "three of four hundred" without a second call.
+  const bridge = searchBridge(found(500, ['первый', 'второй']));
+  const result = await findText(bridge).execute({ query: 'о', limit: 2 }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { query: 'о', matchCase: false, count: 500,
+    matches: [{ index: 0, text: 'первый' }, { index: 1, text: 'второй' }], truncated: true });
+  assert.equal(result.data.matches.length, 2, 'the reported array is bounded by the caller\u2019s limit');
+  assert.equal(result.data.count, 500, 'the total the primitive returned is never narrowed to the report');
+  // The boundary: exactly as many texts as the limit is NOT truncated; one fewer than the total is.
+  const exact = await findText(searchBridge(found(2, ['a', 'b']))).execute({ query: 'a', limit: 2 }, { editor: 'word' });
+  assert.deepEqual(exact.data, { query: 'a', matchCase: false, count: 2,
+    matches: [{ index: 0, text: 'a' }, { index: 1, text: 'b' }], truncated: false });
+});
+
+test('find_text publishes an entry the runtime serializer accepts and refuses one it would refuse', async () => {
+  // The raw text is NOT the bound: the runtime bounds the SERIALIZED entry, and `JSON.stringify`
+  // escapes every C0 control character to six characters, so a legal needle at the byte maximum can
+  // still produce an entry far outside the ceiling. The tool measures the entry it is about to publish
+  // and refuses when even the bounded answer cannot fit — it never shortens a match's text silently.
+  const escaped = '\n'.repeat(LIMITS.findQueryBytes);
+  const texts = new Array(LIMITS.findMatchesMax).fill(escaped);
+  const over = await findText(searchBridge(found(LIMITS.findMatchesMax, texts)))
+    .execute({ query: escaped, matchCase: false, limit: LIMITS.findMatchesMax }, { editor: 'word' });
+  assert.equal(over.ok, false, 'the entry, not the raw text, is the enforced bound');
+  assert.equal(over.code, 'BYTE_LIMIT');
+  assert.equal(over.message, 'отказ');
+  assert.equal(over.data, undefined, 'a refusal carries no document text at all');
+  assert.equal(JSON.stringify(over).includes('\\n'), false, 'no native text leaks through a refusal');
+  // One byte of needle less is SERVED: the bound is a real measurement, not a blanket refusal. The
+  // half-width control needle reports its matches with escapes and all, and the entry still serializes.
+  const servedQuery = '\n'.repeat(LIMITS.findQueryBytes / 2);
+  const served = await findText(searchBridge(found(LIMITS.findMatchesMax, new Array(LIMITS.findMatchesMax).fill(servedQuery))))
+    .execute({ query: servedQuery, matchCase: false, limit: LIMITS.findMatchesMax }, { editor: 'word' });
+  assert.equal(served.ok, true, 'the same shape one size down is inside the ceiling');
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ...served }));
+  assert.equal(entry, 9283, 'the measured entry the runtime accepts');
+  assert.ok(entry <= AGENT_CEILINGS.toolResultBytes);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'find_text', result: served }]));
+  // And the invariant across the boundary: no `ok` this handler publishes can exceed the ceiling.
+  for (const width of [1, 2, 8, 16, 31, 32]) {
+    const answer = found(width, new Array(width).fill(servedQuery));
+    const result = await findText(searchBridge(answer)).execute({ query: servedQuery, limit: LIMITS.findMatchesMax }, { editor: 'word' });
+    if (result.ok) {
+      assert.ok(utf8ByteLength(JSON.stringify({ tool: 'find_text', ...result })) <= AGENT_CEILINGS.toolResultBytes, `width ${width}`);
+      assert.doesNotThrow(() => toolResultMessages([{ tool: 'find_text', result }]), `width ${width}`);
+      assert.equal(result.data.matches.length, width, 'a served result is never shortened');
+    } else assert.equal(result.code, 'BYTE_LIMIT', `width ${width}`);
+  }
+});
+
+test('find_text republishes the closed class the bridge reported, never a raw failure', async () => {
+  const classes = ['TIMEOUT', 'CANCELLED', 'INVALID_DATA', 'CAPABILITY_UNAVAILABLE', 'EDITOR_BUSY', 'BYTE_LIMIT', 'TOOL_ERROR'];
+  for (const code of classes) {
+    const result = await findText(searchBridge({ ok: false, code })).execute({ query: MARKER }, { editor: 'word' });
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code, `${code} crosses unchanged`);
+    assert.equal(result.message, 'отказ', code);
+    assert.equal(result.data, undefined, code);
+  }
+  // Only a class from the closed vocabulary is republished: an arbitrary bridge string keeps the
+  // module's own tool-error fallback rather than reaching the run as an invented code.
+  for (const code of ['SOMETHING_ELSE', '', 7, null, undefined]) {
+    const result = await findText(searchBridge({ ok: false, code })).execute({ query: MARKER }, { editor: 'word' });
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(code));
+  }
+  // A THROWN classified refusal crosses the same way as a returned one; a raw throw is the closed
+  // tool-error class and never a raw exception message.
+  const thrown = await findText(searchBridge(null, { findText: async () => { const error = new Error('private native detail'); error.code = 'TIMEOUT'; throw error; } }))
+    .execute({ query: MARKER }, { editor: 'word' });
+  assert.equal(thrown.code, 'TIMEOUT');
+  assert.equal(thrown.message, 'отказ');
+  const raw = await findText(searchBridge(null, { findText: async () => { throw new Error('private native detail'); } }))
+    .execute({ query: MARKER }, { editor: 'word' });
+  assert.deepEqual(raw, { ok: false, code: 'TOOL_ERROR', message: 'отказ' }, 'a raw native failure never leaks');
+});
+
+test('find_text maps a returned or thrown uncertain class to TOOL_UNCERTAIN', async () => {
+  const returned = await findText(searchBridge({ ok: false, code: 'APPLY_UNCERTAIN' })).execute({ query: MARKER }, { editor: 'word' });
+  assert.deepEqual(returned, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' },
+    'a returned uncertain bridge answer stops the run');
+  const thrown = await findText(searchBridge(null, { findText: async () => { const error = new Error('x'); error.code = 'APPLY_UNCERTAIN'; throw error; } }))
+    .execute({ query: MARKER }, { editor: 'word' });
+  assert.deepEqual(thrown, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' },
+    'a thrown uncertain answer is classified identically');
+});
+
+test('find_text treats an unusable bridge answer as the module\u2019s unknown convention', async () => {
+  // An answer this tool cannot interpret is the module's closed `known()` class, never a publication of
+  // whatever the envelope happened to hold: a missing/negative/fractional count, a `texts` that is not a
+  // bounded array of strings, and a count that contradicts the texts it sent are all uninterpretable.
+  const answers = [
+    null, undefined, 7, 'текст', [],
+    { ok: true },
+    { ok: true, count: 1 },
+    { ok: true, texts: [] },
+    { ok: true, count: -1, texts: [] },
+    { ok: true, count: 1.5, texts: [] },
+    { ok: true, count: '1', texts: [] },
+    { ok: true, count: 1, texts: 'текст' },
+    { ok: true, count: 1, texts: [7] },
+    { ok: true, count: 0, texts: ['лишний'] },
+    { ok: true, count: 1, texts: new Array(3).fill('x') }
+  ];
+  for (const answer of answers) {
+    const result = await findText(searchBridge(answer)).execute({ query: MARKER, limit: 2 }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(answer));
+    assert.equal(result.message, 'отказ', JSON.stringify(answer));
+  }
+  // An answer that carries MORE texts than the limit the caller set is uninterpretable too: the bridge
+  // was told the cap, so more than that is not an answer this tool can attribute to its own request.
+  const overLimit = await findText(searchBridge(found(3, ['a', 'b', 'c']))).execute({ query: MARKER, limit: 2 }, { editor: 'word' });
+  assert.equal(overLimit.ok, false);
+  assert.equal(overLimit.code, 'TOOL_ERROR');
+});
+
+test('find_text refuses an editor that is not Word before any dispatch', async () => {
+  const bridge = searchBridge(found(4, [MARKER, MARKER, MARKER, MARKER]));
+  const tool = findText(bridge);
+  for (const editor of ['cell', 'slide', 'unknown']) {
+    const refusal = tool.precondition({ query: MARKER }, { editor });
+    assert.equal(refusal.code, 'CAPABILITY_UNAVAILABLE', editor);
+    assert.equal(refusal.message, 'отказ', editor);
+  }
+  assert.equal(tool.precondition({ query: MARKER }, { editor: 'word' }), null);
+  assert.deepEqual(bridge.requests, [], 'the precondition is what refuses, and it dispatches nothing');
+});
+
+test('find_text refuses a bridge that cannot serve the search instead of crashing', async () => {
+  for (const bridge of [null, undefined, {}, { findText: 'no' }, { findText: 7 }]) {
+    const result = await findText(bridge).execute({ query: MARKER }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(bridge));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(bridge));
+    assert.equal(result.message, 'отказ', JSON.stringify(bridge));
+  }
+});
+
+test('find_text touches exactly one bridge search and no write method at all', async () => {
+  const touched = [];
+  const record = (method, value) => async () => { touched.push({ method }); return value; };
+  const bridge = {
+    findText: async (request) => { touched.push({ method: 'findText', request }); return found(1, [MARKER]); },
+    readSelection: record('readSelection', {}),
+    readDocumentText: record('readDocumentText', {}),
+    readParagraph: record('readParagraph', {}),
+    readContext: record('readContext', {}),
+    insertParagraph: record('insertParagraph', { ok: true, data: {} }),
+    applySelection: record('applySelection', {})
+  };
+  const result = await findText(bridge).execute({ query: MARKER, matchCase: true }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(touched, [{ method: 'findText', request: { query: MARKER, matchCase: true, limit: LIMITS.findMatchesMax } }],
+    'ONE search, with the resolved defaults, and no other leg');
+  // READ-ONLY BY CONSTRUCTION: no mutate path is reachable from this descriptor, and the assertion is
+  // over the set of write/other methods the bridge actually exposes.
+  for (const method of ['insertParagraph', 'applySelection', 'readSelection', 'readContext', 'readDocumentText', 'readParagraph']) {
+    assert.equal(touched.some(entry => entry.method === method), false, `${method} is never reached`);
+  }
+});
+
+test('find_text forwards the caller signal to its single bridge search', async () => {
+  const bridge = searchBridge(found(0, []));
+  const controller = new AbortController();
+  await findText(bridge).execute({ query: MARKER }, { editor: 'word', signal: controller.signal });
+  assert.deepEqual(bridge.requests, [{ query: MARKER, matchCase: false, limit: LIMITS.findMatchesMax, signal: controller.signal }]);
+});
+
+// --- the real bridge: the command channel, the scope carrier and the measured native decode --------
+// The plugin facade exposes the command channel ONLY as `callCommand` (`executeMethod` queues editor
+// methods to `pluginMethod_<name>` and cannot reach the `Api` builder at all), and the ONLY channel a
+// command body can receive DATA through is `Asc.scope`: the vendor's own wrapper composes
+// `var Asc = {}; Asc.scope = JSON.stringify(window.Asc.scope); var scope = Asc.scope; (<body>)();`
+// before the body, so the body's `scope` binding IS that property. The rig below reproduces exactly
+// that wrapper — it reads the namespace property SYNCHRONOUSLY (as the vendor does), hands the body
+// that value, and evaluates the body the way the EDITOR does: in a FRESH, module-free scope, so a body
+// that closed over a module binding of bridge.js would raise `ReferenceError` here exactly as it did
+// natively on 2026.3.1 (commit 273d70e).
+function measuredSearch(occurrences) {
+  // The measured primitive: a literal search, case-sensitive when the caller asks for it, answering a
+  // REAL Array of range-shaped objects whose `GetText()` is the match's own text.
+  return function (needle, matchCase) {
+    return occurrences
+      .filter(text => matchCase ? text === needle : text.toLowerCase() === needle.toLowerCase())
+      .map(text => ({ GetClassType() { return 'range'; }, GetText() { return text; } }));
+  };
+}
+function evaluateSearchBody(body, api, scope) {
+  return new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(api, scope);
+}
+function findRig({ occurrences = MEASURED_OCCURRENCES, document = null, command = true, namespace = { scope: 'сентинел' }, omitCarrier = false } = {}) {
+  const commands = [];
+  const api = { GetDocument() { return document ?? { Search: measuredSearch(occurrences) }; } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: command ? function (body, close, recalculate, callback) {
+      // `window.Asc.scope` is read HERE, synchronously, exactly as the vendor wrapper reads it.
+      const scope = namespace?.scope;
+      commands.push({ by: 'callCommand', body, close, recalculate, scope });
+      callback(evaluateSearchBody(body, api, scope));
+      return false;
+    } : undefined };
+  const options = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (!omitCarrier) options.ascNamespace = namespace;
+  const bridge = bridgeWith(plugin, options);
+  return { bridge, plugin, commands, namespace, api };
+}
+
+test('bridge findText dispatches ONE command, carries the needle as DATA and restores the namespace', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = findRig({ namespace });
+  const pending = r.bridge.findText({ query: MARKER, matchCase: true, limit: LIMITS.findMatchesMax });
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched');
+  assert.equal(r.commands[0].by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof r.commands[0].body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(r.commands[0].close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(r.commands[0].recalculate, false);
+  assert.deepEqual(r.commands[0].scope, { query: MARKER, matchCase: true, limit: LIMITS.findMatchesMax },
+    'the model data crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: a needle never outlives its dispatch');
+  const result = await pending;
+  assert.deepEqual(result, { ok: true, count: 4, texts: [MARKER, MARKER, MARKER, MARKER] });
+  assert.ok(Object.isFrozen(result));
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+});
+
+test('bridge findText decodes the measured native shapes: 4 strict, 5 case-insensitive, 0 missing', async () => {
+  const r = findRig();
+  const strict = await r.bridge.findText({ query: MARKER, matchCase: true, limit: LIMITS.findMatchesMax });
+  assert.deepEqual(strict, { ok: true, count: 4, texts: [MARKER, MARKER, MARKER, MARKER] }, 'the measured strict count');
+  const loose = await r.bridge.findText({ query: MARKER_LOWER, matchCase: false, limit: LIMITS.findMatchesMax });
+  assert.equal(loose.ok, true);
+  assert.equal(loose.count, 5, 'the measured case-insensitive count');
+  assert.equal(loose.texts[4], MARKER_LOWER, 'the fifth match is the document\u2019s own lowercase text');
+  const missing = await r.bridge.findText({ query: 'НЕТ-ТАКОГО-СЛОВА-12345', matchCase: true, limit: LIMITS.findMatchesMax });
+  assert.deepEqual(missing, { ok: true, count: 0, texts: [] }, 'a needle the document does not hold is an EMPTY answer');
+  assert.equal(r.commands.length, 3, 'one command per search, and no identity probe');
+  // The extraction is bounded at the source: the body asks for at most `limit` texts even when the
+  // primitive matched more, and `count` is still the primitive's own total.
+  const bounded = await r.bridge.findText({ query: MARKER, matchCase: true, limit: 2 });
+  assert.deepEqual(bounded, { ok: true, count: 4, texts: [MARKER, MARKER] });
+  assert.equal(r.commands.length, 4);
+});
+
+test('bridge findText refuses a build, a namespace or an answer it cannot use, with the closed class', async () => {
+  // No command channel at all: nothing is dispatched, and the refusal is the closed capability class.
+  const noCommand = findRig({ command: false });
+  assert.deepEqual(await noCommand.bridge.findText({ query: MARKER, matchCase: true, limit: 4 }),
+    { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(noCommand.commands, [], 'no command is dispatched by a facade that has none');
+  // A namespace that cannot carry the scope is the SAME closed refusal, decided BEFORE the dispatch, so
+  // the slot is released and nothing reached the editor. This is not cosmetic: the vendor wrapper reads
+  // the property itself, so a scope nobody wrote would silently search for the PREVIOUS needle.
+  assert.equal(globalThis.Asc, undefined, 'the omitted carrier falls back to the page namespace, absent here');
+  for (const shape of [{ omitCarrier: true }, { namespace: null }, { namespace: Object.freeze({}) },
+    { namespace: Object.freeze({ scope: 'предыдущая-область' }) }]) {
+    const r = findRig(shape);
+    const result = await r.bridge.findText({ query: MARKER, matchCase: true, limit: 4 });
+    assert.deepEqual(result, { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, JSON.stringify(shape));
+    assert.deepEqual(r.commands, [], 'nothing is dispatched when the scope cannot cross');
+    assert.equal(r.bridge.getState().busy, false, 'and the slot is released');
+  }
+  // A SEALED namespace still carries a writable `scope` data property, so it is served: the refusal is
+  // about the property being unwritable or absent, never about the object being frozen as such.
+  const sealed = Object.seal({ scope: 'предыдущая-область' });
+  const sealedRig = findRig({ namespace: sealed });
+  assert.deepEqual(await sealedRig.bridge.findText({ query: MARKER, matchCase: true, limit: 1 }),
+    { ok: true, count: 4, texts: [MARKER] });
+  assert.equal(sealed.scope, 'предыдущая-область', 'and the previous value is restored');
+  // An Api facade without a usable `Search` answers the body's own refusal sentinel.
+  for (const document of [{}, { Search: null }, { Search: 7 }]) {
+    const r = findRig({ document });
+    assert.deepEqual(await r.bridge.findText({ query: MARKER, matchCase: true, limit: 4 }),
+      { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+    assert.equal(r.bridge.getState().busy, false);
+  }
+  // A native answer that is not the authored shape is INVALID_DATA, never a publication of whatever
+  // arrived; one above the bridge's own read window is BYTE_LIMIT. Neither leaks the native text.
+  const poisoned = (raw) => {
+    const namespace = { scope: undefined };
+    const plugin = { info: { editorType: 'word' }, callCommand: (_body, _close, _recalculate, callback) => { callback(raw); return false; } };
+    return bridgeWith(plugin, { editorType: 'word', ascNamespace: namespace, clock: { now: () => 0 },
+      timers: { schedule() { return {}; }, clear() {} } });
+  };
+  for (const raw of [null, undefined, 7, 'текст', {}, [true], ['CAPABILITY_UNAVAILABLE'], [5], [-1, 'a'], [1.5, 'a'], [2, 'a'],
+    [1, 7], [1, 'a', 'b'], [0, 'лишний']]) {
+    const result = await poisoned(raw).findText({ query: MARKER, matchCase: true, limit: 2 });
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, raw && raw[0] === 'CAPABILITY_UNAVAILABLE' ? 'CAPABILITY_UNAVAILABLE' : 'INVALID_DATA',
+      JSON.stringify(raw));
+    assert.equal(JSON.stringify(result).includes('лишний'), false, 'no native text leaks through a refusal');
+  }
+  // The authored answer for a needle the document does not hold is LEGAL: `[0]` is what the body builds
+  // when it found nothing, and the decoder must not confuse it with a malformed single-slot answer.
+  assert.deepEqual(await poisoned([0]).findText({ query: MARKER, matchCase: true, limit: 2 }),
+    { ok: true, count: 0, texts: [] });
+  // The body extracts EXACTLY `min(count, limit)` texts, so an answer that reports fewer is not one the
+  // authored body can have produced, and the decoder refuses it rather than publishing a short report
+  // the tool would describe as its own `limit` cap.
+  assert.deepEqual(await poisoned([4, 'a']).findText({ query: MARKER, matchCase: true, limit: 2 }),
+    { ok: false, code: 'INVALID_DATA' });
+  assert.deepEqual(await poisoned([4, 'a', 'b']).findText({ query: MARKER, matchCase: true, limit: 2 }),
+    { ok: true, count: 4, texts: ['a', 'b'] }, 'min(4, 2) = 2 texts is the authored shape');
+  const oversized = await poisoned([1, 'я'.repeat(40000)]).findText({ query: MARKER, matchCase: true, limit: 2 });
+  assert.deepEqual(oversized, { ok: false, code: 'BYTE_LIMIT' }, 'an answer above the read window is refused');
+});
+
+test('bridge findText refuses a request it cannot interpret without any SDK work', async () => {
+  for (const raw of [undefined, null, {}, { query: '' }, { query: 7 }, { query: MARKER }, { query: MARKER, matchCase: 'yes', limit: 1 },
+    { query: MARKER, matchCase: true, limit: 0 }, { query: MARKER, matchCase: true, limit: LIMITS.findMatchesMax + 1 },
+    { query: MARKER, matchCase: true, limit: 1.5 }, { query: MARKER, matchCase: true, limit: '2' },
+    { query: 'a'.repeat(LIMITS.findQueryBytes + 1), matchCase: true, limit: 1 }]) {
+    const r = findRig();
+    const result = await r.bridge.findText(raw ?? {});
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(raw));
+    assert.deepEqual(r.commands, [], JSON.stringify(raw));
+    assert.equal(r.bridge.getState().busy, false, JSON.stringify(raw));
+  }
+});
+
+test('bridge findText refuses a pre-aborted signal without any dispatch', async () => {
+  const r = findRig();
+  const controller = new AbortController();
+  controller.abort();
+  const result = await r.bridge.findText({ query: MARKER, matchCase: true, limit: 4, signal: controller.signal });
+  assert.deepEqual(result, { ok: false, code: 'CANCELLED' });
+  assert.deepEqual(r.commands, [], 'nothing reaches the editor');
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('find_text is offered with policy auto and a model call dispatches exactly one search', async () => {
+  const r = findRig();
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'find_text');
+  assert.ok(offered, 'the offered catalogue contains find_text');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'read');
+  assert.equal(offered.requires.includes('document.read'), true);
+  const batch = validateBatch(catalogue, [{ tool: 'find_text', arguments: { query: MARKER, matchCase: true } }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'find_text');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"find_text","arguments":{"query":"' + MARKER + '","matchCase":true}}]}',
+    '{"type":"final","message":"найдено"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '44444444-4444-4444-8444-444444444444', request: 'найди маркер',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['find_text', 'ok']]);
+  assert.equal(r.commands.length, 1, 'one search for the whole run, and no write path touched');
+  assert.equal(r.bridge.getState().busy, false);
+  // The model really RECEIVES the bounded answer — the count and the matches' own texts — through the
+  // runtime's own per-result serialization, not a summary this test invented.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'find_text');
+  assert.equal(published.ok, true);
+  assert.equal(published.data.count, 4);
+  assert.deepEqual(published.data.matches.map(match => match.text), [MARKER, MARKER, MARKER, MARKER]);
+  assert.equal(published.data.truncated, false);
 });
 

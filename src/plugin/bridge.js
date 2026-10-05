@@ -120,6 +120,53 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               ];
             } catch { return ['CAPABILITY_UNAVAILABLE']; }
           }, false, false, callback);
+      },
+      // THE DOCUMENT SEARCH, and the ONLY leg that carries MODEL DATA into a command body. The data
+      // travels as `Asc.scope` — written by `writeScope` before this call and restored by `clearScope`
+      // right after it, because the vendor wrapper reads the property SYNCHRONOUSLY and composes it into
+      // the body's own `scope` binding. The body below is a FULL inline static literal for the reason the
+      // two probes above are: `callCommand` does not CALL it, it stringifies it and evaluates the text in
+      // the editor, where none of this module's bindings exist. It builds the `Api` facade itself, which
+      // is why this is the first READ in this repo that reaches the `Api` builder at all.
+      search(callback) {
+        return plugin.callCommand(function () {
+          try {
+            // The scope the vendor wrapper injected: `{ query, matchCase, limit }`, already validated by
+            // the bridge. Anything else — a missing wrapper, an unserializable namespace value — is the
+            // body's own closed refusal rather than a search of `undefined`.
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = request !== null && available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined || typeof document.Search !== 'function') return ['CAPABILITY_UNAVAILABLE'];
+            // The MEASURED primitive: `Search(query, matchCase)` answers a real Array of range objects.
+            var found = document.Search(request.query, request.matchCase);
+            if (!found || typeof found.length !== 'number' || typeof request.limit !== 'number') return ['CAPABILITY_UNAVAILABLE'];
+            var count = found.length;
+            // The extraction is bounded IN THE EDITOR, so a needle matching thousands of ranges never
+            // crosses thousands of texts: at most `limit` of them are read, and the TOTAL is reported.
+            // The elements are collected FIRST — an indexed read of editor DATA, which is exactly what it
+            // is — and `GetText` is then invoked on the callback PARAMETER, never through the computed
+            // lookup. That distinction is not stylistic: the authored static boundary treats "invoke a
+            // method reached by a computed key" as a computed-execution sink (the same rule that keeps
+            // `descriptors[key].value(...)` out of this module), so `found[index].GetText()` would be an
+            // audit finding in shipped source. The collected array is this body's OWN literal, so its
+            // `.map` costs nothing an editor-specific array would have to provide.
+            var take = count < request.limit ? count : request.limit;
+            var collected = [];
+            for (var index = 0; index < take; index++) collected.push(found[index]);
+            var matchTexts = collected.map(function (foundItem) {
+              return foundItem !== null && foundItem !== undefined && typeof foundItem.GetText === 'function' ? foundItem.GetText() : null;
+            });
+            var answer = [count];
+            for (var position = 0; position < matchTexts.length; position++) {
+              // The measured shape has `GetText()` on every element; an element without it is an editor
+              // this body cannot read, so the whole answer is refused rather than silently shortened.
+              if (typeof matchTexts[position] !== 'string') return ['CAPABILITY_UNAVAILABLE'];
+              answer.push(matchTexts[position]);
+            }
+            return answer;
+          } catch (error) { return ['CAPABILITY_UNAVAILABLE']; }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -183,6 +230,47 @@ function decodeContext(value) {
 function decodeText(value, bound) {
   assertByteLimit(value, LIMITS.editorResultBytes);
   return assertByteLimit(value, bound);
+}
+// The value `writeScope` returns when the namespace had NO `scope` property, so the restore DELETES the
+// property instead of writing `undefined` into an object this module does not own.
+const SCOPE_ABSENT = Object.freeze({});
+// The DOCUMENT-SEARCH answer, decoded strictly. The authored command body builds ONE flat array of
+// primitives — `[count, text0, …]` — because that is the shape the NATIVE return validator keeps: its
+// own recursion accepts any array of primitives and STRIPS a plain object (measured in the vendored
+// 2026.1.2 editor source), which is why a body that needs structured output must encode it. The decode
+// is therefore as strict as `decodeTuple`'s, and for the same reason: `Reflect.ownKeys` before any
+// indexed read closes symbols, holes and hidden extras, and every member is read through its own data
+// descriptor, never through a getter. Three rules are the tool's own contract rather than
+// paranoia:
+//   * a ONE-slot answer is either the body's own refusal sentinel or the COUNT ALONE, which is exactly
+//     what a document holding no occurrence yields — `[0]`. Any other single value is uninterpretable.
+//   * the body extracts EXACTLY `min(count, limit)` texts, so an answer with a different number is not
+//     one this body can have produced: a short array would otherwise be published as the tool's own
+//     `limit` cap, and a tool cannot describe a limitation it did not impose.
+//   * the count is the primitive's own TOTAL and may therefore be ANY non-negative safe integer; what
+//     is bounded is the reported text, by the array's own size and by the editor-result byte ceiling.
+function decodeSearch(value, limit) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > limit + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  const count = members[0];
+  if (!Number.isSafeInteger(count) || count < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const texts = members.slice(1);
+  for (const text of texts) if (typeof text !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (texts.length !== Math.min(count, limit)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({ count, texts: Object.freeze(texts) });
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -377,6 +465,19 @@ export function createR7Bridge(plugin, {
   // this path uses. Absent or unusable, the text cannot be built, which makes the read unusable — the
   // fail-closed direction: no usable baseline means no evidence means no write.
   platform = null,
+  // THE COMMAND-PARAMETER BOUNDARY. A command body is EVALUATED inside the editor and receives exactly
+  // two bindings: the editor's own `Api` and `scope`, which the vendor's `callCommand` wrapper sets from
+  // `window.Asc.scope` (measured 2026.1.2: `"var Asc = {}; Asc.scope = " + JSON.stringify(window.Asc.scope)
+  // + "; var scope = Asc.scope; (" + fn + ")();"`). `Asc` is therefore the plugin PAGE's own namespace
+  // object — the very object whose `plugin` member this product is already handed — and the `find_text`
+  // leg is the only one that must WRITE model data into it. It is an EXPLICIT option for the same reason
+  // `platform` is: the boundary is declared where the bridge is created, a test injects its own, and the
+  // default is the page's own `Asc` (present whenever a plugin object is). Model data crosses as
+  // JSON-serializable DATA through this property and is NEVER interpolated into command source (ADR
+  // 0002). A namespace that is absent, not an object, or cannot carry a writable `scope` data property
+  // makes the search the closed CAPABILITY_UNAVAILABLE before any dispatch — never a search of the
+  // needle the PREVIOUS call left behind.
+  ascNamespace = globalThis.Asc,
   clock = { now: () => Date.now() },
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
 } = {}) {
@@ -400,6 +501,27 @@ export function createR7Bridge(plugin, {
   const targets = new WeakMap(); // private brand + raw ID; never public DTO/model data
   const listeners = new Set();
   function notify() { for (const listener of listeners) { try { listener(); } catch {} } }
+  // THE ONE PLACE this module writes an object it does not own, and it is the parameter channel of a
+  // command body (`ascNamespace` above carries the evidence and the rationale). `writeScope` returns the
+  // value it replaced — `SCOPE_ABSENT` when the namespace had no `scope` property at all — so
+  // `clearScope` restores the exact previous shape: a needle must not outlive its own dispatch, and a
+  // page object must not be left holding a property it never had. Every unusable namespace is the closed
+  // capability class and is decided BEFORE `owned.dispatched`, because nothing reached the editor.
+  function writeScope(scope) {
+    if (!ascNamespace || typeof ascNamespace !== 'object') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    const previous = Object.getOwnPropertyDescriptor(ascNamespace, 'scope');
+    if (previous && !Object.hasOwn(previous, 'value')) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (previous && previous.writable === false) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (!previous && !Object.isExtensible(ascNamespace)) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    ascNamespace.scope = scope;
+    return previous ? previous.value : SCOPE_ABSENT;
+  }
+  function clearScope(previous) {
+    try {
+      if (previous === SCOPE_ABSENT) delete ascNamespace.scope;
+      else ascNamespace.scope = previous;
+    } catch {}
+  }
   function currentEditor() {
     const info = plugin && Object.getOwnPropertyDescriptor(plugin, 'info');
     if (!info || !Object.hasOwn(info, 'value') || !info.value || typeof info.value !== 'object') return 'unknown';
@@ -441,7 +563,9 @@ export function createR7Bridge(plugin, {
     // consulted on this branch at all, and a fallback here would be dead code whose only effect was to
     // hide a future caller that forgot the budget behind an 8 KiB decode. Without one, such a caller
     // gets `assertByteLimit`'s closed INVALID_DATA instead of a silent under-bound decode. Every other
-    // kind keeps its own window (the selection read stays at LIMITS.selectionBytes).
+    // kind keeps its own window (the selection read stays at LIMITS.selectionBytes). A `search` ticket
+    // never consults this window at all: it decodes its own authored `[count, text…]` array against the
+    // `limit` it asked for (`decodeSearch`), not against a byte budget derived from the selection read.
     const readBound = kind === 'contextread' || kind === 'caretread' ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
     return new Promise((resolve, reject) => {
       const owned = { kind, dispatched: false, uncertain: false, settled: false, timer: null, deadline: readClock() + LIMITS.callbackTimeoutMs, cancel: null };
@@ -680,6 +804,10 @@ export function createR7Bridge(plugin, {
           else if (kind === 'context') result = decodeContext(value);
           else if (kind === 'contextread') result = decodeText(value, readBound);
           else if (kind === 'caretread') result = decodeText(value, readBound);
+          // THE DOCUMENT SEARCH. Its answer is the authored `[count, text…]` array, decoded against the
+          // `limit` THIS ticket asked for — the same number the body extracted against — so the decode
+          // and the extraction can never disagree about how many texts are owed.
+          else if (kind === 'search') result = decodeSearch(value, params.limit);
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -785,6 +913,25 @@ export function createR7Bridge(plugin, {
           if (disposed || !adapter.executeMethod) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
           owned.dispatched = true;
           plugin.executeMethod('GetCurrentSentence', Object.freeze([]), callback);
+        } else if (kind === 'search') {
+          // THE DOCUMENT SEARCH: ONE command, and the ONLY leg whose parameters must cross as DATA. It
+          // needs the entry point that OWNS the parameter wrapper (`callCommand`, which composes
+          // `Asc.scope` into the body's `scope` binding); a build whose command channel is the bare
+          // `executeCommand` transport has no sanctioned parameter channel at all — composing model data
+          // into command source is forbidden (ADR 0002) — so it refuses HERE, before any dispatch, and
+          // releases the slot because nothing reached the editor.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          // The scope write is the PARAMETER CHANNEL, not the dispatch: it happens BEFORE
+          // `owned.dispatched`, and an unusable namespace is therefore a KNOWN refusal with the slot
+          // released rather than a dispatch that never was. `owned.dispatched` is then set before the
+          // native is handed the command, exactly like every other leg, so a synchronous throw out of
+          // the transport can never release a slot whose work may already be queued.
+          let previous;
+          try { previous = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.search(callback); }
+          finally { clearScope(previous); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -932,6 +1079,43 @@ export function createR7Bridge(plugin, {
         const text = await start('documentread', signal);
         if (typeof text !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
         return Object.freeze({ ok: true, text, totalChars: text.length });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded DOCUMENT SEARCH behind `find_text` — the third Sprint 3 Word tool and the first READ
+    // in this repo that goes through the `Api` builder inside a command body. The descriptor's own
+    // comment carries the primitive evidence (measured on the target: a strict needle 4, the same needle
+    // case-insensitively 5, a needle the document does not hold 0 as an EMPTY array, and `GetText()` on
+    // an element as that match's own text); what matters HERE is the shape: ONE command on the ONE entry
+    // point that owns the parameter wrapper, the validated needle/case/limit triple carried as DATA
+    // through `Asc.scope`, and ONE strict decoder that turns the authored array into `{count, texts}`.
+    // It is a READ: no leg of it matches a write class, it carries NO document-identity probe (a search
+    // returns no OWNED TARGET a later write could be applied to) and nothing on this path reaches
+    // `PasteText`/`ReplaceTextSmart`. The PRIMITIVE is measured on the target (`Search` answers the 4/5/0
+    // array), and so is the `callCommand` carriage of a static body; what is NOT yet measured natively is
+    // the SHIPPED body's parameter carriage — the `Asc.scope` write through the page's own namespace —
+    // and an editor where that does not arrive answers the body's own refusal sentinel or never calls
+    // back, so the ticket settles CAPABILITY_UNAVAILABLE or TIMEOUT — never a count.
+    async findText(raw) {
+      const query = raw?.query, matchCase = raw?.matchCase, limit = raw?.limit, signal = raw?.signal;
+      // The request is a closed precondition, never an optional refinement: a caller that cannot name a
+      // searchable needle, an explicit case decision and a bound gets a refusal instead of an SDK call
+      // the tool that owns this method never advertised. The needle's SIZE is part of that precondition
+      // — `assertByteLimit` answers by throwing, so it is mapped to the same closed class rather than
+      // escaping as a raw exception.
+      if (typeof query !== 'string' || query === '') return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      if (typeof matchCase !== 'boolean') return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIMITS.findMatchesMax) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      try { assertByteLimit(query, LIMITS.findQueryBytes); }
+      catch { return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE }); }
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const found = await start('search', signal, {}, Object.freeze({ query, matchCase, limit }));
+        return Object.freeze({ ok: true, count: found.count, texts: found.texts });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

@@ -944,3 +944,92 @@ byte-identical across the tool/tests change") is not general: comments inside a 
 are removed by the bundler (the `read_context` and `read_selection` ones are absent from `panel.js`, as
 they were before this round), so only descriptor-body edits move the bytes. No behaviour changed: the
 bundle's only difference is comment text, and the build is deterministic across repeated runs.
+
+
+## 11. Sprint 3, tool 3 — `find_text`, the bounded document search
+
+**The primitive, measured on the target (Astra / R7 2026.1.2.1942, this round) and treated as
+established.** `Api.GetDocument().Search(query, matchCase)` returns a **real Array of range objects**:
+`count = 4` for the strict `'МАРКЕР-ПОИСК'`, `count = 5` for the case-insensitive `'маркер-поиск'` over
+the same document (the fifth occurrence is the lowercase one), `count = 0` — an **empty array, never
+null** — for a needle the document does not hold, and `GetText()` on one element is that match's own
+text (`'МАРКЕР-ПОИСК'`). `Start`/`End` exist on those objects but their **unit is unverified**, so the
+tool publishes **no position**: what a caller receives is each match's own text and its 0-based
+occurrence order. This is the first READ in the repo that builds the `Api` facade **inside a command
+body**.
+
+**The dispatch, and the one new boundary it needs.** A command body is evaluated in the editor with
+exactly two bindings: the editor's `Api` and the `scope` the vendor's own wrapper sets from
+`window.Asc.scope` (`"var Asc = {}; Asc.scope = " + JSON.stringify(window.Asc.scope) + "; var scope =
+Asc.scope; (" + fn + ")();"`, measured in the installed 2026.1.2 vendor source). `Asc.scope` is
+therefore the **only** channel through which model data can reach a body, and it is the channel ADR 0002
+sanctions ("data via `Asc.scope`", "never interpolate model data into source code"). The bridge now
+takes that namespace as an **explicit option** (`ascNamespace`, defaulting to the page's own
+`globalThis.Asc`, exactly the rule the `platform` boundary follows); `writeScope` writes the validated
+`{ query, matchCase, limit }` triple into it and `clearScope` restores the previous value as soon as the
+command has been handed to the native (the vendor reads the property **synchronously**), so a needle
+never outlives its own dispatch and the page object never keeps a property it did not have. An absent,
+non-object, sealed-without-a-writable-`scope`, or frozen namespace is the closed
+`CAPABILITY_UNAVAILABLE` **before `owned.dispatched`**, so the slot is released and nothing reached the
+editor. There is deliberately **no composed-source transport** for this leg: the `executeCommand`
+fallback receives a source *string*, and building that string would mean interpolating model data into
+command source, so a build without `callCommand` refuses before dispatch instead.
+
+**The schema, the limits and the result.** Closed (`additionalProperties: false`), `required:
+['query']`, `query: {string, minBytes 1, maxBytes findQueryBytes}`, `matchCase: {boolean}`,
+`limit: {integer, minimum 1, maximum findMatchesMax}`. Two new `LIMITS` entries: **`findQueryBytes =
+256`** (a search *string*, not a document read — 128 Cyrillic or 256 ASCII characters) and
+**`findMatchesMax = 32`** (both the documented default and the hard cap, so the advertised space is a
+size a default call really returns). The result is `ok({ query, matchCase, count, matches, truncated })`
+with `count` the primitive's **total** and `matches` a bounded array of `{ index, text }`. The enforced
+bound is the **serialized entry** through the module's one `toolResultEntryBytes` (new `findEntryBytes`
+wrapper): the worst realistic call at both maxima measures **9283** bytes against the 16384-byte
+ceiling (7101 of slack); a needle whose every character JSON-escapes to six bytes measures **17731** and
+is the closed `BYTE_LIMIT` — the tool never shortens a match's text silently. The body extracts exactly
+`min(count, limit)` texts **inside the editor**, so a needle matching thousands of ranges never crosses
+thousands of texts, and the decoder refuses any answer with a different number.
+
+**Two documented decisions.** `matchCase` defaults to **`false`** — the case-insensitive search is the
+superset of the strict one and mirrors the editor's own Find default — and the **result echoes the
+resolved flag**, which the measured 4-vs-5 pair makes non-optional: the model can always tell which
+question was answered. **Zero matches is `ok`** with `count: 0` and an empty `matches`: "the document
+holds no occurrence" *is* the complete answer to a search, deliberately unlike an empty **caret**
+context, where `''` means there was nothing to reason about. Failure classes: wrong editor / missing
+bridge method / bridge `CAPABILITY_UNAVAILABLE` → `CAPABILITY_UNAVAILABLE`; any other closed bridge class
+republished through the module's `refusalCode`; an uninterpretable envelope → `known()`; a returned or
+thrown `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN`; an over-ceiling entry → `BYTE_LIMIT`.
+
+**A static-audit finding the first draft hit, recorded because it is a rule, not a style note.** The
+first version of the body wrote `var element = found[index]; … element.GetText()`. That is an indexed
+read of editor **data**, but the audit's scope-insensitive taint then made `element` a computed value,
+so the *call* `element.GetText()` counted as computed **execution** — and the taint propagated to the
+local named `text`, which turned every `text.includes(...)` / `text.indexOf(...)` in `bridge.js` (and
+then across the whole bundle) into findings: `node scripts/static-audit.mjs` reported three lines and the
+bundle audit `BUNDLE_AUDIT_FAILED`. The body now collects the elements first and invokes `GetText` on a
+**callback parameter** (`collected.map(function (foundItem) { … })`), so no method is ever reached
+through a computed lookup: the audit is clean in `src/` and in `panel.js`, which is the authored-static
+boundary working as designed.
+
+**Verification.** RED first, honestly counted: on the pre-implementation tree the focused suites ran
+**135 cases / 110 pass / 25 fail**, and every one of the 25 was "the feature is absent"
+(`tools.find(…) === undefined`, `bridge.findText is not a function`, the catalogue assertion for the new
+name) — no test failed for a reason other than the missing tool. Green: focused `135/135`; full suite
+**728 → 751** with `fail 0`; `node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0);
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+f7e78518dd2df4ac8499ea54fc16f31e2864c1537553c4d1c756cec561c14352` (re-measured twice on the final
+tree, same value). Four existing exhaustive assertions
+grew, none weakened or deleted: the tool-name set, the published-descriptor list, the EDIT/ASK catalogue
+lists and the bundle test's authored command legs (**2 → 3**, now classified by the primitive each body
+authors — `Search` for the search leg — instead of by the refusal literal every body contains). Read-only
+by construction and by test: exactly **one** bridge call (`findText`) and no write method reachable.
+`src/agent/*` untouched.
+
+**Unverified natively, and what only the target can prove.** The Lead measured the primitive and the
+`callCommand` carriage of a static body (with the needle **baked into the probe's source**). What the
+host-side suite cannot prove is the **shipped** carriage: that writing `globalThis.Asc.scope` in the
+plugin page is the property the vendor's wrapper reads at dispatch time, that the native return validator
+delivers a `[count, …texts]` array of the length the body built, and that `GetText()` on a real range
+object is a string for **every** match (a single non-string answer refuses the whole search rather than
+reporting a short list). The bundle's SHA is re-pinned above for the usual builder reason
+(`minify: false` keeps a **descriptor body's** comments verbatim); its comment-only difference is not a
+behaviour change.

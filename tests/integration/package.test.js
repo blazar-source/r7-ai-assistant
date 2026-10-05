@@ -36,6 +36,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // authored statements and name neither reviewed body. The two module-level literals stay in the bundle
   // because the `executeCommand` fallback composes their source as text, and `auditSource` above proves
   // they are static and read `Api` only.
+  //
+  // THREE legs are carried inline, and the third is the SEARCH: it is the first READ that builds the
+  // `Api` facade itself and the first body that must receive MODEL DATA, which it reads from the
+  // `scope` binding the vendor's `callCommand` wrapper injects (never from source text). It carries its
+  // own primitive (`Search`) instead of the identity probe, so the classification below is by the
+  // primitive each body authors rather than by the refusal literal every body now contains.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -48,13 +54,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(carried), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(carried, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      assert.match(carried, /GetRangeBySelect/, 'and carries the authored document probe');
-      legs.push(carried.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
+      if (carried.includes('.Search(')) {
+        assert.match(carried, /\bscope\b/, 'the search body takes its needle from the injected command scope');
+        assert.match(carried, /GetText/, 'and reads each match through the measured primitive');
+        legs.push('search');
+      } else {
+        assert.match(carried, /GetRangeBySelect/, 'and carries the authored document probe');
+        legs.push(carried.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
+      }
     }
   });
-  assert.equal(commands, 2, 'the adapter dispatches exactly the two authored command legs');
-  assert.deepEqual(legs.sort(), ['capability', 'context'],
-    'both reviewed static bodies are carried INLINE by the adapter, each evaluable on its own');
+  assert.equal(commands, 3, 'the adapter dispatches exactly the three authored command legs');
+  assert.deepEqual(legs.sort(), ['capability', 'context', 'search'],
+    'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that
   // container parse). A parsed document has NO browsing context, so it is the only sanctioned DOM entry

@@ -98,6 +98,35 @@ export const LIMITS = Object.freeze({
   // bound can still serialize to an entry far above the ceiling. The handler therefore measures the
   // ACTUAL entry as well, and that measurement is the enforced bound.
   readParagraphBytes: 16000,
+  // The bounded document SEARCH (`find_text`) — the THIRD Sprint 3 Word tool. It adds exactly TWO
+  // static per-call bounds, and NEITHER is derived from a document ceiling, because a search does not
+  // read a document:
+  //   * `findQueryBytes` bounds the NEEDLE. It is a search string, not a document: 256 bytes is 128
+  //     Cyrillic or 256 ASCII characters — longer than any realistic needle — and it is the same number
+  //     the schema advertises and the handler enforces. It is deliberately NOT an alias of any read
+  //     bound (`readDocumentChars` counts characters of a served chunk, `selectionBytes` bounds a
+  //     caret-scoped read); aliasing them would tie a search string's width to a document read's width.
+  //   * `findMatchesMax` bounds how many MATCHES the tool REPORTS, and it is BOTH the documented default
+  //     and the hard schema maximum (the `readDocumentChars`/`readDocumentMaxChars` rule, with one
+  //     value). A search can match thousands of ranges, so the tool must bound what it publishes while
+  //     `count` still carries the primitive's own TOTAL — the model learns "3 of 400" from one call.
+  // THE ARITHMETIC, measured on the SERIALIZED entry the runtime bounds (`AGENT_CEILINGS.toolResultBytes`
+  // = 16384 bytes of `JSON.stringify({ tool, ok, data })`, the shape `stringifyToolResults` measures and
+  // `runtime.js:27-36` replaces with the literal "the tool result could not be serialized" when it is
+  // exceeded). The entry is
+  // `{"tool":"find_text","ok":true,"data":{"query":Q,"matchCase":B,"count":C,"matches":[{…}],"truncated":B}}`
+  // and each reported match's text is the needle's OWN text as the document spells it — the primitive
+  // matches a literal, so a match is as long as the query and cannot be longer. At both maxima, with the
+  // widest field forms (`matchCase:false` and `truncated:false` are one byte wider than their `true`
+  // forms), a Cyrillic needle at the byte maximum whose text is reported for every match measures
+  //   EXACTLY 9283 bytes <= 16384, with 7101 bytes of slack.
+  // That is a bound, not a promise about every character: a needle whose every character JSON-escapes to
+  // SIX bytes (`\n` → `\u000a`) at the same maxima measures 17731 and CANNOT fit. The tool measures the
+  // entry it is about to publish and refuses that one with the closed BYTE_LIMIT — it never shortens a
+  // match's text silently, because a shortened match presented as the match is exactly the kind of
+  // approximation the other reads refuse.
+  findQueryBytes: 256,
+  findMatchesMax: 32,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
