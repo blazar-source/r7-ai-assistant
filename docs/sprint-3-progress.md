@@ -3982,3 +3982,16 @@ scripts/build-plugin.mjs` â†’ exit 0, **`Plugin build: 8 allowlisted files; ZIP 
 42f96c781b66f7d9530c761c43ba546a69cdd15954e5131dc4c56a565f499a73`** â€” the bundle pass stayed GREEN, so the
 helper introduced no optionally-chained method call and no non-constant key. `git diff --stat -- src/agent` is
 empty: `src/agent/` is untouched.
+## Stage B closed — session handoff
+
+The owner stopped the task and closed this chat because the CONTEXT was exhausted and the stage was sufficiently complete — this is explicitly NOT a runtime blocker. No further runtime runs, stress tests or diagnostics were started after that instruction.
+
+**Good-enough product scope fixed by the owner:** Word 5–7 pages per free request; PowerPoint 3–4 slides per request; Excel typical daily scenarios (P&L, formulas, plan/fact, tables, several linked sheets). The product is NOT to be optimised for 10/20/100-page Word documents, dozens of slides or dozens of sheets without a separate real need. (Agent tools for PowerPoint and Excel were not part of this stage; the stage delivered the Word tool layer plus the long-document orchestration.)
+
+**Accepted as sufficient for Word:** the word tool layer works; the bulk profile removed the wrong `insert_paragraph` usage; Plan > Execute > Verify > Continue works; 5–7 pages were really obtained in one free-form request (best measured run: 187 paragraphs, 11 headings, 6 tables, about 11 900 characters); tables and a structured document are created; `TOOL_UNCERTAIN` safely stops a write with no automatic retry.
+
+**PARTIAL / known limitations recorded, not treated as blockers:** the model's outcome is not yet reproducible (measured volume about 5–12 thousand characters and 0–6 tables across runs, so the "3 runs ? at least 18 000 characters with at least 2 tables" acceptance was NOT met and was moved out of scope by the owner); no working public numbering form for lists on this build; the bulk profile hides position-dependent tools; `format_range` covers alignment plus four character properties only; any `TOOL_UNCERTAIN` holds the write slot for the session; the orchestrator measures volume from the document's `SymbolsWSCount` while lists and conclusions use a bounded 2000-character heuristic; native write tests require documents R7 itself produced.
+
+**Full handoff, including the next step (GitHub collaboration setup) and the useful paths:** `docs/handoff-word-stage-b.md`.
+
+State at close: branch `stage-b`, HEAD `11165fd6b565c3e7f3a9d916421f84c90832b050`, worktree clean, no remotes configured, `node --test` 995/995, source audit PASS, bundle `42f96c78…`.
