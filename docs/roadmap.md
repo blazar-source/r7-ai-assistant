@@ -2,6 +2,13 @@
 
 ## Accepted eight product sprints
 
+The **full eight-sprint product roadmap** that this list was cut down from is preserved in
+[Product roadmap to `0.9.0-pilot-rc`](<product-roadmap-to-0.9.0-pilot-rc.md>). It holds the ORIGINAL
+product intent for all eight sprints, objectives, scope and PASS criteria; it is **not** a status report,
+and no sprint is complete because of it. The **actual statuses** remain the table below and the
+sprint-specific authoritative plans, and where details disagree the order in
+[Precedence and supersession](#precedence-and-supersession) applies.
+
 **Sprint 3 (Word tools) is the currently authorized sprint** (authorized by direct user instruction — see the [Sprint 3 Word tools plan](<superpowers/plans/2026-10-04-sprint-3-word-tools.md>)); **Sprint 4 (Cell tools) is authorized by the same means** on 2026-10-06 (see the [Sprint 4 Cell tools plan](<superpowers/plans/2026-10-06-sprint-4-cell-tools.md>)), and its **T1–T3 were already executed and committed BEFORE that plan file existed**, so those three numbers are a retrospective classification rather than a plan that was followed; Sprint 2 was the previously authorized sprint and its recorded status below stands. Sprint 1's Stage B execution keeps its own recorded status below. Task 1 is done, Task 2 measured DEV probe gives prerequisite GO with N09 branch PARTIAL, and Task 3 cb291d7 Apply implementation is independently reviewed/completed. [Current evidence and limits](<sprint-1-progress.md>) record Task 4 IN PROGRESS with scoped R10–R17 candidate native evidence and remaining gates, not whole Task 4 / Stage B PASS; no production deployment is inferred. The [historical Stage B NOT PASS](<stage-b-gate-report.md>) is not retroactively PASS. The [Sprint 1 execution plan](<superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>) and [amended accepted design](<superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md>) define the current contract.
 
 | Sprint | Accepted product scope | Execution status |
@@ -16,6 +23,22 @@
 | 8 | Verified local `0.9.0-pilot-rc` deliverables | NOT AUTHORIZED / NOT RUN; no publication |
 
 The previous A–M lettering is historical sequencing, not current execution authorization. The [original Stage B plan](<superpowers/plans/2026-10-02-stage-b-implementation.md>) is archived with its measured completed/unchecked steps intact. Sprint 2 was authorized by direct user instruction, and **Sprint 3 is now the authorized sprint** by the same means (recorded in the [Sprint 3 Word tools plan](<superpowers/plans/2026-10-04-sprint-3-word-tools.md>)); **Sprint 4 (Cell tools) was authorized the same way on 2026-10-06** (recorded in the [Sprint 4 Cell tools plan](<superpowers/plans/2026-10-06-sprint-4-cell-tools.md>), which is a plan reconstructed on that date because no Sprint 4 plan had ever existed in this repository); sprints 5–8 are not authorized. See [Sprint 2 progress](<sprint-2-progress.md>) for Sprint 2's execution status.
+
+## Precedence and supersession
+
+Where documents disagree on a DETAIL, the order is:
+
+1. Security/architecture **ADRs** and newer **accepted specs**.
+2. The **sprint-specific accepted plan**.
+3. The [full product roadmap](<product-roadmap-to-0.9.0-pilot-rc.md>).
+4. Older **historical/bootstrap** documents.
+
+The full roadmap therefore preserves the original product intent but **cannot revive a superseded
+decision**: the universal Preview/Apply of the original Sprint 2 sketch, older limits and cancelled
+research branches are NOT reinstated by it, and recovering it adds **no** authorization for any sprint.
+Concretely for this file, the [Sprint 3 Word tools plan](<superpowers/plans/2026-10-04-sprint-3-word-tools.md>)
+stays authoritative for Word and the [Sprint 4 Cell tools plan](<superpowers/plans/2026-10-06-sprint-4-cell-tools.md>)
+stays authoritative for Cell; neither is rewritten by the recovered roadmap.
 
 ## Stage boundaries and escalation
 
