@@ -3009,13 +3009,19 @@ element means `TOOL_UNCERTAIN` with the slot held and no retry, and no write mea
 across the whole document and proves the outcome by COUNTING the occurrences of both strings through
 `doc.Search`, before and after the ONE write, with no export involved at all.
 
-**The policy is `confirm`, on the plan's own authority.** Phase 0 of the sprint plan recorded `confirm` for this
-tool because a text-replacing operation is confirmed by the human before it runs, exactly like
-`replace_selection`. A `confirm` descriptor is never reached from the runtime loop (§6.3 publishes
-PREVIEW_READY from the descriptor and the validated arguments), so the handler is exercised directly by the
-tests; it is nevertheless a COMPLETE mutation rather than a stub, because a descriptor is also executable when
-it is held directly and because a later one-value switch (`policy: 'auto'`) must turn on a handler that is
-already finished.
+**The policy is `auto`, and the reason is MEASURED rather than the plan's Phase 0 preference.** Phase 0 recorded
+`confirm` for this tool, but a `confirm` descriptor is REFUSED BEFORE THE MODEL IN THE CURRENT PANEL: the runtime
+publishes `PREVIEW_READY` for it and the panel needs a preview candidate, which this panel does not produce, so
+`src/ui/controller.js:171`/`:340` answers `CAPABILITY_UNAVAILABLE` with an EMPTY action log and an untouched
+document. The **A/B control** on the SAME build and the SAME document shows the policy is the cause and the tool is
+not: `insert_blocks` (`policy: 'auto'`) works normally. Nothing about this tool's safety rested on the confirmation —
+its outcome is PROVEN, not guessed, so it does not depend on a human to be safe: the exact occurrence arithmetic
+below derives the expectation from the request on BOTH sides, every refusal on the path to the write is CLOSED with
+ZERO writes, and anything non-exact after it settles `TOOL_UNCERTAIN` with the slot HELD and no retry. A
+confirmation could not add a proof that arithmetic does not already carry. **The rewrite is nevertheless
+DOCUMENT-WIDE**, so a later round may revisit this policy if the panel ever serves the preview candidate. The switch
+is one value: the handler is unchanged, so the descriptor executes from the loop exactly as the six `auto` mutations
+already do.
 
 **The measured facts, on the target (Astra / R7 2026.1.2.1942) or read out of the vendored 2026.1.2 bundle.**
 

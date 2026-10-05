@@ -66,7 +66,7 @@ test('the representative descriptor set is well formed and policy-correct', () =
   const names = tools.map(tool => tool.name).sort();
   assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.equal(tools.find(tool => tool.name === 'add_hyperlink').policy, 'auto');
-  assert.equal(tools.find(tool => tool.name === 'replace_text').policy, 'confirm');
+  assert.equal(tools.find(tool => tool.name === 'replace_text').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_text').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'add_hyperlink').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
@@ -9161,14 +9161,15 @@ function replaceRig(options = {}) {
   return { bridge, plugin, commands, methods, namespace: carrier, api, doc: measured };
 }
 
-test('replace_text advertises the closed bounded schema, the confirm policy and the limit vocabulary', () => {
+test('replace_text advertises the closed bounded schema, the auto policy and the limit vocabulary', () => {
   const tool = replaceTextTool(replaceTextBridge(replaced()));
   assert.equal(tool.name, 'replace_text');
   assert.equal(tool.kind, 'mutate');
   assert.deepEqual([...tool.editors], ['word']);
-  // THE POLICY IS `confirm`, and the plan's Phase 0 recorded it for this tool: a text-replacing
-  // operation is confirmed by the human before it runs, exactly like `replace_selection`.
-  assert.equal(tool.policy, 'confirm');
+  // THE POLICY IS `auto`: the `confirm` path is refused before the model in the current panel because no
+  // preview candidate is produced, the A/B control shows an `auto` mutation works on the same build, and
+  // this tool's safety rests on its exact occurrence arithmetic and its zero-write refusals.
+  assert.equal(tool.policy, 'auto');
   assert.deepEqual([...tool.requires], ['document.write']);
   const schema = tool.schema;
   assert.equal(schema.type, 'object');
@@ -9263,14 +9264,16 @@ test('replace_text refuses every illegal argument with nothing dispatched', asyn
   assert.equal(tool.precondition({ search: REPLACE_SEARCH, replace: '' }, { editor: 'word' }), null);
 });
 
-test('replace_text is offered with policy confirm and never executes inside the loop', async () => {
+test('replace_text is offered with policy auto, replaces from the loop, and refuses a needle the document lacks with zero writes', async () => {
   const r = replaceRig({ namespace: { scope: replaceTextScope() } });
   const registry = createRegistry(createWordTools(r.bridge));
   const full = ['document.read', 'document.write'];
   const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
   const offered = catalogue.find(entry => entry.name === 'replace_text');
   assert.ok(offered, 'the offered catalogue contains replace_text');
-  assert.equal(offered.policy, 'confirm');
+  // THE POLICY IS `auto` because the `confirm` path is refused before the model in the current panel,
+  // while this tool's safety is its own exact arithmetic and its zero-write refusals.
+  assert.equal(offered.policy, 'auto');
   assert.equal(offered.kind, 'mutate');
   assert.deepEqual([...offered.requires], ['document.write']);
   assert.equal(offered.schema.properties.search.maxBytes, LIMITS.replaceTextSearchBytes);
@@ -9278,19 +9281,34 @@ test('replace_text is offered with policy confirm and never executes inside the 
     .some(entry => entry.name === 'replace_text'), false, 'no write capability, no mutation tool');
   assert.equal(registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' })
     .some(entry => entry.name === 'replace_text'), false, 'ASK exposes no mutation tool');
-  // §6.3: the loop PUBLISHES the preview and never executes; the document is untouched and no command
-  // was dispatched.
+  // AN `auto` DESCRIPTOR IS EXECUTED BY THE LOOP, which is the whole point of the switch: a model batch
+  // performs the document-wide replace through exactly ONE command and the run records the proof.
   const responses = ['{"type":"tool_calls","calls":[{"tool":"replace_text","arguments":{"search":"' + REPLACE_SEARCH +
-    '","replace":"' + REPLACE_WITH + '"}}]}', '{"type":"final","message":"предложение готово"}'];
+    '","replace":"' + REPLACE_WITH + '"}}]}', '{"type":"final","message":"замена выполнена"}'];
   let step = 0;
   const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
     settings: {}, uuid: '16161616-1616-4616-8616-161616161616', request: 'замени черновик на финал',
     transport: async () => ({ content: responses[step++] ?? responses[responses.length - 1] }) });
-  assert.equal(run.status, 'PREVIEW_READY');
-  assert.equal(run.preview.descriptor.name, 'replace_text');
-  assert.deepEqual({ ...run.preview.arguments }, { search: REPLACE_SEARCH, replace: REPLACE_WITH });
-  assert.equal(r.commands.length, 0, 'a confirm descriptor dispatches NOTHING from the loop');
-  assert.equal(r.doc.state.replaces, 0, 'and the document is not written');
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['replace_text', 'ok']]);
+  assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
+  assert.equal(r.doc.state.replaces, 1, 'and exactly one document-wide write ran');
+  assert.equal(r.doc.state.replaced, 4, 'every counted occurrence was rewritten');
+  assert.equal(r.doc.text(), 'финал один, финал два, финал три, финал четыре');
+  // THE REFUSALS ARE STILL REFUSALS FROM THE LOOP, with ZERO writes: a needle the document does not hold
+  // is the closed argument class, and the pre-count is the only command that reaches the editor.
+  const absent = replaceRig({ text: 'документ без иглы', namespace: { scope: replaceTextScope() } });
+  const absentRegistry = createRegistry(createWordTools(absent.bridge));
+  let absentStep = 0;
+  const refused = await runAgent({ registry: absentRegistry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '17171717-1717-4717-8717-171717171717', request: 'замени черновик на финал',
+    transport: async () => ({ content: responses[absentStep++] ?? responses[responses.length - 1] }) });
+  assert.equal(refused.status, 'FINAL');
+  assert.deepEqual(refused.actions.map(action => [action.tool, action.outcome, action.code]),
+    [['replace_text', 'error', 'TOOL_ERROR']], 'the run records the closed refusal it really produced');
+  assert.equal(absent.doc.state.replaces, 0, 'ZERO SearchAndReplace calls');
+  assert.equal(absent.doc.text(), 'документ без иглы', 'and the document is untouched');
+  assert.equal(absent.bridge.getState().busy, false, 'nothing was written, so no slot is held');
 });
 
 test('replace_text publishes the exact replace-all arithmetic it proved', async () => {

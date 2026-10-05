@@ -2306,14 +2306,19 @@ export function createWordTools(bridge) {
     // --- THE SIXTH MUTATION OF SPRINT 3: `replace_text`, the ELEVENTH Word tool, and the FIRST whose whole
     // proof is an EXACT OCCURRENCE COUNT ---
     //
-    // THE POLICY IS `confirm`, AND THAT IS THE PLAN'S OWN DECISION rather than this module's taste: Phase 0
-    // of the sprint plan recorded `confirm` for this tool because replacing text is a document-wide rewrite
-    // the human confirms before it runs, exactly like `replace_selection`. A `confirm` descriptor is never
-    // reached from the loop — the runtime publishes PREVIEW_READY from the descriptor and the validated
-    // arguments (§6.3) — and the handler below is kept intact anyway because a descriptor is also executable
-    // when it is held directly, and because a later one-value switch (`policy: 'auto'`) must turn on a
-    // handler that is already complete rather than a stub. THE HANDLER IS THEREFORE FULLY IMPLEMENTED AND
-    // FULLY TESTED AS A MUTATION.
+    // THE POLICY IS `auto`, AND THE REASON IS MEASURED RATHER THAN A PREFERENCE. `confirm` was the sprint
+    // plan's Phase 0 decision, but this tool is REFUSED BEFORE THE MODEL IN THE CURRENT PANEL: the runtime
+    // publishes PREVIEW_READY for a confirm descriptor and the panel needs a preview candidate, which this
+    // panel does not produce, so `src/ui/controller.js:171`/`:340` answers `CAPABILITY_UNAVAILABLE` with an
+    // EMPTY action log and an untouched document. The A/B control on the SAME build and the SAME document
+    // shows the policy is the cause and the tool is not: `insert_blocks` (`policy: 'auto'`) works normally.
+    // Nothing about this tool's safety rested on the confirmation — its outcome is PROVEN, not guessed, so it
+    // does not depend on a human to be safe: the exact occurrence arithmetic below derives the expectation
+    // from the request on BOTH sides, and every refusal on the path to the write is CLOSED with ZERO writes,
+    // while anything non-exact after it settles `TOOL_UNCERTAIN` with the slot HELD and no retry. A
+    // confirmation could not add a proof that arithmetic does not already carry. THE REWRITE IS
+    // NEVERTHELESS DOCUMENT-WIDE, so a later round may revisit this policy if the panel ever serves the
+    // preview candidate.
     //
     // THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942) or read out of the
     // vendored 2026.1.2 bundle (`.local/stage-b-runtime/vendor-word-sdk-all.js`) rather than assumed:
@@ -2395,7 +2400,7 @@ export function createWordTools(bridge) {
     //   * the needle is matched with the editor's OWN search semantics (the same primitive the pre- and
     //     post-counts use), so this tool proves what the editor did and not a text substitution of its own.
     defineTool({
-      name: 'replace_text', kind: 'mutate', editors: ['word'], policy: 'confirm', requires: ['document.write'],
+      name: 'replace_text', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
       schema: { type: 'object', additionalProperties: false, required: ['search', 'replace'],
         properties: {
           search: { type: 'string', minBytes: 1, maxBytes: LIMITS.replaceTextSearchBytes },
