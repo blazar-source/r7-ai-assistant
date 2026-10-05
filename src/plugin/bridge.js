@@ -20,9 +20,10 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // the heading style assignment: it writes the same way — ONE `paragraph.SetStyle` on an EXISTING paragraph
 // inside its own command body — and it is the FIRST write leg that appends nothing at all, which is why
 // it must be named here rather than inferred from the two creation legs. `rangeformat` is the range format:
-// it writes the same way in place — ONE `paragraph.GetParaPr().SetJc(...)` on an EXISTING paragraph inside
-// its own command body — and it is the SECOND leg that appends nothing, which is why it is named here
-// explicitly for the same reason the heading assignment is.
+// it writes the same way in place — ONE `paragraph.GetParaPr().SetJc(...)` plus ONE
+// `paragraph.GetRange(from,to).SetBold/SetItalic/SetUnderline/SetStrikeout(true)` per requested property, on
+// an EXISTING paragraph inside its own command body — and it is the SECOND leg that appends nothing, which is
+// why it is named here explicitly for the same reason the heading assignment is.
 const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat']));
 
 // Inspect data descriptors, never extract a command function for execution.
@@ -914,39 +915,53 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // model data arrives as the `scope` binding the vendor wrapper composes from `Asc.scope` (never
       // composed into source, ADR 0002) — and it is the FIRST one that does NOT change a paragraph STYLE.
       //
-      // WHY THE PROOF IS THE PARAGRAPH'S ALIGNMENT AND NOTHING ELSE. The SDK inspection recorded in
-      // `src/tools/word.js` (line numbers and quoted prototypes there) established that the public
-      // `ApiRange`/`ApiTextPr` pair authors SETTERS ONLY: there is no `GetBold`, `GetItalic`, `GetUnderline`,
-      // `GetStrikeout`, `GetColor`, `GetFontSize`, `GetFontFamily` or `GetHighlight` anywhere in the bundle,
-      // so a body could apply those and never READ them back. The ONE builder type that does read back is
-      // `ApiParaPr`, whose `SetJc` sits directly beside `GetJc`, and whose `GetJc` answers the closed
-      // four-word vocabulary `right`/`left`/`center`/`both`. So the ONE mutating call in this body is
-      // `paragraph.GetParaPr().SetJc(align)` and the proof is that same getter — an exact, per-object readback
-      // of the very property the mutation sets, on the very paragraph the addressed range belongs to.
+      // TWO READBACKS, and they are what decide every mutating call in this body. (1) THE PARAGRAPH'S OWN
+      // ALIGNMENT: the SDK inspection recorded in `src/tools/word.js` established that the public
+      // `ApiRange`/`ApiTextPr` pair authors SETTERS ONLY — there is no `GetBold`, `GetItalic`, `GetUnderline`,
+      // `GetStrikeout`, `GetColor`, `GetFontSize`, `GetFontFamily` or `GetHighlight` anywhere in the bundle — so
+      // the ONE builder type with a direct, per-object readback is `ApiParaPr`, whose `SetJc` sits directly
+      // beside `GetJc` and whose `GetJc` answers the closed vocabulary `right`/`left`/`center`/`both`. (2) THE
+      // DOCUMENT'S OWN HTML EXPORT: the Lead MEASURED on the target that `doc.ToHtml()` reflects run
+      // formatting with exactly one marker per property — bold `<strong>`, italic `<em>`, underline
+      // `<span style="text-decoration:underline;">`, strikeout `<del>` — which is the indirect readback that
+      // makes a character-level property advertisable at all. `doc.ToMarkdown()` does NOT reflect them
+      // (measured byte-identical) and is not used here.
       //
-      // WHAT THE { paragraph, start, end } ADDRESS IS FOR, and the ONE range signal this leg has. It is a
+      // THE MUTATING CALLS are therefore `paragraph.GetParaPr().SetJc(align)` plus ONE
+      // `paragraph.GetRange(from,to).SetBold/SetItalic/SetUnderline/SetStrikeout(true)` per REQUESTED property,
+      // in that fixed order, each on its OWN fresh range object. A call that names no run property authors NONE
+      // of them and never reads the export.
+      //
+      // WHAT THE { paragraph, start, end } ADDRESS IS FOR, and the range signals this leg has. It is a
       // BOUNDARY: the body requires the paragraph to exist, requires both offsets to lie inside that
       // paragraph's OWN `GetText().length` BEFORE the mutation, and reads the ADDRESSED REGION through the
       // paragraph's own `GetRange(start, end)` before and after the mutation. That region read is the range
       // leg of the proof and it is deliberately built from a FRESH range object on each side: `ApiRange`
       // caches its own text at construction (measured in the vendored SDK), so a range HELD across the
-      // mutation would compare a cached value with itself. The region can only REFUTE, never establish — the
-      // alignment readback is the part that establishes anything — and that is why the descriptor says the
-      // effect is paragraph-wide rather than claiming per-character formatting.
+      // mutation would compare a cached value with itself. The region can only REFUTE the alignment leg — but
+      // its PRE-mutation text is the NEEDLE of the run proof, and it must occur EXACTLY ONCE in the export and
+      // be wrapped CONTIGUOUSLY in the requested marker; a region text that stands twice is UNVERIFIABLE and
+      // answers 0 rather than a guessed 1.
+      //
+      // THE EXPORT IS BOUNDED BY `htmlMax` (composed by the bridge from `LIMITS.formatRangeHtmlChars`) and it
+      // never leaves the editor: the body scans it and returns four one-character flags. An export that does
+      // not exist or does not FIT is refused BEFORE the mutation (closed class, zero writes); an export that
+      // fails only AFTER the mutation is a POST-insert refusal the decoder settles as uncertain with the slot
+      // held, because the writes have already run.
       //
       // THE ANSWER is ONE flat array of primitives (the native return validator keeps those and strips a
-      // plain object): `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged,
-      // rangeShifted, align, alignBefore, alignAfter]`, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE
-      // IS AN EXPLICIT SLOT OF EVERY ANSWER, and the decoder turns a phase-less or post-insert refusal into
-      // the uncertain class — the name alone can never release a slot for a mutation that may already be in
-      // the document.
+      // plain object): `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted,
+      // boldVerified, italicVerified, underlineVerified, strikeoutVerified, align, alignBefore, alignAfter]`,
+      // or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and the
+      // decoder turns a phase-less or post-insert refusal into the uncertain class — the name alone can never
+      // release a slot for a mutation that may already be in the document.
       format(callback) {
         return plugin.callCommand(function () {
           // The phase, and the ONE place the two classes are distinguished: everything answered while it is
-          // `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after the
-          // single `SetJc` is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
-          // IMMEDIATELY BEFORE that one call, not after it, because a native that throws OUT of the call may
-          // already have applied the alignment.
+          // `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after the FIRST
+          // mutating call is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
+          // IMMEDIATELY BEFORE that call, not after it, because a native that throws OUT of any of them may
+          // already have applied it.
           var phase = 'PRE_INSERT';
           // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
           // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
@@ -960,9 +975,10 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return refusal;
           }
           try {
-            // The scope the vendor wrapper injected: `{ paragraph, start, end, align }`, already validated by
-            // the bridge. Anything else — a missing wrapper, a non-numeric address, an alignment the runtime
-            // cannot serve — is the body's own closed refusal rather than a paragraph formatted on the
+            // The scope the vendor wrapper injected: `{ paragraph, start, end, align, bold, italic, underline,
+            // strikeout, htmlMax }`, already validated by the bridge. Anything else — a missing wrapper, a
+            // non-numeric address, an alignment the runtime cannot serve, a run switch that is not a boolean, a
+            // missing export bound — is the body's own closed refusal rather than a paragraph formatted on the
             // strength of `undefined`.
             var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
             var measured = measureRequest(request);
@@ -971,6 +987,11 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var startOffset = measured[1];
             var endOffset = measured[2];
             var align = measured[3];
+            var wantBold = measured[4];
+            var wantItalic = measured[5];
+            var wantUnderline = measured[6];
+            var wantStrikeout = measured[7];
+            var htmlMax = measured[8];
             var available = typeof Api !== 'undefined' && Api !== null;
             var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
             if (document === null || document === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
@@ -1002,10 +1023,16 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             }
             // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The address is re-checked HERE and not
             // only in the bridge method, because the scope is the ONE thing that crosses: a fractional index,
-            // an offset past the advertised bound or an alignment outside the measured vocabulary is this
-            // body's own closed argument refusal, never a format applied to a coerced address. The return is
-            // an ARRAY so the caller binds each measured value separately, which keeps every later member call
-            // on a call's own result rather than on an indexed read.
+            // an offset past the advertised bound, an alignment outside the measured vocabulary, a run switch
+            // that is not a boolean or a missing export bound is this body's own closed argument refusal, never
+            // a format applied to a coerced address. The return is an ARRAY so the caller binds each measured
+            // value separately, which keeps every later member call on a call's own result rather than on an
+            // indexed read. `htmlMax` crosses with the request exactly as a search's `limit` does — it is the
+            // bound THIS body enforces, and it is composed by the bridge from `LIMITS.formatRangeHtmlChars`,
+            // never supplied by the caller.
+            function isFlag(value) {
+              return value === true || value === false;
+            }
             function measureRequest(value) {
               if (value === null || value === undefined || typeof value !== 'object') return null;
               var position = value.paragraph;
@@ -1015,7 +1042,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               if (!isCount(position) || !isCount(from) || !isCount(to)) return null;
               if (!(from < to)) return null;
               if (!isAlign(wanted)) return null;
-              return [position, from, to, wanted];
+              var wantBold = value.bold;
+              var wantItalic = value.italic;
+              var wantUnderline = value.underline;
+              var wantStrikeout = value.strikeout;
+              if (!isFlag(wantBold) || !isFlag(wantItalic) || !isFlag(wantUnderline) || !isFlag(wantStrikeout)) return null;
+              var bound = value.htmlMax;
+              if (!isCount(bound) || bound < 1) return null;
+              return [position, from, to, wanted, wantBold, wantItalic, wantUnderline, wantStrikeout, bound];
             }
             // THE ALIGNMENT OF THE ADDRESSED PARAGRAPH, READ THROUGH THE MEASURED CHAIN
             // `paragraph.GetParaPr().GetJc()`. THE THREE ANSWERS ARE KEPT DISTINCT because they mean three
@@ -1041,14 +1075,48 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // BEFORE and AFTER reads can never be the same cached value. `null` is the absence of a
             // measurement — a missing primitive, a refusal, or a throw — and is kept apart from the empty
             // string, which is a region that really holds no characters.
-            function readRange(item, from, to) {
+            function rangeFor(item, from, to) {
               try {
                 if (item === null || item === undefined || typeof item.GetRange !== 'function') return null;
-                var range = item.GetRange(from, to);
-                if (range === null || range === undefined || typeof range.GetText !== 'function') return null;
+                var built = item.GetRange(from, to);
+                return built === null || built === undefined ? null : built;
+              } catch (error) { return null; }
+            }
+            function readRange(item, from, to) {
+              var range = rangeFor(item, from, to);
+              if (range === null || typeof range.GetText !== 'function') return null;
+              try {
                 var covered = range.GetText();
                 return typeof covered === 'string' ? covered : null;
               } catch (error) { return null; }
+            }
+            // THE MEASURED RUN READBACK: the document's own HTML export, read through `doc.ToHtml()`, which the
+            // Lead measured on the target to reflect run formatting with one marker per property. A missing
+            // primitive, a non-string answer and a throw are all the ABSENCE of a measurement (`null`), which
+            // the caller settles as a closed refusal BEFORE the mutation or as the uncertain class after it.
+            // The export NEVER leaves the editor: only the one-character run flags derived from it cross.
+            function exportHtml(doc) {
+              try {
+                if (doc === null || doc === undefined || typeof doc.ToHtml !== 'function') return null;
+                var markup = doc.ToHtml();
+                return typeof markup === 'string' ? markup : null;
+              } catch (error) { return null; }
+            }
+            // THE RUN PROOF, and the ONE honest rule a string match can carry. The needle is the region text
+            // the PRE-mutation `GetRange(from,to).GetText()` ANSWERED — never a value re-derived after the
+            // mutation — and it must occur EXACTLY ONCE in the export: a region text that stands twice, inside
+            // the addressed paragraph or anywhere else in the document, leaves the marker's target ambiguous,
+            // so it is UNVERIFIABLE and answers 0 rather than a guessed 1. The uniqueness count runs over the
+            // RAW export string, because this body has no HTML parser; an occurrence inside MARKUP (a short
+            // ASCII region such as `p` or `style`) therefore counts too, which can only cost a false 0, never a
+            // false 1. The marker must then wrap the WHOLE region CONTIGUOUSLY — `<strong>REGION</strong>`,
+            // never a `<strong>` that merely appears near it.
+            function wrappedRegion(markup, region, open, close) {
+              if (region === '' || typeof markup !== 'string') return 0;
+              var first = markup.indexOf(region);
+              if (first < 0) return 0;
+              if (markup.indexOf(region, first + 1) >= 0) return 0;
+              return markup.indexOf(open + region + close) >= 0 ? 1 : 0;
             }
             // THE PRE-DISPATCH BASELINE: the document's paragraph count, the addressed paragraph's own text,
             // its own alignment and the addressed region. Everything below is read BEFORE anything is mutated,
@@ -1079,12 +1147,57 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (alignBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
             var regionBefore = readRange(target, startOffset, endOffset);
             if (regionBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // THE RUN REQUESTS THIS CALL NAMES, and the ONE question that decides whether the export is read at
+            // all: a call that names NONE keeps the exact behaviour it had before this leg existed — no export,
+            // no marker and no dependency on `ToHtml`. The run RANGES are built and their setters
+            // FUNCTION-CHECKED here, BEFORE the phase turns, so an editor missing one of them answers the closed
+            // capability class with ZERO writes instead of a half-applied format. ONE fresh range per property:
+            // each setter writes exactly the range it was called on, and one property's write can never be
+            // folded into another's.
+            var runsRequested = wantBold === true || wantItalic === true || wantUnderline === true || wantStrikeout === true ? 1 : 0;
+            var boldRange = null;
+            var italicRange = null;
+            var underlineRange = null;
+            var strikeoutRange = null;
+            if (wantBold === true) {
+              boldRange = rangeFor(target, startOffset, endOffset);
+              if (boldRange === null || typeof boldRange.SetBold !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (wantItalic === true) {
+              italicRange = rangeFor(target, startOffset, endOffset);
+              if (italicRange === null || typeof italicRange.SetItalic !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (wantUnderline === true) {
+              underlineRange = rangeFor(target, startOffset, endOffset);
+              if (underlineRange === null || typeof underlineRange.SetUnderline !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (wantStrikeout === true) {
+              strikeoutRange = rangeFor(target, startOffset, endOffset);
+              if (strikeoutRange === null || typeof strikeoutRange.SetStrikeout !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            // THE EXPORT GATE, and it is the ONLY place the bound can be a KNOWN refusal. A run request needs a
+            // marker readback, so the export must EXIST and FIT before anything is written: a build without
+            // `ToHtml` answers the closed capability class, and an export above `htmlMax` answers the closed
+            // export class — both with ZERO writes and the slot RELEASED. An export that only grows past the
+            // bound AFTER the write cannot be refused closed; the POST half settles it instead. The bound is
+            // applied to the WHOLE export, never to a prefix: a prefix could hide the addressed region or its
+            // marker, so a too-large export makes this read unusable rather than partially trusted.
+            if (runsRequested === 1) {
+              var preflight = exportHtml(document);
+              if (preflight === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (!(preflight.length <= htmlMax)) return formatRefusal('BYTE_LIMIT');
+            }
             // THE MUTATION, and the exact boundary the two refusal classes are split on. ONE call on the
             // PARAGRAPH's own `ApiParaPr` — the measured setter whose getter is the proof — with the alignment
-            // carried as DATA. `POST_INSERT` is set IMMEDIATELY BEFORE it, because a native that throws OUT of
-            // the call may already have applied it.
+            // carried as DATA, then ONE call per REQUESTED run property on its own fresh range, in the FIXED
+            // order bold → italic → underline → strikeout. `POST_INSERT` is set IMMEDIATELY BEFORE the FIRST of
+            // them, because a native that throws OUT of any one of these may already have applied it.
             phase = 'POST_INSERT';
             beforeSource.SetJc(align);
+            if (wantBold === true) boldRange.SetBold(true);
+            if (wantItalic === true) italicRange.SetItalic(true);
+            if (wantUnderline === true) underlineRange.SetUnderline(true);
+            if (wantStrikeout === true) strikeoutRange.SetStrikeout(true);
             // THE POST READ, and NOTHING is taken from the pre-mutation snapshot. A FRESH `GetAllParagraphs()`
             // answers a fresh paragraph object, so the readback cannot be a stale wrapper, and the region is
             // re-read through a fresh range for the same reason.
@@ -1117,9 +1230,29 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               : regionAfterRead.length > regionBefore.length && textAfter.length === textBefore.length ? 1 : 0;
             var paragraphsStable = countAfter === countBefore ? 1 : 0;
             var textUnchanged = textAfter === textBefore ? 1 : 0;
-            // The phase slot, the four flags, the echo and the two measured alignment values are APPENDED
-            // rather than spelled as one array literal, for the authored-code-audit reason the block body
-            // states.
+            // THE RUN PROOF: the export re-read AFTER the writes, the needle taken from the PRE-mutation region
+            // read, and one flag per property — 1 exactly when that property was REQUESTED and its measured
+            // marker wraps the addressed region contiguously. An export that cannot be read at all, or one that
+            // grew past the bound only now, is a POST-insert refusal: the writes have already run, so the
+            // decoder settles it as UNCERTAIN with the slot HELD. A property nobody requested keeps its 0, and
+            // the decoder's outcome rule REFUSES an answer whose four flags do not match the four switches this
+            // ticket carried.
+            var boldVerified = 0;
+            var italicVerified = 0;
+            var underlineVerified = 0;
+            var strikeoutVerified = 0;
+            if (runsRequested === 1) {
+              var proof = exportHtml(document);
+              if (proof === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (!(proof.length <= htmlMax)) return formatRefusal('BYTE_LIMIT');
+              if (wantBold === true && wrappedRegion(proof, regionBefore, '<strong>', '</strong>') === 1) boldVerified = 1;
+              if (wantItalic === true && wrappedRegion(proof, regionBefore, '<em>', '</em>') === 1) italicVerified = 1;
+              if (wantUnderline === true && wrappedRegion(proof, regionBefore, '<span style="text-decoration:underline;">', '</span>') === 1) underlineVerified = 1;
+              if (wantStrikeout === true && wrappedRegion(proof, regionBefore, '<del>', '</del>') === 1) strikeoutVerified = 1;
+            }
+            // The phase slot, the five range flags, the FOUR run flags, the echo and the two measured alignment
+            // values are APPENDED rather than spelled as one array literal, for the authored-code-audit reason
+            // the block body states.
             var answer = [];
             answer.push(phase);
             answer.push(paragraphsStable);
@@ -1127,6 +1260,10 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             answer.push(rangeRead);
             answer.push(rangeUnchanged);
             answer.push(rangeShifted);
+            answer.push(boldVerified);
+            answer.push(italicVerified);
+            answer.push(underlineVerified);
+            answer.push(strikeoutVerified);
             answer.push(align);
             answer.push(alignBefore);
             answer.push(alignAfter);
@@ -1405,9 +1542,17 @@ function exactBlocksDelta(outcome, blocks) {
 // pre-insert and the phase protocol disappears; the cost is one extra native round trip and one ticket that
 // owns two dispatches. Until that round, the residual is accepted and stated here rather than silently
 // relied on.
-function preInsertRefusal(error) {
-  return error instanceof SafeError &&
-    (error.code === ERROR_CODES.CAPABILITY_UNAVAILABLE || error.code === ERROR_CODES.TOOL_ERROR);
+function preInsertRefusal(error, kind) {
+  if (!(error instanceof SafeError)) return false;
+  if (error.code === ERROR_CODES.CAPABILITY_UNAVAILABLE || error.code === ERROR_CODES.TOOL_ERROR) return true;
+  // THE RANGE FORMAT'S CLOSED EXPORT CLASS, and it is scoped to THAT leg on purpose. `decodeRange` is the ONE
+  // decoder whose answer cannot be large (every member is validated to a one-character flag or a four-word
+  // alignment BEFORE its `assertByteLimit`, so that call can never fire), which means a `BYTE_LIMIT` reaching
+  // this point from a range dispatch can only be the PHASE-GATED `[PRE_INSERT, 'BYTE_LIMIT']` the body emits
+  // for an export above `LIMITS.formatRangeHtmlChars` — a refusal decided before anything was written. For the
+  // other three write legs `BYTE_LIMIT` is what `assertByteLimit` throws on an OVERSIZED ANSWER, which is a
+  // dispatched write whose outcome is unknown, so it must keep the uncertain class and the HELD slot.
+  return kind === 'rangeformat' && error.code === ERROR_CODES.BYTE_LIMIT;
 }
 // The TABLE-INSERT answer, decoded with the same strictness as `decodeBlocks` and for the same reason: the
 // authored body encodes its measurements as ONE flat array of PRIMITIVES —
@@ -1596,44 +1741,53 @@ function exactHeadingDelta(outcome) {
 }
 // THE RANGE-FORMAT ANSWER, decoded with the same strictness as `decodeHeading` and for the same reason: the
 // authored body encodes its measurements as ONE flat array of PRIMITIVES —
-// `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted, align,
-// alignBefore, alignAfter]` — because the native return validator keeps arrays of primitives and STRIPS a
-// plain object. `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every
-// member is read through its own data descriptor, never through a getter. Four rules are this leg's own
-// contract:
+// `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted, boldVerified,
+// italicVerified, underlineVerified, strikeoutVerified, align, alignBefore, alignAfter]` — because the native
+// return validator keeps arrays of primitives and STRIPS a plain object. `Reflect.ownKeys` before any indexed
+// read closes symbols, holes and hidden extras, and every member is read through its own data descriptor,
+// never through a getter. Four rules are this leg's own contract:
 //   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes are
 //     split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a KNOWN
 //     refusal whose code the caller republishes (nothing was mutated), and `[POST_INSERT, name]` is the
-//     UNCERTAIN class (the document may already carry the alignment). A phase that is ABSENT — the one-slot
-//     `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real mutation — or a
-//     pre-insert phase over a measurement, or any other single value, can never be a known refusal: it is
-//     decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the marker does.
+//     UNCERTAIN class (the document may already carry the alignment or the run formatting). A phase that is
+//     ABSENT — the one-slot `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real
+//     mutation — or a pre-insert phase over a measurement, or any other single value, can never be a known
+//     refusal: it is decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the marker does.
 //   * the answer's LENGTH IS FIXED, because this leg's work does not scale with a caller-supplied
 //     collection: there is exactly ONE addressed paragraph and ONE region, so an answer with anything but
-//     the nine slots below is not one this body can have produced. There is no per-item array to pin, which
-//     is precisely what makes the phase gate the whole of the length rule.
-//   * the FLAGS are EXACTLY `0` or `1` (a count this bridge cannot trust is not a count, and an editor that
-//     answers anything else is not one this body can have read), and the TWO ALIGNMENT slots are the
-//     MEASURED four-word vocabulary the `ApiParaPr.GetJc` readback answers. The requested alignment is
-//     ECHOED in its own slot so the tool can require the answer to name the request it made; the two
-//     measured values are the readback itself.
+//     the THIRTEEN slots below is not one this body can have produced. There is no per-item array to pin,
+//     which is precisely what makes the phase gate the whole of the length rule.
+//   * the RANGE FLAGS are EXACTLY `0` or `1`, the FOUR RUN FLAGS are EXACTLY `0` or `1` (a property that was
+//     requested AND whose measured marker wrapped the addressed region is 1, everything else is 0), and the
+//     TWO ALIGNMENT slots are the MEASURED four-word vocabulary the `ApiParaPr.GetJc` readback answers. The
+//     requested alignment is ECHOED in its own slot so the tool can require the answer to name the request it
+//     made; the two measured values are the readback itself.
 //   * the answer needs NO byte ceiling beyond the one this decoder carries, and it is carried because it is
-//     cheap and exact: the phase is one of two literals, the five flags one character each, the three
-//     alignments at most six characters as JSON, so the widest legal answer measures about 64 bytes against
+//     cheap and exact: the phase is one of two literals, the nine flags one character each, the three
+//     alignments at most six characters as JSON, so the widest legal answer measures about 72 bytes against
 //     `LIMITS.editorResultBytes` (65536) — and, unlike the block/table decoders' retired assertions, this one
 //     is genuinely reachable by no legal shape either. It is a CEILING on an answer this bridge accepts from
 //     the native, and a ceiling that is never applied is not a ceiling at all.
 const RANGE_FLAGS = 5;
+const RANGE_RUNS = 4;
 const RANGE_ALIGNMENTS = 3;
 const RANGE_PHASE_PRE = 'PRE_INSERT';
 const RANGE_PHASE_POST = 'POST_INSERT';
-const RANGE_LENGTH = 1 + RANGE_FLAGS + RANGE_ALIGNMENTS;
+const RANGE_LENGTH = 1 + RANGE_FLAGS + RANGE_RUNS + RANGE_ALIGNMENTS;
 // THE CLOSED ALIGNMENT VOCABULARY, carried HERE as well as in the schema because the DECODER must validate
 // the measured readback against the same four words the schema advertises. It is the vocabulary the measured
 // `ApiParaPr.GetJc` answers (the vendored 2026.1.2 SDK), and the value is compared as a WHOLE: a getter that
 // answers anything outside these four is an answer this bridge cannot interpret, never a near-match.
 function rangeAlign(value) {
   return value === 'left' || value === 'center' || value === 'right' || value === 'both' ? value : null;
+}
+// THE RUN SWITCH, and it keeps the same three answers the alignment resolver keeps apart: `true` and `false`
+// are the two booleans a request may carry, an ABSENT switch is the `false` a request that names none means,
+// and `null` is an answer this bridge cannot interpret — a string, a number or an explicit `null` is the
+// closed argument class with NOTHING dispatched, never a coerced truthiness.
+function rangeRun(value) {
+  if (value === undefined) return false;
+  return value === true || value === false ? value : null;
 }
 function decodeRange(value) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
@@ -1658,6 +1812,10 @@ function decodeRange(value) {
     // document, offsets outside the addressed paragraph, and an address or alignment the body cannot serve.
     // They carry the pre-insert phase, so they keep their known class and RELEASE the slot.
     if (members[1] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    // THE CLOSED EXPORT CLASS. A PRE-mutation export above `LIMITS.formatRangeHtmlChars` is refused before
+    // anything is written, so it keeps its own known class and RELEASES the slot, exactly like the argument
+    // refusals above — the same name, the same phase, the same release.
+    if (members[1] === 'BYTE_LIMIT') throw new SafeError(ERROR_CODES.BYTE_LIMIT);
     throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   }
   // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal.
@@ -1666,32 +1824,46 @@ function decodeRange(value) {
   if (members[0] !== RANGE_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   const flags = members.slice(1, 1 + RANGE_FLAGS);
   for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  const alignments = members.slice(1 + RANGE_FLAGS);
+  const runs = members.slice(1 + RANGE_FLAGS, 1 + RANGE_FLAGS + RANGE_RUNS);
+  for (const run of runs) if (run !== 0 && run !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const alignments = members.slice(1 + RANGE_FLAGS + RANGE_RUNS);
   for (const alignment of alignments) if (rangeAlign(alignment) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
   assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
   return Object.freeze({ paragraphsStable: flags[0] === 1, textUnchanged: flags[1] === 1,
     rangeRead: flags[2] === 1, rangeUnchanged: flags[3] === 1, rangeShifted: flags[4] === 1,
+    boldVerified: runs[0] === 1, italicVerified: runs[1] === 1,
+    underlineVerified: runs[2] === 1, strikeoutVerified: runs[3] === 1,
     align: alignments[0], alignBefore: alignments[1], alignAfter: alignments[2] });
 }
 // THE EXACT OUTCOME RULE the range format rests on, in ONE place so the decision and its comment cannot
-// drift apart. FIVE conditions, all required, and they are split by what they can do:
-//   1. THE PRIMARY LEG is the ADDRESSED PARAGRAPH'S OWN alignment, read back through the measured
+// drift apart. SIX conditions, all required, and they are split by what they can do:
+//   1. THE PRIMARY ALIGNMENT LEG is the ADDRESSED PARAGRAPH'S OWN alignment, read back through the measured
 //      `GetParaPr().GetJc()` chain: the AFTER value must be READABLE and must BE the requested alignment.
 //      There is deliberately NO fallback on the region flags and NO "the value did not change" shortcut — an
 //      unreadable or disagreeing readback is a mutation this tool cannot claim, and the mutation has already
 //      run, so the ticket settles `APPLY_UNCERTAIN` with the slot HELD.
-//   2. THE SECONDARY SIGNALS can only REFUTE: the addressed REGION was read and is what it was
+//   2. THE RUN LEG is a FOUR-WAY EQUALITY, not a one-way check, and the request it is judged against is the
+//      SCOPE THIS TICKET CARRIED (`requested`), never a value read back out of the answer. A property the
+//      request NAMED must be PROVEN (`1`), and a property the request did NOT name must NOT claim a proof
+//      (`0`): a build that answered `1` for a property nobody asked for would be claiming a measurement of a
+//      write that never happened, and a build that answered `0` for a requested one is a mutation this tool
+//      cannot stand behind. Both are the UNCERTAIN class with the slot HELD, because the write already ran.
+//   3. THE SECONDARY SIGNALS can only REFUTE: the addressed REGION was read and is what it was
 //      (`rangeRead`/`rangeUnchanged`), it did not MOVE under the mutation (`rangeShifted` is false — a
 //      concurrent edit that shifts the text under the address is a non-success, not a silent format of
 //      whatever the offsets now cover), the addressed paragraph's TEXT is unchanged, and the document's
 //      paragraph count is unchanged.
-function exactRangeFormat(outcome) {
+function exactRangeFormat(outcome, requested) {
   if (!outcome.rangeRead) return false;
   if (outcome.alignAfter !== outcome.align) return false;
   if (!outcome.rangeUnchanged) return false;
   if (outcome.rangeShifted) return false;
   if (!outcome.paragraphsStable) return false;
   if (!outcome.textUnchanged) return false;
+  if (outcome.boldVerified !== (requested.bold === true)) return false;
+  if (outcome.italicVerified !== (requested.italic === true)) return false;
+  if (outcome.underlineVerified !== (requested.underline === true)) return false;
+  if (outcome.strikeoutVerified !== (requested.strikeout === true)) return false;
   return true;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
@@ -2287,14 +2459,16 @@ export function createR7Bridge(plugin, {
           // THE RANGE FORMAT. Its answer is the authored flat array of primitives, decoded with NO
           // caller-supplied collection to pin against — this leg addresses exactly ONE paragraph and ONE
           // region, so the answer's length is fixed by `decodeRange` and the phase gate is the whole of the
-          // length rule. The outcome rule then decides the ticket HERE, while it still owns the slot: an
-          // unreadable or disagreeing alignment readback, a region that moved, a paragraph whose text changed
-          // or a paragraph count that moved is the UNCERTAIN class with the slot HELD, never a known error
-          // about a document this call may already have reformatted. A decode that THROWS is classified by the
-          // catch below (a `[PRE_INSERT, name]` answer keeps its known code; everything else is uncertain).
+          // length rule. The outcome rule then decides the ticket HERE, while it still owns the slot, and it is
+          // judged against the SCOPE (`params`) this ticket carried: an unreadable or disagreeing alignment
+          // readback, a requested run property whose measured marker did NOT wrap the addressed region, a
+          // property nobody requested claiming a proof, a region that moved, a paragraph whose text changed or
+          // a paragraph count that moved is the UNCERTAIN class with the slot HELD, never a known error about a
+          // document this call may already have reformatted. A decode that THROWS is classified by the catch
+          // below (a `[PRE_INSERT, name]` answer keeps its known code; everything else is uncertain).
           else if (kind === 'rangeformat') {
             const outcome = decodeRange(value);
-            if (!exactRangeFormat(outcome)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            if (!exactRangeFormat(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
@@ -2321,7 +2495,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat') && owned.dispatched && !preInsertRefusal(error)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -2533,20 +2707,21 @@ export function createR7Bridge(plugin, {
           finally { clearScope(previousHeading); }
         } else if (kind === 'rangeformat') {
           // THE RANGE FORMAT: ONE command, and the SAME parameter channel the other read and write legs use —
-          // the validated `{ paragraph, start, end, align }` quadruple written into the page's `Asc.scope`,
-          // never composed into source (ADR 0002). It needs the entry point that OWNS that wrapper
-          // (`callCommand`); a build whose command channel is the bare `executeCommand` transport has no
-          // sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases the
-          // slot because nothing reached the editor.
+          // the validated `{ paragraph, start, end, align, bold, italic, underline, strikeout, htmlMax }` scope
+          // written into the page's `Asc.scope`, never composed into source (ADR 0002). It needs the entry point
+          // that OWNS that wrapper (`callCommand`); a build whose command channel is the bare `executeCommand`
+          // transport has no sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and
+          // releases the slot because nothing reached the editor.
           // It carries NO document-identity probe, for the heading assignment's reason: this leg addresses a
           // POSITION and an OFFSET pair, not an owned TARGET, so there is no handle whose identity a probe
           // could establish. What it does instead is the subject of the body's own comment: the addressed
           // paragraph's OWN ALIGNMENT is read through the measured `GetParaPr().GetJc()` chain before the one
-          // `SetJc` and again after it, the ADDRESSED REGION is read through a FRESH range on each side, and
-          // the paragraph count and the paragraph's text are required unchanged. THE READBACK IS THE PROOF and
-          // the range flags can only REFUTE, because the public `ApiTextPr`/`ApiRange` surface exposes NO
-          // getter for any character-level property (measured in the vendored SDK), which is also why the
-          // descriptor's schema advertises alignment and nothing else.
+          // `SetJc` and again after it, the ADDRESSED REGION is read through a FRESH range on each side, and the
+          // paragraph count and the paragraph's text are required unchanged. Each REQUESTED run property is then
+          // proven through the measured HTML export — the addressed region's own pre-mutation text must occur
+          // exactly once in it and be wrapped contiguously in that property's measured marker — because the
+          // public `ApiTextPr`/`ApiRange` surface exposes NO getter for any character-level property (measured
+          // in the vendored SDK). BOTH readbacks are the proof and the range flags can only REFUTE.
           // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a
           // synchronous throw out of the transport must never release a slot whose work may already be queued,
           // and the body's own pre-insert refusals keep their known class through the callback (they arrive as
@@ -3004,34 +3179,44 @@ export function createR7Bridge(plugin, {
       }
     },
     // THE RANGE FORMAT behind `format_range` — the FOURTH MUTATION of Sprint 3 and the SECOND write leg that
-    // appends nothing: it changes an EXISTING paragraph's ALIGNMENT in place through ONE
-    // `paragraph.GetParaPr().SetJc(...)` on an index the caller names, within a character range of that
-    // paragraph's own text. The body's own comment carries the mechanism (a pre-dispatch baseline of the
-    // paragraph count, the addressed paragraph's own text and alignment and the addressed REGION, then ONE
-    // `SetJc`, then the post read and the region re-read) and why no mutation primitive's return value is the
-    // signal; what matters HERE is the shape: ONE command on the ONE entry point that owns the parameter
-    // wrapper, the validated `{ paragraph, start, end, align }` quadruple carried as DATA through `Asc.scope`,
-    // and ONE strict decoder that turns the authored flat array — an explicit phase slot, five flags (the
-    // paragraph-count invariant, the unchanged text, the region read, the unchanged region and whether it
-    // moved) and the requested/measured/measured alignment triple — into the envelope below. The OUTCOME rule
-    // is then decided inside the ticket, before the slot is released, and the ALIGNMENT READBACK is the
-    // PRIMARY leg while the region flags can only REFUTE: an unread readback, a readable readback that
-    // disagrees, a region that moved, a paragraph count that moved, an answer that cannot be interpreted and
-    // the body's own POST-insert uncertainty are all `APPLY_UNCERTAIN` with the slot HELD and no retry, while
-    // the body's PRE-insert refusals (an unusable baseline, an index outside the document, offsets outside the
-    // paragraph, an unreadable pre-state alignment) settle their closed KNOWN class with the slot released,
-    // because nothing was mutated — and they do so ONLY when the answer carries their phase.
+    // appends nothing: it changes an EXISTING paragraph in place, on an index the caller names, within a
+    // character range of that paragraph's own text. It has TWO legs now: the paragraph ALIGNMENT through ONE
+    // `paragraph.GetParaPr().SetJc(...)`, and the four MEASURED character properties through ONE
+    // `paragraph.GetRange(from,to).SetBold/…(true)` per property requested. The body's own comment carries the
+    // mechanism (a pre-dispatch baseline of the paragraph count, the addressed paragraph's own text, alignment
+    // and REGION, the export gate, then the one alignment call plus one call per requested run property, then
+    // the post reads and the marker proof) and why no mutation primitive's return value is the signal; what
+    // matters HERE is the shape: ONE command on the ONE entry point that owns the parameter wrapper, the
+    // validated `{ paragraph, start, end, align, bold, italic, underline, strikeout, htmlMax }` scope carried
+    // as DATA through `Asc.scope`, and ONE strict decoder that turns the authored flat array — an explicit
+    // phase slot, five range flags, FOUR run proof flags and the requested/measured/measured alignment triple —
+    // into the envelope below. The OUTCOME rule is then decided inside the ticket, before the slot is released,
+    // and BOTH readbacks are PRIMARY while the region flags can only REFUTE: an unread readback, a readable
+    // alignment that disagrees, a requested run marker that does not wrap the addressed region, a proof for a
+    // property nobody requested, a region that moved, a paragraph count that moved, an answer that cannot be
+    // interpreted and the body's own POST-insert uncertainty are all `APPLY_UNCERTAIN` with the slot HELD and
+    // no retry, while the body's PRE-insert refusals (an unusable baseline, an index outside the document,
+    // offsets outside the paragraph, an unreadable pre-state alignment, a missing/throwing export and an export
+    // above `LIMITS.formatRangeHtmlChars`) settle their closed KNOWN class with the slot released, because
+    // nothing was mutated — and they do so ONLY when the answer carries their phase.
     // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather
-    // than taken on trust: the bridge is a public entry point, and an address or an alignment this module
-    // never measured would let a caller format a paragraph the tool's own schema would have refused. The
-    // bounds and the vocabulary are the SAME ones the descriptor advertises (`LIMITS`), so a descriptor held
-    // directly and the tool that serves it cannot disagree about which refusal a caller receives.
+    // than taken on trust: the bridge is a public entry point, and an address, an alignment or a run switch
+    // this module never measured would let a caller format something the tool's own schema would have refused.
+    // The bounds, the vocabulary and the four switch names are the SAME ones the descriptor advertises
+    // (`LIMITS`), so a descriptor held directly and the tool that serves it cannot disagree about which
+    // refusal a caller receives.
     async formatRange(raw) {
       // THE LOCALS ARE NAMED SO THEY CANNOT SHADOW THE DISPATCHER. `start` is the bridge's own ticket
       // opener in this closure, so the request's two offsets are bound as `from`/`to`: a local named
       // `start` would make the dispatch below a call on a NUMBER, and the throw would be classified as an
       // editor failure instead of reaching the editor at all.
       const paragraph = raw?.paragraph, from = raw?.start, to = raw?.end, align = rangeAlign(raw?.align), signal = raw?.signal;
+      // THE FOUR RUN SWITCHES, resolved with the same discipline as the alignment itself: an ABSENT switch is
+      // the `false` a request that names none means, a boolean is itself, and anything else is the closed
+      // argument class with NOTHING dispatched. The switch names are the four MEASURED markers' properties and
+      // the list is closed: there is no `size`, `color`, `family` or `highlight` here to accept.
+      const bold = rangeRun(raw?.bold), italic = rangeRun(raw?.italic);
+      const underline = rangeRun(raw?.underline), strikeout = rangeRun(raw?.strikeout);
       if (!Number.isSafeInteger(paragraph) || paragraph < 0 || paragraph > LIMITS.formatRangeIndexMax) {
         return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       }
@@ -3046,20 +3231,32 @@ export function createR7Bridge(plugin, {
       // NOTHING dispatched rather than a request this body would have to reinterpret.
       if (!(from < to)) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       if (align === null) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (bold === null || italic === null || underline === null || strikeout === null) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
       try {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-        const outcome = await start('rangeformat', signal, {}, Object.freeze({ paragraph, start: from, end: to, align }));
-        // `align` is ECHOED, not dropped, exactly as `styleName` is: the tool derives it from the schema
-        // vocabulary and carries it to the body, so the tool can require the answer to name the SAME alignment
-        // it asked for — an `ok` envelope that names a different one was produced for a request this caller
-        // did not make. It is the one field here that is NOT a measurement of the document, and it is the
-        // request's own word.
+        // THE SCOPE, and `htmlMax` is composed HERE from the named limit rather than read from the caller: a
+        // descriptor held directly, or a caller that guessed the key, cannot widen the export bound, and the
+        // number the body enforces is the number this module publishes.
+        const outcome = await start('rangeformat', signal, {},
+          Object.freeze({ paragraph, start: from, end: to, align,
+            bold, italic, underline, strikeout, htmlMax: LIMITS.formatRangeHtmlChars }));
+        // THE FOUR RUN SWITCHES ARE ECHOED, not dropped, exactly as `align` and `styleName` are: the tool
+        // derives them from the closed schema and carries them to the body, so the tool can require the answer
+        // to name the SAME request it made — an `ok` envelope produced for a different request is never
+        // republished as this one's proof. The four VERIFIED flags beside them are the body's own measurement,
+        // and each is `true` exactly when that property was requested AND its measured marker wrapped the
+        // addressed region. The alignment echo has the same standing, beside the two measured alignment values.
         return Object.freeze({ ok: true, align, alignBefore: outcome.alignBefore, alignAfter: outcome.alignAfter,
           paragraphsStable: outcome.paragraphsStable, textUnchanged: outcome.textUnchanged,
-          rangeRead: outcome.rangeRead, rangeUnchanged: outcome.rangeUnchanged, rangeShifted: outcome.rangeShifted });
+          rangeRead: outcome.rangeRead, rangeUnchanged: outcome.rangeUnchanged, rangeShifted: outcome.rangeShifted,
+          bold, italic, underline, strikeout,
+          boldVerified: outcome.boldVerified, italicVerified: outcome.italicVerified,
+          underlineVerified: outcome.underlineVerified, strikeoutVerified: outcome.strikeoutVerified });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

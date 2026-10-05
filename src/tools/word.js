@@ -211,10 +211,13 @@ function setHeadingEntryBytes(data) {
 }
 // `format_range`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
 // measurement: the addressed paragraph, the two offsets, the echoed alignment, the measured before/after
-// readback and the four proof flags. The measurement is NOT a formality here either, even though the fields
-// are bounded scalars and two four-word strings (`LIMITS.formatRangeAlign` states the vocabulary and
+// readback, the four run requests, their four proof flags and the dispatched scope's own byte size. The
+// measurement is NOT a formality here either, even though the fields are bounded scalars, two four-word strings,
+// THIRTEEN booleans and one bounded number (`LIMITS.formatRangeAlign` states the vocabulary and
 // `LIMITS.formatRangeOffsetMax` the arithmetic): it is the module's single ENFORCED bound, and a field added
-// to this result later must not be able to widen the entry unmeasured.
+// to this result later must not be able to widen the entry unmeasured. THE HTML EXPORT IS NOT PART OF IT: the
+// export is scanned inside the editor against `LIMITS.formatRangeHtmlChars` and only four one-character flags
+// derived from it ever cross.
 function formatRangeEntryBytes(data) {
   return toolResultEntryBytes('format_range', data);
 }
@@ -229,6 +232,17 @@ function formatRangeEntryBytes(data) {
 // list may be indexed with a constant without making the call that returns it a computed value.
 function formatAlign(value) {
   return typeof value === 'string' && LIMITS.formatRangeAlign.includes(value) ? value : null;
+}
+// THE FOUR RUN SWITCHES, and the SAME three-state discipline the alignment resolver keeps: a property the
+// caller omitted is the `false` a call that names none means, `true`/`false` are themselves, and anything else
+// (a string, a number, `null`) is `null` — an argument this tool cannot interpret, refused as the closed
+// argument class with ZERO writes, never a coerced truthiness. The four NAMES are the measured properties
+// whose HTML markers the run proof rests on; there is deliberately no fifth (`size`, `color`, `family` and
+// `highlight` have setters but no measured marker, so they are refused as UNKNOWN keys by the closed schema
+// rather than silently accepted here).
+function formatRunFlag(value) {
+  if (value === undefined) return false;
+  return value === true || value === false ? value : null;
 }
 // THE LEVEL → STYLE NAME MAPPING, in ONE place so the request the editor receives and the name the body
 // resolves can never be two different strings. The whole OOXML built-in heading family is `Heading 1` …
@@ -1617,40 +1631,66 @@ export function createWordTools(bridge) {
     // CONSTRUCTION and owns an EMPTY text-properties object, so a range held across a mutation would compare
     // a cached value with itself.
     //
-    // THE ONLY BUILDER TYPE THAT READS BACK IS `ApiParaPr`: `GetJc` sits directly beside `SetJc` (line 87,
-    // `T.prototype.SetJc`/`T.prototype.GetJc`), and `GetJc` answers the closed four-word vocabulary
-    // `right`/`left`/`center`/`both`. So the ONE property this tool advertises is the alignment, the proof is
-    // the ADDRESSED PARAGRAPH'S OWN readback through `GetParaPr().GetJc()`, and EVERY character-level
-    // property is refused AT THE SCHEMA as an unknown key with ZERO writes. Advertising `bold`/`italic`/`size`
-    // /`color`/`family` while proving a text constancy would be exactly the unverifiable property contract.
+    // THE ONLY BUILDER TYPE THAT READS BACK *DIRECTLY* IS `ApiParaPr`: `GetJc` sits directly beside `SetJc`
+    // (line 87, `T.prototype.SetJc`/`T.prototype.GetJc`), and `GetJc` answers the closed four-word vocabulary
+    // `right`/`left`/`center`/`both`. So the paragraph ALIGNMENT has a per-object readback of its own.
     //
-    // THE { paragraph, start, end } ADDRESS IS A BOUNDARY, NOT A SCOPE, and the descriptor says so: the
-    // alignment setter is a PARAGRAPH property, so the effect is paragraph-wide. The address decides WHERE the
-    // tool is allowed to act: the body requires the paragraph to exist, requires BOTH offsets to lie inside
-    // that paragraph's own text BEFORE the mutation, and reads the SAME region again after it, so a stale
-    // address or a region that moved under the mutation is a non-success rather than a silent edit of
-    // whatever the offsets now cover. It is the tool the caller names a range with; it is not a claim that
-    // per-character formatting was applied, and this comment and the result fields are the record of that.
+    // THE MEASURED INDIRECT READBACK, and the round that added four properties: the Lead measured on the target
+    // (Astra / R7 2026.1.2.1942) that `doc.ToHtml()` REFLECTS run formatting — `paragraph.GetRange(from,to)`
+    // is PARAGRAPH-RELATIVE (measured: on `ФОРМАТИРУЕМЫЙ-…`, `GetRange(0,10).GetText()` = `'ФОРМАТИРУ'`,
+    // `GetRange(5,15)` = `'ТИРУЕМЫЙ-ТЕ'`), `SetBold`/`SetItalic`/`SetUnderline`/`SetStrikeout(true)` all apply
+    // without throwing, and four properties applied to four DISTINCT regions of one paragraph exported as
+    // `<p><strong>ФОРМАТИРУ</strong><em>ЕМЫЙ-ТЕК</em>СТ-<span style="text-decoration:underline;">ДЛЯ-ПР</span><del>ОВЕРК</del>И: …</p>`
+    // (the export grew 258 → 391 characters). ONE MARKER PER PROPERTY is therefore established: **bold →
+    // `<strong>…</strong>`**, **italic → `<em>…</em>`**, **underline →
+    // `<span style="text-decoration:underline;">…</span>`**, **strikeout → `<del>…</del>`**. `doc.ToMarkdown()`
+    // does NOT reflect run formatting (measured byte-identical after eight properties) and is not used. So the
+    // FOUR run properties are now advertised, each proven through its own measured marker, while `size`,
+    // `color`, `family` and `highlight` remain REFUSED AT THE SCHEMA as unknown keys with ZERO writes: their
+    // setters exist, but NO marker was measured for them, so a tool that advertised them could only prove a
+    // text constancy — exactly the unverifiable property contract this module forbids.
     //
-    // THE STATED LIMITATION AT THE POINT A CALLER MEETS IT, in three sentences, so a later round does not have
-    // to rediscover any of them:
-    //   * **the proven effect is PARAGRAPH-WIDE alignment although the address is a character range.** The
-    //     offsets bound and re-read the addressed region; they do not select WHICH characters are formatted,
-    //     because the one property this SDK can read back (`ApiParaPr.GetJc`) belongs to the paragraph.
-    //   * **an unknown format key is REFUSED at the schema with ZERO writes** — `format` is closed over the one
-    //     readback-able property, so `bold`/`italic`/`size`/`color`/`family`/`highlight` never reach the body
-    //     and no partial request is ever applied.
+    // THE EXPORT IS BIG — the Lead measured roughly 4.25× the text, because of the inline styles — so it is
+    // bounded by `LIMITS.formatRangeHtmlChars` and refused CLOSED when exceeded, never scanned unbounded. It
+    // never leaves the editor: the authored body scans it and returns four one-character flags.
+    //
+    // THE { paragraph, start, end } ADDRESS IS A BOUNDARY *AND* THE RUN SCOPE, and the descriptor says both:
+    // the ALIGNMENT setter is a PARAGRAPH property, so that leg's effect is paragraph-wide and the address
+    // merely decides WHERE the tool may act (the body requires the paragraph to exist, requires BOTH offsets to
+    // lie inside that paragraph's own text BEFORE the mutation, and reads the same region again after it); the
+    // RUN setters address exactly the REGION, through `paragraph.GetRange(from,to)`, and that same region's
+    // PRE-mutation text is the needle of the marker proof. Each leg's result fields say which of the two it
+    // proved, so a caller can never mistake a run proof for a paragraph-wide one or the reverse.
+    //
+    // THE STATED LIMITATIONS AT THE POINT A CALLER MEETS THEM, so a later round does not have to rediscover
+    // any of them:
+    //   * **the alignment leg is PARAGRAPH-WIDE although the address is a character range**, because
+    //     `ApiParaPr.GetJc` belongs to the paragraph; the run legs act on the region itself.
+    //   * **an unknown format key is REFUSED at the schema with ZERO writes** — `format` is closed over the
+    //     alignment and the four MEASURED run properties, so `size`/`color`/`family`/`highlight` never reach the
+    //     body and no partial request is ever applied.
+    //   * **a run property is proven by a STRING MATCH on the export**, so it is deliberately one-sided: the
+    //     region text must occur EXACTLY ONCE in the export and be wrapped CONTIGUOUSLY in that property's
+    //     marker (`<strong>REGION</strong>`, …). A region text that stands twice — inside the addressed
+    //     paragraph or anywhere else — is UNVERIFIABLE and settles uncertain rather than guessing which
+    //     occurrence was formatted; the count runs over the raw export string, so an occurrence inside MARKUP
+    //     (a short ASCII region such as `p`) counts too, which can only cost a false uncertain, never a false
+    //     `ok`. The markers were measured ONE PROPERTY PER REGION, so two run properties named for the SAME
+    //     region are proven one leg at a time and may fail to prove if the exporter nests them.
     //   * **a non-exact outcome is `TOOL_UNCERTAIN` with the write slot HELD and NO retry** — an unread or
-    //     disagreeing readback, a moved region, a changed text or a moved paragraph count all stop the run
-    //     rather than reporting a known failure about a document this call may already have reformatted.
+    //     disagreeing alignment readback, an absent or non-wrapping marker, a moved region, a changed text or a
+    //     moved paragraph count all stop the run rather than reporting a known failure about a document this
+    //     call may already have reformatted.
     //
-    // THE PROOF, in order of authority. `ok` requires ALL of: the readback WAS read (`rangeRead`) and it is
-    // the requested alignment (`alignAfter`), both of which are the PRIMARY leg and come from the same
-    // per-object getter the setter wrote; the addressed paragraph's TEXT is what it was before the mutation
-    // (`textUnchanged`), the document's paragraph count is unchanged (`paragraphsStable`), the addressed
-    // REGION is unchanged (`rangeUnchanged`), and the region did not move under the mutation
-    // (`rangeShifted === false`). The four secondary signals can only REFUTE. An `ok` whose own fields
-    // contradict them is `TOOL_UNCERTAIN`, and so is any envelope that disagrees with the request it names.
+    // THE PROOF, in order of authority. `ok` requires ALL of: the alignment readback WAS read (`rangeRead`) and
+    // it is the requested alignment (`alignAfter`); EVERY requested run property's measured marker wrapped the
+    // addressed region (`boldVerified` … `strikeoutVerified`, each an equality against its own request, so a
+    // property the call never named can never claim a proof); the addressed paragraph's TEXT is what it was
+    // before the mutation (`textUnchanged`), the document's paragraph count is unchanged (`paragraphsStable`),
+    // the addressed REGION is unchanged (`rangeUnchanged`), and the region did not move under the mutation
+    // (`rangeShifted === false`). Both readbacks are PRIMARY; the four region signals can only REFUTE. An `ok`
+    // whose own fields contradict them is `TOOL_UNCERTAIN`, and so is any envelope that disagrees with the
+    // request it names.
     //
     // NO PRE-STATE REFUSAL IS ADDED, and that is deliberate: `set_heading` must refuse an already-heading
     // paragraph because a level change moves no count, but applying an alignment that is ALREADY the
@@ -1658,23 +1698,28 @@ export function createWordTools(bridge) {
     // alignAfter === requested`), so it is served rather than refused with a closed class.
     //
     // THE FAILURE MAP, each class closed: a wrong editor is `CAPABILITY_UNAVAILABLE` (precondition); an
-    // address or an alignment outside the advertised bounds is the closed argument class with ZERO writes
-    // (precondition AND handler, because a descriptor is also executable when it is held directly); a missing
-    // bridge entry point is `CAPABILITY_UNAVAILABLE`; an unusable pre-dispatch baseline, a paragraph index
-    // outside the DOCUMENT and offsets outside the paragraph's own length are `CAPABILITY_UNAVAILABLE` /
-    // the closed argument class (`TOOL_ERROR`) with ZERO writes, all decided in the body BEFORE the one
-    // `SetJc`; a bridge refusal keeps the closed class it reported (`refusalCode`); an envelope this handler
-    // cannot interpret is the module's unknown convention, `known()`; a returned or thrown `APPLY_UNCERTAIN`
-    // and an outcome that is not the exact proof above are `TOOL_UNCERTAIN` with the slot HELD and NO retry;
-    // and an over-ceiling result entry is `BYTE_LIMIT`.
+    // address, an alignment or a run switch outside the advertised shapes is the closed argument class with
+    // ZERO writes (precondition AND handler, because a descriptor is also executable when it is held
+    // directly); a missing bridge entry point is `CAPABILITY_UNAVAILABLE`; an unusable pre-dispatch baseline, a
+    // paragraph index outside the DOCUMENT and offsets outside the paragraph's own length are
+    // `CAPABILITY_UNAVAILABLE` / the closed argument class (`TOOL_ERROR`) with ZERO writes, all decided in the
+    // body BEFORE the first mutating call; a MISSING or THROWING export and an export above
+    // `LIMITS.formatRangeHtmlChars` are decided there too — `CAPABILITY_UNAVAILABLE` and `BYTE_LIMIT` — with
+    // ZERO writes, because a run request that cannot be read back must not be written; a bridge refusal keeps
+    // the closed class it reported (`refusalCode`); an envelope this handler cannot interpret is the module's
+    // unknown convention, `known()`; a returned or thrown `APPLY_UNCERTAIN` and an outcome that is not the
+    // exact proof above are `TOOL_UNCERTAIN` with the slot HELD and NO retry; and an over-ceiling result entry
+    // is `BYTE_LIMIT`.
     //
     // THE MECHANISM is ONE authored command body in the bridge (`formatRange` → `command.format`), static and
     // self-contained exactly like the six bodies before it: it builds the `Api` facade itself, receives
-    // `{ paragraph, start, end, align }` as DATA through the `Asc.scope` parameter channel (never interpolated
-    // into source, ADR 0002), reads the baseline, resolves the address against the paragraph's own `GetRange`,
-    // reads the alignment and the region, turns its phase to `POST_INSERT` IMMEDIATELY BEFORE the single
-    // `paragraph.GetParaPr().SetJc(...)`, and then re-reads both. The phase is an explicit slot of every
-    // answer, exactly as the three other mutations state it: a throw out of the mutation is never a known
+    // `{ paragraph, start, end, align, bold, italic, underline, strikeout, htmlMax }` as DATA through the
+    // `Asc.scope` parameter channel (never interpolated into source, ADR 0002), reads the baseline, resolves
+    // the address against the paragraph's own `GetRange`, gates the export, turns its phase to `POST_INSERT`
+    // IMMEDIATELY BEFORE the FIRST mutating call — the one `paragraph.GetParaPr().SetJc(...)`, then one
+    // `SetBold`/`SetItalic`/`SetUnderline`/`SetStrikeout(true)` per requested property, in that fixed order —
+    // and then re-reads the alignment, the region and the export. The phase is an explicit slot of every
+    // answer, exactly as the three other mutations state it: a throw out of any mutating call is never a known
     // refusal with the slot released.
     defineTool({
       name: 'format_range', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
@@ -1683,11 +1728,14 @@ export function createWordTools(bridge) {
           paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeIndexMax },
           start: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeOffsetMax },
           end: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeOffsetMax },
-          // THE CLOSED FORMAT OBJECT, and its ONE property is the ONE the SDK can read back. A request that
-          // names `bold` — or any other character property — is refused HERE as an unknown key, which is the
-          // whole reason the SDK inspection came before the schema.
+          // THE CLOSED FORMAT OBJECT: the alignment (unchanged, and still REQUIRED — every call is an alignment
+          // call and the run properties are additive) plus the FOUR run properties with a MEASURED HTML marker.
+          // A request that names `size`, `color`, `family` or `highlight` is refused HERE as an unknown key,
+          // which is the whole reason the measurement came before the schema.
           format: { type: 'object', additionalProperties: false, required: ['align'],
-            properties: { align: { type: 'string', enum: [...LIMITS.formatRangeAlign] } } }
+            properties: { align: { type: 'string', enum: [...LIMITS.formatRangeAlign] },
+              bold: { type: 'boolean' }, italic: { type: 'boolean' },
+              underline: { type: 'boolean' }, strikeout: { type: 'boolean' } } }
         } },
       precondition: (args, ctx) => {
         if (ctx?.editor !== 'word') return { code: ERROR_CODES.CAPABILITY_UNAVAILABLE, message: REFUSAL };
@@ -1706,6 +1754,15 @@ export function createWordTools(bridge) {
         if (!(args.start < args.end)) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
         if (args?.format === null || typeof args?.format !== 'object') return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
         if (formatAlign(args.format.align) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        // THE FOUR RUN SWITCHES are re-checked HERE too, for the reason the alignment is: a descriptor held
+        // directly must refuse a switch this mutation cannot interpret with NOTHING dispatched, never coerce
+        // `'да'` or `1` into a truthy property the body would then apply.
+        if (formatRunFlag(args.format.bold) === null || formatRunFlag(args.format.italic) === null) {
+          return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        }
+        if (formatRunFlag(args.format.underline) === null || formatRunFlag(args.format.strikeout) === null) {
+          return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        }
         return null;
       },
       execute: async (args, ctx) => {
@@ -1715,18 +1772,29 @@ export function createWordTools(bridge) {
         if (ctx?.editor !== 'word') return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         if (missingBridgeMethod(bridge, 'formatRange')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The alignment is resolved ONCE and carried to the body, so the value the editor applies and the
-        // value this handler compares the answer against cannot be two different strings.
+        // value this handler compares the answer against cannot be two different strings. The four run
+        // switches are resolved the same way, each to a boolean, so a property the caller omitted is the
+        // `false` the body (and the outcome rule) sees rather than an `undefined` the request never named.
         const align = formatAlign(args?.format?.align);
         if (!measuredCount(args?.paragraph) || args.paragraph > LIMITS.formatRangeIndexMax) return known();
         if (!measuredCount(args?.start) || args.start > LIMITS.formatRangeOffsetMax) return known();
         if (!measuredCount(args?.end) || args.end > LIMITS.formatRangeOffsetMax) return known();
         if (!(args.start < args.end)) return known();
         if (align === null) return known();
-        // `bytes` is the size of the dispatched SCOPE — the four values that cross to the editor — and it is
-        // measured on exactly what is forwarded, never on the caller's raw object.
+        const bold = formatRunFlag(args?.format?.bold);
+        const italic = formatRunFlag(args?.format?.italic);
+        const underline = formatRunFlag(args?.format?.underline);
+        const strikeout = formatRunFlag(args?.format?.strikeout);
+        if (bold === null || italic === null || underline === null || strikeout === null) return known();
+        // `bytes` is the size of the dispatched SCOPE — the values that cross to the editor, the four run
+        // switches and the export bound included — and it is measured on exactly what is forwarded, never on
+        // the caller's raw object. `LIMITS.formatRangeHtmlChars` is the bound the BRIDGE composes into the
+        // scope, so it is part of what crosses even though the caller never supplies it.
+        const runMask = `${bold ? 1 : 0}${italic ? 1 : 0}${underline ? 1 : 0}${strikeout ? 1 : 0}`;
         const request = { paragraph: args.paragraph, start: args.start, end: args.end, align,
+          bold, italic, underline, strikeout,
           ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
-        const bytes = utf8ByteLength(`${args.paragraph}:${args.start}:${args.end}:${align}`);
+        const bytes = utf8ByteLength(`${args.paragraph}:${args.start}:${args.end}:${align}:${runMask}:${LIMITS.formatRangeHtmlChars}`);
         let result;
         try { result = await bridge.formatRange(request); }
         catch (error) {
@@ -1746,6 +1814,13 @@ export function createWordTools(bridge) {
         if (typeof result.rangeRead !== 'boolean' || typeof result.rangeUnchanged !== 'boolean') return known();
         if (typeof result.rangeShifted !== 'boolean') return known();
         if (typeof result.align !== 'string' || typeof result.alignBefore !== 'string' || typeof result.alignAfter !== 'string') return known();
+        // THE EIGHT RUN SLOTS ARE BOOLEANS OR THE ENVELOPE IS UNKNOWN. Four of them are the REQUEST echoed and
+        // four are the body's own proof; a slot carrying a string, a number or nothing at all is a shape this
+        // bridge cannot publish, so it is the module's unknown class before any of them is judged.
+        if (typeof result.bold !== 'boolean' || typeof result.italic !== 'boolean') return known();
+        if (typeof result.underline !== 'boolean' || typeof result.strikeout !== 'boolean') return known();
+        if (typeof result.boldVerified !== 'boolean' || typeof result.italicVerified !== 'boolean') return known();
+        if (typeof result.underlineVerified !== 'boolean' || typeof result.strikeoutVerified !== 'boolean') return known();
         // THE THREE ALIGNMENT SLOTS ARE MEASURED VALUES, not free text: the body authors only the four measured
         // words (its readback keeps an unreadable chain apart as the ABSENCE of a measurement and refuses
         // before the mutation), so a slot carrying anything else is an envelope this bridge cannot write and
@@ -1756,17 +1831,38 @@ export function createWordTools(bridge) {
         // value is DERIVED from the schema vocabulary and carried to the body, so an `ok` carrying a different
         // alignment was produced for a request this handler did not make and is never republished as its proof.
         if (result.align !== align) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE FOUR RUN ECHOES ARE THE SAME REQUEST-IDENTITY CHECK, one per property: an `ok` whose run switches
+        // disagree with this call's is an answer produced for a DIFFERENT request, and it is never republished.
+        if (result.bold !== bold || result.italic !== italic) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.underline !== underline || result.strikeout !== strikeout) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // A PROOF FOR A PROPERTY THIS CALL NEVER NAMED is an answer this bridge cannot have produced — the
+        // sequence is opened against the SCOPE it carried — so it is the unknown class rather than a
+        // disagreement, exactly like an alignment slot outside the measured vocabulary.
+        if (!bold && result.boldVerified) return known();
+        if (!italic && result.italicVerified) return known();
+        if (!underline && result.underlineVerified) return known();
+        if (!strikeout && result.strikeoutVerified) return known();
         // A READBACK THAT WAS NOT READ IS NOT A VERIFIED ASSIGNMENT: `rangeRead` is the body's own statement
         // that the addressed paragraph's `GetParaPr().GetJc()` chain answered a measurement at all, and the
         // mutation has already run by then, so a false one is the UNCERTAIN class and never a known error.
         if (!result.rangeRead) return known(ERROR_CODES.TOOL_UNCERTAIN);
         if (result.alignAfter !== align) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE RUN LEG, per property: a property THIS call requested must be PROVEN, and the proof is the
+        // measured marker's own flag. Both legs are checked in the same place because the mutation has already
+        // run when this handler sees the envelope, so a missing run proof is the UNCERTAIN class with the slot
+        // held — never a known failure about a document this call may already have reformatted.
+        if (bold && !result.boldVerified) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (italic && !result.italicVerified) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (underline && !result.underlineVerified) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (strikeout && !result.strikeoutVerified) return known(ERROR_CODES.TOOL_UNCERTAIN);
         if (result.rangeUnchanged !== true || result.rangeShifted !== false) return known(ERROR_CODES.TOOL_UNCERTAIN);
         if (result.paragraphsStable !== true || result.textUnchanged !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
         const published = Object.freeze({ paragraph: args.paragraph, start: args.start, end: args.end, align,
           alignBefore: result.alignBefore, alignAfter: result.alignAfter, paragraphsStable: result.paragraphsStable,
           textUnchanged: result.textUnchanged, rangeRead: result.rangeRead, rangeUnchanged: result.rangeUnchanged,
-          rangeShifted: result.rangeShifted, bytes });
+          rangeShifted: result.rangeShifted, bold, italic, underline, strikeout,
+          boldVerified: result.boldVerified, italicVerified: result.italicVerified,
+          underlineVerified: result.underlineVerified, strikeoutVerified: result.strikeoutVerified, bytes });
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the three
         // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
         const entry = formatRangeEntryBytes(published);

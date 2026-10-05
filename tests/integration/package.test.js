@@ -99,17 +99,20 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // selection, which this leg must never take because its contract is that the text does NOT change.
   // EIGHT legs are carried inline, and the last one is the RANGE FORMAT: the fourth body that MUTATES the
   // document through the `Api` builder, the SECOND one that APPENDS NOTHING, and the ONE leg whose schema
-  // advertises a SINGLE formatting property. It is classified by its ONE mutating call
+  // advertises formatting properties. It is classified by its ONE paragraph-level mutating call
   // (`paragraph.GetParaPr().SetJc`, which no other leg authors), and that branch is placed BEFORE the
   // heading body's `.SetStyle(` branch because BOTH legs author `GetParaPr()` — without its own branch this
   // body would be classified as the heading leg it shares that read with. It takes its
-  // `{ paragraph, start, end, align }` address from the injected command scope, resolves the range through
-  // the paragraph's own `GetRange`, and proves the mutation through the MEASURED `GetJc` readback of the
-  // same paragraph-properties chain. The character-level properties are absent BY CONSTRUCTION — the
-  // vendored SDK exposes setters only for them and the schema refuses them as unknown keys — so this body
-  // must never author `SetBold`/`SetItalic`/`SetFontSize`, and it appends nothing and never takes the legacy
-  // whole-array insert primitive (measured to land at the START and to replace existing text under a
-  // selection), because its contract is that the addressed paragraph's TEXT does not change.
+  // `{ paragraph, start, end, align, bold, italic, underline, strikeout, htmlMax }` address from the injected
+  // command scope, resolves the range through the paragraph's own `GetRange`, and proves the mutation BOTH
+  // ways: the alignment through the MEASURED `GetJc` readback of the same paragraph-properties chain, and
+  // each requested run property through the MEASURED HTML export (`ToHtml()`), where the addressed region's
+  // own text must be wrapped CONTIGUOUSLY in that property's measured marker. `size`/`color`/`family`/
+  // `highlight` are absent BY CONSTRUCTION — no marker was measured for them and the schema refuses them as
+  // unknown keys — so this body must never author `SetFontSize`/`SetColor`/`SetFontFamily`/`SetHighlight`,
+  // while the four measured run setters (`SetBold`/`SetItalic`/`SetUnderline`/`SetStrikeout`) ARE authored.
+  // It appends nothing and never takes the legacy whole-array insert primitive (measured to land at the START
+  // and to replace existing text under a selection).
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -128,15 +131,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /GetRange\(/, 'and resolves the addressed region through the paragraph\u2019s own GetRange');
         assert.match(code, /GetAllParagraphs/, 'and checks the index against the document\u2019s own paragraph list');
         assert.match(code, /GetParaPr\(\)/, 'and reads the addressed paragraph through the paragraph-properties chain');
-        assert.match(code, /GetJc\(\)/, 'and proves the mutation through the measured GetJc readback');
+        assert.match(code, /GetJc\(\)/, 'and proves the alignment through the measured GetJc readback');
+        // THE RUN LEG'S OWN READBACK, pinned because the whole character-level half now rests on it: the
+        // measured HTML export, and the four measured setters it proves — and NOT the setters no marker was
+        // measured for.
+        assert.match(code, /ToHtml\(\)/, 'and proves each requested run property through the measured HTML export');
+        for (const setter of ['.SetBold(', '.SetItalic(', '.SetUnderline(', '.SetStrikeout(']) {
+          assert.equal(code.includes(setter), true, `the format body authors the measured run setter ${setter}`);
+        }
+        for (const setter of ['.SetFontSize(', '.SetColor(', '.SetFontFamily(', '.SetHighlight(']) {
+          assert.equal(code.includes(setter), false, `the format body must not author ${setter}: the SDK exposes no getter and no marker was measured for it`);
+        }
         assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
         assert.equal(code.includes('document.Push('), false, 'and never the append primitive: this leg changes an existing paragraph in place');
-        // THE PROPERTIES THIS LEG CANNOT PROVE ARE AUTHORED NOWHERE. The SDK inspection found SETTERS ONLY on
-        // the range/text-properties types, so a body that reached one of these would be applying an effect it
-        // has no getter to read back — exactly what the closed schema refuses.
-        for (const setter of ['.SetBold(', '.SetItalic(', '.SetFontSize(', '.SetColor(', '.SetFontFamily(', '.SetHighlight(']) {
-          assert.equal(code.includes(setter), false, `the format body must not author ${setter}: the SDK exposes no getter for it`);
-        }
         legs.push('format');
       } else if (code.includes('CreateTable')) {
         assert.match(code, /\bscope\b/, 'the table body takes its matrix from the injected command scope');

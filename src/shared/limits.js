@@ -349,7 +349,7 @@ export const LIMITS = Object.freeze({
   // result later must not be able to widen the entry unmeasured.
   setHeadingIndexMax: 128,
   // The bounded RANGE FORMAT (`format_range`) — the EIGHTH Sprint 3 Word tool, the FOURTH MUTATION, and the
-  // SECOND one that changes an EXISTING paragraph in place. It adds THREE static per-call bounds, and the
+  // SECOND one that changes an EXISTING paragraph in place. It adds FOUR static per-call bounds, and the
   // first two are an ADDRESS rather than a payload:
   //   * `formatRangeIndexMax` bounds the PARAGRAPH INDEX a caller may name. It is a SEPARATE constant from
   //     `setHeadingIndexMax` although the two bound the same kind of quantity, because they are separate
@@ -369,20 +369,46 @@ export const LIMITS = Object.freeze({
   //     strings, and `both` — not `justify` — is the value the editor itself uses for justified text. The
   //     tool publishes this list and the body compares its readback against the SAME four strings, so the
   //     advertised vocabulary and the measured one cannot drift apart.
+  //   * `formatRangeHtmlChars` bounds the HTML EXPORT the run proof is read through — the second readback, and
+  //     the one that makes a character-level property advertisable at all. Its own comment below states the
+  //     unit, the scale and the two places it is enforced.
   // NO TEXT BOUND IS ADDED, for `set_heading`'s reason exactly: this tool takes NO text from the model, so
   // there is nothing for a per-call text byte bound to bound. The paragraph's text that the body resolves
   // the offsets against is a document read, bounded by the editor-result ceiling the bridge decodes under.
   // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
   // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes), and it is the WIDEST of the two mutating-in-place
   // legs: the entry is
-  // `{"tool":"format_range","ok":true,"data":{"paragraph":N,"start":N,"end":N,"align":"both","alignBefore":"center","alignAfter":"center","paragraphsStable":B,"textUnchanged":B,"rangeRead":B,"rangeUnchanged":B,"rangeShifted":B,"bytes":N}}`
-  // — four bounded numbers, two alignment strings from a closed four-word vocabulary, five booleans and one
-  // more bounded number. Eleven bounded scalars cannot fill 16384 bytes (measured in the tool's own test at
-  // well under 300), so this guard cannot fire for any shape the handler can publish; the measurement is
-  // nevertheless the ENFORCED bound, exactly as it is for the other three mutations.
+  // `{"tool":"format_range","ok":true,"data":{"paragraph":N,"start":N,"end":N,"align":"both","alignBefore":"center","alignAfter":"center","paragraphsStable":B,"textUnchanged":B,"rangeRead":B,"rangeUnchanged":B,"rangeShifted":B,"bold":B,"italic":B,"underline":B,"strikeout":B,"boldVerified":B,"italicVerified":B,"underlineVerified":B,"strikeoutVerified":B,"bytes":N}}`
+  // — four bounded numbers, two alignment strings from a closed four-word vocabulary, THIRTEEN booleans (five
+  // range flags, four run requests and four run proofs) and one more bounded number. Nineteen bounded scalars
+  // cannot fill 16384 bytes (measured in the tool's own test at well under 400), so this guard cannot fire for
+  // any shape the handler can publish; the measurement is nevertheless the ENFORCED bound, exactly as it is
+  // for the other three mutations. THE EXPORT IS NOT PART OF THIS ENTRY: `formatRangeHtmlChars` bounds a
+  // string the authored body scans INSIDE the editor, and only the four one-character run flags derived from
+  // it ever cross, so the export can never widen what the model receives.
   formatRangeIndexMax: 128,
   formatRangeOffsetMax: 8192,
   formatRangeAlign: Object.freeze(['left', 'center', 'right', 'both']),
+  // `formatRangeHtmlChars` bounds the HTML EXPORT this leg SCANS, and it is a CHARACTER bound rather than a
+  // byte bound for a reason that is not a convenience: the export never CROSSES anything. The authored body
+  // reads it inside the editor, scans it, and returns four one-character flags — so the only quantity that
+  // bounds the work this leg pays is the LENGTH of the string the editor built, and the body has no honest way
+  // to compute UTF-8 bytes at all (there is no `TextEncoder` in the evaluated command scope, and reaching for
+  // one would be reaching for a global the body must not depend on).
+  // THE ARITHMETIC, and it is the same one this module already does for `readDocumentEntryBytes`: take the
+  // export BYTE ceiling the read path fixes for a pilot document (`documentHtmlBytes` = 262144) and divide by
+  // THIS product's realistic worst case of two UTF-8 bytes per character (Cyrillic) — 262144 / 2 = 131072
+  // characters. So the leg scans no more HTML than the read path will carry, measured in the unit the editor's
+  // own string has, and the export is BIG relative to the text (the Lead measured roughly 4.25x because of the
+  // inline styles): 131072 characters of export is on the order of 30 000 characters of Cyrillic source text.
+  // A document this product WRITES (a chapter, an outline plus body paragraphs) is far below that, and a
+  // document whose export needs more is outside the size this leg will scan and is REFUSED CLOSED. The bound is
+  // enforced in TWO places: the authored body refuses a PRE-mutation export above it with the closed
+  // `BYTE_LIMIT` and ZERO writes, and it refuses a POST-mutation export above it as the UNCERTAIN class with
+  // the slot held (a write has already run, so nothing there can be a known refusal). It is never truncated
+  // to a prefix: a prefix could hide the addressed region or its marker, so a large export makes the read
+  // unusable rather than partially trusted.
+  formatRangeHtmlChars: 131072,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,

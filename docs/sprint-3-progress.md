@@ -2551,3 +2551,134 @@ exists, and it must not be advertised before then. The same three rules are stat
 comment in `src/tools/word.js`, at the point a caller reads them: **an unknown format key is refused at the
 schema with ZERO writes**, and **a non-exact outcome is `TOOL_UNCERTAIN` with the write slot HELD and NO retry**
 rather than a known failure about a document the call may already have reformatted.
+
+### 16b. `format_range` runs: the MEASURED HTML export as the indirect readback, and the four properties it made advertisable
+
+**What changed, and what it rests on.** §16's second sentence — "no character-level property may be advertised,
+because none can be READ BACK" — was true of the builder surface and is **superseded as a whole-tool
+limitation** by a measurement: the document's own HTML export IS a readback for run formatting. The Lead
+measured, on the target (Astra / R7 2026.1.2.1942), that `paragraph.GetRange(from,to)` is
+**paragraph-relative** (`GetRange(0,10).GetText()` = `'ФОРМАТИРУ'`, `GetRange(5,15)` = `'ТИРУЕМЫЙ-ТЕ'` on a
+paragraph reading `ФОРМАТИРУЕМЫЙ-…` — the two-argument DOCUMENT form takes GLOBAL offsets and is not used
+here), that `SetBold`/`SetItalic`/`SetUnderline`/`SetStrikeout(true)` all apply without throwing, and that
+`doc.ToHtml()` reflects them. The measured export of four properties applied to four DISTINCT regions of one
+paragraph is the evidence for **one marker per property**:
+
+> `<p><strong>ФОРМАТИРУ</strong><em>ЕМЫЙ-ТЕК</em>СТ-<span style="text-decoration:underline;">ДЛЯ-ПР</span><del>ОВЕРК</del>И: …</p>`
+> (bold → `<strong>…</strong>`, italic → `<em>…</em>`, underline →
+> `<span style="text-decoration:underline;">…</span>`, strikeout → `<del>…</del>`; the export grew 258 → 391
+> characters).
+
+`doc.ToMarkdown()` does **not** reflect run formatting (measured byte-identical after applying eight
+properties) and is not used anywhere on this path. The export is BIG relative to the text — roughly **4.25×**,
+because of the inline styles — so it is bounded and refused closed rather than scanned unbounded (§ the bound
+below).
+
+**THE PROOF, and the honest limits of a string match.** `ok` now requires **both** legs. The ALIGNMENT leg is
+§16's, unchanged (`GetParaPr().GetJc()` before and after the one `SetJc`). The RUN leg is: the addressed
+region's own text — the text the **PRE-mutation** `paragraph.GetRange(from,to).GetText()` answered, kept from
+the pre-read and never re-derived after the write — must occur **EXACTLY ONCE** in the export AND be wrapped
+**CONTIGUOUSLY** in the requested property's measured marker. Three properties of that rule are deliberate and
+are stated in the code as well as here:
+1. **A duplicate region text is UNVERIFIABLE, not guessed at.** If the region text stands twice — inside the
+   addressed paragraph, or anywhere else in the document — the marker's target cannot be told apart, so the
+   outcome is `APPLY_UNCERTAIN` with the slot HELD rather than a silent choice of the first occurrence. The
+   count runs over the RAW export string, because the authored body has no HTML parser; an occurrence inside
+   MARKUP (a short ASCII region such as `p`, `span` or `style`) therefore counts too, which can only cost a
+   false UNCERTAIN, never a false `ok`.
+2. **A marker that merely appears NEAR the region proves nothing.** The check is `open + region + close`, so a
+   property applied to a SUPERSET of the address (the file's own `<strong>Цель</strong>` over a `Це` address,
+   pinned by a test) fails while the marker really is present in the export.
+3. **The markers were measured ONE PROPERTY PER REGION**, so a call naming TWO run properties for the SAME
+   region proves each leg independently and may fail to prove if the exporter nests them. That is a stated
+   limitation, not a silent one; a caller that needs two properties on one region can issue two calls.
+
+**THE EXPORT BOUND: `LIMITS.formatRangeHtmlChars` = 131072 CHARACTERS, and why.** It is a **character** bound
+rather than a byte bound because the export never CROSSES anything: the authored body reads it inside the
+editor, scans it and returns four one-character flags, so the quantity that bounds the work is the length of
+the string the editor built (and the body has no honest way to compute UTF-8 bytes at all — there is no
+`TextEncoder` in the evaluated command scope). The arithmetic is the one this module already uses for
+`readDocumentEntryBytes`: take the read path's pilot-scale export **byte** ceiling (`documentHtmlBytes` =
+262144) and divide by this product's realistic worst case of **two UTF-8 bytes per character** (Cyrillic) →
+`131072`. So the leg scans no more HTML than the read path will carry, in the unit the editor's own string has.
+It is **strict enough that a pilot document passes and a huge one refuses closed**: at the measured ~4.25×
+inflation, 131072 characters of export is on the order of 30 000 characters of Cyrillic source text, and the
+bound is enforced in TWO places with the two different classes that are honest on each side of a write —
+**before** the mutation a missing or throwing `ToHtml` is `CAPABILITY_UNAVAILABLE` and an export above the
+bound is the closed **`BYTE_LIMIT`** (ZERO writes, slot RELEASED); **after** the mutation either is a
+POST-INSERT refusal → `APPLY_UNCERTAIN` with the slot **HELD**. It is never truncated to a prefix: a prefix
+could hide the addressed region or its marker.
+
+**What the body authors now, and the phase discipline is UNCHANGED.** The phase still turns `POST_INSERT`
+**immediately before the FIRST mutating call**, because a native that throws OUT of any one of them may already
+have applied it. That call is still `paragraph.GetParaPr().SetJc(align)`, followed by ONE
+`paragraph.GetRange(from,to).SetBold/SetItalic/SetUnderline/SetStrikeout(true)` per REQUESTED property, in that
+fixed order, each on its **own fresh range object** (a range is never shared between properties). A call that
+names no run property authors NONE of them and **never reads the export at all** — it keeps its exact
+pre-existing behaviour and does not even require `ToHtml` to exist, which is pinned by a test. The four run
+ranges are built and their setters function-checked BEFORE the phase turns, so an editor missing one answers
+the closed capability class with ZERO writes instead of a half-applied format. `htmlMax` crosses in the
+`Asc.scope` parameter channel exactly as a search's `limit` does, and it is composed by the bridge from the
+named limit — a caller cannot widen it.
+
+**The answer and the decoder.** The flat array is now **THIRTEEN** slots:
+`[phase, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted, boldVerified, italicVerified,
+underlineVerified, strikeoutVerified, align, alignBefore, alignAfter]`, or the two-slot `[PRE_INSERT, name]`
+refusal. `BYTE_LIMIT` joins `CAPABILITY_UNAVAILABLE` and `TOOL_ERROR` as a **phase-gated pre-insert** name.
+The outcome rule (`exactRangeFormat`) now takes the SCOPE the ticket carried and requires, for each of the four
+properties, `verified === requested` — so a requested property that was **not** proven is UNCERTAIN with the
+slot HELD, and a property nobody requested that claims a proof is UNCERTAIN too (never an invented measurement
+of a write that never happened). The envelope publishes the four run switches **echoed** (so the tool can
+require the answer to name the request it made, exactly as it does for `align`) plus the four verified flags,
+and the tool re-checks every one of them: an unrequested property claiming a proof is the module's **unknown**
+class, a requested one left unproven is `TOOL_UNCERTAIN`, and a required run proof is checked in the same place
+as the alignment leg — a call that names both must prove BOTH.
+
+**A REAL DEFECT THE RED ROUND CAUGHT, worth recording because it was a fail-open in the making.**
+`preInsertRefusal` recognised only `CAPABILITY_UNAVAILABLE`/`TOOL_ERROR`, so the range leg's new closed export
+refusal arrived at the ticket's catch as `APPLY_UNCERTAIN` — the closed class was unreachable. The first fix
+considered was adding `BYTE_LIMIT` to the shared predicate, and that would have been a **regression**: the
+block/table/heading decoders' `assertByteLimit` throws `BYTE_LIMIT` for an OVERSIZED ANSWER, which is a
+dispatched write whose outcome is unknown, and releasing that slot would be exactly the fail-open signal this
+project forbids. The predicate is therefore scoped: `preInsertRefusal(error, kind)` accepts `BYTE_LIMIT` **only**
+for `kind === 'rangeformat'`, which is sound because `decodeRange` validates every member to a one-character
+flag or a four-word alignment BEFORE its own `assertByteLimit`, so that call can never fire there and the only
+`BYTE_LIMIT` a range dispatch can produce is the phase-gated `[PRE_INSERT, 'BYTE_LIMIT']`.
+
+**TDD: the exact RED, then GREEN.** The tests were written FIRST and run against `93b361a`: the file
+`tests/unit/tools-word.test.js` → **239 tests, pass 224, fail 15**. Every failure was the expected one —
+`format_range advertises the closed bounded schema and the measured properties it can verify` →
+`actual: [ 'align' ], expected: [ 'align', 'bold', 'italic', 'underline', 'strikeout' ]`;
+`the address crosses as the command SCOPE…` → `actual: { paragraph: 1, start: 1, end: 3, align: 'center' }`,
+`expected: … bold: false, …, htmlMax: undefined` (the bridge composed no run data at all);
+`the measured run setter .SetBold( is authored` → `actual: false`;
+`bridge formatRange decodes ONLY the authored shapes…` → `actual: 'APPLY_UNCERTAIN', expected: 'BYTE_LIMIT'`;
+and the nine new run-leg tests failing on `actual: undefined, expected: true` for the flags no code emitted
+yet. GREEN: the file alone **239/239**, the focused set
+`tests/unit/tools-word.test.js tests/integration/package.test.js` → **244/244**, `fail 0`, and the package
+classifier pins the format body to the MEASURED setters (`SetBold`/`SetItalic`/`SetUnderline`/`SetStrikeout`
+authored, `SetFontSize`/`SetColor`/`SetFontFamily`/`SetHighlight` still authored nowhere) plus the measured
+`ToHtml()` readback, while the leg is still classified by its one `SetJc` and the leg count stays EIGHT.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/tools-word.test.js tests/integration/package.test.js` → **244/244**, `fail 0`; full suite
+`node --test` → **871 tests, pass 871, fail 0, skipped 0** (**862 → 871**, never shrunk); `node
+scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` → exit 0,
+`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+0966545ecc446dd7d5d02a301db877608c1a10c30790601d18c38456dc9c04a5`. The SHA moved from `93b361a`'s
+`af69985cf2092fd0e89f56bf117c360e22103d3063c203a01524e63137fc325a`, for the reason §16a already recorded: the
+builder runs with **`minify: false`**, so a comment inside an authored command body reaches the bundle, and this
+round changed the body's code as well. The phase protocol and the slot discipline are UNCHANGED (**only
+`[PRE_INSERT, name]` releases this leg's slot**), `src/agent/*` is untouched, no dynamic execution was added to
+`src/`, the four run setters are static member calls (no computed call on any value read from an array), and a
+call that names no run property makes exactly ONE mutating call, as before.
+
+**NATIVELY UNVERIFIED AT THIS ROUND'S CLOSE, and what each unknown lands on.** The Lead's measurements cover
+the markers, the paragraph-relative `GetRange`, the setters not throwing and the export reflecting them; what a
+native run still has to settle is (1) that the four run setters accept a range built from the PRE-mutation
+paragraph snapshot (the same shape `SetJc` already uses through a pre-mutation `GetParaPr()`), (2) that
+`doc.ToHtml()` is present and cheap enough on a real pilot document, and (3) the real size of that export. Each
+unknown lands on a closed path: a missing or throwing export is `CAPABILITY_UNAVAILABLE` with ZERO writes, an
+export above `LIMITS.formatRangeHtmlChars` is `BYTE_LIMIT` with ZERO writes, and an unproven or non-exact
+outcome is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot HELD and no retry — never an `ok` with the slot
+released.
