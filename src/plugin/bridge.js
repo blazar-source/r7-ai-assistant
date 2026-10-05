@@ -167,6 +167,74 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return ['CAPABILITY_UNAVAILABLE']; }
         }, false, false, callback);
+      },
+      // THE DOCUMENT STRUCTURE, and the ONLY leg that reads several primitives at once. It is the same
+      // shape as the search above: a FULL inline static literal (this native stringifies it and evaluates
+      // the text in the editor, where none of this module's bindings exist), its one parameter — the
+      // extraction cap — read from the `scope` binding the vendor wrapper injects from `Asc.scope`, and
+      // NO composed-source transport. The answer is ONE flat array of primitives because that is the
+      // shape the native return validator keeps; a plain object would be stripped. The extraction is
+      // bounded IN THE EDITOR (`min(headings, maxHeadings)` texts), so a document outlining five hundred
+      // headings never crosses five hundred texts, while the TOTAL still crosses in its own slot. The
+      // descriptor and `limits.js` carry the measured primitive evidence and the entry arithmetic.
+      structure(callback) {
+        return plugin.callCommand(function () {
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = request !== null && available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return ['CAPABILITY_UNAVAILABLE'];
+            var maxHeadings = request.maxHeadings;
+            if (typeof maxHeadings !== 'number' || !(maxHeadings >= 1)) return ['CAPABILITY_UNAVAILABLE'];
+            // Every primitive is a FUNCTION CHECK before any call, exactly like the search body: an
+            // editor that does not expose one of them answers the body's own refusal rather than a
+            // structure of invented zeros.
+            var pages = typeof document.GetPageCount === 'function' ? document.GetPageCount() : null;
+            var stats = typeof document.GetStatistics === 'function' ? document.GetStatistics() : null;
+            var paragraphs = typeof document.GetAllParagraphs === 'function' ? document.GetAllParagraphs() : null;
+            var headingList = typeof document.GetAllHeadingParagraphs === 'function' ? document.GetAllHeadingParagraphs() : null;
+            var tables = typeof document.GetAllTables === 'function' ? document.GetAllTables() : null;
+            var sections = typeof document.GetSections === 'function' ? document.GetSections() : null;
+            var lists = [paragraphs, headingList, tables, sections];
+            for (var l = 0; l < lists.length; l++) {
+              if (lists[l] === null || lists[l] === undefined || typeof lists[l].length !== 'number') return ['CAPABILITY_UNAVAILABLE'];
+            }
+            if (stats === null || stats === undefined) return ['CAPABILITY_UNAVAILABLE'];
+            // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count: the measured
+            // primitives answer numbers, and anything else (a missing field, a string, NaN, an infinity, a
+            // negative or fractional value) is an editor this body cannot describe. The check deliberately
+            // reaches for NO global at all — `value === value` rejects NaN, `% 1 === 0` rejects every
+            // non-integer including both infinities — so the stringified body depends on nothing but the
+            // two bindings the vendor wrapper creates.
+            function measured(value) {
+              return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+            }
+            if (!measured(pages) || !measured(stats.PageCount) || !measured(stats.WordsCount) ||
+                !measured(stats.ParagraphCount) || !measured(stats.SymbolsCount) || !measured(stats.SymbolsWSCount)) {
+              return ['CAPABILITY_UNAVAILABLE'];
+            }
+            var total = headingList.length;
+            var take = total < maxHeadings ? total : maxHeadings;
+            // The elements are collected FIRST — an indexed read of editor DATA, which is exactly what it
+            // is — and `GetText` is then invoked on the callback PARAMETER, never through a computed
+            // lookup. That distinction is the same one the search body states: the authored static
+            // boundary treats an invocation reached by a computed key as a computed-execution sink.
+            var collected = [];
+            for (var index = 0; index < take; index++) collected.push(headingList[index]);
+            var headingTexts = collected.map(function (headingItem) {
+              return headingItem !== null && headingItem !== undefined && typeof headingItem.GetText === 'function' ? headingItem.GetText() : null;
+            });
+            var answer = [pages, stats.PageCount, stats.WordsCount, stats.ParagraphCount, stats.SymbolsCount,
+              stats.SymbolsWSCount, paragraphs.length, total, tables.length, sections.length];
+            for (var position = 0; position < headingTexts.length; position++) {
+              // The measured shape has `GetText()` on every element; an element without it is an editor
+              // this body cannot read, so the whole answer is refused rather than silently shortened.
+              if (typeof headingTexts[position] !== 'string') return ['CAPABILITY_UNAVAILABLE'];
+              answer.push(headingTexts[position]);
+            }
+            return answer;
+          } catch (error) { return ['CAPABILITY_UNAVAILABLE']; }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -271,6 +339,52 @@ function decodeSearch(value, limit) {
   if (texts.length !== Math.min(count, limit)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
   return Object.freeze({ count, texts: Object.freeze(texts) });
+}
+// The DOCUMENT-STRUCTURE answer, decoded with the same strictness as `decodeSearch` and for the same
+// reason: the authored body encodes the whole structure as ONE flat array of PRIMITIVES — `[pages,
+// PageCount, WordsCount, ParagraphCount, SymbolsCount, SymbolsWSCount, paragraphs, headings, tables,
+// sections, text0, …]` — because the native return validator keeps arrays of primitives and a string and
+// STRIPS a plain object. `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden
+// extras, and every member is read through its own data descriptor, never through a getter. Three rules
+// are the tool's own contract rather than paranoia:
+//   * a ONE-slot answer is the body's own refusal sentinel and nothing else: every legal answer carries
+//     the TEN fixed slots below, so a single value can only be a body that could not read the structure.
+//   * the body extracts EXACTLY `min(headings, maxHeadings)` texts, so an answer with a different number
+//     is not one this body can have produced: a short array would otherwise be published as the tool's
+//     own cap, and a tool cannot describe a limitation it did not impose.
+//   * every count is a NON-NEGATIVE SAFE INTEGER — the primitive's own total — and the whole answer is
+//     still bounded by `LIMITS.editorResultBytes`, the one window every native read of this bridge is
+//     decoded under.
+const STRUCTURE_SLOTS = 10;
+function decodeStructure(value, maxHeadings) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > STRUCTURE_SLOTS + maxHeadings) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  if (size < STRUCTURE_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const numbers = members.slice(0, STRUCTURE_SLOTS);
+  for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const texts = members.slice(STRUCTURE_SLOTS);
+  for (const text of texts) if (typeof text !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (texts.length !== Math.min(numbers[7], maxHeadings)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({
+    pages: numbers[0],
+    statistics: Object.freeze({ PageCount: numbers[1], WordsCount: numbers[2], ParagraphCount: numbers[3],
+      SymbolsCount: numbers[4], SymbolsWSCount: numbers[5] }),
+    counts: Object.freeze({ paragraphs: numbers[6], headings: numbers[7], tables: numbers[8], sections: numbers[9] }),
+    headings: Object.freeze(texts)
+  });
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -566,6 +680,8 @@ export function createR7Bridge(plugin, {
     // kind keeps its own window (the selection read stays at LIMITS.selectionBytes). A `search` ticket
     // never consults this window at all: it decodes its own authored `[count, text…]` array against the
     // `limit` it asked for (`decodeSearch`), not against a byte budget derived from the selection read.
+    // A `structureread` ticket is the same shape of exception and decodes its own authored flat array
+    // against the `maxHeadings` it asked for (`decodeStructure`).
     const readBound = kind === 'contextread' || kind === 'caretread' ? Math.min(maxBytes, LIMITS.editorResultBytes) : LIMITS.selectionBytes;
     return new Promise((resolve, reject) => {
       const owned = { kind, dispatched: false, uncertain: false, settled: false, timer: null, deadline: readClock() + LIMITS.callbackTimeoutMs, cancel: null };
@@ -808,6 +924,10 @@ export function createR7Bridge(plugin, {
           // `limit` THIS ticket asked for — the same number the body extracted against — so the decode
           // and the extraction can never disagree about how many texts are owed.
           else if (kind === 'search') result = decodeSearch(value, params.limit);
+          // THE DOCUMENT STRUCTURE. Its answer is the authored flat array of PRIMITIVES, decoded against
+          // the `maxHeadings` THIS ticket asked for — the same cap the body extracted against — so the
+          // decode and the extraction can never disagree about how many heading texts are owed.
+          else if (kind === 'structureread') result = decodeStructure(value, params.maxHeadings);
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -932,6 +1052,22 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.search(callback); }
           finally { clearScope(previous); }
+        } else if (kind === 'structureread') {
+          // THE DOCUMENT STRUCTURE: ONE command, and the SAME parameter channel the search uses. It needs
+          // the entry point that OWNS the parameter wrapper (`callCommand`, which composes `Asc.scope`
+          // into the body's `scope` binding); a build whose command channel is the bare `executeCommand`
+          // transport has no sanctioned parameter channel at all — composing model data into command
+          // source is forbidden (ADR 0002) — so it refuses HERE, before any dispatch, and releases the
+          // slot because nothing reached the editor. The scope write is the PARAMETER CHANNEL, not the
+          // dispatch: it happens BEFORE `owned.dispatched`, so an unusable namespace is a KNOWN refusal
+          // with the slot released rather than a dispatch that never was.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousScope;
+          try { previousScope = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.structure(callback); }
+          finally { clearScope(previousScope); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -1116,6 +1252,38 @@ export function createR7Bridge(plugin, {
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         const found = await start('search', signal, {}, Object.freeze({ query, matchCase, limit }));
         return Object.freeze({ ok: true, count: found.count, texts: found.texts });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded DOCUMENT-STRUCTURE read behind `read_structure` — the fourth Sprint 3 Word tool and the
+    // second leg that goes through the `Api` builder inside a command body. The descriptor and
+    // `limits.js` carry the measured primitive evidence (the five-field `GetStatistics()` object, the
+    // array lengths, `GetText()` on each heading paragraph) and the entry arithmetic; what matters HERE
+    // is the shape: ONE command on the ONE entry point that owns the parameter wrapper, the validated
+    // extraction cap carried as DATA through `Asc.scope`, and ONE strict decoder that turns the authored
+    // flat array into `{ pages, statistics, counts, headings }`. The request is a closed precondition,
+    // never an optional refinement: a caller that cannot name the cap — or names one this bridge never
+    // advertised — gets a refusal instead of an SDK call extracting an unbounded outline. It is a READ:
+    // no leg of it matches a write class, it carries NO document-identity probe (a structure read returns
+    // no OWNED TARGET a later write could be applied to) and nothing on this path reaches
+    // `PasteText`/`ReplaceTextSmart`. What is NOT measured natively is the SHIPPED body's parameter
+    // carriage for this leg: an editor where the `Asc.scope` write does not arrive answers the body's own
+    // refusal sentinel or never calls back, so the ticket settles CAPABILITY_UNAVAILABLE or TIMEOUT —
+    // never a structure.
+    async readStructure(raw) {
+      const maxHeadings = raw?.maxHeadings, signal = raw?.signal;
+      if (!Number.isSafeInteger(maxHeadings) || maxHeadings < 1 || maxHeadings > LIMITS.structureHeadingsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const structure = await start('structureread', signal, {}, Object.freeze({ maxHeadings }));
+        return Object.freeze({ ok: true, pages: structure.pages, statistics: structure.statistics,
+          counts: structure.counts, headings: structure.headings });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

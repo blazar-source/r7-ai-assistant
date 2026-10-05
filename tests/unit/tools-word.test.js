@@ -28,7 +28,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['find_text', 'insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
+  assert.deepEqual(names, ['find_text', 'insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
@@ -60,7 +60,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection'],
+    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -278,8 +278,8 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'replace_selection']);
-  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text']);
+    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+  assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
 test('replace_selection advertises the argument ceiling its handler enforces', async () => {
@@ -3160,6 +3160,567 @@ test('find_text is offered with policy auto and a model call dispatches exactly 
   assert.equal(published.ok, true);
   assert.equal(published.data.count, 4);
   assert.deepEqual(published.data.matches.map(match => match.text), [MARKER, MARKER, MARKER, MARKER]);
+  assert.equal(published.data.truncated, false);
+});
+
+// ==================================================================================================
+// Sprint 3, tool 4 — `read_structure`, the bounded document-structure read
+//
+// The primitives, MEASURED on the target (Astra / R7 2026.1.2.1942, this round) and treated as
+// established: `Api.GetDocument().GetStatistics()` answers an object with the numeric fields
+// `PageCount`, `WordsCount`, `ParagraphCount`, `SymbolsCount`, `SymbolsWSCount`; `GetPageCount()`
+// answers a number; `GetAllParagraphs()` answers an array (10 elements on the measured document) whose
+// elements carry `GetClassType()`/`GetText()`; `GetAllHeadingParagraphs()` answers an array of the
+// styled heading paragraphs (3 on the measured document); `GetAllTables()` 1; `GetSections()` 1. The
+// native return validator keeps ARRAYS OF PRIMITIVES and a string and STRIPS a plain object, so the
+// authored body encodes the whole structure as ONE flat array of primitives — the same reason the
+// search body encodes its matches.
+//
+// The measurements below are reproduced at the boundary the TOOL actually sees (the bridge's decoded
+// `{ ok, pages, statistics, counts, headings }` envelope); the native flat array itself is decoded by
+// the real bridge further down and the command body is evaluated in tests/unit/bridge-dispatch-api.test.js
+// and tests/integration/package.test.js.
+// ==================================================================================================
+const MEASURED_STATISTICS = Object.freeze({ PageCount: 1, WordsCount: 25, ParagraphCount: 10, SymbolsCount: 150, SymbolsWSCount: 165 });
+const MEASURED_COUNTS = Object.freeze({ paragraphs: 10, headings: 3, tables: 1, sections: 1 });
+const MEASURED_HEADINGS = Object.freeze(['ГЛАВА ПЕРВАЯ', 'ГЛАВА ВТОРАЯ', 'ПОДРАЗДЕЛ']);
+function structureBridge(answer, extras = {}) {
+  const requests = [];
+  return { requests, readStructure: async (request) => { requests.push(request);
+    return typeof answer === 'function' ? answer(request) : answer; }, ...extras };
+}
+function readStructure(bridge) { return createWordTools(bridge).find(entry => entry.name === 'read_structure'); }
+function structured(overrides = {}) {
+  return { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS }, headings: [...MEASURED_HEADINGS], ...overrides };
+}
+function structureData(headings, counts = MEASURED_COUNTS, statistics = MEASURED_STATISTICS, pages = 1) {
+  return { pages, statistics: { ...statistics }, counts: { ...counts },
+    headings: headings.map((text, index) => ({ index, text })), truncated: counts.headings > headings.length };
+}
+
+test('read_structure advertises the closed schema and the two bounds it adds', () => {
+  const tool = readStructure(structureBridge(structured()));
+  assert.equal(tool.kind, 'read');
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual(tool.editors, ['word']);
+  assert.deepEqual(tool.requires, ['document.read']);
+  assert.equal(tool.schema.type, 'object');
+  assert.equal(tool.schema.additionalProperties, false, 'the schema is CLOSED');
+  assert.deepEqual(tool.schema.required, [], 'every primitive this tool reads takes no parameter');
+  assert.deepEqual(Object.keys(tool.schema.properties), [],
+    'no argument is advertised: a value that did not have to be measured to matter is not added');
+  // WHY 32 HEADINGS AND WHY 256 BYTES PER HEADING — arithmetic, not taste. The document read is a
+  // STRUCTURE read: the count cap is how many heading texts a caller receives, and the text bound is
+  // one heading's own width. Both are the numbers the schema-side contract advertises and the handler
+  // enforces, and they are chosen so the worst REALISTIC call at both maxima fits the entry the runtime
+  // bounds. A heading is a title, not a paragraph: 256 UTF-8 bytes is 128 Cyrillic or 256 ASCII
+  // characters, and 32 covers the outline of a long report while keeping the count in the same place
+  // `findMatchesMax` puts a search report.
+  assert.equal(LIMITS.structureHeadingsMax, 32, 'the count cap');
+  assert.equal(LIMITS.structureHeadingBytes, 256, 'one heading text, never a document read');
+  // The worst REALISTIC call at those maxima, measured on the SERIALIZED entry the runtime bounds
+  // (`JSON.stringify({ tool, ok, data })`, exactly what `stringifyToolResults` measures against
+  // `AGENT_CEILINGS.toolResultBytes` = 16384): 32 headings of 128 Cyrillic characters each, with every
+  // statistic and count at its own digit width and `truncated:false` (one byte wider than `true`).
+  const heading = 'я'.repeat(LIMITS.structureHeadingBytes / 2);
+  const headings = new Array(LIMITS.structureHeadingsMax).fill(heading).map((text, index) => ({ index, text }));
+  const statistics = { PageCount: 842, WordsCount: 99999, ParagraphCount: 4321, SymbolsCount: 999999, SymbolsWSCount: 999999 };
+  const counts = { paragraphs: 4321, headings: 999, tables: 99, sections: 9 };
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true, data: { pages: 842,
+    statistics, counts, headings, truncated: false } }));
+  assert.equal(entry, 9192, 'the measured worst realistic case at the advertised maxima');
+  assert.ok(entry <= AGENT_CEILINGS.toolResultBytes,
+    `${entry} <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - entry} bytes of slack`);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result: { ok: true,
+    data: { pages: 842, statistics, counts, headings, truncated: false } } }]));
+  // Every numeric field can be wider than a real document makes it, and the schema-side bounds are not
+  // what bounds the entry: widening all ten of them to `Number.MAX_SAFE_INTEGER` adds 123 bytes and
+  // nothing else, so the true maximum this shape can carry is 9315.
+  const MAX = Number.MAX_SAFE_INTEGER;
+  const trueMax = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true, data: { pages: MAX,
+    statistics: { PageCount: MAX, WordsCount: MAX, ParagraphCount: MAX, SymbolsCount: MAX, SymbolsWSCount: MAX },
+    counts: { paragraphs: MAX, headings: MAX, tables: MAX, sections: MAX },
+    headings, truncated: false } }));
+  assert.equal(trueMax, 9315, 'the true maximum: every numeric field at its widest, every heading at the text bound');
+  assert.ok(trueMax <= AGENT_CEILINGS.toolResultBytes,
+    `${trueMax} <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - trueMax} bytes of slack`);
+  // What cannot fit is the ESCAPE width, and there are TWO of them: a heading of 256 `\n` characters
+  // serializes each one as the TWO characters `"\n"` (measured 17364 for 32 such headings), while a
+  // heading of 256 C0 controls with no short escape serializes each as SIX characters `\uXXXX`
+  // (measured 50132) — the same two-escape bracket `find_text` documents. Both are REFUSED with the
+  // closed BYTE_LIMIT by the entry measurement: a heading is never shortened to fit.
+  const escaped = new Array(LIMITS.structureHeadingsMax).fill('\n'.repeat(LIMITS.structureHeadingBytes))
+    .map((text, index) => ({ index, text }));
+  const shortEscape = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true,
+    data: { pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS }, headings: escaped, truncated: false } }));
+  assert.equal(shortEscape, 17364, 'the two-character-escape case, measured');
+  assert.ok(shortEscape > AGENT_CEILINGS.toolResultBytes, 'and it is outside the per-result ceiling');
+  const sixEscaped = new Array(LIMITS.structureHeadingsMax).fill('\u0001'.repeat(LIMITS.structureHeadingBytes))
+    .map((text, index) => ({ index, text }));
+  const sixEscape = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ok: true,
+    data: { pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS }, headings: sixEscaped, truncated: false } }));
+  assert.equal(sixEscape, 50132, 'the true six-character-escape worst case, measured');
+  assert.ok(sixEscape > AGENT_CEILINGS.toolResultBytes, 'and it is outside the per-result ceiling too');
+});
+
+test('read_structure accepts only the empty argument object and rejects every other key at the schema', () => {
+  const tool = readStructure(structureBridge(structured()));
+  assert.doesNotThrow(() => validateArguments(tool.schema, {}));
+  for (const args of [
+    { scope: 'structure' },       // another tool's result names its own scope, never an argument
+    { index: 0 },
+    { limit: 1 },
+    { maxHeadings: 1 },
+    { text: '' },
+    [], null, 'structure', 5
+  ]) assert.throws(() => validateArguments(tool.schema, args), /TOOL_ERROR/, JSON.stringify(args));
+});
+
+test('read_structure reports the MEASURED document structure faithfully', async () => {
+  const bridge = structureBridge(structured());
+  const result = await readStructure(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  // Every field is the measured one, republished under the primitive's OWN names and with nothing
+  // invented: the statistics object carries exactly the five fields `GetStatistics()` answered, the
+  // counts are the array lengths, and each heading is that paragraph's own `GetText()`.
+  assert.deepEqual(result.data, structureData(MEASURED_HEADINGS));
+  assert.deepEqual(bridge.requests, [{ maxHeadings: LIMITS.structureHeadingsMax }],
+    'the tool asks for the cap it advertises, and no other value crosses');
+  assert.equal(Object.isFrozen(result.data), true);
+  assert.equal(Object.isFrozen(result.data.headings), true);
+  assert.equal(Object.isFrozen(result.data.headings[0]), true);
+  assert.equal(Object.isFrozen(result.data.statistics), true);
+  assert.equal(Object.isFrozen(result.data.counts), true);
+});
+
+test('read_structure treats an EMPTY structure as the complete answer, not a refusal', async () => {
+  // THE STATED DECISION. A document with no styled headings and no tables has an EMPTY outline, and
+  // "this document has no headings" IS the complete answer to "what is this document's structure" —
+  // deliberately unlike an empty CARET context (`read_paragraph`), where `''` means there was nothing to
+  // reason about. `ok` with `headings: []`, `counts.headings: 0` and `truncated: false` is published.
+  const counts = { paragraphs: 1, headings: 0, tables: 0, sections: 1 };
+  const statistics = { PageCount: 1, WordsCount: 0, ParagraphCount: 1, SymbolsCount: 0, SymbolsWSCount: 0 };
+  const bridge = structureBridge(structured({ statistics, counts, headings: [] }));
+  const result = await readStructure(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, structureData([], counts, statistics));
+  assert.deepEqual(result.data.headings, []);
+  assert.equal(result.data.truncated, false, 'an empty list is not a cap');
+  // The entry is measured, not assumed: 248 bytes for this answer, and the runtime serializer accepts it.
+  assert.equal(utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...result })), 248);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result }]));
+});
+
+test('read_structure bounds how many headings it reports while counts stay the TOTAL', async () => {
+  // An outline can hold hundreds of headings. The request tells the bridge how many TEXTS to extract,
+  // `headings` is capped there, and `counts.headings` still carries the primitive's own total, so the
+  // model can tell "three headings" from "three of five hundred" from one call.
+  const texts = new Array(LIMITS.structureHeadingsMax).fill('раздел');
+  const bridge = structureBridge({ ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS, headings: 500 }, headings: texts });
+  const result = await readStructure(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.headings.length, LIMITS.structureHeadingsMax, 'the reported array is capped');
+  assert.equal(result.data.counts.headings, 500, 'the total is never narrowed to the report');
+  assert.equal(result.data.truncated, true, 'and the cap is stated honestly');
+  // The boundary: a document holding exactly as many headings as the cap is NOT truncated.
+  const exact = await readStructure(structureBridge({ ok: true, pages: 1,
+    statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: texts }))
+    .execute({}, { editor: 'word' });
+  assert.equal(exact.ok, true);
+  assert.equal(exact.data.truncated, false);
+  assert.equal(exact.data.counts.headings, exact.data.headings.length);
+});
+
+test('read_structure bounds ONE heading text and refuses rather than shortening it', async () => {
+  // A heading longer than the advertised text bound is NOT trimmed to fit: a shortened heading presented
+  // as the heading is exactly the kind of approximation this module forbids for every other read. The
+  // whole answer is the closed BYTE_LIMIT, and only the one heading that made it unservable is withheld
+  // — nothing at all is published, so no partial outline can be mistaken for the document's own.
+  const over = 'Г'.repeat(LIMITS.structureHeadingBytes / 2 + 1);
+  const refused = await readStructure(structureBridge(structured({ headings: ['КОРОТКИЙ', over],
+    counts: { ...MEASURED_COUNTS, headings: 2 } })))
+    .execute({}, { editor: 'word' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'BYTE_LIMIT');
+  assert.equal(refused.message, 'отказ');
+  assert.equal(refused.data, undefined, 'a refusal carries no structure at all');
+  assert.equal(JSON.stringify(refused).includes('КОРОТКИЙ'), false, 'no heading leaks through a refusal');
+  // The longest text the bound advertises IS served, verbatim, with the document's own characters.
+  const widest = 'Г'.repeat(LIMITS.structureHeadingBytes / 2);
+  const served = await readStructure(structureBridge(structured({ headings: [widest],
+    counts: { ...MEASURED_COUNTS, headings: 1 } })))
+    .execute({}, { editor: 'word' });
+  assert.equal(served.ok, true);
+  assert.equal(served.data.headings[0].text, widest, 'the document\u2019s own heading, unshortened');
+  assert.equal(utf8ByteLength(served.data.headings[0].text), LIMITS.structureHeadingBytes);
+});
+
+test('read_structure publishes an entry the runtime serializer accepts and refuses one it would refuse', async () => {
+  // The raw text is NOT the bound: the runtime bounds the SERIALIZED entry, and `JSON.stringify` escapes
+  // every C0 control character, so a heading inside the byte bound can still produce an entry far outside
+  // the ceiling. The tool measures the entry it is about to publish and refuses when even the bounded
+  // answer cannot fit — it never shortens a heading.
+  const escaped = '\n'.repeat(LIMITS.structureHeadingBytes);
+  const texts = new Array(LIMITS.structureHeadingsMax).fill(escaped);
+  const over = await readStructure(structureBridge({ ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: texts }))
+    .execute({}, { editor: 'word' });
+  assert.equal(over.ok, false, 'the entry, not the raw text, is the enforced bound');
+  assert.equal(over.code, 'BYTE_LIMIT');
+  assert.equal(over.data, undefined);
+  // Smaller headings of the SAME document are SERVED, escapes and all: the bound is a real measurement,
+  // not a blanket refusal. This is the advertised-maxima shape, and it carries 7069 bytes of slack.
+  const servedText = '\n'.repeat(LIMITS.structureHeadingBytes / 2);
+  const served = await readStructure(structureBridge({ ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax }, headings: new Array(LIMITS.structureHeadingsMax).fill(servedText) }))
+    .execute({}, { editor: 'word' });
+  assert.equal(served.ok, true);
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...served }));
+  assert.ok(entry <= AGENT_CEILINGS.toolResultBytes, `${entry} <= ${AGENT_CEILINGS.toolResultBytes}`);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result: served }]));
+  // The invariant across the boundary: no `ok` this handler publishes can exceed the ceiling, and a
+  // served result is never shortened.
+  for (const width of [0, 1, 2, 8, 16, 31, 32]) {
+    const result = await readStructure(structureBridge({ ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+      counts: { ...MEASURED_COUNTS, headings: width }, headings: new Array(width).fill(servedText) }))
+      .execute({}, { editor: 'word' });
+    assert.equal(result.ok, true, `width ${width}`);
+    assert.equal(result.data.headings.length, width, `width ${width}`);
+    assert.ok(utf8ByteLength(JSON.stringify({ tool: 'read_structure', ...result })) <= AGENT_CEILINGS.toolResultBytes, `width ${width}`);
+    assert.doesNotThrow(() => toolResultMessages([{ tool: 'read_structure', result }]), `width ${width}`);
+  }
+});
+
+test('read_structure republishes the closed class the bridge reported, never a raw failure', async () => {
+  const classes = ['TIMEOUT', 'CANCELLED', 'INVALID_DATA', 'CAPABILITY_UNAVAILABLE', 'EDITOR_BUSY', 'BYTE_LIMIT', 'TOOL_ERROR'];
+  for (const code of classes) {
+    const result = await readStructure(structureBridge({ ok: false, code })).execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code, `${code} crosses unchanged`);
+    assert.equal(result.message, 'отказ', code);
+    assert.equal(result.data, undefined, code);
+  }
+  // Only a class from the closed vocabulary is republished: an arbitrary bridge string keeps the
+  // module's own tool-error fallback rather than reaching the run as an invented code.
+  for (const code of ['SOMETHING_ELSE', '', 7, null, undefined]) {
+    const result = await readStructure(structureBridge({ ok: false, code })).execute({}, { editor: 'word' });
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(code));
+  }
+  const thrown = await readStructure(structureBridge(null, { readStructure: async () => { const error = new Error('private native detail'); error.code = 'TIMEOUT'; throw error; } }))
+    .execute({}, { editor: 'word' });
+  assert.equal(thrown.code, 'TIMEOUT');
+  assert.equal(thrown.message, 'отказ');
+  const raw = await readStructure(structureBridge(null, { readStructure: async () => { throw new Error('private native detail'); } }))
+    .execute({}, { editor: 'word' });
+  assert.deepEqual(raw, { ok: false, code: 'TOOL_ERROR', message: 'отказ' }, 'a raw native failure never leaks');
+});
+
+test('read_structure maps a returned or thrown uncertain class to TOOL_UNCERTAIN', async () => {
+  const returned = await readStructure(structureBridge({ ok: false, code: 'APPLY_UNCERTAIN' })).execute({}, { editor: 'word' });
+  assert.deepEqual(returned, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' },
+    'a returned uncertain bridge answer stops the run');
+  const thrown = await readStructure(structureBridge(null, { readStructure: async () => { const error = new Error('x'); error.code = 'APPLY_UNCERTAIN'; throw error; } }))
+    .execute({}, { editor: 'word' });
+  assert.deepEqual(thrown, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' },
+    'a thrown uncertain answer is classified identically');
+});
+
+test('read_structure treats an unusable bridge answer as the module\u2019s unknown convention', async () => {
+  // An answer this tool cannot interpret is the module's closed `known()` class, never a publication of
+  // whatever the envelope happened to hold: a missing or negative or fractional page count, a statistics
+  // object that is not the measured five-field shape, counts that disagree with the headings they sent,
+  // and a headings array that is not a bounded array of strings are all uninterpretable.
+  const answers = [
+    null, undefined, 7, 'структура', [],
+    { ok: true },
+    { ok: true, pages: 1 },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS } },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS }, headings: 'текст' },
+    { ok: true, pages: -1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1.5, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: '1', statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS, PageCount: '1' }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS, PageCount: -1 }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS, PageCount: 1.5 }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS, WordsCount: undefined }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1, statistics: null, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: null, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: -1 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, paragraphs: 1.5 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 1 }, headings: [] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: ['лишний'] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 1 }, headings: [7] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 1 }, headings: ['а', 'б'] },
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS, headings: 0 }, headings: new Array(3).fill('x') }
+  ];
+  for (const answer of answers) {
+    const result = await readStructure(structureBridge(answer)).execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(answer));
+    assert.equal(result.message, 'отказ', JSON.stringify(answer));
+    assert.equal(result.data, undefined, JSON.stringify(answer));
+  }
+  // A `headings` array LONGER than the cap the tool asked for is uninterpretable too: the bridge was
+  // told the cap, so more than that is not an answer this tool can attribute to its own request.
+  const overCap = await readStructure(structureBridge({ ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS, headings: LIMITS.structureHeadingsMax + 1 },
+    headings: new Array(LIMITS.structureHeadingsMax + 1).fill('а') })).execute({}, { editor: 'word' });
+  assert.equal(overCap.ok, false);
+  assert.equal(overCap.code, 'TOOL_ERROR');
+});
+
+test('read_structure refuses an editor that is not Word before any dispatch', async () => {
+  const bridge = structureBridge(structured());
+  const tool = readStructure(bridge);
+  for (const editor of ['cell', 'slide', 'unknown']) {
+    const refusal = tool.precondition({}, { editor });
+    assert.equal(refusal.code, 'CAPABILITY_UNAVAILABLE', editor);
+    assert.equal(refusal.message, 'отказ', editor);
+  }
+  assert.equal(tool.precondition({}, { editor: 'word' }), null);
+  assert.deepEqual(bridge.requests, [], 'the precondition is what refuses, and it dispatches nothing');
+});
+
+test('read_structure refuses a bridge that cannot serve the read instead of crashing', async () => {
+  for (const bridge of [null, undefined, {}, { readStructure: 'no' }, { readStructure: 7 }]) {
+    const result = await readStructure(bridge).execute({}, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(bridge));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(bridge));
+    assert.equal(result.message, 'отказ', JSON.stringify(bridge));
+  }
+});
+
+test('read_structure touches exactly one bridge read and no write method at all', async () => {
+  const touched = [];
+  const record = (method, value) => async () => { touched.push({ method }); return value; };
+  const bridge = {
+    readStructure: async (request) => { touched.push({ method: 'readStructure', request }); return structured(); },
+    readSelection: record('readSelection', {}),
+    readDocumentText: record('readDocumentText', {}),
+    readParagraph: record('readParagraph', {}),
+    readContext: record('readContext', {}),
+    findText: record('findText', { ok: true, count: 0, texts: [] }),
+    insertParagraph: record('insertParagraph', { ok: true, data: {} }),
+    applySelection: record('applySelection', {})
+  };
+  const result = await readStructure(bridge).execute({}, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(touched, [{ method: 'readStructure', request: { maxHeadings: LIMITS.structureHeadingsMax } }],
+    'ONE structure read, with the cap it advertises, and no other leg');
+  for (const method of ['insertParagraph', 'applySelection', 'readSelection', 'readContext', 'readDocumentText', 'readParagraph', 'findText']) {
+    assert.equal(touched.some(entry => entry.method === method), false, `${method} is never reached`);
+  }
+});
+
+test('read_structure forwards the caller signal to its single bridge read', async () => {
+  const bridge = structureBridge(structured());
+  const controller = new AbortController();
+  await readStructure(bridge).execute({}, { editor: 'word', signal: controller.signal });
+  assert.deepEqual(bridge.requests, [{ maxHeadings: LIMITS.structureHeadingsMax, signal: controller.signal }]);
+});
+
+// --- the real bridge: the fourth authored command body and the flat native answer it decodes --------
+// The rig reproduces the vendor wrapper exactly as `findRig` does: it reads `Asc.scope` SYNCHRONOUSLY,
+// hands the body that value, and evaluates the body the way the EDITOR does — in a fresh, module-free
+// scope whose only bindings are `Api` and `scope`.
+function measuredDocument({ headings = MEASURED_HEADINGS, tables = 1, sections = 1, paragraphs = 10,
+  statistics = MEASURED_STATISTICS, pageCount = 1 } = {}) {
+  return {
+    GetPageCount() { return pageCount; },
+    GetStatistics() { return { ...statistics }; },
+    GetAllParagraphs() { return new Array(paragraphs).fill(null).map(() => ({})); },
+    GetAllHeadingParagraphs() { return headings.map(text => ({ GetClassType() { return 'paragraph'; }, GetText() { return text; } })); },
+    GetAllTables() { return new Array(tables).fill(null).map(() => ({})); },
+    GetSections() { return new Array(sections).fill(null).map(() => ({})); }
+  };
+}
+function evaluateStructureBody(body, api, scope) {
+  return new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(api, scope);
+}
+function structureRig({ document = undefined, command = true, namespace = { scope: 'сентинел' }, omitCarrier = false } = {}) {
+  const commands = [];
+  const api = { GetDocument() { return document === undefined ? measuredDocument() : document; } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: command ? function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = namespace?.scope;
+      const answer = evaluateStructureBody(body, api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answer });
+      callback(answer);
+      return false;
+    } : undefined };
+  const options = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (!omitCarrier) options.ascNamespace = namespace;
+  const bridge = bridgeWith(plugin, options);
+  return { bridge, plugin, commands, namespace, api };
+}
+
+test('bridge readStructure dispatches ONE command, carries the cap as DATA and restores the namespace', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = structureRig({ document: measuredDocument(), namespace });
+  const pending = r.bridge.readStructure({ maxHeadings: LIMITS.structureHeadingsMax });
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, { maxHeadings: LIMITS.structureHeadingsMax },
+    'the extraction cap crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no cap outlives its dispatch');
+  // The native answer is the flat array of PRIMITIVES the validator keeps, in the authored order.
+  assert.deepEqual(carried.answer, [1, 1, 25, 10, 150, 165, 10, 3, 1, 1, 'ГЛАВА ПЕРВАЯ', 'ГЛАВА ВТОРАЯ', 'ПОДРАЗДЕЛ'],
+    'the body encodes the measured structure as one array of primitives');
+  // The body is SELF-CONTAINED: the text that reaches the editor names no module binding of bridge.js.
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeStructure|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body must be self-contained, not a closure over bridge.js');
+  const result = await pending;
+  assert.deepEqual(result, { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS }, headings: [...MEASURED_HEADINGS] });
+  assert.ok(Object.isFrozen(result));
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+});
+
+test('the structure body answers the measured shapes in a fresh, module-free scope', async () => {
+  // The editor's own evaluation, independent of the bridge: a free module identifier resolves to nothing
+  // in this scope and the whole call dies, exactly as it did natively on 2026.3.1 (commit 273d70e).
+  const r = structureRig({ document: measuredDocument({ headings: [] , tables: 0, sections: 1 }) });
+  const pending = r.bridge.readStructure({ maxHeadings: LIMITS.structureHeadingsMax });
+  const body = r.commands[0];
+  const evaluated = evaluateStructureBody(body.body, r.api, body.scope);
+  assert.deepEqual(evaluated, [1, 1, 25, 10, 150, 165, 10, 0, 0, 1],
+    'an empty outline is the ten fixed slots and no texts');
+  assert.deepEqual(await pending, { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { paragraphs: 10, headings: 0, tables: 0, sections: 1 }, headings: [] });
+  // The extraction is bounded IN THE EDITOR: a document with five hundred headings crosses at most
+  // `maxHeadings` texts while the count it reports stays the primitive's own total.
+  const many = structureRig({ document: measuredDocument({ headings: new Array(500).fill('раздел') }) });
+  const bounded = await many.bridge.readStructure({ maxHeadings: LIMITS.structureHeadingsMax });
+  assert.equal(bounded.ok, true);
+  assert.equal(bounded.headings.length, LIMITS.structureHeadingsMax);
+  assert.equal(bounded.counts.headings, 500, 'the total is the primitive\u2019s own, never the extracted count');
+  assert.equal(many.commands[0].answer.length, 10 + LIMITS.structureHeadingsMax);
+  // A body that cannot read the structure answers its own refusal sentinel, which the decoder maps to
+  // the closed capability class rather than to a structure of zeros.
+  for (const document of [null, {}, { GetPageCount: 1 }, { ...measuredDocument(), GetStatistics: null },
+    { ...measuredDocument(), GetAllHeadingParagraphs: 7 }]) {
+    const missing = structureRig({ document });
+    const result = await missing.bridge.readStructure({ maxHeadings: 1 });
+    assert.deepEqual(result, { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, JSON.stringify(document));
+    assert.equal(missing.bridge.getState().busy, false);
+  }
+});
+
+test('bridge readStructure decodes the measured shapes and refuses an answer it cannot interpret', async () => {
+  const r = structureRig();
+  const missing = await r.bridge.readStructure({ maxHeadings: LIMITS.structureHeadingsMax });
+  assert.deepEqual(missing, { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS },
+    counts: { ...MEASURED_COUNTS }, headings: [...MEASURED_HEADINGS] });
+  assert.equal(r.commands.length, 1, 'one command per read, and no identity probe');
+  // A native answer that is not the authored shape is INVALID_DATA, never a publication of whatever
+  // arrived; one above the bridge's own read window is BYTE_LIMIT. Neither leaks the native text.
+  const poisoned = (raw) => {
+    const plugin = { info: { editorType: 'word' }, callCommand: (_body, _close, _recalculate, callback) => { callback(raw); return false; } };
+    return bridgeWith(plugin, { editorType: 'word', ascNamespace: { scope: undefined }, clock: { now: () => 0 },
+      timers: { schedule() { return {}; }, clear() {} } });
+  };
+  const fixed = [1, 1, 25, 10, 150, 165, 10, 3, 1, 1];
+  for (const raw of [null, undefined, 7, 'текст', {}, [true], ['CAPABILITY_UNAVAILABLE'], [5], [1],
+    [...fixed.slice(0, 9)], [...fixed, 1], [...fixed, 'a'], [1.5, ...fixed.slice(1)],
+    [-1, ...fixed.slice(1)], [1, '1', ...fixed.slice(2)], [1, ...fixed.slice(1), 1],
+    [...fixed.map((value, index) => (index === 9 ? -1 : value))]]) {
+    const result = await poisoned(raw).readStructure({ maxHeadings: 2 });
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, raw && raw[0] === 'CAPABILITY_UNAVAILABLE' ? 'CAPABILITY_UNAVAILABLE' : 'INVALID_DATA',
+      JSON.stringify(raw));
+    assert.equal(JSON.stringify(result).includes('ГЛАВА'), false, 'no native text leaks through a refusal');
+  }
+  // The authored answer for a document whose outline is empty is LEGAL: ten slots and no texts.
+  const noHeadings = [...fixed.slice(0, 7), 0, ...fixed.slice(8)];
+  assert.deepEqual(await poisoned(noHeadings).readStructure({ maxHeadings: 2 }),
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { paragraphs: 10, headings: 0, tables: 1, sections: 1 }, headings: [] });
+  // The body extracts EXACTLY `min(count, maxHeadings)` texts, so an answer with a different number is
+  // not one the authored body can have produced, and the decoder refuses it rather than publishing a
+  // short outline the tool would describe as its own cap.
+  assert.deepEqual(await poisoned([...fixed, 'a']).readStructure({ maxHeadings: 2 }),
+    { ok: false, code: 'INVALID_DATA' });
+  assert.deepEqual(await poisoned([...fixed, 'a', 'b']).readStructure({ maxHeadings: 2 }),
+    { ok: true, pages: 1, statistics: { ...MEASURED_STATISTICS }, counts: { ...MEASURED_COUNTS }, headings: ['a', 'b'] },
+    'min(3, 2) = 2 texts is the authored shape, with the primitive\u2019s own total');
+  const oversized = await poisoned([...fixed, 'я'.repeat(35000), 'я'.repeat(35000)]).readStructure({ maxHeadings: 2 });
+  assert.equal(oversized.code, 'BYTE_LIMIT', 'an answer above the bridge\u2019s read window is refused');
+});
+
+test('bridge readStructure refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  // No command channel at all: nothing is dispatched, and the refusal is the closed capability class.
+  const noCommand = structureRig({ command: false });
+  assert.deepEqual(await noCommand.bridge.readStructure({ maxHeadings: 1 }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(noCommand.commands, [], 'no command is dispatched by a facade that has none');
+  // A namespace that cannot carry the cap is the SAME closed refusal, decided BEFORE the dispatch.
+  for (const shape of [{ omitCarrier: true }, { namespace: null }, { namespace: Object.freeze({}) },
+    { namespace: Object.freeze({ scope: 'предыдущая-область' }) }]) {
+    const r = structureRig(shape);
+    assert.deepEqual(await r.bridge.readStructure({ maxHeadings: 1 }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' },
+      JSON.stringify(shape));
+    assert.deepEqual(r.commands, [], 'nothing is dispatched when the scope cannot cross');
+    assert.equal(r.bridge.getState().busy, false, 'and the slot is released');
+  }
+  // A request this bridge cannot interpret is refused with the closed class and NO SDK work: the cap is
+  // a closed precondition, never an optional refinement, and `maxHeadings` is bounded by the advertised
+  // maximum so a caller cannot ask the editor to extract an unbounded outline.
+  for (const raw of [undefined, null, {}, { maxHeadings: 0 }, { maxHeadings: -1 }, { maxHeadings: 1.5 },
+    { maxHeadings: '2' }, { maxHeadings: LIMITS.structureHeadingsMax + 1 }]) {
+    const r = structureRig();
+    const result = await r.bridge.readStructure(raw ?? {});
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(raw));
+    assert.deepEqual(r.commands, [], JSON.stringify(raw));
+    assert.equal(r.bridge.getState().busy, false, JSON.stringify(raw));
+  }
+  // A pre-aborted signal never reaches the editor.
+  const r = structureRig();
+  const controller = new AbortController();
+  controller.abort();
+  assert.deepEqual(await r.bridge.readStructure({ maxHeadings: 1, signal: controller.signal }), { ok: false, code: 'CANCELLED' });
+  assert.deepEqual(r.commands, []);
+  assert.equal(r.bridge.getState().busy, false);
+});
+
+test('read_structure is offered with policy auto and a model call dispatches exactly one structure read', async () => {
+  const r = structureRig();
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'read_structure');
+  assert.ok(offered, 'the offered catalogue contains read_structure');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'read');
+  assert.equal(offered.requires.includes('document.read'), true);
+  const batch = validateBatch(catalogue, [{ tool: 'read_structure', arguments: {} }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'read_structure');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"read_structure","arguments":{}}]}',
+    '{"type":"final","message":"структура прочитана"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '55555555-5555-4555-8555-555555555555', request: 'какая структура у документа',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['read_structure', 'ok']]);
+  assert.equal(r.commands.length, 1, 'one structure read for the whole run, and no write path touched');
+  assert.equal(r.bridge.getState().busy, false);
+  // The model really RECEIVES the bounded answer — the statistics, the counts and the headings' own
+  // texts — through the runtime's own per-result serialization, not a summary this test invented.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'read_structure');
+  assert.equal(published.ok, true);
+  assert.deepEqual(published.data.statistics, { ...MEASURED_STATISTICS });
+  assert.deepEqual(published.data.counts, { ...MEASURED_COUNTS });
+  assert.deepEqual(published.data.headings.map(heading => heading.text), [...MEASURED_HEADINGS]);
   assert.equal(published.data.truncated, false);
 });
 

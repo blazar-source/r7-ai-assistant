@@ -173,6 +173,37 @@ function paragraphEntryBytes(text, bytes) {
 function findEntryBytes(data) {
   return toolResultEntryBytes('find_text', data);
 }
+// `read_structure`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's one
+// measurement: the page count, the statistics object, the counts and the bounded heading array. The
+// measurement is taken on the exact object the handler returns, never on a competing shape, and it is
+// what decides whether this structure can be delivered at all: `JSON.stringify` escapes every C0 control
+// character in a heading, so a heading inside its own byte bound can still produce an entry the runtime
+// refuses (`find_text` documents the same two-escape bracket).
+function structureEntryBytes(data) {
+  return toolResultEntryBytes('read_structure', data);
+}
+// A count this module publishes is a NON-NEGATIVE SAFE INTEGER and nothing else. The bridge decodes the
+// same rule, and the handler re-applies it because a descriptor is also executable when it is held
+// directly: publishing a fractional, negative, NaN or stringified count as "the document's own number"
+// would be exactly the invented field this module's result contract forbids.
+function measuredCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+// The FIVE fields `GetStatistics()` was measured to answer, each one a `measuredCount`. The fields are
+// re-read into the result object below rather than republished by reference, so an object carrying extra
+// keys cannot smuggle an unmeasured field into the entry.
+function measuredStatistics(value) {
+  return value !== null && typeof value === 'object' && measuredCount(value.PageCount) &&
+    measuredCount(value.WordsCount) && measuredCount(value.ParagraphCount) &&
+    measuredCount(value.SymbolsCount) && measuredCount(value.SymbolsWSCount);
+}
+// The FOUR array lengths the structure read reports. There is deliberately no table row/column getter
+// here: `GetRowCount`/`GetColumnCount` were measured as `undefined`, so the only per-table fact this
+// module can honestly publish is how many tables the document holds.
+function measuredCounts(value) {
+  return value !== null && typeof value === 'object' && measuredCount(value.paragraphs) &&
+    measuredCount(value.headings) && measuredCount(value.tables) && measuredCount(value.sections);
+}
 
 export function createWordTools(bridge) {
   return [
@@ -611,6 +642,134 @@ export function createWordTools(bridge) {
         // SIX-character `\uXXXX` and measures 51523. Both are REFUSED here rather than shortened: a
         // shortened match text presented as the match would be an approximation this module forbids.
         const entry = findEntryBytes(data);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
+      }
+    }),
+    defineTool({
+      // Sprint 3 Word tool 4: the bounded DOCUMENT-STRUCTURE read. It is a READ — it answers a question
+      // about the document's shape and changes nothing — so it needs no delta and no readback, no mutate
+      // path is reachable from this descriptor, and it adds no capability beyond the read channel every
+      // other leg already uses. It IS the measured replacement for the long-withheld `read_context`
+      // structure scope: this descriptor reads the document structure with primitives the Lead MEASURED
+      // on the target, while `read_context` keeps its `deny` policy and its own comment untouched.
+      //
+      // THE PRIMITIVE EVIDENCE, measured on the target (Astra / R7 2026.1.2.1942, this round) and
+      // treated as established: inside a `callCommand` body, `Api.GetDocument().GetStatistics()` answers
+      // an OBJECT with the numeric fields `PageCount`, `WordsCount`, `ParagraphCount`, `SymbolsCount`,
+      // `SymbolsWSCount` (`{1, 25, 10, 150, 165}` on the purpose-built document); `GetPageCount()`
+      // answers `1`; `GetAllParagraphs()` an array of 10 whose elements carry `GetClassType()` and
+      // `GetText()`; `GetAllHeadingParagraphs()` an array of EXACTLY the 3 styled headings;
+      // `GetAllTables()` 1; `GetSections()` 1. `GetAllStyles()` answers 182 and is deliberately NOT read:
+      // the full style library is not the document's structure.
+      //
+      // THE NO-`level` DECISION, and it is measured rather than assumed. The vendored copy of the
+      // installed build's SDK source (dev-only, `.local/stage-b-runtime/vendor-word-sdk-all.js`) was
+      // searched with the file's TEXT matched case-sensitively: `GetOutlineLvl` occurs 8 times, and every
+      // one of the eight sits on an INTERNAL class — the document-outline manager, the internal paragraph
+      // (`s.prototype.GetOutlineLvl`), and the internal paragraph properties (`Mt`, registered as
+      // `AscCommonWord.CParaPr`) — while the two PUBLIC builder classes an element of
+      // `GetAllHeadingParagraphs()` can reach expose none: `AscBuilder.ApiParagraph` (`G`) registers no
+      // outline getter at all (its alias list runs `…GetParaPr…GetText…GetTextPr…` and never an outline
+      // member), and `AscBuilder.ApiParaPr` (`T`), which `G.GetParaPr()` returns, registers
+      // `SetStyle`/`GetStyle`/`GetJc`/`GetIndLeft`/`GetIndRight`/`GetIndFirstLine`/`GetSpacing*`/… and NO
+      // `GetOutlineLvl` (its measured method count is 0 for both `T.prototype.GetOutlineLvl` and
+      // `T.prototype.SetOutlineLvl`). Deriving a level from the style NAME would be a guess the document
+      // need not confirm (style names are localized), and deriving it from the array index is explicitly
+      // forbidden, so this tool publishes NO `level` field — and no `level: null` placeholder either,
+      // because a null would read as a measured "no outline level" the run never measured.
+      //
+      // THE RESULT IS SHAPED BY WHAT WAS MEASURED, not by what a structure read might ideally carry:
+      // `pages` is `GetPageCount()`'s own answer; `statistics` republishes the measured object under the
+      // primitive's OWN field names, so no renamed or invented field can drift from it; `counts` is the
+      // four array lengths (`paragraphs`, `headings`, `tables`, `sections`); `headings` is a BOUNDED
+      // array of `{ index, text }` — each text is that paragraph's own `GetText()`, in the order the
+      // primitive returned it — and `truncated` says whether the document holds more headings than are
+      // reported. There is deliberately NO separate `tables`/`sections` RESULT key: the only facts this
+      // module can honestly state about them are their counts, which `counts` already carries, and a
+      // per-table row/column report would need `GetRowCount`/`GetColumnCount`, which were measured as
+      // `undefined`. Two competing fields for one count is how a report comes to describe a limitation
+      // it did not impose.
+      //
+      // THE EMPTY-STRUCTURE DECISION. A document with no styled headings and no tables answers `ok` with
+      // `headings: []`, `counts.headings: 0` and `truncated: false`: "this document has no headings" IS
+      // the complete answer to "what is this document's structure", deliberately unlike an empty CARET
+      // context (`read_paragraph`), where `''` means there was nothing to reason about.
+      name: 'read_structure', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      // CLOSED and EMPTY: every primitive this read dispatches takes no model parameter, so the schema
+      // advertises none and a caller that guesses an argument (including `scope`, which the WITHHELD
+      // `read_context` schema names) is refused by the schema itself. An optional argument no measurement
+      // showed to matter would only be a second way to ask the same question.
+      schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'readStructure')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The ONE request this tool makes, and the cap it carries is the cap the schema side advertises:
+        // one value, so the extraction inside the editor and the bound this handler applies cannot drift.
+        // The caller's signal crosses with it so a Stop cancels before dispatch, while an abort after
+        // dispatch invalidates the caller and leaves the queued SDK work owning the bridge slot until its
+        // own callback.
+        const request = { maxHeadings: LIMITS.structureHeadingsMax,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let response;
+        try { response = await bridge.readStructure(request); }
+        catch (error) {
+          // A bridge that reports its own UNCERTAIN class means the read's outcome is unknown: that is
+          // the one case which stops the run, and it is classified before any ordinary refusal path.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // An answer this tool cannot interpret is the module's unknown convention (`known()`, the closed
+        // tool-error class), while a bridge REFUSAL in between keeps the closed class it reported. Only a
+        // class from the closed vocabulary is republished.
+        if (!response || typeof response !== 'object') return known();
+        const uncertain = uncertainResult(response);
+        if (uncertain) return uncertain;
+        if (response.ok !== true) return known(refusalCode(response.code, ERROR_CODES.TOOL_ERROR));
+        // The bridge's own envelope contract, re-checked here because the descriptor is executable on
+        // its own: a non-negative safe-integer page count, the five measured statistic fields, the four
+        // measured counts, and EXACTLY `min(counts.headings, structureHeadingsMax)` heading texts. An
+        // answer with a different number of texts is not one this bridge can have produced, and
+        // publishing it would let the tool present a short outline as its own cap.
+        const pages = response.pages;
+        const statistics = response.statistics;
+        const counts = response.counts;
+        const headings = response.headings;
+        if (!measuredCount(pages)) return known();
+        if (!measuredStatistics(statistics)) return known();
+        if (!measuredCounts(counts)) return known();
+        if (!Array.isArray(headings) || headings.length > LIMITS.structureHeadingsMax) return known();
+        if (headings.length !== Math.min(counts.headings, LIMITS.structureHeadingsMax)) return known();
+        if (headings.some(text => typeof text !== 'string')) return known();
+        // THE PER-HEADING BOUND, and it is a REFUSAL boundary rather than a trim: a heading wider than
+        // `LIMITS.structureHeadingBytes` makes the outline unservable, so the answer is the closed
+        // BYTE_LIMIT and the model receives no structure at all. Shortening the heading would publish an
+        // approximation as the document's own title, which is the one direction this module never takes.
+        if (headings.some(text => utf8ByteLength(text) > LIMITS.structureHeadingBytes)) return known(ERROR_CODES.BYTE_LIMIT);
+        // The published object is BUILT here field by field, so an envelope carrying an extra key cannot
+        // put an unmeasured field into the entry, and `truncated` is derived from the same two numbers the
+        // result shows: a list shorter than the primitive's own total is the only thing that makes it true.
+        const data = Object.freeze({
+          pages,
+          statistics: Object.freeze({ PageCount: statistics.PageCount, WordsCount: statistics.WordsCount,
+            ParagraphCount: statistics.ParagraphCount, SymbolsCount: statistics.SymbolsCount,
+            SymbolsWSCount: statistics.SymbolsWSCount }),
+          counts: Object.freeze({ paragraphs: counts.paragraphs, headings: counts.headings,
+            tables: counts.tables, sections: counts.sections }),
+          headings: Object.freeze(headings.map((text, index) => Object.freeze({ index, text }))),
+          truncated: counts.headings > headings.length
+        });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the other four reads
+        // measure it: the runtime bounds `JSON.stringify({tool, ...result})` by
+        // `AGENT_CEILINGS.toolResultBytes` (16384) and replaces an entry above it with the model-visible
+        // literal "the tool result could not be serialized" — the model would receive NO structure while
+        // the action log recorded `ok`. The arithmetic is stated in `LIMITS.structureHeadingsMax`: the
+        // worst realistic call at the advertised maxima measures 9192 bytes and the true maximum, every
+        // numeric field widened to `Number.MAX_SAFE_INTEGER`, 9315 — with 7069 bytes of slack — while the
+        // two escape families (17364 for `\n`, 50132 for a C0 control with no short escape) cannot fit and
+        // are refused rather than shortened.
+        const entry = structureEntryBytes(data);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(data);
       }

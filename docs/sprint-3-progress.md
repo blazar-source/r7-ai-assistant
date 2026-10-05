@@ -1118,3 +1118,97 @@ bodies is rebuilt into the bundle and the SHA **moved** from the `fa7b2f6` pin
 `f7e78518dd2df4ac8499ea54fc16f31e2864c1537553c4d1c756cec561c14352`; that difference is comment-only in
 `src/`, and **the non-comment diff of `src/` for this round is empty** (only `//` lines changed in
 `src/shared/limits.js` and `src/tools/word.js`).
+
+## 12. Sprint 3, tool 4 — `read_structure`, the bounded document-structure read
+
+**The primitives, measured on the target (Astra / R7 2026.1.2.1942, this round) and treated as
+established.** Inside a `callCommand` body, `Api.GetDocument().GetStatistics()` answers an **object** with
+the numeric fields `PageCount`, `WordsCount`, `ParagraphCount`, `SymbolsCount`, `SymbolsWSCount`
+(`{ 1, 25, 10, 150, 165 }` on the purpose-built document); `GetPageCount()` answers `1`;
+`GetAllParagraphs()` an array of **10**; `GetAllHeadingParagraphs()` an array of **3** — exactly the three
+styled headings; `GetAllTables()` **1**; `GetSections()` **1**. `GetAllStyles()` answers **182** and is
+deliberately **not read**: the full style library is not the document's structure. This descriptor is the
+**measured replacement** for the long-withheld `read_context` *structure* scope; `read_context` itself keeps
+its `deny` policy, its schema and its handler untouched, and the Lead decides that switch separately.
+
+**The dispatch.** The same pattern `find_text` measured, one leg further: ONE inline, self-contained
+static `callCommand` body (`command.structure`), the validated extraction cap crossing as **DATA** through
+`Asc.scope` (written by `writeScope`, restored by `clearScope` right after the native has been handed the
+body, because the vendor wrapper reads the property synchronously), and ONE strict decoder
+(`decodeStructure`) for its answer. The native **return validator keeps arrays of primitives and a string
+and strips a plain object**, so the body encodes the whole structure as ONE flat array —
+`[pages, PageCount, WordsCount, ParagraphCount, SymbolsCount, SymbolsWSCount, paragraphs, headings, tables,
+sections, heading0, …]` — and the decoder refuses any answer that is not that shape, including one that
+extracts a different number of texts than the `min(headings, maxHeadings)` it asked for. The body's own
+integer test reaches for **no global at all** (`value === value`, `value % 1 === 0`), so the stringified
+body depends on nothing but the `Api` and `scope` bindings the wrapper creates. A build whose command
+channel is the bare `executeCommand` has no sanctioned parameter channel and refuses **before** any
+dispatch (`CAPABILITY_UNAVAILABLE`, slot released).
+
+**No `level` is published, and that is measured rather than assumed.** The vendored 2026.1.2 SDK copy
+(dev-only, `.local/stage-b-runtime/vendor-word-sdk-all.js`) carries `GetOutlineLvl` **8** times, and every
+one of the eight sits on an **internal** class — the document-outline manager, the internal paragraph
+(`s.prototype.GetOutlineLvl`), the internal paragraph properties (`Mt` = `AscCommonWord.CParaPr`) — while
+the two **public** builder classes a heading element can reach expose none: `AscBuilder.ApiParagraph` (`G`)
+registers no outline member at all, and `AscBuilder.ApiParaPr` (`T`), which `G.GetParaPr()` returns,
+registers `SetStyle`/`GetStyle`/`GetJc`/`GetIndLeft`/… and **no** `GetOutlineLvl` (`T.prototype.GetOutlineLvl`
+and `T.prototype.SetOutlineLvl` both measure **0**). A level derived from the style *name* would be a guess
+(the names are localized) and one derived from the array index is forbidden, so the result carries **no
+`level` field and no `level: null` placeholder**. `GetRowCount`/`GetColumnCount` were already measured
+`undefined`, so the only per-table fact published is the count.
+
+**The schema, the limits and the result.** Closed, `additionalProperties: false`, `required: []`,
+`properties: {}` — every dispatched primitive takes no model parameter, so no optional argument was added.
+Two new `LIMITS` entries: **`structureHeadingsMax = 32`** — the reported-heading cap AND the count the body
+extracts inside the editor (one value, so the native work and the report cannot disagree) — and
+**`structureHeadingBytes = 256`** — one heading TEXT (128 Cyrillic or 256 ASCII characters), a **refusal**
+boundary, never a trim. The result is
+`ok({ pages, statistics, counts, headings, truncated })`: `statistics` republishes the measured object under
+the primitive's **own** field names, `counts` is `{ paragraphs, headings, tables, sections }` from the array
+lengths, `headings` is a bounded array of `{ index, text }`, and there is deliberately **no separate
+`tables`/`sections` result key** (the only honest facts are their counts, which `counts` already carries).
+The enforced bound is the **serialized entry** through the module's one `toolResultEntryBytes` (new
+`structureEntryBytes` wrapper): the worst realistic call at both maxima measures **9192** bytes against the
+16384-byte ceiling (7192 of slack), and the true maximum — every numeric field widened to
+`Number.MAX_SAFE_INTEGER`, which adds 123 bytes and nothing else — measures **9315** (7069 of slack). The
+two escape families are what cannot fit: 32 headings of 256 `\n` (TWO-character escapes) measure **17364**,
+and the same headings made of a C0 control with no short escape (SIX-character `\uXXXX`) measure **50132**;
+both are the closed `BYTE_LIMIT`, and no heading is ever shortened.
+
+**Two documented decisions.** An **empty structure is `ok`** with `headings: []`, `counts.headings: 0` and
+`truncated: false`: "this document has no headings" IS the complete answer to "what is the structure",
+deliberately unlike an empty **caret** context (`read_paragraph`). And a structure the decoder cannot
+interpret is the module's closed `known()` class, never a partial outline: a `headings` array longer than
+the cap the tool asked for, or shorter than `min(counts.headings, structureHeadingsMax)`, is not an answer
+this bridge can have produced. Failure classes: wrong editor / missing bridge method / unavailable command
+channel or namespace → `CAPABILITY_UNAVAILABLE`; any other closed bridge class republished through
+`refusalCode`; an uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` →
+`TOOL_UNCERTAIN`; a heading above its text bound or an over-ceiling entry → `BYTE_LIMIT`.
+
+**Verification.** RED first, honestly counted: on the pre-implementation tree the focused set
+(`bridge-dispatch-api` + `tools-word` + `integration/package`) ran **159 cases / 137 pass / 22 fail**, and
+all 22 were "the feature is absent" — 19 new `read_structure` test blocks plus the 3 existing exhaustive
+assertions that grew (the descriptor-name set, `registry.tools`, and the EDIT/ASK catalogue lists). Green:
+focused **159/159**, `fail 0`; full suite **751 → 770**, `pass 770`, `fail 0`;
+`node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` →
+exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+0b97e1ad46257a27e8f6901f68662f854229a62fdbe91522d67bba425bf7810f`, re-measured twice on the final tree
+with the same value. The builder runs with `minify: false`, so the comment text inside the new descriptor
+and body is rebuilt into the bundle and the SHA **moved** from the `503d441` pin
+`757a465e4c53623aafdefa6f67cbdbffd62c692c37e6f7b7912780e6fdb860e7`; the moved bytes are comments and one
+new authored body. The `package` test's authored-command-leg classifier grew **3 → 4**
+(`['capability', 'context', 'search', 'structure']`, classified by the primitive each body authors), and no
+existing test was weakened or deleted. Read-only by construction and by test: exactly **one** bridge call
+(`readStructure`) and no write method reachable; `src/agent/*` untouched.
+
+**Unverified natively, and what only the target can prove.** The **primitive** measurements above are the
+Lead's. What the host-side suite cannot prove is the **shipped** carriage of this leg: that
+`{ maxHeadings }` written into the page's `Asc.scope` reaches the body's `scope` binding on the target
+build, that `GetStatistics()`/`GetAllHeadingParagraphs()` answer from **inside** this exact body, and that
+the native return validator passes the **10 + n** flat array unaltered. Each unknown is fail-safe rather
+than fail-open: a scope that does not arrive makes the body answer its own refusal sentinel
+(`CAPABILITY_UNAVAILABLE`), a primitive that is missing or answers a non-integer makes it refuse the same
+way, and an editor that never calls back settles `TIMEOUT` — never a structure. A heading `level` remains
+unavailable on this build because no **public** getter exists; rendering it would need a native probe of an
+internal-only member, which this tool deliberately does not reach for.
+

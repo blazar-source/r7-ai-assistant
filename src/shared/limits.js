@@ -141,6 +141,46 @@ export const LIMITS = Object.freeze({
   // escape family, so no needle above this bound is ever published as `ok`.
   findQueryBytes: 256,
   findMatchesMax: 32,
+  // The bounded DOCUMENT-STRUCTURE read (`read_structure`) — the FOURTH Sprint 3 Word tool. It adds
+  // exactly TWO static per-call bounds, and NEITHER is a document READ bound reused from another scope,
+  // because a structure read is not a text read:
+  //   * `structureHeadingsMax` bounds how many heading PARAGRAPHS the tool REPORTS, and it is ALSO the
+  //     count the authored command body extracts INSIDE the editor (one value, so the native work and
+  //     the published report can never disagree about how many texts are owed). An outline can hold
+  //     hundreds of headings, so the tool must bound what it publishes while `counts.headings` still
+  //     carries the primitive's own TOTAL — the model learns "32 of 500" from one call.
+  //   * `structureHeadingBytes` bounds ONE heading TEXT, in UTF-8 bytes. A heading is a TITLE, not a
+  //     paragraph: 256 bytes is 128 Cyrillic or 256 ASCII characters, longer than any realistic heading.
+  //     A heading above it is REFUSED with the closed BYTE_LIMIT, never trimmed: a shortened heading
+  //     presented as the heading is exactly the approximation every read in this module refuses.
+  // THE ARITHMETIC, measured on the SERIALIZED entry the runtime bounds (`AGENT_CEILINGS.toolResultBytes`
+  // = 16384 bytes of `JSON.stringify({ tool, ok, data })`, the shape `stringifyToolResults` measures and
+  // `runtime.js:27-36` replaces with the literal "the tool result could not be serialized" when it is
+  // exceeded). The entry is
+  // `{"tool":"read_structure","ok":true,"data":{"pages":N,"statistics":{…5 fields…},"counts":{…4 fields…},"headings":[{"index":N,"text":T}…],"truncated":B}}`.
+  // At BOTH maxima — 32 headings of 128 Cyrillic characters, with the statistics and counts at the digit
+  // widths a real document makes them — the entry measures EXACTLY 9192 <= 16384, with 7192 bytes of
+  // slack. `truncated:false` is the wider of the two boolean forms, so that figure is the worst one.
+  // Every numeric field is the primitive's own total, so the true maximum is the SAME shape with all ten
+  // of them at `Number.MAX_SAFE_INTEGER`, which adds 123 bytes and nothing else:
+  //   9315 <= 16384, with 7069 bytes of slack.
+  // That is a bound, not a promise about every character: `JSON.stringify` escapes C0 controls, and there
+  // are TWO escape widths, exactly as `find_text` documents. An all-`\n` heading of 256 characters
+  // (TWO-character escapes) at the maxima measures 17364 and CANNOT fit; the same heading made of a C0
+  // control with no short escape (SIX-character `\uXXXX`) measures 50132 and CANNOT fit. The tool
+  // measures the entry it is about to publish and refuses either one with the closed BYTE_LIMIT — it
+  // never shortens a heading to fit.
+  // NO `level` IS PUBLISHED, and that is a MEASURED decision rather than an omission. The vendored copy
+  // of the installed build's SDK source (dev-only, `.local/stage-b-runtime/vendor-word-sdk-all.js`)
+  // carries `GetOutlineLvl` 8 times, and EVERY one of the eight is on an INTERNAL class — the
+  // document-outline manager, the internal paragraph (`s.prototype.GetOutlineLvl`) and the internal
+  // paragraph properties (`Mt`, registered as `AscCommonWord.CParaPr`) — while the two PUBLIC builder
+  // classes this read can reach expose none: `AscBuilder.ApiParagraph` (`G`) has no outline getter at
+  // all, and `AscBuilder.ApiParaPr` (`T`) publishes `SetStyle`/`GetStyle`/`GetJc`/`GetIndLeft`/… but no
+  // `GetOutlineLvl`. A level derived from the style NAME would be a guess (the names are localized), and
+  // one derived from the array index is forbidden, so no `level` field exists to drift from the truth.
+  structureHeadingsMax: 32,
+  structureHeadingBytes: 256,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
