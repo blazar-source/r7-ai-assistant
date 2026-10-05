@@ -15,6 +15,38 @@ import { htmlPlatform } from '../fixtures/html-document.js';
 // supplies is injected here (the fixture stands in for the browser's own DOMParser).
 function bridgeWith(plugin, options) { return createR7Bridge(plugin, { ...options, platform: htmlPlatform() }); }
 
+// A COMMENT-STRIPPED view of an authored command body, for the leg/route classifiers in this file. They are
+// TEXT matches over the stringified body, and these bodies are densely commented, so a body that DROPPED a
+// call while KEEPING the sentence that names it — a route note such as `document.Push(…)` or
+// `Api.CreateTable(…)` next to the code that used to make the call — satisfied the same match as the living
+// call and was classified as the old leg. Stripping line and block comments first makes the matches see CODE
+// only; string literals are preserved, so a `//` or `/*` inside a string is never mistaken for a comment.
+function withoutComments(source) {
+  let out = '';
+  let quote = null;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (quote !== null) {
+      out += char;
+      if (char === '\\') { out += next === undefined ? '' : next; index += 1; }
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') { quote = char; out += char; continue; }
+    if (char === '/' && next === '/') { while (index < source.length && source[index] !== '\n') index += 1; out += '\n'; continue; }
+    if (char === '/' && next === '*') {
+      index += 2;
+      while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) index += 1;
+      index += 1;
+      out += ' ';
+      continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
 function fakeBridge(overrides = {}) {
   const seen = [];
   return { seen, readSelection: async () => ({ text: 'привет', eligible: true, target: 1 }),
@@ -4416,10 +4448,13 @@ test('the body pushes ONE paragraph per block, in order, and never calls the leg
   const blocks = [{ text: 'МАРКЕР-МАРШРУТ-1' }, { text: 'ВТОРОЙ-МАРКЕР' }, { text: 'ТРЕТИЙ-МАРКЕР', heading: 1 }];
   const result = await r.bridge.insertBlocks({ blocks });
   const carried = r.commands[0];
-  // THE SOURCE THE EDITOR EVALUATES: the mutation is a `Push` call, and the route that lands at the
-  // START is not named as a call anywhere in the body.
-  assert.match(carried.source, /\.Push\s*\(/, 'the carried body authors the measured append primitive');
-  assert.equal(/\.InsertContent\s*\(/.test(carried.source), false, 'and never the route that lands at the START');
+  // THE SOURCE THE EDITOR EVALUATES, WITH COMMENTS STRIPPED FIRST: these bodies are heavily commented, so a
+  // match against the RAW carried source could be satisfied by a comment that merely NAMES the route — a
+  // body that dropped the `Push` loop but kept the sentence describing it would have been classified as the
+  // measured append leg all the same. `withoutComments` leaves the CODE only.
+  const authored = withoutComments(carried.source);
+  assert.match(authored, /\.Push\s*\(/, 'the carried body authors the measured append primitive');
+  assert.equal(/\.InsertContent\s*\(/.test(authored), false, 'and never the route that lands at the START');
   // THE BEHAVIOUR: one Push PER BLOCK, in block order, each landing after the last existing paragraph.
   assert.equal(r.doc.calls.pushes, 3, 'ONE Push per block — three blocks are three calls');
   assert.deepEqual(r.doc.calls.pushed, ['МАРКЕР-МАРШРУТ-1', 'ВТОРОЙ-МАРКЕР', 'ТРЕТИЙ-МАРКЕР'], 'in block order');

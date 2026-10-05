@@ -1512,6 +1512,24 @@ a measurement, and every other single value are `APPLY_UNCERTAIN` with the slot 
 pre-insert refusals (an unusable baseline, an unresolvable style) still map to their known classes with
 ZERO `Push`.
 
+**THE RESIDUAL, STATED (review D2 of the insert_blocks chain review, closed as stated-not-fixed).** The two
+names that keep a KNOWN class are
+the body's `CAPABILITY_UNAVAILABLE` (a missing `scope`, a missing primitive, an unusable baseline, an
+unreadable region) and `STYLE_UNAVAILABLE` (an unresolvable `Heading <n>`, republished as `TOOL_ERROR`).
+They are genuine in the sense that a faithful run of the SHIPPED body writes them only before its first
+`Push` — but the phase slot travels **inside the same untrusted answer** the body composes, so a damaged or
+adversarial native that returns `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']` (or `[PRE_INSERT,
+'STYLE_UNAVAILABLE']`) **after** it has already pushed the batch is decoded as a known refusal, and a known
+refusal **RELEASES the slot**: fail-OPEN, whose price is a possible **duplicate on a retry** of a batch that
+is already in the document. Only the shipped body's own **control flow** distinguishes the two cases (the
+refusal is returned before `phase` is assigned `POST_INSERT`), and there is **no in-band fix**: a nonce or
+any challenge would have to cross in `Asc.scope`, which the answering native reads, so it could forge
+whatever the bridge checked. **The recorded remedy for a later hardening round is STRUCTURAL:** split the
+**non-mutating preconditions** — the `Api`/capability checks, the baseline read and the `Heading <n>` style
+resolution — into a dispatch of their own, so every answer from that dispatch is genuinely pre-insert and
+the phase protocol disappears; the cost is one extra native round trip and a ticket that owns two
+dispatches. The residual is stated in `src/plugin/bridge.js` at `preInsertRefusal` as well as here.
+
 **D3 (info) — the decoder's byte assertion was unreachable, and it was DELETED rather than kept as a claim
 nothing can test.** The wire shape is closed to one of two phase literals, four safe integers of at most
 16 JSON characters, and at most `LIMITS.insertBlocksMax` (64) one-character flags, so the widest legal
@@ -1593,10 +1611,14 @@ and another drives a first-`Push` throw (nothing landed, the phase had already t
 
 **TDD, and the exact RED.** The new and re-modelled test blocks were written FIRST and run against
 `1c08827`: `node --test tests/unit/tools-word.test.js` → **tests 161, pass 149, fail 12** (`fail 0` on that
-file before the round), every failure rooted in the one cause — the carried body still called
-`document.InsertContent(…)`, so the doubles built to the measured route recorded ZERO `Push` calls, the
-append went through the wrong primitive, and `AssertionError … expected: /\.Push\s*\(/` named the body's
-missing route. Green on the final tree: **161/161** on that file. The doubles were re-modelled (they now
+file before the round). **ONE CAUSE, TWELVE FAILURES, AND ONE OF THE TWELVE NAMING THE MISSING ROUTE:** the
+carried body still called `document.InsertContent(…)`, so the doubles built to the measured route recorded
+ZERO `Push` calls and the append went through the wrong primitive — but only **one** of the twelve carried
+the `AssertionError … expected: /\.Push\s*\(/` that the earlier wording attributed to all of them (corrected
+here: the regex names the missing route, it did not account for the failures; review D4). The other eleven
+failed on the consequences of the wrong route — the recorded `pushes`/`pushed` order, the `insertContents`
+trap and the paragraph-text assertions. Green on the final tree: **161/161** on that file. The doubles were
+re-modelled (they now
 record `pushes` + `pushed` order and keep an `insertContents` trap, and `prepends` models a start-landing
 mutation), and four new test blocks cover the measured route and call order, a start-landing mutation
 (`TOOL_UNCERTAIN`, slot held, no retry), a partial push failure, and a build that exposes only the legacy
@@ -1662,8 +1684,17 @@ the one `Push` — `Push` appends, so the insert's own table is at index `tables
 read back **cell by cell, in row-major order**, through the symmetric read of the measured fill chain,
 `appended.GetCell(r, c).GetContent().GetElement(0).GetText()`, each compared with `data[r][c]`. That is
 what makes it non-existential: a document that already held the very same texts in **another** table cannot
-stand in for the insert's own cells, and a start-landing mutation (the inserted table at index 0) can only
-produce flags of `0`. Searching the document for the cell texts is exactly the rule that was **rejected**,
+stand in for the insert's own cells. **The bound on that address is stated rather than overstated (review
+D2 of the insert_table review):** it catches a route that lands at the START **only when the document held
+at least one table
+before** — at `tablesBefore ≥ 1` the old table sits at the address and the flags come out `0` — because at
+`tablesBefore = 0` a prepending route also leaves a **fresh** table at index 0, and a fresh table at index 0
+is not distinguishable from the appended one by shape alone (measured: a prepending double with no
+pre-existing table answers `ok`; the earlier claim that a start-landing mutation "can only produce flags of
+`0`" is **corrected here**). That is why the route and its geometry precondition are asserted
+**separately** — the authored-leg classifier pins the body's primitives, and the factory-order/geometry
+precondition pins the created shape — rather than resting on this address. Searching the document for the
+cell texts is exactly the rule that was **rejected**,
 and a test drives the rejection: a document already holding the matrix, plus an insert that creates the
 right number of tables and writes **no** text, is `APPLY_UNCERTAIN` with the slot held.
 
@@ -1683,7 +1714,14 @@ push and one flag in the answer), **16** columns (a wide but real data table; 64
 case, whose 1024 one-character flags measure ~2 KiB against the 65536-byte `editorResultBytes` window),
 **1024** bytes per cell (deliberately not an alias of `insertBlockBytes`: half its width, because a written
 cell is not a written paragraph) and **8192** bytes for the whole payload — `AGENT_CEILINGS.argumentsBytes`,
-because the matrix *is* the action's arguments and JSON escaping never shrinks a text. A **blank cell is
+because the matrix *is* the action's arguments and JSON escaping never shrinks a text. **What that bound does
+NOT cover (review D3 of the insert_table review, informational):** it is the **sum of the cells**, so it is
+weaker than
+`AGENT_CEILINGS.argumentsBytes` by exactly the JSON structure and escaping wrapped around that sum — a
+handler-legal payload whose cells total 8192 bytes can serialize **above** 8192, and the runtime path refuses
+that in `protocol.js` (`assertArgumentsBytes`) while a descriptor executed directly carries the handler's
+bound alone. The same shape exists for `insertBlocksBytes`; both are deliberate per-call bounds, not aliases
+of the serialized one, and the sentence is repeated at the limit in `src/shared/limits.js`. A **blank cell is
 legal** and no lower bound is advertised for a cell text. The non-empty array, the non-empty row and the
 **rectangularity** are deep rules the closed schema vocabulary cannot express (no `minItems`), so they are
 refused by the handler **and** by the bridge as the closed argument class with **nothing dispatched**.
@@ -1793,5 +1831,22 @@ unchanged. The verification gate on the final tree: the focused `tests/unit/tool
 dc10a529f14f7730e1f53826ed789017ed4857640fae1d4c1d056d117e0f14a1`. The `package` test's
 authored-command leg classifier is **unchanged** (the table leg is still recognised by `CreateTable` before
 the `.Push(` branch).
+
+**§14a NATIVE EVIDENCE, recorded after the argument-order fix (the Lead's target run).** Three facts are now
+**measured on the target** rather than pending:
+1. **The fix works end to end for the geometry that failed, and for a large one.** The previously failing
+   case — `{ "data": [["НОВАЯ-Т1", "НОВАЯ-Т2"]] }`, **1 row × 2 columns** — now answers `ok` with the two
+   cells in the document, and a **3 × 5** matrix (**15** cells) also answers `ok`: the MEASURED order holds
+   for non-square matrices, and at a cell count well above the pilot's header table.
+2. **`GetAllTables()` enumerates in the same order `Push` appends — the review's enumeration-order question
+   is SETTLED.** A **2 × 2** insert into an R7-built document that **already held one table** gave
+   **tables 1 → 2**, with the pre-existing table FIRST and the new one SECOND in the markdown readback, and
+   the tool answered `ok`. The baseline address `tablesBefore` therefore names the appended table on the
+   shipped build, which is exactly what the exact-delta contract reads — and it is why the "fresh table at
+   index 0" limit stated above (review D2 of the insert_table review) does not undermine the append case.
+3. **R7 does NOT save the open document to disk.** Each native run's baseline must be read from the **FILE**,
+   never from the previous run's in-memory state: the editor keeps the change in the open window, so a run
+   that assumes the previous run's result was persisted measures against the wrong document. Recorded as an
+   operational fact about the target so a later native round does not re-learn it.
 
 

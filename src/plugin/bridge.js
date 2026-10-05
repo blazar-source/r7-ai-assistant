@@ -581,9 +581,21 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var tablesAfter = allTables.length;
             if (!measured(tablesAfter)) return tableRefusal('CAPABILITY_UNAVAILABLE');
             // THE TABLE THE APPEND ADDED, addressed by the baseline this body ALREADY took before the call:
-            // `Push` appends, so the insert's own table is the one at index `tablesBefore`. Reading any other
-            // table — a start-landing mutation leaves the inserted table at index 0 — can only produce flags
-            // of 0, which is exactly the false success this address exists to prevent.
+            // `Push` appends, so the insert's own table is the one at index `tablesBefore`, and that anchor
+            // is what makes the readback one-to-one over the APPEND instead of a search for cell texts the
+            // document may already hold. WHAT THE ANCHOR CATCHES, HONESTLY BOUNDED — this comment used to
+            // claim that "a start-landing mutation leaves the inserted table at index 0, which can only
+            // produce flags of 0", and THAT IS FALSE AT `tablesBefore = 0` (measured: a prepending double
+            // with no pre-existing table answered `ok`). The true statement is narrower: a prepending route
+            // is caught only when the document held at least ONE table before. At `tablesBefore >= 1` the
+            // prepended table takes index 0, the OLD table sits at `tablesBefore`, its cells cannot equal
+            // the requested matrix and the flags come out 0 — the uncertain class. At `tablesBefore = 0` a
+            // prepending route puts a FRESH table at index 0 too, and a fresh table at index 0 is NOT
+            // distinguishable from the appended one by shape alone. That is exactly why the route and its
+            // geometry precondition are asserted SEPARATELY rather than carried by this address: the
+            // authored-leg classifier pins the primitives this body authors, and the factory-order and
+            // geometry precondition above pins the shape the factory built. Reading any OTHER table would
+            // be the false success this address exists to prevent.
             // The index read goes through a small function ON PURPOSE, and that is an authored-code-audit
             // requirement rather than a style choice: `allTables[tablesBefore]` is a member read with a
             // NON-CONSTANT key, which this module's NAME-based alias analysis treats as a computed value, so
@@ -879,6 +891,27 @@ function exactBlocksDelta(outcome, blocks) {
 // the mutation leaves behind as well: a body that had pushed and then threw answers its refusal with the
 // post-insert phase, so the exact delta is never consulted for a write that may have happened and the slot
 // is never released.
+// THE RESIDUAL, STATED EXACTLY BECAUSE IT CANNOT BE FIXED IN BAND. The two names that reach this function
+// as KNOWN classes are the block body's `CAPABILITY_UNAVAILABLE` (from its own pre-insert half: a missing
+// scope, a missing primitive, an unusable baseline, an unreadable region) and `STYLE_UNAVAILABLE` (an
+// unresolvable `Heading <n>`, which `decodeBlocks` publishes as `TOOL_ERROR`). Both are GENUINE in the
+// sense that a faithful run of the shipped body writes them only before its first `Push` — but the phase
+// slot travels INSIDE the answer the same body composes, and the answering native is the untrusted party:
+// a damaged or adversarial native that returns `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']` (or
+// `[PRE_INSERT, 'STYLE_UNAVAILABLE']`) AFTER it has already pushed the batch is decoded as a known
+// refusal, and a known refusal RELEASES the slot. That is fail-OPEN, and its price is a possible DUPLICATE
+// on a retry of a batch that is already in the document. Only the shipped body's own CONTROL FLOW
+// distinguishes the two cases — the refusal is returned from the pre-insert half, before `phase` is
+// assigned `POST_INSERT`, and the answer is the only channel back — so the distinction is exactly as strong
+// as the assumption that the native runs THIS body.
+// THERE IS NO IN-BAND FIX. A nonce, a signature or any challenge would have to cross in `Asc.scope`, which
+// the answering native reads, so a native able to forge the answer is able to forge whatever value the
+// bridge would check against. THE RECORDED REMEDY FOR A LATER HARDENING ROUND IS STRUCTURAL: split the
+// NON-MUTATING preconditions — the `Api`/capability checks, the baseline read and the `Heading <n>` style
+// resolution — into a dispatch of their own, so that EVERY answer from that dispatch is genuinely
+// pre-insert and the phase protocol disappears; the cost is one extra native round trip and one ticket that
+// owns two dispatches. Until that round, the residual is accepted and stated here rather than silently
+// relied on.
 function preInsertRefusal(error) {
   return error instanceof SafeError &&
     (error.code === ERROR_CODES.CAPABILITY_UNAVAILABLE || error.code === ERROR_CODES.TOOL_ERROR);

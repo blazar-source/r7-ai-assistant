@@ -11,6 +11,38 @@ const root = new URL('../../', import.meta.url);
 const expected = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'config.json', 'index.html', 'panel.js', 'resources/icon.png', 'resources/icon@2x.png', 'styles.css'];
 function hash(data) { return createHash('sha256').update(data).digest('hex'); }
 function walk(node, callback) { if (!node?.type) return; callback(node); for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(child => walk(child, callback)); else if (value && typeof value === 'object') walk(value, callback); }
+// A COMMENT-STRIPPED view of an authored command body, for the leg classifier below. The classifier is a
+// TEXT match, and these bodies are densely commented, so a body that DROPPED a call while KEEPING the
+// sentence that names it — a route note such as `document.Push(…)` or `Api.CreateTable(…)` sitting next to
+// the code that used to make the call — satisfied the very `carried.includes(...)`/regex match the
+// classifier uses to recognise the living call, and was blessed as that leg. Stripping line and block
+// comments first makes the matches see CODE only; string literals are preserved, so a `//` or `/*` inside a
+// string is never mistaken for a comment.
+function withoutComments(source) {
+  let out = '';
+  let quote = null;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (quote !== null) {
+      out += char;
+      if (char === '\\') { out += next === undefined ? '' : next; index += 1; }
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') { quote = char; out += char; continue; }
+    if (char === '/' && next === '/') { while (index < source.length && source[index] !== '\n') index += 1; out += '\n'; continue; }
+    if (char === '/' && next === '*') {
+      index += 2;
+      while (index < source.length && !(source[index] === '*' && source[index + 1] === '/')) index += 1;
+      index += 1;
+      out += ' ';
+      continue;
+    }
+    out += char;
+  }
+  return out;
+}
 
 test('dual build produces byte-identical ZIP STORE/.plugin exact root allowlist with canonical manifest', async () => {
   const a = await buildPlugin({ output: 'dist/task4-package-a' });
@@ -62,31 +94,32 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(body.async, false); assert.equal(body.generator, false);
       assert.equal(node.arguments[1].value, false); assert.equal(node.arguments[2].value, false);
       const carried = source.slice(body.start, body.end);
-      assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(carried), false,
+      const code = withoutComments(carried);
+      assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
-      assert.match(carried, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      if (carried.includes('CreateTable')) {
-        assert.match(carried, /\bscope\b/, 'the table body takes its matrix from the injected command scope');
-        assert.match(carried, /GetAllTables/, 'and reads the document\u2019s own table count around the insert');
-        assert.match(carried, /GetCell/, 'and fills and re-reads every cell through the measured cell chain');
-        assert.equal(carried.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+      assert.match(code, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
+      if (code.includes('CreateTable')) {
+        assert.match(code, /\bscope\b/, 'the table body takes its matrix from the injected command scope');
+        assert.match(code, /GetAllTables/, 'and reads the document\u2019s own table count around the insert');
+        assert.match(code, /GetCell/, 'and fills and re-reads every cell through the measured cell chain');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
         legs.push('table');
-      } else if (carried.includes('.Push(')) {
-        assert.match(carried, /\bscope\b/, 'the append body takes its blocks from the injected command scope');
-        assert.match(carried, /CreateParagraph/, 'and builds each paragraph through the measured factory');
-        assert.match(carried, /GetAllParagraphs/, 'and reads the document\u2019s own counts around the append');
+      } else if (code.includes('.Push(')) {
+        assert.match(code, /\bscope\b/, 'the append body takes its blocks from the injected command scope');
+        assert.match(code, /CreateParagraph/, 'and builds each paragraph through the measured factory');
+        assert.match(code, /GetAllParagraphs/, 'and reads the document\u2019s own counts around the append');
         legs.push('blocks');
-      } else if (carried.includes('.GetAllHeadingParagraphs(')) {
-        assert.match(carried, /\bscope\b/, 'the structure body takes its extraction cap from the injected command scope');
-        assert.match(carried, /GetStatistics/, 'and reads the measured statistics primitive');
+      } else if (code.includes('.GetAllHeadingParagraphs(')) {
+        assert.match(code, /\bscope\b/, 'the structure body takes its extraction cap from the injected command scope');
+        assert.match(code, /GetStatistics/, 'and reads the measured statistics primitive');
         legs.push('structure');
-      } else if (carried.includes('.Search(')) {
-        assert.match(carried, /\bscope\b/, 'the search body takes its needle from the injected command scope');
-        assert.match(carried, /GetText/, 'and reads each match through the measured primitive');
+      } else if (code.includes('.Search(')) {
+        assert.match(code, /\bscope\b/, 'the search body takes its needle from the injected command scope');
+        assert.match(code, /GetText/, 'and reads each match through the measured primitive');
         legs.push('search');
       } else {
-        assert.match(carried, /GetRangeBySelect/, 'and carries the authored document probe');
-        legs.push(carried.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
+        assert.match(code, /GetRangeBySelect/, 'and carries the authored document probe');
+        legs.push(code.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
       }
     }
   });

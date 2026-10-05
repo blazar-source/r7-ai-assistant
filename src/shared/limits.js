@@ -283,7 +283,13 @@ export const LIMITS = Object.freeze({
   //     wrapper serializes with `JSON.stringify`), and JSON escaping never shrinks a text, so the sum of
   //     cell bytes can never EXCEED the serialized arguments the runtime already bounds. The handler
   //     applies the same number, so a descriptor held directly — where no runtime bound runs — is bounded
-  //     too, and the bound can only refuse a call the runtime would also have refused.
+  //     too, and the bound can only refuse a call the runtime would also have refused. THE ENFORCED BOUND IS
+  //     THE SUM OF THE CELLS, NOT THE SERIALIZED SIZE, so it is WEAKER than `AGENT_CEILINGS.argumentsBytes`
+  //     by exactly the JSON structure and escaping wrapped around that sum: a handler-legal payload whose
+  //     cells total 8192 bytes can serialize ABOVE 8192, and the runtime path refuses that in
+  //     `src/agent/protocol.js` (`assertArgumentsBytes`) while a descriptor executed directly carries the
+  //     handler's bound alone. The same shape exists for `insertBlocksBytes`, and it is a deliberate
+  //     per-call bound rather than an alias of the serialized one.
   // A BLANK CELL IS LEGAL and no lower bound is advertised for a cell text: an empty cell is a real table
   // cell, and unlike the non-empty matrix (enforced by the handler and the bridge where `minItems` cannot
   // be advertised) there is nothing for a lower bound to protect.

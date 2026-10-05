@@ -1181,8 +1181,13 @@ export function createWordTools(bridge) {
       // The appended table is addressed by the baseline the body took BEFORE the one `Push` — `Push`
       // appends, so the insert's table is at index `tablesBefore` — which is what makes the check
       // non-existential: a document that already held the same texts in another table cannot stand in for
-      // the insert's own cells, and a table built without `Push` (or a start-landing mutation) can only
-      // produce flags of 0.
+      // the insert's own cells. WHAT THE ADDRESS DOES NOT PROVE, corrected here: it catches a route that
+      // lands at the START only when the document held at least ONE table before — `tablesBefore >= 1` puts
+      // the OLD table at that address, so the flags come out 0 — because at `tablesBefore = 0` a prepending
+      // route also leaves a FRESH table at index 0, which is indistinguishable from the appended one by
+      // shape alone (measured: such a double answers `ok`). The route is therefore asserted SEPARATELY, by
+      // the leg's own primitives and the body's factory-order/geometry precondition, and never by this
+      // address alone.
       //
       // THE SCHEMA is closed. `data` is required — a non-empty 2D array of strings whose SHAPE IS DERIVED
       // FROM THE DATA, which is what "rows, columns and data at once" means: the tool has no separate
