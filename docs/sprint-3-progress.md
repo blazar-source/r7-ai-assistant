@@ -984,10 +984,17 @@ size a default call really returns). The result is `ok({ query, matchCase, count
 with `count` the primitive's **total** and `matches` a bounded array of `{ index, text }`. The enforced
 bound is the **serialized entry** through the module's one `toolResultEntryBytes` (new `findEntryBytes`
 wrapper): the worst realistic call at both maxima measures **9283** bytes against the 16384-byte
-ceiling (7101 of slack); a needle whose every character JSON-escapes to six bytes measures **17731** and
-is the closed `BYTE_LIMIT` — the tool never shortens a match's text silently. The body extracts exactly
-`min(count, limit)` texts **inside the editor**, so a needle matching thousands of ranges never crosses
-thousands of texts, and the decoder refuses any answer with a different number.
+ceiling (7101 of slack), and widening `count` from its 2 digits to the 16 of
+`Number.MAX_SAFE_INTEGER` — which the schema allows, because `count` is the primitive's total, not the
+reported-array length — adds 14 bytes and nothing else, for the true maximum of **9297** with
+`truncated:false` (**7087** of slack) and **9296** with `truncated:true`. What cannot fit is the
+**escape width**, and there are **two** of them, not one: a C0 control with a named short escape
+serializes to the **two** characters `"\n"`, so a 256-character `\n` needle at 32 matches measures
+**17731**; a C0 control with no short escape serializes to the **six**-character `\uXXXX`, so the same
+needle made of U+0001 measures **51523**. Both are the closed `BYTE_LIMIT` — the tool never shortens a
+match's text silently. The body extracts exactly `min(count, limit)` texts **inside the editor**, so a
+needle matching thousands of ranges never crosses thousands of texts, and the decoder refuses any answer
+with a different number.
 
 **Two documented decisions.** `matchCase` defaults to **`false`** — the case-insensitive search is the
 superset of the strict one and mirrors the editor's own Find default — and the **result echoes the
@@ -1013,7 +1020,8 @@ boundary working as designed.
 **Verification.** RED first, honestly counted: on the pre-implementation tree the focused suites ran
 **135 cases / 110 pass / 25 fail**, and every one of the 25 was "the feature is absent"
 (`tools.find(…) === undefined`, `bridge.findText is not a function`, the catalogue assertion for the new
-name) — no test failed for a reason other than the missing tool. Green: focused `135/135`; full suite
+name) — no test failed for a reason other than the missing tool. Green: focused `140/140` (the `135`
+this section first recorded was the RED-era count — §11a re-measures it); full suite
 **728 → 751** with `fail 0`; `node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0);
 `node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
 f7e78518dd2df4ac8499ea54fc16f31e2864c1537553c4d1c756cec561c14352` (re-measured twice on the final
@@ -1025,11 +1033,88 @@ by construction and by test: exactly **one** bridge call (`findText`) and no wri
 `src/agent/*` untouched.
 
 **Unverified natively, and what only the target can prove.** The Lead measured the primitive and the
-`callCommand` carriage of a static body (with the needle **baked into the probe's source**). What the
-host-side suite cannot prove is the **shipped** carriage: that writing `globalThis.Asc.scope` in the
-plugin page is the property the vendor's wrapper reads at dispatch time, that the native return validator
-delivers a `[count, …texts]` array of the length the body built, and that `GetText()` on a real range
-object is a string for **every** match (a single non-string answer refuses the whole search rather than
-reporting a short list). The bundle's SHA is re-pinned above for the usual builder reason
-(`minify: false` keeps a **descriptor body's** comments verbatim); its comment-only difference is not a
-behaviour change.
+`callCommand` carriage of a static body (with the needle **baked into the probe's source**). The shipped
+carriage and the case flag have since been measured on the target — see **11a** below. What the
+host-side suite still cannot prove is listed there in full.
+
+## 11a. `find_text` — the escape arithmetic corrected, the native evidence recorded
+
+Three LOW findings from the independent review of `fa7b2f6`; no limit value moved, no behaviour changed,
+`src/agent/*` untouched.
+
+**Measured, and what changed.** The entry arithmetic was re-derived from the shape the runtime actually
+bounds (`JSON.stringify({ tool: 'find_text', ok: true, data })` through `utf8ByteLength`), not
+re-stated. Two of the three earlier figures survived; one *label* did not, and one figure was missing an
+addend.
+
+| shape (256-byte needle, 32 matches, widest flags) | measured | ceiling |
+| --- | --- | --- |
+| Cyrillic needle, `count = findMatchesMax` (2 digits) | **9283** | 16384, slack **7101** |
+| same, `count = Number.MAX_SAFE_INTEGER` (16 digits), `truncated:false` | **9297** | slack **7087** |
+| same with `truncated:true` (the narrow form) | **9296** | slack 7088 |
+| 256 × `\n` — **two**-character short escapes | **17731** | over by 1347 |
+| 256 × U+0001 — **six**-character `\uXXXX` escapes | **51523** | over by 35139 |
+
+So the corrected claims are two, both about the *description*: (i) `JSON.stringify('\n')` is the **two**
+characters `"\n"`, **not** six — only a C0 control with no short escape (`\u0001` and its family)
+expands to the six characters `\uXXXX`, so 17731 is the **two-character-escape** case and 51523 is the
+true six-character worst case, not 17731; and (ii) the former "worst realistic call = 9283" ignored
+`count`'s own digits, which are part of the entry and are unbounded by the schema (`count` is the
+primitive's total). Corrected in `src/shared/limits.js`, `src/tools/word.js` and
+`tests/unit/tools-word.test.js`; the test now asserts **9297** as the true maximum and **51523** as the
+six-character case, alongside the unchanged 9283 and 17731. **The conclusion is unchanged and remains
+the point**: every one of these entries is refused with the closed `BYTE_LIMIT` by the existing
+measurement, so **no over-ceiling `ok` can be published** — both escape figures are outside the 16384
+ceiling, and the two in-ceiling figures are ceilings *with thousands of bytes of slack*, not tight
+fits.
+
+**Natively measured, on the target (Astra / R7 2026.1.2.1942, shipped build).** The review had listed
+the **shipped** `Asc.scope` carriage and the case flag as unproven, because the earlier native probe had
+baked its needle into the source. Both are now measured with the shipped code path:
+
+* `{"query": "МАРКЕР-ПОИСК", "matchCase": true}` → the panel action line **`find_text: ok`**, and the
+  model answered `КОЛИЧЕСТВО=4|ПЕРВЫЙ_ТЕКСТ=МАРКЕР-ПОИСК`;
+* `{"query": "маркер-поиск", "matchCase": false}` → **`find_text: ok`** with `КОЛИЧЕСТВО=5`.
+
+The document holds **exactly four** case-sensitive and **five** case-insensitive occurrences, and **no
+serialization refusal appears in the captured traffic**. That settles three of the review's unknowns:
+the validated `{query, matchCase, limit}` triple really does reach the body through `Asc.scope`, the
+body's `Search`/`GetText` pair really does work from **inside** a `callCommand` body on the shipped
+build, and the case flag really does select the strict (4) vs the case-insensitive (5) answer.
+
+**Still unmeasured, and each is fail-safe.** Four items from the review's list were not covered by this
+run: the **document order** of the returned matches; a **match text longer than the needle** under
+case-insensitivity; a **256-byte needle** at the primitive; and a **never-answering** editor callback
+(whether it wedges the bridge slot). None of the four can produce a wrong `ok`:
+
+* the **carriage** refuses **before dispatch** if the scope write fails (an absent, non-object, sealed or
+  frozen `Asc` namespace is `CAPABILITY_UNAVAILABLE` ahead of `owned.dispatched`, so the slot is released
+  and nothing reached the editor);
+* the **body's own sentinel** answers `CAPABILITY_UNAVAILABLE` when a primitive it needs is missing, so a
+  body that cannot search does not report a search;
+* an **uninterpretable envelope** — an answer that is not `{ok, count, texts}` with exactly
+  `min(count, limit)` strings — is `known()`, the module's closed tool-error class, never a partial list
+  presented as the result.
+
+**Reporting accuracy, and the one claim that does not reproduce.** The implementer's report claimed
+"focused 140/140"; the review re-measured the focused suite at **135/135** and reconciled the RED count as
+**23 new test blocks plus 2 extended catalogue assertions**, not "25 with three extended". The RED
+reconciliation is right and is recorded as such: the pre-implementation tree carries **99** `test(…)`
+blocks in `tools-word.test.js` and **135** cases in the focused set the RED run counted, so 25 failing
+cases = 23 new blocks + 2 extended catalogue assertions. The **135/135 is the RED-era figure, though, not
+a green-tree measurement**: the focused set that reproduces the implementer's number is
+`bridge-dispatch-api` + `tools-word` + `integration/package`, which measures **140/140** on this final
+tree (16 + 119 + 5). The implementer's 140 was therefore right and the review's 135 undercounts it; both
+figures are recorded here rather than silently reconciled.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js`
+→ **140/140**, `fail 0`; full suite `node --test` → **751**, `pass 751`, `fail 0`;
+`node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` →
+exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+757a465e4c53623aafdefa6f67cbdbffd62c692c37e6f7b7912780e6fdb860e7`, re-measured twice on the final tree
+with the same value. The builder runs with `minify: false`, so the comment text inside the descriptor
+bodies is rebuilt into the bundle and the SHA **moved** from the `fa7b2f6` pin
+`f7e78518dd2df4ac8499ea54fc16f31e2864c1537553c4d1c756cec561c14352`; that difference is comment-only in
+`src/`, and **the non-comment diff of `src/` for this round is empty** (only `//` lines changed in
+`src/shared/limits.js` and `src/tools/word.js`).

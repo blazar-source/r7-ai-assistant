@@ -2670,20 +2670,44 @@ test('find_text advertises the closed bounded schema and states the two bounds i
   const matches = new Array(LIMITS.findMatchesMax).fill(query).map((text, index) => wide(index, text));
   const entry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
     data: { query, matchCase: false, count: LIMITS.findMatchesMax, matches, truncated: false } }));
-  assert.equal(entry, 9283, 'the measured worst case at the advertised maxima');
+  assert.equal(entry, 9283, 'the measured worst realistic case at the advertised maxima');
   assert.ok(entry <= AGENT_CEILINGS.toolResultBytes,
     `${entry} + nothing else <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - entry} bytes of slack`);
+  // `count` is the primitive's TOTAL, so its own digits are part of the entry and the bound must hold
+  // for the widest value the schema can carry, not just for the one a default call returns. Widening it
+  // from 2 digits to the 16 of `Number.MAX_SAFE_INTEGER` adds 14 bytes and nothing else.
+  const widestCount = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
+    data: { query, matchCase: false, count: Number.MAX_SAFE_INTEGER, matches, truncated: false } }));
+  assert.equal(widestCount, 9297, 'the true maximum: count at its widest, every other field widest');
+  assert.ok(widestCount <= AGENT_CEILINGS.toolResultBytes,
+    `${widestCount} <= ${AGENT_CEILINGS.toolResultBytes}, with ${AGENT_CEILINGS.toolResultBytes - widestCount} bytes of slack`);
   assert.doesNotThrow(() => toolResultMessages([{ tool: 'find_text',
     result: { ok: true, data: { query, matchCase: false, count: LIMITS.findMatchesMax, matches, truncated: false } } }]));
-  // The ONE shape that cannot fit even at the maxima: a needle whose every character JSON-escapes to
-  // six bytes (`\n` → `\u000a`). The entry is measured, not guessed, and it is REFUSED — the tool never
-  // shortens a match's text silently. This is the arithmetic the limits module states.
-  const escapedQuery = '\n'.repeat(LIMITS.findQueryBytes);
-  const escapedMatches = new Array(LIMITS.findMatchesMax).fill(escapedQuery).map((text, index) => wide(index, text));
-  const escapedEntry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
-    data: { query: escapedQuery, matchCase: false, count: LIMITS.findMatchesMax, matches: escapedMatches, truncated: false } }));
-  assert.equal(escapedEntry, 17731, 'the escape-worst case, measured');
-  assert.ok(escapedEntry > AGENT_CEILINGS.toolResultBytes, 'and it is outside the per-result ceiling');
+  // What cannot fit is the ESCAPE width, and there are TWO escape widths. A C0 control with a named
+  // short escape (`\n`) serializes to the TWO characters `"\n"` — NOT six — and at the same maxima
+  // measures 17731; a C0 control with no short escape serializes to the SIX-character `\uXXXX` and
+  // measures 51523. Both are measured, not guessed, and both are REFUSED — the tool never shortens a
+  // match's text silently. This is the arithmetic the limits module states.
+  const shortEscapeQuery = '\n'.repeat(LIMITS.findQueryBytes);
+  const shortEscapeMatches = new Array(LIMITS.findMatchesMax).fill(shortEscapeQuery)
+    .map((text, index) => wide(index, text));
+  const shortEscapeEntry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
+    data: { query: shortEscapeQuery, matchCase: false, count: LIMITS.findMatchesMax,
+      matches: shortEscapeMatches, truncated: false } }));
+  assert.equal(shortEscapeEntry, 17731, 'the two-character-escape case, measured');
+  assert.ok(shortEscapeEntry > AGENT_CEILINGS.toolResultBytes,
+    'and it is outside the per-result ceiling');
+  // The TRUE six-byte family: a C0 control whose JSON escape has no short form. `'\u0001'` here is the
+  // real U+0001 character, and `JSON.stringify` emits the six characters `\u0001` for it.
+  const sixEscapeQuery = '\u0001'.repeat(LIMITS.findQueryBytes);
+  const sixEscapeMatches = new Array(LIMITS.findMatchesMax).fill(sixEscapeQuery)
+    .map((text, index) => wide(index, text));
+  const sixEscapeEntry = utf8ByteLength(JSON.stringify({ tool: 'find_text', ok: true,
+    data: { query: sixEscapeQuery, matchCase: false, count: LIMITS.findMatchesMax,
+      matches: sixEscapeMatches, truncated: false } }));
+  assert.equal(sixEscapeEntry, 51523, 'the true six-character-escape worst case, measured');
+  assert.ok(sixEscapeEntry > AGENT_CEILINGS.toolResultBytes,
+    'and it is outside the per-result ceiling, like the two-character-escape case');
 });
 
 test('find_text accepts its closed argument set and rejects everything else at the schema', () => {

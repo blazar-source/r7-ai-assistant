@@ -603,8 +603,12 @@ export function createWordTools(bridge) {
         // `AGENT_CEILINGS.toolResultBytes` (16384) and replaces an entry above it with the model-visible
         // literal "the tool result could not be serialized" — the model would receive NO search result
         // while the action log recorded `ok`. The worst REALISTIC call at the advertised maxima measures
-        // 9283 bytes (see `LIMITS.findQueryBytes`); a needle whose every character JSON-escapes to six
-        // bytes is the one shape that cannot fit, and it is REFUSED here rather than shortened: a
+        // 9283 bytes (see `LIMITS.findQueryBytes`); widening `count` to `Number.MAX_SAFE_INTEGER` adds 14
+        // bytes of total, for 9297 with `truncated:false` (7087 of slack) and 9296 with `truncated:true`.
+        // What actually cannot fit is the ESCAPE width, and there are two of them: a control character
+        // with a named short escape (`\n`) serializes to the TWO-character `"\n"` and, at a 256-character
+        // needle times 32 matches, measures 17731; a C0 control with no short escape serializes to the
+        // SIX-character `\uXXXX` and measures 51523. Both are REFUSED here rather than shortened: a
         // shortened match text presented as the match would be an approximation this module forbids.
         const entry = findEntryBytes(data);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);

@@ -120,11 +120,25 @@ export const LIMITS = Object.freeze({
   // widest field forms (`matchCase:false` and `truncated:false` are one byte wider than their `true`
   // forms), a Cyrillic needle at the byte maximum whose text is reported for every match measures
   //   EXACTLY 9283 bytes <= 16384, with 7101 bytes of slack.
-  // That is a bound, not a promise about every character: a needle whose every character JSON-escapes to
-  // SIX bytes (`\n` → `\u000a`) at the same maxima measures 17731 and CANNOT fit. The tool measures the
-  // entry it is about to publish and refuses that one with the closed BYTE_LIMIT — it never shortens a
-  // match's text silently, because a shortened match presented as the match is exactly the kind of
-  // approximation the other reads refuse.
+  // That figure is the widest REALISTIC call, and it still ignores `count`'s own digits: `count` is the
+  // primitive's TOTAL, not the reported-array length, so it can be any safe integer. Widening it from
+  // the 2 digits of `count = findMatchesMax` to the 16 digits of `Number.MAX_SAFE_INTEGER` adds 14 bytes
+  // and nothing else changes, which is the true maximum this schema can carry:
+  //   9297 bytes <= 16384 (with `truncated:false`, the widest field form) — 7087 bytes of slack;
+  //   9296 with `truncated:true` (the narrow form, `truncated: count > matches.length`).
+  // A count that large is never told apart by the entry: 51 bytes of headroom separate the two forms.
+  // That is a bound, not a promise about every character: the width of a character's JSON ESCAPE is what
+  // breaks it, and there are TWO escape widths, not one. `JSON.stringify` emits a C0 control with a
+  // named short escape (or `\b`, `\f`, `\n`, `\r`, `\t`) as a TWO-character escape — `JSON.stringify('\n')`
+  // is the two characters `"\n"`, not six — while a control with no short form escapes as SIX characters,
+  // `\uXXXX`. Both at the same maxima, measured:
+  //   a 256-character needle of `\n` (two-character escapes) measures 17731 and CANNOT fit;
+  //   a 256-character needle of a C0 control with no short escape (six-character `\uXXXX`) measures 51523
+  //   and CANNOT fit.
+  // The tool measures the entry it is about to publish and refuses either one with the closed
+  // BYTE_LIMIT — it never shortens a match's text silently, because a shortened match presented as the
+  // match is exactly the kind of approximation the other reads refuse. The two figures bracket the whole
+  // escape family, so no needle above this bound is ever published as `ok`.
   findQueryBytes: 256,
   findMatchesMax: 32,
   requestBytes: 98304,
