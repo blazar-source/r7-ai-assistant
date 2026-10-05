@@ -3128,14 +3128,38 @@ document's OWN four counts plus the exact data URL located in the document's own
   `GetAllImages = function () { … this.Document.GetAllDrawingObjects() … GraphicObj instanceof
   AscFormat.CImageShape && E.push(new jt(…)) }` shows the image list is the `CImageShape` **filter** of the
   drawing list, so the two are read SEPARATELY and both must grow — neither is redundant.
-* `doc.ToMarkdown(true, true)` rendered `![](data:image/png;base64,…)` holding the **EXACT** data URL. The
+* `doc.ToMarkdown(true, false)` rendered `![](data:image/png;base64,…)` holding the **EXACT** data URL. The
   vendored signature is `ToMarkdown(U, S, E, V)` with `ht = { convertType: "markdown", htmlHeadings: U || false,
   base64img: S || false, … }`, and the converter's arm is
   `case para_Drawing: if (va.IsPicture()) { if (S === "markdown") ui += Fr.Config.base64img ? "![](" +
-  va.GraphicObj.getBase64Img() + ")" : "![](" + va.GraphicObj.getImageUrl() + ")" …` — **both** arguments are
-  required, because the FIRST selects the markdown converter and the SECOND (`base64img`) is the ONLY arm that
-  embeds the data URL. The markdown export is NOT entity-escaped (unlike `ToHtml`), which is why the data URL
-  survives verbatim and why the HTML export is authored nowhere on this leg.
+  va.GraphicObj.getBase64Img() + ")" : "![](" + va.GraphicObj.getImageUrl() + ")" …`. **THE TWO POSITIONS WERE
+  RE-MEASURED AND THE FIRST READING OF THEM WAS WRONG** (it claimed *both* arguments had to be true). The
+  measurement was taken on the target (Astra / R7 2026.1.2.1942) **inside a `callCommand` body**, on a document
+  the probe itself had just inserted the image into — so the image was definitely present — and each row is the
+  export's own character length, the index the `](<dataUrl>` needle was found at, and whether the base64 payload
+  was present at all:
+
+  | call | length | needle | base64 |
+  | --- | --- | --- | --- |
+  | `ToMarkdown()` | 341 | 148 | present ✓ |
+  | `ToMarkdown(false, false)` | 341 | 148 | present ✓ |
+  | `ToMarkdown(false, true)` | 151 | −1 | **ABSENT ✗** |
+  | `ToMarkdown(true, false)` | 361 | 168 | present ✓ |
+  | `ToMarkdown(true, true)` | 171 | −1 | **ABSENT ✗** |
+  | `ToMarkdown(true)` | 361 | 168 | present ✓ |
+  | `ToMarkdown(false)` | 341 | 148 | present ✓ |
+
+  **THE FIRST PARAMETER IS THE HEADING-MARKUP FLAG** (`true` gives the longer export — 361 against 341 — on every
+  row that holds the image) and **THE SECOND PARAMETER, WHEN TRUTHY, DISABLES THE EMBEDDED BASE64 IMAGE** — the
+  opposite of what the leg's comment originally claimed. **THE WORKING FORMS ARE `ToMarkdown(true)` AND
+  `ToMarkdown(true, false)`**, and `ToMarkdown(true, false)` is what the bridge body asks for. **A TRUTHY SECOND
+  ARGUMENT MAKES THIS LEG'S PROOF IMPOSSIBLE**: the export then holds `![](<the image's URL>)`, the `](<dataUrl>`
+  needle is found zero times, and a write that **SUCCEEDED** is reported as the uncertain class — which is exactly
+  the false `insert_image: uncertain (TOOL_UNCERTAIN)` a 4×4 PNG append produced while the independent readback
+  proved paragraphs 3 → 4, `GetAllImages()` 0 → 1 and `GetAllDrawingObjects()` 0 → 1. This table is a durable
+  platform fact for **every** future image/export leg; the same table is recorded at `readMarkdown` in
+  `src/plugin/bridge.js`, where the form is chosen. The markdown export is NOT entity-escaped (unlike `ToHtml`),
+  which is why the data URL survives verbatim and why the HTML export is authored nowhere on this leg.
 * The pushed paragraph's own element readback was a single element of class `run` with **EMPTY** text. **THAT IS
   NOT AN IMAGE PROOF** and this leg builds none on it: a run with empty text is what a drawing of any other kind
   would leave behind too. What it supplies instead is the text leg of each form — the created paragraph really
@@ -3202,9 +3226,9 @@ the image branch is placed FIRST on purpose: this body authors NEITHER `.Push(` 
 `GetAllParagraphs`, so without its own branch it would have been blessed as the read-only CAPABILITY probe.
 `src/agent/*` is untouched and no dynamic execution was added to `src/`.
 
-**What only a native run can settle.** (1) That the real `ToMarkdown(true, true)` export embeds
+**What only a native run can settle.** (1) That the real `ToMarkdown(true, false)` export embeds
 `getBase64Img()` as the EXACT string that was handed to `Api.CreateImage` — the needle is a byte-for-byte
-comparison, and the vendored arm is the evidence, not a native run of it. (2) That a document already holding an
+comparison, and the measured table above is the evidence, not a native run of it. (2) That a document already holding an
 IDENTICAL picture really keeps the pre-count at one (the pre-count gate is what stops a pre-existing image from
 carrying the proof; a second identical image makes the needle count two, which also settles uncertain rather than
 claiming success). (3) That `GetAllImages()` and `GetAllDrawingObjects()` really move TOGETHER on the target for
@@ -3213,3 +3237,18 @@ can only cost a false `TOOL_UNCERTAIN` with the slot held, never a false `ok`. (
 accepts the two dimensions as PIXELS of the requested size. (5) That the `Asc.scope` parameter carriage delivers
 `{ dataUrl, widthPx, heightPx, paragraph, append, markdownMax }` to an editor that has `callCommand` — the same
 carriage every command leg of this sprint already uses.
+
+**Amendment: the markdown export's argument form (native-only correction).** A target run reported
+`insert_image: uncertain (TOOL_UNCERTAIN)` for a 4×4 PNG append whose independent document readback PROVED the
+write had succeeded (paragraphs 3 → 4, `GetAllImages()` 0 → 1, `GetAllDrawingObjects()` 0 → 1, and the markdown
+holding the exact data URL). The body was calling `ToMarkdown(true, true)` on the false assumption stated above
+that **both** arguments had to be true. The re-measured table recorded in the bullet above shows the truth: the
+FIRST position is the heading-markup flag and the SECOND, **when truthy, REMOVES** the embedded base64 image. The
+body now asks for `ToMarkdown(true, false)` — the measured form. The unit double renders the image data ONLY for
+that form and an image-less export for a truthy second argument, so the retired form can no longer pass, and the
+test `bridge insertImage passes the markdown export the MEASURED argument list: a truthy second position drops
+the image` asserts the exact argument list of BOTH reads (the pre-write baseline and the post-write proof) as
+`[true, false]`. Nothing else about the leg changed: the closed schema and its bounds, both forms, the exact
+proof (`GetAllImages` +1 AND `GetAllDrawingObjects` +1 AND the request's own paragraph delta AND the exact data
+URL needle present exactly once after and absent before), the phase protocol, the closed failure classes, the
+zero-write pre-insert refusals, the export size bound and the result bound are all as they were.

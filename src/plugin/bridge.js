@@ -1815,13 +1815,17 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       //     `GetAllImages = function () { … this.Document.GetAllDrawingObjects() … GraphicObj instanceof
       //     AscFormat.CImageShape && E.push(new jt(…)) }` shows the image list is the `CImageShape` FILTER of
       //     the drawing list, so the two are read SEPARATELY and both must grow;
-      //   * `document.ToMarkdown(true, true)` rendered `![](data:image/png;base64,…)` holding the EXACT data
+      //   * `document.ToMarkdown(true, false)` rendered `![](data:image/png;base64,…)` holding the EXACT data
       //     URL. The vendored signature is `ToMarkdown(U, S, E, V)` with `ht = { convertType: 'markdown',
       //     htmlHeadings: U || false, base64img: S || false, demoteHeadings: E || false, renderHTMLTags:
       //     V || false }`, and the converter's arm is `case para_Drawing: if (va.IsPicture()) { if (S ===
       //     'markdown') ui += Fr.Config.base64img ? '![](' + va.GraphicObj.getBase64Img() + ')' : '![](' +
-      //     va.GraphicObj.getImageUrl() + ')' …` — so BOTH arguments are REQUIRED: the first selects the
-      //     markdown converter and the second (`base64img`) is the ONLY arm that embeds the data URL;
+      //     va.GraphicObj.getImageUrl() + ')' …`. THE TWO POSITIONS WERE RE-MEASURED and they are NOT what this
+      //     body first assumed: the FIRST is the heading-markup flag, and the SECOND, WHEN TRUTHY, REMOVES the
+      //     embedded base64 image (`ToMarkdown(true, true)` came back 171 characters long with NO base64 at all,
+      //     while `ToMarkdown(true, false)` came back 361 with the data URL). A truthy second argument
+      //     therefore makes this leg's needle proof IMPOSSIBLE; the full measured table is stated at
+      //     `readMarkdown` below, which is the ONE place the form is chosen;
       //   * the pushed paragraph's own element readback was a single element of class `run` with EMPTY text.
       //     THAT IS NOT AN IMAGE PROOF and this body builds none on it: a run with empty text is what a drawing
       //     of any other kind would leave behind too. What it supplies instead is the text leg of each form —
@@ -1923,13 +1927,38 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (at < 1) return 0;
             return export_.indexOf(needle, at + needle.length) < 0 ? 1 : 2;
           }
-          // THE DOCUMENT'S OWN MARKDOWN EXPORT, in the BASE64 form the data URL requires, bounded by the
-          // ceiling the caller composed (`markdownMax`). `assertByteLimit` is NOT reached for here: this body
-          // reads no module binding at all (the native evaluates it where none exists), so the ceiling is
+          // THE DOCUMENT'S OWN MARKDOWN EXPORT, in the MEASURED form that EMBEDS the base64 image, bounded by
+          // the ceiling the caller composed (`markdownMax`). `assertByteLimit` is NOT reached for here: this
+          // body reads no module binding at all (the native evaluates it where none exists), so the ceiling is
           // applied with its own byte count, exactly as the read path's helpers do.
+          //
+          // THE ARGUMENT TABLE, MEASURED ON THE TARGET (Astra / R7 2026.1.2.1942) inside a `callCommand` body,
+          // on a document the probe itself had just inserted the image into so the image was definitely
+          // present. Each row is the export's own character length, the index the `](<dataUrl>` needle was
+          // found at, and whether the base64 payload was present at all:
+          //   ToMarkdown()             length 341, needle 148, base64 present  ✓
+          //   ToMarkdown(false,false)  length 341, needle 148, base64 present  ✓
+          //   ToMarkdown(false,true)   length 151, needle  -1, base64 ABSENT   ✗
+          //   ToMarkdown(true,false)   length 361, needle 168, base64 present  ✓   ← the form this body asks for
+          //   ToMarkdown(true,true)    length 171, needle  -1, base64 ABSENT   ✗
+          //   ToMarkdown(true)         length 361, needle 168, base64 present  ✓
+          //   ToMarkdown(false)        length 341, needle 148, base64 present  ✓
+          // SO THE TWO POSITIONS MEAN: the FIRST is the HEADING-MARKUP flag (`true` gives the longer export —
+          // 361 against 341 — on every row that holds the image), and the SECOND, WHEN TRUTHY, DISABLES the
+          // embedded base64 image. The vendored signature is `ToMarkdown(U, S, E, V)` with `ht = { convertType:
+          // 'markdown', htmlHeadings: U || false, base64img: S || false, demoteHeadings: E || false,
+          // renderHTMLTags: V || false }` and the converter's arm is `case para_Drawing: if (va.IsPicture()) {
+          // if (S === 'markdown') ui += Fr.Config.base64img ? '![](' + va.GraphicObj.getBase64Img() + ')' :
+          // '![](' + va.GraphicObj.getImageUrl() + ')' …` — a FALSY `base64img` takes the arm that embeds the
+          // data URL, while a TRUTHY one renders the image's own URL instead.
+          // WARNING: A TRUTHY SECOND ARGUMENT REMOVES THE BASE64 IMAGE AND MAKES THIS LEG'S PROOF IMPOSSIBLE —
+          // the export then holds `![](<the image's URL>)`, the needle below is found ZERO times, and a write
+          // that SUCCEEDED is reported as the uncertain class. The retired `ToMarkdown(true, true)` did exactly
+          // that on the false assumption that BOTH arguments had to be true; `ToMarkdown(true, false)` is the
+          // measured form and `ToMarkdown(true)` is its one-argument equivalent.
           function readMarkdown(document, max) {
             if (typeof document.ToMarkdown !== 'function') return null;
-            var exported = document.ToMarkdown(true, true);
+            var exported = document.ToMarkdown(true, false);
             if (typeof exported !== 'string') return null;
             var bytes = 0;
             for (var index = 0; index < exported.length; index += 1) {
@@ -4165,8 +4194,10 @@ export function createR7Bridge(plugin, {
           // probe could establish. What it does instead is the subject of the body's own comment: the
           // document's own image list, drawing list, paragraph count and addressed text are read BEFORE the
           // ONE `AddDrawing` (or the ONE `Push`), the document's own markdown export is read on BOTH sides of
-          // that write through `ToMarkdown(true, true)` — the BASE64 form, the only arm that embeds the data
-          // URL — and the outcome is the request's own form delta plus the needle that export holds. THERE IS
+          // that write through `ToMarkdown(true, false)` — the MEASURED form: the first position is the
+          // heading-markup flag and the second, WHEN TRUTHY, REMOVES the embedded base64 image (so the retired
+          // `ToMarkdown(true, true)` rendered the image's URL and made the data URL needle unfindable) — and the
+          // outcome is the request's own form delta plus the needle that export holds. THERE IS
           // NO ELEMENT READBACK ON THIS LEG: the pushed paragraph's own element was measured as a single `run`
           // with EMPTY text, which is NOT an image proof, so this leg builds none on it.
           // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a

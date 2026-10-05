@@ -160,10 +160,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // `CImageShape` FILTER of `GetAllDrawingObjects`, so the two are independent evidence), the paragraph
   // count must move by the request's own form delta, and the document's own `ToMarkdown` export must hold
   // `](` immediately followed by the EXACT requested data URL — which is why this body must ask for the
-  // BASE64 form (`ToMarkdown(false, true)`): the default form embeds the image's URL instead and could never
-  // hold the needle. `ToHtml` is AUTHORED NOWHERE: that export is entity-escaped, so the data URL could not
-  // appear in it verbatim. The legacy whole-array insert primitive — measured to land at the START and to
-  // replace existing text under a selection — is absent too.
+  // MEASURED form (`ToMarkdown(true, false)`): the FIRST position is the heading-markup flag and the SECOND,
+  // when TRUTHY, REMOVES the embedded base64 image (the retired `ToMarkdown(true, true)` came back 171
+  // characters long with no base64 at all, while `ToMarkdown(true, false)` came back 361 with it), so a truthy
+  // second argument could never hold the needle. `ToHtml` is AUTHORED NOWHERE: that export is entity-escaped,
+  // so the data URL could not appear in it verbatim. The legacy whole-array insert primitive — measured to land
+  // at the START and to replace existing text under a selection — is absent too.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {

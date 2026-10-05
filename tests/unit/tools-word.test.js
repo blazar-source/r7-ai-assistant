@@ -9747,12 +9747,14 @@ test('the replace body is self-contained: it answers the measured shapes in a fr
 //     image list is a FILTER of the drawing list, so the two grow together and neither is redundant;
 //   * the pushed paragraph's own element readback was a single element of class `run` with EMPTY text, so the
 //     PER-ELEMENT CLASS IS NOT AN IMAGE PROOF and this leg does not build one on it;
-//   * `doc.ToMarkdown(false, true)` renders `![](` + the EXACT data URL + `)` — the vendored converter's
+//   * `doc.ToMarkdown(true, false)` renders `![](` + the EXACT data URL + `)` — the vendored converter's
 //     `case para_Drawing: if (va.IsPicture()) { if (S === 'markdown') ui += Fr.Config.base64img ? '![](' +
-//     va.GraphicObj.getBase64Img() + ')' : '![](' + va.GraphicObj.getImageUrl() + ')' …` — so the proof MUST
-//     ask for the BASE64 form (`base64img = true`); the default form embeds the image's URL instead and no
-//     data URL would ever appear. The markdown export is NOT entity-escaped (unlike `ToHtml`), which is
-//     exactly why the data URL is usable as a needle at all:
+//     va.GraphicObj.getBase64Img() + ')' : '![](' + va.GraphicObj.getImageUrl() + ')' …` — and the ARGUMENT
+//     TABLE was re-measured on the target: the FIRST position is the heading-markup flag and the SECOND, WHEN
+//     TRUTHY, REMOVES the embedded base64 image (`ToMarkdown(true, true)` came back 171 characters with no
+//     base64 at all, while `ToMarkdown(true, false)` came back 361 with it), so the proof must ask for the form
+//     with a FALSY second argument and a truthy one makes the needle unfindable. The markdown export is NOT
+//     entity-escaped (unlike `ToHtml`), which is exactly why the data URL is usable as a needle at all:
 //   * THE NEEDLE IS `](<dataUrl>` — the two characters that CLOSE the markdown image's `![` prefix, then the
 //     exact data URL. It is located by `indexOf`/`lastIndexOf`/`slice` comparisons, never by a dynamic
 //     `RegExp` (this module's authored-code audit forbids a computed pattern).
@@ -9826,6 +9828,10 @@ function imageProof(overrides = {}) {
 // and a test that faults one of them faults a count the body must notice.
 function imageDocument(options = {}) {
   const state = { drawings: 0, pushes: 0, created: 0, markdowns: 0 };
+  // EVERY argument list the body hands the export is RECORDED, so a test can pin the FORM itself rather than
+  // only its effect: the double below renders the base64 arm ONLY for the measured form, and this log is what
+  // turns "the export happened to hold the image" into "the body asked for the form that embeds it".
+  const markdownArgs = [];
   const doubles = (options.texts ?? ['первый абзац', 'второй абзац', 'третий абзац'])
     .map(text => ({ text, content: [{ kind: 'marker' }], installed: true }));
   function pictures() { return doubles.reduce((total, item) => total + item.content.filter(entry => entry.kind === 'image').length, 0); }
@@ -9833,6 +9839,25 @@ function imageDocument(options = {}) {
     if (options.drawingsThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
     return pictures();
   }
+  // THE TWO ARMS OF THE MEASURED TABLE, each one BODY of its own so the two bound faults below can be applied
+  // to whichever arm the body asks for: the BASE64 arm (the requested image embedded as its exact data URL) and
+  // the IMAGE-LESS arm the second position selects (the image rendered as its own URL, + `[](image.png)`).
+  function markdownBase64() {
+    return doubles.map(item => {
+      const runs = item.content.filter(entry => entry.kind === 'image')
+        .map(entry => '![](' + entry.dataUrl + ')').join('');
+      return item.text + runs;
+    }).join('\n');
+  }
+  function markdownImageUrl() {
+    return doubles.map(item => {
+      const runs = item.content.filter(entry => entry.kind === 'image')
+        .map(() => '[](image.png)').join('');
+      return item.text + runs;
+    }).join('\n');
+  }
+  // THE BASE64 ARM, as the model's default read of one arm rather than a second call path: the argument list
+  // still decides which arm is rendered (in `ToMarkdown` below), and this one is what the body must ask for.
   function markdown() {
     state.markdowns += 1;
     if (options.markdownThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
@@ -9840,11 +9865,7 @@ function imageDocument(options = {}) {
     // the write (`markdownPad`), and one that only becomes over the ceiling after it (`markdownAfterPad`) —
     // the second read is the one a real growing document leaves behind.
     if (state.markdowns > 1 && options.markdownAfterPad !== undefined) return options.markdownAfterPad;
-    const body = doubles.map(item => {
-      const runs = item.content.filter(entry => entry.kind === 'image')
-        .map(entry => '![](' + entry.dataUrl + ')').join('');
-      return item.text + runs;
-    }).join('\n');
+    const body = markdownBase64();
     return options.markdownPad === undefined ? body : options.markdownPad + body;
   }
   function pictureFor(dataUrl) { return { kind: 'image', classType: options.classType ?? 'image', dataUrl }; }
@@ -9882,14 +9903,38 @@ function imageDocument(options = {}) {
       const size = drawingCount();
       return new Array(options.imagesFault === undefined ? size : options.imagesFault).fill(null);
     },
-    // THE BASE64 ARM IS GATED ON BOTH ARGUMENTS, exactly as the vendored converter gates it: the first selects
-    // the markdown converter and the second is `base64img`. A build that takes only the second (or neither)
-    // renders the image's URL instead, which is the shape this tool cannot prove.
-    ToMarkdown(a, b) { return options.markdownIgnoresBase64 !== true && a === true && b === true ? markdown() : '[](image.png)'; },
+    // THE MEASURED ARGUMENT TABLE, MODELLED AS MEASURED — and NOT as the code once assumed:
+    //   `ToMarkdown()`            embeds the base64 image ✓   (`ToMarkdown(false, false)`, `(true, false)` and
+    //   `ToMarkdown(true)` too) — the FIRST position is the heading-markup flag and the SECOND position, when
+    //   TRUTHY, REMOVES the embedded base64 image (`base64img: S || false` in the vendored signature
+    //   `ToMarkdown(U, S, E, V)`; the converter then renders `![](` + the image's URL + `)` instead).
+    // So the image data comes back ONLY for `htmlHeadings === true` with `base64img` falsy — the form the body
+    // must ask for — and EVERY truthy second argument (including the retired `ToMarkdown(true, true)`) returns
+    // an image-less export. That is the regression this double exists to catch: the old form makes the proof
+    // impossible and must fail a test rather than ship a false `TOOL_UNCERTAIN`.
+    ToMarkdown(a, b) {
+      markdownArgs.push(Array.prototype.slice.call(arguments));
+      state.markdowns += 1;
+      if (options.markdownThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      // THE EXPORT'S OWN TWO BOUND FAULTS, applied to whichever arm the argument list selects, so an
+      // over-bound export stays over-bound on the form that was actually requested.
+      if (state.markdowns > 1 && options.markdownAfterPad !== undefined) return options.markdownAfterPad;
+      const unpadded = options.markdownPad === undefined;
+      const base64 = markdownBase64();
+      const imageUrl = markdownImageUrl();
+      // A BUILD THAT IGNORES `base64img`: it renders the image's URL on EVERY argument list, and the bound
+      // faults still measure the form it actually rendered.
+      if (options.markdownIgnoresBase64 === true) return unpadded ? imageUrl : options.markdownPad + imageUrl;
+      // THE MEASURED TABLE: the image data comes back ONLY for the BASE64 arm — a truthy second argument
+      // REMOVES it — and either arm is still bounded by the same padding when the fault asks for that.
+      const body = a === true && !b ? base64 : imageUrl;
+      return unpadded ? body : options.markdownPad + body;
+    },
     InsertContent() { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); }
   };
   return {
     state,
+    markdownArgs,
     doubles,
     document,
     itemAt(position) { return paragraphAt(doubles, position); },
@@ -10319,10 +10364,12 @@ test('bridge insertImage dispatches ONE command, carries the request as DATA and
     paragraphsBefore: 3, paragraphsAfter: 4, appended: true, textBeforeChars: 0, textAfterChars: 0,
     textEmpty: true, textUnchanged: false, imageAppended: true, drawingAppended: true,
     markdownBeforeChars: 38, markdownNeedle: true });
-  // THE MARKDOWN READ ASKS FOR THE BASE64 FORM, which is the ONLY form that embeds the data URL: the default
-  // form embeds the image's URL instead, so no data URL needle could ever be found.
-  assert.match(withoutComments(r.commands[0].source), /ToMarkdown\(\s*true\s*,\s*true\s*\)/,
-    'the export is asked for the base64 form the vendored converter gates the data URL on');
+  // THE MARKDOWN READ ASKS FOR THE MEASURED FORM: the FIRST position is the heading-markup flag and the SECOND
+  // position, when TRUTHY, REMOVES the embedded base64 image (`base64img` in the vendored signature
+  // `ToMarkdown(U, S, E, V)`), so the body must hand the second position a FALSY value — the retired
+  // `ToMarkdown(true, true)` renders `![](` + the image's URL + `)` and no data URL needle could ever be found.
+  assert.match(withoutComments(r.commands[0].source), /ToMarkdown\(\s*true\s*,\s*false\s*\)/,
+    'the export is asked for the form the measured table says embeds the data URL: htmlHeadings true, base64img falsy');
   // THE SAME ROUTE ON A DOCUMENT THAT ALREADY HOLDS A DRAWING moves both counts by exactly one.
   const loaded = imageRig({ text: undefined, namespace: { scope: imageAppendScope() } });
   // The rig's default document has none; the body's own delta is what is pinned above.
@@ -10334,6 +10381,42 @@ test('bridge insertImage dispatches ONE command, carries the request as DATA and
     append: true, paragraph: null });
   assert.equal(unproven.code, 'APPLY_UNCERTAIN');
   assert.equal(defaultForm.bridge.getState().busy, true);
+});
+
+test('bridge insertImage passes the markdown export the MEASURED argument list: a truthy second position drops the image', async () => {
+  // THE PLATFORM FACT THIS TEST PINS, measured on the target (Astra / R7 2026.1.2.1942) INSIDE a `callCommand`
+  // body and on a document the probe had just inserted the image into, so the image was definitely present:
+  //   ToMarkdown()            length 341, needle  148, base64 present ✓
+  //   ToMarkdown(false,false) length 341, needle  148, base64 present ✓
+  //   ToMarkdown(false,true)  length 151, needle   -1, base64 ABSENT  ✗
+  //   ToMarkdown(true,false)  length 361, needle  168, base64 present ✓
+  //   ToMarkdown(true,true)   length 171, needle   -1, base64 ABSENT  ✗  ← the retired form
+  //   ToMarkdown(true)        length 361, needle  168, base64 present ✓
+  //   ToMarkdown(false)       length 341, needle  148, base64 present ✓
+  // So the FIRST parameter is the heading-markup flag (true gives the longer export) and the SECOND, when
+  // TRUTHY, DISABLES the embedded base64 image (`base64img` in the vendored `ToMarkdown(U, S, E, V)`), which is
+  // the OPPOSITE of what this body once assumed. A future edit back to the truthy second argument renders the
+  // image's URL instead of the data URL, makes the needle unfindable and would ship a FALSE `TOOL_UNCERTAIN`
+  // over a write that SUCCEEDED — so the double returns an image-less export for that form and this test fails
+  // on the argument LIST, not merely on the outcome.
+  const r = imageRig({ namespace: { scope: imageAppendScope() } });
+  const result = await r.bridge.insertImage({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT,
+    append: true, paragraph: null });
+  assert.equal(result.ok, true);
+  // BOTH READS OF THE ONE TICKET, the pre-write baseline and the post-write proof, ask for the SAME form.
+  assert.equal(r.doc.markdownArgs.length, 2, 'the export is read once BEFORE the write and once after it');
+  for (const args of r.doc.markdownArgs) {
+    assert.deepEqual(args, [true, false],
+      'the export carries htmlHeadings true with a FALSY second position: a truthy one REMOVES the base64 image');
+  }
+  // AND THE SAME FACT ON THE BODY'S OWN SOURCE, so a comment naming the form cannot stand in for the call.
+  assert.match(withoutComments(r.commands[0].source), /ToMarkdown\(\s*true\s*,\s*false\s*\)/,
+    'the body asks for the measured form, and never the retired `ToMarkdown(true, true)`');
+  // THE RETIRED FORM IS NOW PROVABLY FATAL IN THE DOUBLE ITSELF: a direct call with a truthy second argument
+  // answers an export WITHOUT the image data, so no test can pass while the body asks for it.
+  const retired = r.doc.document.ToMarkdown(true, true);
+  assert.equal(retired.includes(IMAGE_URL), false, 'a truthy second position leaves no data URL to find');
+  assert.equal(retired.includes('[](image.png)'), true, 'the image is rendered as its URL instead');
 });
 
 test('bridge insertImage refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
@@ -10431,7 +10514,8 @@ test('the image body is self-contained: it answers the measured shapes in a fres
   assert.match(code, /GetAllImages\(\)/, 'the proof reads the document\u2019s own image count');
   assert.match(code, /GetAllDrawingObjects\(\)/, 'and its own drawing count');
   assert.match(code, /ToMarkdown\(/, 'and the document\u2019s own markdown export');
-  assert.match(code, /ToMarkdown\(true, true\)/, 'in the BASE64 form the data URL requires, and only that form');
+  assert.match(code, /ToMarkdown\(true, false\)/,
+    'in the MEASURED form the data URL requires: htmlHeadings true and a FALSY second position, because a truthy one removes the base64 image');
   assert.equal(code.includes('ToHtml'), false, 'the HTML export is entity-escaped and is authored nowhere');
   assert.equal(code.includes('InsertContent'), false,
     'the legacy whole-array primitive is authored nowhere: it lands at the START (measured)');

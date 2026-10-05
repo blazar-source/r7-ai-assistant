@@ -2614,13 +2614,20 @@ export function createWordTools(bridge) {
     //     text is also what a drawing of any other kind would leave behind. What it DOES supply is the APPEND
     //     form's second leg — the created paragraph really started and finished EMPTY — and the NAMED form's
     //     invariance leg — the addressed paragraph's own text is untouched.
-    //   * `doc.ToMarkdown(false, true)` rendered `![](data:image/png;base64,…)` holding the EXACT data URL,
-    //     which makes it a unique, exact needle. The vendored converter gates that form explicitly — `case
-    //     para_Drawing: if (va.IsPicture()) { if (S === 'markdown') ui += Fr.Config.base64img ? '![](' +
-    //     va.GraphicObj.getBase64Img() + ')' : '![](' + va.GraphicObj.getImageUrl() + ')' …` — so the base64
-    //     arm is REQUIRED and the bridge body asks for it (`ToMarkdown(false, true)`); the default arm embeds
-    //     the image's URL instead and no data URL could ever be found. The markdown export is NOT
-    //     entity-escaped (unlike `ToHtml`), which is why the data URL survives verbatim in it.
+    //   * the document's markdown export in the MEASURED form `doc.ToMarkdown(true, false)` rendered
+    //     `![](data:image/png;base64,…)` holding the EXACT data URL, which makes it a unique, exact needle.
+    //     THE TWO POSITIONS WERE RE-MEASURED ON THE TARGET and they are NOT what this leg first assumed: the
+    //     FIRST is the heading-markup flag (true gives the longer export) and the SECOND, WHEN TRUTHY, REMOVES
+    //     the embedded base64 image — `ToMarkdown(true, true)` came back 171 characters long with NO base64 at
+    //     all, while `ToMarkdown(true, false)` came back 361 with the data URL, and `ToMarkdown(false, true)`
+    //     dropped it the same way. The vendored converter gates that form explicitly — `case para_Drawing: if
+    //     (va.IsPicture()) { if (S === 'markdown') ui += Fr.Config.base64img ? '![](' + va.GraphicObj
+    //     .getBase64Img() + ')' : '![](' + va.GraphicObj.getImageUrl() + ')' …` — so a FALSY `base64img` is the
+    //     arm that embeds the payload and the bridge body asks for exactly that. WARNING: a truthy second
+    //     argument makes this proof IMPOSSIBLE, because the export then holds the image's URL and the needle
+    //     below is found zero times. The markdown export is NOT entity-escaped (unlike `ToHtml`), which is why
+    //     the data URL survives verbatim in it. The full measured table is recorded in
+    //     `readMarkdown` in src/plugin/bridge.js and in docs/sprint-3-progress.md.
     //
     // THE OUTCOME PROOF, one-to-one with those measurements:
     //   1. `GetAllImages()` grew by EXACTLY one, read from the document on both sides of the write.
