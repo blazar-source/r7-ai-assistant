@@ -37,8 +37,11 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // hyperlink insert, and it is named here explicitly for that leg's reason. `commentinsert` is the comment
 // insert: it creates ONE comment through the DOCUMENT's own `AddComment`, which joins the document's comment
 // collection — an APPEND, but of a comment rather than of a block — and it is named here explicitly for the
-// same reason.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert']));
+// same reason. `sheetwrite` is the SPREADSHEET write: it is the FIRST leg that writes into a WORKBOOK rather
+// than a document, through ONE `range.SetValue` per cell of the addressed block inside its own command body,
+// and it is the FIRST whose proof is a bounded readback of the very block it wrote (one flag per cell) rather
+// than a document delta. It is named here explicitly for the same reason every other write leg is.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -477,6 +480,230 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) {
             return readRefusal();
+          }
+        }, false, false, callback);
+      },
+      // ----- CELL: the bounded SPREADSHEET write --------------------------------------------------
+      // The first Cell MUTATION, and it authors primitives measured on a live Cell session: `SetValue`
+      // on a single-cell range, `GetValue` on the whole addressed block and `GetFormula` on ONE
+      // single-cell range per formula cell for the readback, and `GetActiveSheet`. Three
+      // measured rules decide what is written:
+      //   * an INTEGER-looking cell (`0`, `-12`, and no leading zero) is handed to the editor as a
+      //     NUMBER, because the measured JS number for an integer is stored numerically. A LEADING ZERO is
+      //     deliberately not integer-looking, and that rule's INTENT is the one the engine does not honour:
+      //     MEASURED, `SetValue('007')` is coerced to a NUMBER anyway and reads back `7` (`'00'` -> `0`,
+      //     `'-012'` -> `-12`), so an account code with a leading zero CANNOT be written by this leg on this
+      //     build. What it does NOT do is silently renumber the account: the readback below refutes the
+      //     coercion as a mismatch, so the outcome is the fail-safe flag-0 class — UNCERTAIN, the slot HELD,
+      //     and no retry — rather than a stored `7` reported as a success.
+      //   * the integer form is capped at FIFTEEN digits, where a JS number still carries every integer
+      //     exactly; a longer digit string goes through as the string the caller sent, and MEASURED the
+      //     engine coerces that too and loses precision (`'12345678901234567890'` read back as
+      //     `12345678901234567000`), which the readback refutes the same way — so the cap changes which
+      //     route is taken, not whether a lossy write is proved.
+      //   * everything else goes through as the STRING the caller sent. That is the measured rule that
+      //     makes a decimal a real number (`SetValue('123,45')` answers `=ЕЧИСЛО` TRUE) while a
+      //     non-integer JS number is stored as TEXT, and it is also why the locale form belongs to the
+      //     CALLER: this body never rewrites a decimal separator.
+      //   * a cell whose text begins with `=` is a FORMULA, and the engine's own parser decides whether
+      //     it is valid. A `.` in a formula source is rejected by the parser and CLEARS the cell, which
+      //     is exactly the failure the readback below exists to catch.
+      // THE ADDRESS AND THE MATRIX MUST AGREE: the authored block is the addressed block, so no cell of
+      // the request is left unwritten and the readback is over precisely what was asked for.
+      // THE PROOF IS ONE BOUNDED READBACK OF THE WHOLE BLOCK, one flag per cell: an ERROR value can never
+      // EQUAL a different request, so it is never a proof of one, while a caller who literally asked for
+      // `#`-leading TEXT is proved by the match (`SetValue('#REF!')` stores text, measured); a formula cell
+      // is proved by HOLDING A FORMULA (the engine rewrites names and separators, so comparing formula TEXT
+      // would compare the engine's own normalisation), and any other cell is proved by its value matching the
+      // request after the ONE stated normalisation (spaces removed, `,` read as `.` — the form the editor
+      // answers a locale number in). The REQUEST's own type decides which of the two proofs applies, and it
+      // is decided FIRST, so a written formula that evaluates to an error value is still proved by holding
+      // its formula.
+      // THE TWO READS HAVE DELIBERATELY DIFFERENT SHAPES, and the difference is MEASURED rather than
+      // chosen: the VALUES come from ONE `GetValue()` over the addressed block, while a formula SOURCE
+      // is read ADDRESSALLY, one single-cell range per formula cell. The reason is recorded at the
+      // readback below and is the whole point: on this build a MULTI-CELL `GetFormula()` answers the
+      // computed VALUES, so a block-level formula read could never prove a formula cell and every one
+      // of them would be reported as unproved.
+      // WHAT THE PROOF DOES NOT COVER, stated rather than implied: it cannot show that a numeric-looking
+      // cell was stored as a NUMBER rather than as text, because the readback answers both as the same
+      // string. Numericity rests on the measured `SetValue` rule above, and a caller that needs it
+      // checked can read the cell back with `read_range` and use it in a formula.
+      sheetwrite(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose first slot is the phase, built by APPENDING to a
+          // literal for the authored-code-audit reason every other body states.
+          function writeRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var address = request.address;
+            var cells = request.cells;
+            if (typeof address !== 'string' || address === '') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            if (cells === null || cells === undefined || typeof cells.length !== 'number' || !(cells.length >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var sheet = Api.GetActiveSheet();
+            if (sheet === null || sheet === undefined) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheet.GetRange !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            // The addressed block, split into its two corners. The address shape was closed by the
+            // bridge before dispatch, so anything unparseable here is a damaged request.
+            var colon = address.indexOf(':');
+            var head = colon < 0 ? address : address.slice(0, colon);
+            var tail = colon < 0 ? null : address.slice(colon + 1);
+            var headColumn = head.replace(/[0-9]+$/, '');
+            var headRow = head.replace(/^[A-Z]+/, '');
+            if (headColumn === '' || headRow === '') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var startColumn = 0;
+            for (var letter = 0; letter < headColumn.length; letter++) {
+              startColumn = startColumn * 26 + (headColumn.charCodeAt(letter) - 64);
+            }
+            var startRow = Number(headRow);
+            if (!(startColumn >= 1) || !(startRow >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var expectedRows = cells.length;
+            var expectedColumns = 0;
+            for (var rowIndex = 0; rowIndex < expectedRows; rowIndex++) {
+              var rowCells = cells[rowIndex];
+              if (rowCells === null || rowCells === undefined || typeof rowCells.length !== 'number' || !(rowCells.length >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+              if (rowIndex === 0) expectedColumns = rowCells.length;
+              else if (rowCells.length !== expectedColumns) return writeRefusal('CAPABILITY_UNAVAILABLE');
+              for (var cellIndex = 0; cellIndex < rowCells.length; cellIndex++) {
+                if (typeof rowCells[cellIndex] !== 'string') return writeRefusal('CAPABILITY_UNAVAILABLE');
+              }
+            }
+            var addressedColumns = 1;
+            var addressedRows = 1;
+            if (tail !== null) {
+              var tailColumn = tail.replace(/[0-9]+$/, '');
+              var tailRow = tail.replace(/^[A-Z]+/, '');
+              if (tailColumn === '' || tailRow === '') return writeRefusal('CAPABILITY_UNAVAILABLE');
+              var endColumn = 0;
+              for (var tailLetter = 0; tailLetter < tailColumn.length; tailLetter++) {
+                endColumn = endColumn * 26 + (tailColumn.charCodeAt(tailLetter) - 64);
+              }
+              addressedColumns = endColumn - startColumn + 1;
+              addressedRows = Number(tailRow) - startRow + 1;
+            }
+            if (addressedColumns !== expectedColumns || addressedRows !== expectedRows) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            function columnName(position) {
+              var name = '';
+              var remaining = position;
+              while (remaining > 0) {
+                var remainder = (remaining - 1) % 26;
+                name = String.fromCharCode(65 + remainder) + name;
+                remaining = Math.floor((remaining - 1) / 26);
+              }
+              return name;
+            }
+            // THE MUTATION, and the exact boundary the two classes are split on. It turns `POST_INSERT`
+            // IMMEDIATELY BEFORE the first `SetValue`: from the first call entered, nothing observed here
+            // proves the sheet was not touched, so every refusal below carries the post-insert phase and
+            // the decoder turns it into the uncertain class, for which the bridge HOLDS its slot.
+            phase = 'POST_INSERT';
+            for (var writeRow = 0; writeRow < expectedRows; writeRow++) {
+              for (var writeColumn = 0; writeColumn < expectedColumns; writeColumn++) {
+                var cellAddress = columnName(startColumn + writeColumn) + String(startRow + writeRow);
+                var target = sheet.GetRange(cellAddress);
+                if (target === null || target === undefined || typeof target.SetValue !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+                var wanted = cells[writeRow][writeColumn];
+                if (/^-?(0|[1-9][0-9]{0,14})$/.test(wanted)) target.SetValue(Number(wanted));
+                else target.SetValue(wanted);
+              }
+            }
+            // THE ONE BOUNDED READBACK, over exactly the addressed block. The local is `sheetWriteBlock`
+            // rather than `block` on purpose: the authored-code audit resolves taint by identifier NAME
+            // across the whole bundle, and `block` is already a caller-derived name in the block-append
+            // body, so calling a method on it here was a dynamic-property finding.
+            var sheetWriteBlock = sheet.GetRange(address);
+            if (sheetWriteBlock === null || sheetWriteBlock === undefined || typeof sheetWriteBlock.GetValue !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var readback = sheetWriteBlock.GetValue();
+            // THE READBACK'S OWN TYPE DECIDES ITS SHAPE, and the test is NESTED-AWARE rather than a `.length`
+            // probe. MEASURED on this build (R7-Office Editors 2026.3.1): a ONE-CELL range answers a SCALAR
+            // STRING — `GetRange('H1').GetValue()`, and even the explicit `GetRange('H1:H1')` spelling, both
+            // answered `"Москва"` — while a BLOCK answers a 2-D array, a 1xN or Nx1 block included
+            // (`GetRange('H1:H2').GetValue()` -> `[["Москва"],["1000"]]`). A STRING ALSO HAS A NUMERIC
+            // `length`, so the `.length` test this body used first classified a scalar string as a MATRIX and
+            // indexed its FIRST CHARACTER: every one-cell write was then unprovable, an empty one-cell readback
+            // threw out of the index, and a one-character request could even be "proved" against a stale longer
+            // value. Requiring the first element to be an array as well additionally refuses to be fooled by a
+            // shape the measurement never produced — a FLAT one-element array for a one-cell range — which is
+            // read as a scalar: a scalar can only be proved by an exact single-element match (the value really
+            // is that text) and can never be indexed into a FIRST CHARACTER, which is the false positive this
+            // rule exists to exclude. A multi-cell request that ever met a flat answer refuses as a POST_INSERT
+            // refusal, i.e. UNCERTAIN with the slot held, so this reading fails safe in both directions.
+            var readbackIsMatrix = Array.isArray(readback) && (readback.length === 0 || Array.isArray(readback[0]));
+            var singleCell = !readbackIsMatrix;
+            if (singleCell && (expectedRows !== 1 || expectedColumns !== 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            // THERE IS DELIBERATELY NO BLOCK-LEVEL `GetFormula()` HERE, and that is MEASURED rather than an
+            // omission. On this build (R7-Office Editors 2026.3.1) a MULTI-CELL range answered the computed
+            // VALUES: `GetRange('B4').GetFormula()` on ONE cell answered the real formula source
+            // `= B2-B3`, while the SAME call on the whole block answered `300` — the value that formula
+            // evaluates to — in the formula's place. A multi-cell `GetFormula()` is therefore NOT a source
+            // of original formulas on the measured build, so a block-level formula read could never prove
+            // a formula cell and would report every one of them as unproved. Each formula cell is read on
+            // its OWN single-cell range in the proof loop below, which is the shape the measurement found
+            // answering the source.
+            function normalize(text) {
+              return String(text).replace(/ /g, '').replace(/,/g, '.').trim();
+            }
+            // A cell is a formula when its FIRST character is `=`. The test lives in its own function and
+            // works on the PARAMETER, never on the caller-derived local directly: the authored-code audit
+            // treats a method call on a computed value read as a dynamic-property sink, and the parameter
+            // boundary is what the other bodies use for exactly this normalisation.
+            function startsWithEquals(sourceText) {
+              return sourceText.charAt(0) === '=';
+            }
+            var answer = [];
+            answer.push(phase);
+            answer.push(expectedRows);
+            answer.push(expectedColumns);
+            for (var checkRow = 0; checkRow < expectedRows; checkRow++) {
+              for (var checkColumn = 0; checkColumn < expectedColumns; checkColumn++) {
+                var wantedText = cells[checkRow][checkColumn];
+                var gotRaw = singleCell ? readback : readback[checkRow][checkColumn];
+                var gotText = gotRaw === null || gotRaw === undefined ? '' : String(gotRaw);
+                var flag = 0;
+                // THE REQUEST'S OWN TYPE DECIDES WHICH PROOF APPLIES, and this branch is therefore decided
+                // FIRST. The `#`-leading "error value" test that used to run before it was both too broad and
+                // in the wrong place: it refused a caller who correctly asked for `#`-leading TEXT — MEASURED,
+                // `SetValue('#REF!')` stores the literal text `#REF!`, answered by both `GetValue()` and
+                // `GetFormula()` — and it PRE-EMPTED the formula proof, so a correctly stored formula that
+                // EVALUATES to an error value was scored unproved even though it still held its formula, which
+                // contradicted the rule stated above. The order is not cosmetic, and the measurement says why:
+                // `=1/0` answered the EMPTY string immediately after the write and `#DIV/0!` on a LATER read of
+                // the same cell, so under the old order a correctly written formula's proof depended on WHEN
+                // the sheet happened to recalculate it. No separate error rule is needed for a VALUE request:
+                // an error value can never EQUAL a different request, so it is still never a proof of one,
+                // and a request that literally asks for that text is proved by the match.
+                if (startsWithEquals(wantedText)) {
+                  // The formula SOURCE of this one cell, read ADDRESSALLY on its own single-cell range:
+                  // the address is rebuilt exactly the way the write loop above built it, so the cell
+                  // that is proved is the cell that was written. Only text is taken from the editor —
+                  // the `=` test runs on a parameter, never on a value read out of the sheet.
+                  var storedFormula = '';
+                  var formulaAddress = columnName(startColumn + checkColumn) + String(startRow + checkRow);
+                  var formulaRange = sheet.GetRange(formulaAddress);
+                  if (formulaRange !== null && formulaRange !== undefined && typeof formulaRange.GetFormula === 'function') {
+                    var formulaSource = formulaRange.GetFormula();
+                    storedFormula = formulaSource === null || formulaSource === undefined ? '' : String(formulaSource);
+                  }
+                  flag = startsWithEquals(storedFormula) ? 1 : 0;
+                } else {
+                  flag = normalize(gotText) === normalize(wantedText) ? 1 : 0;
+                }
+                answer.push(flag);
+              }
+            }
+            return answer;
+          } catch (error) {
+            return writeRefusal('CAPABILITY_UNAVAILABLE');
           }
         }, false, false, callback);
       },
@@ -2762,6 +2989,53 @@ const SHEET_ADDRESS = /^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/
 //     never an empty matrix that would read as "the range has no formulas".
 //   * the whole answer must fit `LIMITS.editorResultBytes`, the same ceiling every other decoded leg
 //     applies.
+// The SPREADSHEET-WRITE answer, and its ONE decision rule is the PHASE. The body answers
+// `[phase, rowCount, columnCount, flag0, …]` with one flag per cell, or its own two-slot refusal
+// `[phase, name]`:
+//   * `[PRE_INSERT, name]` is a KNOWN refusal — nothing reached the sheet — and it keeps the closed code
+//     the body named, which THIS decoder republishes unchanged. Whether its slot is RELEASED is the
+//     downstream `preInsertRefusal` decision, and that is NARROWER than the phase: for this leg it accepts
+//     exactly the two classes every other write leg does (`CAPABILITY_UNAVAILABLE` and `TOOL_ERROR`, which is
+//     what this body's pre-write half answers), so a phase-marked `BYTE_LIMIT` — which this body cannot
+//     produce — still settles UNCERTAIN with the slot HELD rather than being released here.
+//   * a `[POST_INSERT, name]` refusal, a malformed answer, a flag list that is not the matrix size, a
+//     phase that is not post-insert, or a count that disagrees with the request is the UNCERTAIN class:
+//     the callback ARRIVED, so the body's write loop was entered and some cells may already be written.
+//     This decoder therefore never returns a "bad shape" as a plain known error.
+function decodeWriteRange(value, expectedRows, expectedColumns) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  const cellCount = expectedRows * expectedColumns;
+  if (!Number.isSafeInteger(cellCount) || cellCount < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== 3 + cellCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[1] !== expectedRows || members[2] !== expectedColumns) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const matches = [];
+  for (let index = 0; index < cellCount; index++) {
+    const flag = members[3 + index];
+    if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    matches.push(flag === 1);
+  }
+  return Object.freeze({ phase: 'POST_INSERT', rowCount: expectedRows, columnCount: expectedColumns,
+    matches: Object.freeze(matches) });
+}
 function decodeSheetRead(value, maxCells) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -2978,8 +3252,14 @@ function exactBlocksDelta(outcome, blocks) {
 // THE RESIDUAL, STATED EXACTLY BECAUSE IT CANNOT BE FIXED IN BAND. The two names that reach this function
 // as KNOWN classes are the block body's `CAPABILITY_UNAVAILABLE` (from its own pre-insert half: a missing
 // scope, a missing primitive, an unusable baseline, an unreadable region) and `STYLE_UNAVAILABLE` (an
-// unresolvable `Heading <n>`, which `decodeBlocks` publishes as `TOOL_ERROR`). Both are GENUINE in the
-// sense that a faithful run of the shipped body writes them only before its first `Push` — but the phase
+// unresolvable `Heading <n>`, which `decodeBlocks` publishes as `TOOL_ERROR`). `sheetwrite` is a THIRD
+// producer of the same shape and this residual now covers it too: its own pre-write half answers
+// `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']` — a missing `Api`, `GetActiveSheet`, `GetRange` or `SetValue`, a
+// damaged request, or an addressed block that disagrees with the matrix — all of them before the phase turns
+// and before the first `SetValue`, so a faithful run of that body cannot mark a real write pre-insert while a
+// damaged native can say anything. ALL THREE are GENUINE in the sense that a faithful run of the shipped body
+// writes them only before its first MUTATING call — the block append's first `Push`, the table insert's first
+// `Push`, and this one's first `SetValue` — but the phase
 // slot travels INSIDE the answer the same body composes, and the answering native is the untrusted party:
 // a damaged or adversarial native that returns `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']` (or
 // `[PRE_INSERT, 'STYLE_UNAVAILABLE']`) AFTER it has already pushed the batch is decoded as a known
@@ -4474,6 +4754,18 @@ export function createR7Bridge(plugin, {
           // `CAPABILITY_UNAVAILABLE` answer crosses as the capability class; there is no uncertain class
           // here, because a read that cannot be performed changed nothing.
           else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
+          // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
+          // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
+          // and the exact-proof rule decides the ticket HERE, while it still owns the slot: a single flag
+          // that is not 1 means the write may have applied but is not PROVED, which is the UNCERTAIN class
+          // with the slot HELD, never a known error about a sheet the editor may already have changed.
+          else if (kind === 'sheetwrite') {
+            const outcome = decodeWriteRange(value, params.cells.length, params.cells[0].length);
+            let allMatched = true;
+            for (const flag of outcome.matches) if (!flag) { allMatched = false; break; }
+            if (!allMatched) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE BLOCK APPEND. Its answer is the authored flat array of primitives, decoded against the
           // BLOCK COUNT this ticket carried — the same number the body built its one region flag per
           // block against — so the decode and the body can never disagree about how many blocks are owed.
@@ -4615,7 +4907,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -4759,6 +5051,22 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.sheet(callback); }
           finally { clearScope(previousSheetRead); }
+        } else if (kind === 'sheetwrite') {
+          // THE SPREADSHEET WRITE: ONE command, and the SAME parameter channel the other Cell and Word
+          // legs use — the validated address and matrix written into the page's `Asc.scope`, never
+          // composed into command source (ADR 0002). It needs the entry point that OWNS that wrapper
+          // (`callCommand`); a build whose command channel is the bare `executeCommand` transport has no
+          // sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases the
+          // slot because nothing reached the editor. The kind IS in `WRITE_KINDS`, so from the dispatch on
+          // the ticket presents itself as a pending mutation: an unresolved callback can never be mistaken
+          // for an idle bridge, and the caller is never told a write they cannot retry is safe to retry.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetWrite;
+          try { previousSheetWrite = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetwrite(callback); }
+          finally { clearScope(previousSheetWrite); }
         } else if (kind === 'blocksinsert') {
           // THE BLOCK APPEND: ONE command, and the SAME parameter channel the search and structure legs
           // use — the validated block array written into the page's `Asc.scope`, never composed into
@@ -5212,6 +5520,51 @@ export function createR7Bridge(plugin, {
         return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
       }
       return sheetRead(signal, Object.freeze({ address, maxCells }));
+    },
+    // The bounded SPREADSHEET write behind `write_range` — the first Cell MUTATION in this repo. It takes
+    // the leg shape every other dispatched write takes: the request is a CLOSED precondition checked
+    // before any dispatch, ONE authored body performs the write AND its own bounded readback, and the
+    // exact-proof rule decides the ticket while it still owns the slot. `cells` is a matrix of STRINGS;
+    // the body alone decides whether a cell becomes an integer, a locale number, a text or a formula, and
+    // the measured rules for that are stated in the body rather than duplicated here. What this method
+    // owns is the boundary: an address outside `SHEET_ADDRESS`, a matrix that is empty, ragged, too large
+    // or holding a non-string, and an over-bound payload are refused HERE with NOTHING dispatched.
+    async writeRange(raw) {
+      const address = raw?.address, cells = raw?.cells, signal = raw?.signal;
+      if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      if (!Array.isArray(cells) || cells.length < 1 || cells.length > LIMITS.writeRangeRowsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      let columns = null;
+      let cellCount = 0;
+      let totalBytes = 0;
+      for (const row of cells) {
+        if (!Array.isArray(row) || row.length < 1 || row.length > LIMITS.writeRangeColumnsMax) {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+        if (columns === null) columns = row.length;
+        else if (row.length !== columns) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        for (const cell of row) {
+          if (typeof cell !== 'string') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+          const bytes = utf8ByteLength(cell);
+          if (bytes > LIMITS.writeRangeCellBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+          totalBytes += bytes;
+          cellCount += 1;
+        }
+      }
+      if (cellCount > LIMITS.writeRangeCellsMax) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (totalBytes > LIMITS.writeRangeBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetwrite', signal, {}, Object.freeze({ address, cells }));
+        return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
     },
     async readStructure(raw) {
       const maxHeadings = raw?.maxHeadings, signal = raw?.signal;

@@ -325,6 +325,24 @@ export const LIMITS = Object.freeze({
   //     figure, label or formula this product authors.
   sheetReadCellsMax: 400,
   sheetReadCellBytes: 512,
+  // The bounded SPREADSHEET write (`write_range`). It is the first Cell MUTATION, so its bounds are the
+  // ones the authored body writes against and the decoder proves against:
+  //   * `writeRangeRowsMax`/`writeRangeColumnsMax` bound the block one call may write. They are the
+  //     INSERT TABLE bounds of this same file (64 x 16), not new numbers: a written block of cells and a
+  //     written table of cells are the same daily-work scale, and an alias would be invisible at runtime
+  //     and silently wrong the moment the two diverge, so each scope names its own entry.
+  //   * `writeRangeCellBytes` bounds ONE cell's text. It is a QUARTER of `insertTableCellBytes` (1024) and
+  //     HALF of `sheetReadCellBytes` (512) — a quarter of a kilobyte — because a written cell is a value
+  //     or a formula, never a document paragraph, and a formula over a daily sheet fits several times over.
+  //   * `writeRangeBytes` bounds the whole payload — the sum of every cell's bytes. It deliberately
+  //     equals `insertTableBytes`: the two are the same kind of bound and the same pilot scale.
+  // `writeRangeCellsMax` is the total cell count and equals `sheetReadCellsMax`, so a block this product
+  // can WRITE is always a block it can READ BACK to prove, which is the readback this mutation owes.
+  writeRangeRowsMax: 64,
+  writeRangeColumnsMax: 16,
+  writeRangeCellBytes: 256,
+  writeRangeBytes: 8192,
+  writeRangeCellsMax: 400,
   // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
   // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
   // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because

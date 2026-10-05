@@ -54,16 +54,20 @@ test('the Cell reads are offered for the cell editor only, and Word tools never 
   const registry = createRegistry([...createWordTools(bridge), ...createCellTools(bridge)]);
   const capabilities = ['document.read', 'document.write'];
   const cellEdit = registry.catalogue({ editor: 'cell', capabilities, mode: 'EDIT' }).map(entry => entry.name);
-  assert.deepEqual(cellEdit.sort(), ['read_range', 'read_sheet'],
-    'a spreadsheet is offered the two Cell reads and no Word descriptor');
+  assert.deepEqual(cellEdit.sort(), ['read_range', 'read_sheet', 'write_range'],
+    'a spreadsheet is offered the Cell reads and the Cell write, and no Word descriptor');
   const cellAsk = registry.catalogue({ editor: 'cell', capabilities, mode: 'ASK' }).map(entry => entry.name);
   assert.deepEqual(cellAsk.sort(), ['read_range', 'read_sheet'],
-    'both Cell descriptors are reads, so ASK offers them unchanged');
-  for (const name of cellEdit) {
-    const entry = registry.resolve(registry.catalogue({ editor: 'cell', capabilities, mode: 'EDIT' }), name);
+    'ASK offers the reads and withholds the mutation');
+  for (const name of cellAsk) {
+    const entry = registry.resolve(registry.catalogue({ editor: 'cell', capabilities, mode: 'ASK' }), name);
     assert.deepEqual(entry.editors, ['cell']);
     assert.equal(entry.kind, 'read');
+    assert.deepEqual(entry.requires, ['document.read']);
   }
+  const write = registry.resolve(registry.catalogue({ editor: 'cell', capabilities, mode: 'EDIT' }), 'write_range');
+  assert.equal(write.kind, 'mutate');
+  assert.deepEqual(write.requires, ['document.write']);
   const wordEdit = registry.catalogue({ editor: 'word', capabilities, mode: 'EDIT' }).map(entry => entry.name);
   assert.equal(wordEdit.includes('read_sheet'), false, 'the Cell reads are withheld from a document');
   assert.equal(wordEdit.includes('read_range'), false);
@@ -236,7 +240,7 @@ test('both Cell descriptors carry a one-line authored description inside the byt
     assert.ok(entry.description.trim().length > 0);
     assert.ok(utf8ByteLength(entry.description) <= 256, `${entry.name} description bytes`);
     assert.equal(/[\u0000-\u001f\u007f]/.test(entry.description), false, `${entry.name} stays on one line`);
-    assert.deepEqual(entry.requires, ['document.read']);
+    assert.deepEqual(entry.requires, [entry.kind === 'mutate' ? 'document.write' : 'document.read']);
     assert.equal(entry.policy, 'auto');
   }
 });

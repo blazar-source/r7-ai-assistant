@@ -11,14 +11,20 @@
 //   * `Api.GetActiveSheet()` + `sheet.GetName()`/`GetIndex()`/`GetUsedRange()` and `Api.GetSheets()`
 //     exist; `GetRowsCount`/`GetColumnsCount`/`GetMaxRow`/`GetMaxColumn`/`GetCell` are `undefined`, so
 //     the USED RANGE is discovered through `GetUsedRange()` and through nothing else.
-//   * `range.GetValue()` answers a 2-D array (one inner array per row). A multi-cell `GetFormula()` is
-//     NOT confirmed on this build, which is why the bridge publishes `formulas: null` rather than an
-//     empty matrix whenever the editor did not answer a matching matrix: `null` is an explicit "the
-//     editor did not answer", while `[]` would read as a measured "these cells hold no formulas".
+//   * `range.GetValue()` answers a 2-D array of strings for a BLOCK but a SCALAR STRING for a ONE-CELL
+//     range (both measured), so the two shapes must be separated with `Array.isArray` — never with a
+//     `.length` test, which a string also satisfies. `GetFormula()` is the sharper trap: on a MULTI-CELL
+//     range it answers the computed VALUES, while on a ONE-CELL range it answers the real formula source.
+//     The Cell READ leg's `formulas` slot is therefore NOT a source of formulas on this build, because it
+//     publishes whatever the block answered once the shape matches — and a block matches. It publishes
+//     `null` rather than an empty matrix when the editor answered nothing matching, because `null` is an
+//     explicit "the editor did not answer" while `[]` would read as a measured "these cells hold no
+//     formulas". What the Cell WRITE leg owns instead is the ADDRESSAL read: one single-cell range per
+//     formula cell, which is the shape measured to answer the source.
 //   * `SetFormula` does NOT exist on a range, and a decimal written as a NUMBER becomes TEXT
-//     (`SetValue(123.5)` → text; `SetValue('123,45')` → a real number). No tool in this module writes
-//     yet; that rule belongs to `write_range` and is recorded here so the next tool cannot re-derive it
-//     wrongly.
+//     (`SetValue(123.5)` → text; `SetValue('123,45')` → a real number). `write_range` is the tool in this
+//     module that WRITES, and it applies that rule in its authored body; the rule is recorded here so the
+//     next tool cannot re-derive it wrongly.
 import { defineTool } from './registry.js';
 import { ERROR_CODES } from '../shared/errors.js';
 import { AGENT_CEILINGS, LIMITS } from '../shared/limits.js';
@@ -71,6 +77,27 @@ function toolResultEntryBytes(tool, data) {
 // that trusted the bridge alone would hand an uninterpretable address to a dispatched editor command on
 // the direct path. The two checks are deliberately the SAME shape, not two opinions about one address.
 const ADDRESS = /^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/;
+// The COLUMN number of an A-Z address prefix, 1-based (`A` -> 1, `AA` -> 27).
+function columnNumber(letters) {
+  let value = 0;
+  for (const letter of letters) value = value * 26 + (letter.charCodeAt(0) - 64);
+  return value;
+}
+// The block an address names, or `null` when it names no block at all (`B2:A1` runs backwards). The
+// `write_range` handler needs it because THAT tool's one structural precondition is that the addressed
+// block IS the matrix it was handed: without it the editor would write a sub-rectangle and the readback
+// proof would be over cells the request never mentioned.
+function addressShape(address) {
+  const parts = address.includes(':') ? address.split(':') : [address, address];
+  if (parts.length !== 2) return null;
+  const head = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(parts[0]);
+  const tail = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(parts[1]);
+  if (head === null || tail === null) return null;
+  const columns = columnNumber(tail[1]) - columnNumber(head[1]) + 1;
+  const rows = Number(tail[2]) - Number(head[2]) + 1;
+  if (!(columns >= 1) || !(rows >= 1)) return null;
+  return { rows, columns };
+}
 // A count this module can publish: a non-negative safe integer, with the counts that address a real
 // sheet, row or column required to be at least 1.
 function measuredCount(value) {
@@ -244,6 +271,112 @@ export function createCellTools(bridge) {
         const data = sheetReadData(response);
         if (data === null) return known();
         const entry = toolResultEntryBytes('read_range', data);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
+      }
+    }),
+    defineTool({
+      // Sprint 4 Cell tool 3: the FIRST Cell MUTATION. It is NOT the first leg here whose argument carries
+      // VALUES to be stored — `insert_table` and `insert_blocks` already take a matrix of strings — but it IS
+      // the first that writes into a WORKBOOK rather than a document, and the first whose proof is a bounded
+      // READBACK of the very block it wrote, one flag per cell, rather than a document delta or an occurrence
+      // count. Every primitive it reaches was
+      // measured on a live Cell sheet, and the measured rules live in the authored body (bridge.js,
+      // `sheetwrite`) because that is where they are applied: an INTEGER-looking cell is handed over as a
+      // number, everything else as the string the caller sent — which is what makes a decimal in locale
+      // form (`123,45`) a real number while a non-integer JS number would be stored as TEXT — and a cell
+      // beginning with `=` is a formula, whose validity the engine's own parser decides.
+      //
+      // THE ONE STRUCTURAL PRECONDITION is that the ADDRESSED BLOCK IS THE MATRIX. It is checked here and
+      // again in the body, because it is what makes the proof exact: the body writes every cell of the
+      // addressed block and then reads that SAME block back, one flag per cell, so a matrix that covered
+      // only part of the address would leave cells the request never mentioned inside the proof.
+      //
+      // THE PROOF AND ITS LIMIT are stated rather than implied. After the write the body reads the block
+      // ONCE for its VALUES — a ONE-CELL address is answered as a SCALAR and a block as a matrix, both
+      // measured, and the two are separated by `Array.isArray` — and reads every FORMULA cell on its OWN
+      // single-cell range, because a multi-cell formula read answers computed values on this build rather
+      // than formula sources. One flag per cell: a formula cell is proved by HOLDING A FORMULA — the engine
+      // rewrites function names and separators, so comparing formula TEXT would compare the engine's own
+      // normalisation — and any other cell is proved by its value matching the request after the ONE
+      // normalisation the editor's own answer requires (spaces removed, `,` read as `.`). That exact match
+      // is also the whole rule for error values: one can never equal a DIFFERENT request, so it is never a
+      // proof of one, while a caller who literally asked for `#`-leading text is proved by the match. A
+      // single flag that is not 1 is the UNCERTAIN class: the document may already be changed, so the run
+      // stops and the mutation is never retried. WHAT THE PROOF CANNOT SHOW: that a numeric-looking cell was
+      // stored as a NUMBER rather than as text, because the readback answers both identically. Numericity
+      // rests on the measured `SetValue` rule; a caller that needs it checked can read the cell with
+      // `read_range` and use it in a formula. ONE REQUEST CLASS THIS LEG CANNOT SERVE, measured and stated so
+      // it is not discovered as a mystery: a digits-only code with a LEADING ZERO (`'007'`) is coerced to a
+      // NUMBER by the editor and reads back as `7`, so the proof refuses it and the run stops UNCERTAIN. The
+      // refusal is deliberate — an account code silently renumbered would be worse — but such a code cannot
+      // be written here on this build.
+      name: 'write_range', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
+      description: 'Пишет блок ячеек (числа, текст или формулы). Адрес должен точно совпасть с блоком.',
+      schema: { type: 'object', additionalProperties: false, required: ['address', 'cells'],
+        properties: {
+          address: { type: 'string', maxBytes: 24 },
+          cells: { type: 'array', maxItems: LIMITS.writeRangeRowsMax,
+            items: { type: 'array', maxItems: LIMITS.writeRangeColumnsMax,
+              items: { type: 'string', maxBytes: LIMITS.writeRangeCellBytes } } } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also
+        // executable when it is held directly, and a request this write cannot interpret must be a closed
+        // refusal with NOTHING dispatched.
+        const address = args?.address;
+        const cells = args?.cells;
+        if (typeof address !== 'string' || address === '' || !ADDRESS.test(address)) return known();
+        if (utf8ByteLength(address) > 24) return known();
+        const shape = addressShape(address);
+        if (shape === null) return known();
+        if (!Array.isArray(cells) || cells.length < 1 || cells.length > LIMITS.writeRangeRowsMax) return known();
+        if (cells.length !== shape.rows) return known();
+        const columns = cells[0]?.length;
+        if (!Number.isSafeInteger(columns) || columns < 1 || columns > LIMITS.writeRangeColumnsMax) return known();
+        if (columns !== shape.columns) return known();
+        let cellCount = 0;
+        let totalBytes = 0;
+        const forwarded = [];
+        for (const row of cells) {
+          if (!Array.isArray(row) || row.length !== columns) return known();
+          const forwardedRow = [];
+          for (const cell of row) {
+            if (typeof cell !== 'string') return known();
+            const bytes = utf8ByteLength(cell);
+            if (bytes > LIMITS.writeRangeCellBytes) return known(ERROR_CODES.BYTE_LIMIT);
+            totalBytes += bytes;
+            cellCount += 1;
+            forwardedRow.push(cell);
+          }
+          forwarded.push(Object.freeze(forwardedRow));
+        }
+        if (cellCount > LIMITS.writeRangeCellsMax) return known();
+        if (totalBytes > LIMITS.writeRangeBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        if (missingBridgeMethod(bridge, 'writeRange')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        let response;
+        try {
+          response = await bridge.writeRange({ address, cells: Object.freeze(forwarded),
+            ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) });
+        } catch (error) {
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        if (!response || typeof response !== 'object') return known();
+        // A returned UNCERTAIN class is the one outcome that must stop the run rather than read as an
+        // ordinary known error.
+        const uncertain = uncertainResult(response);
+        if (uncertain) return uncertain;
+        if (response.ok !== true) return known(refusalCode(response.code, ERROR_CODES.TOOL_ERROR));
+        // The bridge's own envelope contract re-checked here: the answer must describe exactly the block
+        // this tool asked for, so a bridge that drifted can never publish a write of another shape as this
+        // one's result.
+        if (response.address !== address) return known();
+        if (response.rowCount !== shape.rows || response.columnCount !== shape.columns) return known();
+        const data = Object.freeze({ address, rowCount: shape.rows, columnCount: shape.columns,
+          cells: cellCount, bytes: totalBytes });
+        const entry = toolResultEntryBytes('write_range', data);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(data);
       }

@@ -206,7 +206,27 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // What is pinned is this leg's own measured surface: the active-sheet read, the used-range
       // discovery route, the injected command scope, and the ABSENCE of every mutation primitive — a
       // read that cannot write, stated as an assertion rather than as a promise.
-      if (code.includes('GetActiveSheet')) {
+      // THE FOURTEENTH LEG — the first CELL (spreadsheet) MUTATION, and its branch must also come before
+      // the Word fallback. `SetValue` is what identifies it: the Cell READ beside it authors none, and no
+      // Word body reaches a spreadsheet primitive. These are BUNDLE-CONTENT pins and not behavioural ones,
+      // so what they hold is the SHAPE of the shipped body: its parameter channel (`scope`), its explicit
+      // phase slot in BOTH directions, the ONE write primitive authored exactly twice (the integer route and
+      // the string route), the two reads its proof is built from, and the absence of the legacy whole-array
+      // primitive and of any document push. What is NOT pinned here is what the body DECIDES — the phase/flag
+      // classification and the bound arithmetic are covered through the real bridge by
+      // `tests/unit/bridge-sheetwrite.test.js` and by `tests/unit/tools-cell-write.test.js`.
+      if (code.includes('SetValue')) {
+        assert.match(code, /\bscope\b/, 'the sheet-write body takes its address and matrix from the injected command scope');
+        assert.match(code, /POST_INSERT/, 'and marks the moment the sheet may already have been touched');
+        assert.match(code, /PRE_INSERT/, 'and its pre-write refusals with the explicit phase');
+        assert.equal((code.match(/SetValue\s*\(/g) ?? []).length, 2,
+          'the ONE write primitive is authored exactly twice: the integer route and the string route');
+        assert.match(code, /GetValue\(\)/, 'and proves itself by reading the block back');
+        assert.match(code, /GetFormula\(\)/, 'and by requiring a written formula to HOLD a formula');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        assert.equal(code.includes('Push('), false, 'and pushes nothing into a document');
+        legs.push('sheetwrite');
+      } else if (code.includes('GetActiveSheet')) {
         assert.match(code, /\bscope\b/, 'the sheet-read body takes its address and cap from the injected command scope');
         assert.match(code, /GetActiveSheet\(\)/, 'and reads the active sheet through the measured primitive');
         assert.match(code, /GetUsedRange\(\)/, 'and discovers the used range through the only measured route');
@@ -344,8 +364,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 13, 'the adapter dispatches exactly the thirteen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'structure', 'table'],
+  assert.equal(commands, 14, 'the adapter dispatches exactly the fourteen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetwrite', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that
