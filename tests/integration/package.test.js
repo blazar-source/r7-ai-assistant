@@ -145,6 +145,25 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // and is authored nowhere, the export readers (`ToHtml`/`ToMarkdown`) are absent because no export is
   // involved, and nothing is constructed or appended, so `Push`/`CreateParagraph`/`InsertContent` must stay
   // unauthored on this leg.
+  // ELEVEN legs are carried inline, and the last one is the IMAGE INSERT (`insert_image`): the SEVENTH body
+  // that MUTATES the document through the `Api` builder, the FOURTH one that APPENDS, and the FIRST whose
+  // proof is a DOCUMENT-WIDE EXPORT NEEDLE built from the caller's own data URL. It is classified by its OWN
+  // creation primitive (`CreateImage`, which no other leg authors) — and its OWN branch must come FIRST, for
+  // the table body's reason INVERTED: it authors NEITHER `.Push(` NOR `CreateParagraph(` NOR
+  // `GetAllParagraphs`, so without its own branch it would be blessed as the read-only CAPABILITY probe, whose
+  // body looks nothing like it. It takes its `{ dataUrl, widthPx, heightPx, paragraph, append }` scope as
+  // DATA, creates the image through the measured `Api.CreateImage`, adds the drawing through the measured
+  // `paragraph.AddDrawing` — an append at the end of the paragraph's own content, exactly like `AddElement` —
+  // and, for the APPEND form, `Push`es a detached `Api.CreateParagraph` that already holds it, which the SDK
+  // lands at the END. The proof is read back from the DOCUMENT: `GetAllImages()` and
+  // `GetAllDrawingObjects()` must each grow by exactly one (the vendored `GetAllImages` is the
+  // `CImageShape` FILTER of `GetAllDrawingObjects`, so the two are independent evidence), the paragraph
+  // count must move by the request's own form delta, and the document's own `ToMarkdown` export must hold
+  // `](` immediately followed by the EXACT requested data URL — which is why this body must ask for the
+  // BASE64 form (`ToMarkdown(false, true)`): the default form embeds the image's URL instead and could never
+  // hold the needle. `ToHtml` is AUTHORED NOWHERE: that export is entity-escaped, so the data URL could not
+  // appear in it verbatim. The legacy whole-array insert primitive — measured to land at the START and to
+  // replace existing text under a selection — is absent too.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -158,8 +177,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(code, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      // The tenth leg, whose narrative is stated once at the head of this classifier.
-      if (code.includes('SearchAndReplace')) {
+      // The eleventh leg, whose narrative is stated once at the head of this classifier.
+      if (code.includes('CreateImage')) {
+        assert.match(code, /\bscope\b/, 'the image body takes its data URL, dimensions and address from the injected command scope');
+        assert.match(code, /CreateImage\(/, 'and creates the picture through the measured factory');
+        assert.match(code, /AddDrawing\(/, 'and places it through the measured paragraph drawing primitive');
+        assert.match(code, /GetAllImages\(\)/, 'and reads the document\u2019s own image count around the insert');
+        assert.match(code, /GetAllDrawingObjects\(\)/, 'and its own drawing count, which the image list is a filter of');
+        assert.match(code, /ToMarkdown\(/, 'and proves the outcome through the document\u2019s own markdown export');
+        assert.equal(code.includes('ToHtml'), false,
+          'the HTML export is authored nowhere: it is entity-escaped, so the data URL could not appear in it verbatim');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        legs.push('image');
+      } else if (code.includes('SearchAndReplace')) {
         assert.match(code, /\bscope\b/, 'the replace body takes its needle, replacement, case flag and limit from the injected command scope');
         assert.match(code, /\.Search\(/, 'and counts the occurrences through the measured Search primitive');
         assert.match(code, /PRE_INSERT/, 'and marks its pre-write refusals with an explicit phase');
@@ -250,8 +280,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 10, 'the adapter dispatches exactly the ten authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'hyperlink', 'replace', 'search', 'structure', 'table'],
+  assert.equal(commands, 11, 'the adapter dispatches exactly the eleven authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

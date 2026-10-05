@@ -30,8 +30,12 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // in-place write and an append, and it is named here explicitly for the range format's reason.
 // `replaceinsert` is the text replace: it rewrites existing text IN PLACE through ONE
 // `document.SearchAndReplace` inside its own command body, and it is named here explicitly for the same
-// reason the heading assignment and the range format are.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert']));
+// reason the heading assignment and the range format are. `imageinsert` is the image insert: it writes ONE
+// `paragraph.AddDrawing` of an `Api.CreateImage` into an EXISTING paragraph, or — for its OTHER form — ONE
+// `Api.CreateParagraph` plus the same `AddDrawing` plus ONE `document.Push` that lands the created paragraph
+// at the END of the document. It is therefore BOTH an in-place write and an append, exactly like the
+// hyperlink insert, and it is named here explicitly for that leg's reason.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -1789,6 +1793,332 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return replaceRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE IMAGE INSERT, and the SIXTH leg in this bridge that MUTATES a document through the `Api` builder.
+      // It is the same carriage as the six bodies before it — a FULL inline static literal whose only model
+      // data arrives as the `scope` binding the vendor wrapper composes from `Asc.scope` (never composed into
+      // source, ADR 0002) — and it is the FOURTH leg that APPENDS.
+      //
+      // THE MEASURED PRIMITIVES, established on the target (Astra / R7 2026.1.2.1942) and read out of the
+      // vendored 2026.1.2 bundle (`.local/stage-b-runtime/vendor-word-sdk-all.js`) rather than assumed:
+      //   * `Api.CreateImage(dataUrl, 40, 40)` answers an OBJECT; the vendored body is
+      //     `CreateImage = function (U, S, E) { var V = Oe(S), ht = Oe(E), _t = new ParaDrawing(V, ht, null,
+      //     ci(), qt(), null), Ot = qt().DrawingObjects.createImage(U, 0, 0, V, ht); return Ot.setParent(_t),
+      //     _t.Set_GraphicObject(Ot), new jt(Ot) }` — it builds and REGISTERS a picture object and it is called
+      //     BEFORE the phase turns because it writes nothing to any paragraph;
+      //   * `paragraph.AddDrawing(image)` answers an OBJECT and really adds the drawing; its body is
+      //     `AddDrawing = function (U) { var S = new ParaRun(this.Paragraph, !1); return U instanceof Nt ?
+      //     (S.Add_ToContent(0, U.Drawing), _i(this.Paragraph, S), U.Drawing.Set_Parent(S), i(U), new F(S)) :
+      //     new F(S) }` — an APPEND at the END of that paragraph's own content;
+      //   * `document.Push(paragraph)` appended the created paragraph: the paragraph count went 3 -> 4;
+      //   * `GetAllDrawingObjects()` answered 1 and `GetAllImages()` went 0 -> 1; the vendored
+      //     `GetAllImages = function () { … this.Document.GetAllDrawingObjects() … GraphicObj instanceof
+      //     AscFormat.CImageShape && E.push(new jt(…)) }` shows the image list is the `CImageShape` FILTER of
+      //     the drawing list, so the two are read SEPARATELY and both must grow;
+      //   * `document.ToMarkdown(true, true)` rendered `![](data:image/png;base64,…)` holding the EXACT data
+      //     URL. The vendored signature is `ToMarkdown(U, S, E, V)` with `ht = { convertType: 'markdown',
+      //     htmlHeadings: U || false, base64img: S || false, demoteHeadings: E || false, renderHTMLTags:
+      //     V || false }`, and the converter's arm is `case para_Drawing: if (va.IsPicture()) { if (S ===
+      //     'markdown') ui += Fr.Config.base64img ? '![](' + va.GraphicObj.getBase64Img() + ')' : '![](' +
+      //     va.GraphicObj.getImageUrl() + ')' …` — so BOTH arguments are REQUIRED: the first selects the
+      //     markdown converter and the second (`base64img`) is the ONLY arm that embeds the data URL;
+      //   * the pushed paragraph's own element readback was a single element of class `run` with EMPTY text.
+      //     THAT IS NOT AN IMAGE PROOF and this body builds none on it: a run with empty text is what a drawing
+      //     of any other kind would leave behind too. What it supplies instead is the text leg of each form —
+      //     the created paragraph really started and finished EMPTY, and the addressed paragraph's own text is
+      //     UNCHANGED.
+      // NO MUTATION PRIMITIVE'S RETURN VALUE IS READ anywhere in this body: every primitive here answers an
+      // object and says nothing about the document, so the counts and the export needle are the whole evidence.
+      //
+      // THE NEEDLE IS `](<dataUrl>` — the two characters that close the markdown image's `![` prefix, then the
+      // EXACT requested data URL. It is located by `indexOf`/`slice`, NEVER by a `RegExp` built from the
+      // payload (this repository's authored-code audit forbids a computed pattern), and it is required to be
+      // ABSENT from the export read BEFORE the write and present EXACTLY once after it — so a picture that was
+      // already in the document can never carry this call's proof.
+      //
+      // THE EXPORT BOUND IS THE EXISTING DOCUMENT CEILING (`scope.markdownMax`, the same number the read path
+      // uses for a document export). The PRE-write export above it is the body's own closed `BYTE_LIMIT` with
+      // ZERO writes; the POST-write one is the UNCERTAIN class with the slot HELD, which is why the answer
+      // carries the post-insert phase in a THREE-slot form for that case alone (`[POST_INSERT, 'BYTE_LIMIT',
+      // markdownBeforeChars]`) and a TWO-slot one for the pre-write refusal.
+      //
+      // THE ANSWER is ONE flat array of primitives (the native return validator keeps those and strips a plain
+      // object): `[POST_INSERT, imagesBefore, imagesAfter, drawingsBefore, drawingsAfter, paragraphsBefore,
+      // paragraphsAfter, markdownBeforeChars, textBeforeChars, textAfterChars, markdownNeedle, imageAppended,
+      // drawingAppended, textEmpty, textUnchanged]` — FIFTEEN slots — or a refusal `[phase, name]` /
+      // `[POST_INSERT, 'BYTE_LIMIT', markdownBeforeChars]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and
+      // it turns at — and immediately BEFORE — the first call that can change the DOCUMENT: the ONE `Push` of
+      // the append form or the ONE `AddDrawing` into a LIVE paragraph of the named form. A throw out of a call
+      // that cannot have touched the document therefore keeps its known refusal instead of wedging the write
+      // slot, while a throw after that point is the uncertain class.
+      // THE PRIMITIVES ARE CHECKED BEFORE ANY CREATION, and the per-form ones before the phase turns: a build
+      // missing `GetAllImages`, `GetAllDrawingObjects` or `ToMarkdown` (or one whose document answers no
+      // paragraph list) is the body's own closed capability refusal with ZERO writes rather than a picture
+      // written into a document whose proof could never be read. A member that THROWS on a pre-write read is
+      // the same refusal for the same reason.
+      image(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
+          // bodies state: the alias analysis is NAME-based and scope-insensitive over the whole bundle, so an
+          // array literal built from identifier names could make the receiver of every later call on it a
+          // computed value.
+          function imageRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          // The POST-write export failure, which is its own three-slot shape: it carries the post-insert phase
+          // because a write has already run, so the slot must be HELD. Every consumer classifies any answer of
+          // this size as the uncertain class, and the extra slot is the pre-write export's own length, which
+          // is the only measurement this body has when the post-write read could not answer.
+          function imagePostExportRefusal(beforeChars) {
+            var refusal = [];
+            refusal.push('POST_INSERT');
+            refusal.push('BYTE_LIMIT');
+            refusal.push(beforeChars);
+            return refusal;
+          }
+          // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check reaches
+          // for NO global at all, so the stringified body depends on nothing but the two bindings the vendor
+          // wrapper creates.
+          function isCount(value) {
+            return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+          }
+          // `list[index]` is a member read with a NON-CONSTANT key, which this module's NAME-based alias
+          // analysis treats as a computed value; a CALL's result is not tainted by it, so every value taken
+          // out of an array is taken through a helper and every method call lands on the helper's own
+          // parameters rather than on a variable read out of one.
+          function paragraphAt(list, position) {
+            return position >= 0 && position < list.length ? list[position] : null;
+          }
+          function textAt(item) {
+            if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
+            try { return item.GetText(); } catch (error) { return null; }
+          }
+          // THE TWO DOCUMENT COUNTS, taken through the same array-length route `GetAllParagraphs` uses. A
+          // missing primitive, a non-number answer and a throw are all the ABSENCE of a measurement (`null`),
+          // which the caller settles as a closed refusal BEFORE the creation or as the uncertain class after
+          // the write.
+          function listSize(list) {
+            if (list === null || list === undefined) return null;
+            var size = list.length;
+            return isCount(size) ? size : null;
+          }
+          function imagesAt(document) {
+            if (typeof document.GetAllImages !== 'function') return null;
+            try { return listSize(document.GetAllImages()); } catch (error) { return null; }
+          }
+          function drawingsAt(document) {
+            if (typeof document.GetAllDrawingObjects !== 'function') return null;
+            try { return listSize(document.GetAllDrawingObjects()); } catch (error) { return null; }
+          }
+          // ONE non-overlapping count of the needle, so `](dataUrl` occurring twice can never be read as one
+          // insertion. An occurrence at the very start (index 0) is not a match — the needle begins with `](`,
+          // which can only ever follow the `![` the markdown converter emits.
+          function imageNeedleCount(export_, needle) {
+            var at = export_.indexOf(needle);
+            if (at < 1) return 0;
+            return export_.indexOf(needle, at + needle.length) < 0 ? 1 : 2;
+          }
+          // THE DOCUMENT'S OWN MARKDOWN EXPORT, in the BASE64 form the data URL requires, bounded by the
+          // ceiling the caller composed (`markdownMax`). `assertByteLimit` is NOT reached for here: this body
+          // reads no module binding at all (the native evaluates it where none exists), so the ceiling is
+          // applied with its own byte count, exactly as the read path's helpers do.
+          function readMarkdown(document, max) {
+            if (typeof document.ToMarkdown !== 'function') return null;
+            var exported = document.ToMarkdown(true, true);
+            if (typeof exported !== 'string') return null;
+            var bytes = 0;
+            for (var index = 0; index < exported.length; index += 1) {
+              var code = exported.charCodeAt(index);
+              if (code < 0x80) bytes += 1;
+              else if (code < 0x800) bytes += 2;
+              else if (code >= 0xd800 && code <= 0xdbff) {
+                var next = exported.charCodeAt(index + 1);
+                if (isCount(next) && next >= 0xdc00 && next <= 0xdfff) { bytes += 4; index += 1; }
+                else bytes += 3;
+              } else bytes += 3;
+            }
+            return bytes > max ? null : exported;
+          }
+          // A member this body could not measure is folded to the ONE value its slot's rule can express,
+          // rather than destroying the whole answer: a damaged document degrades the field it belongs to and
+          // the outcome rule then settles the ticket uncertain, instead of turning a verifiable write into a
+          // phase-less uncertainty.
+          function counted(value) {
+            if (typeof value === 'boolean') return value;
+            return typeof value === 'number' && value === value && value !== Infinity && value !== -Infinity ? value : 0;
+          }
+          // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The scope is the ONE thing that crosses, so
+          // a shape this bridge would never compose — a mime this leg does not serve, a payload that is not the
+          // pure base64 alphabet, a dimension of the wrong kind, a form that does not agree with its address,
+          // and a ceiling that is not the one the caller composed — is this body's own closed refusal, never a
+          // picture written on the strength of `undefined`. `paragraph` is `null` for the append form, which is
+          // that form's OWN address rather than an invented index.
+          function measureImageRequest(given) {
+            if (given === null || given === undefined || typeof given !== 'object') return null;
+            var data = given.dataUrl;
+            var width = given.widthPx;
+            var height = given.heightPx;
+            var position = given.paragraph;
+            var appends = given.append;
+            var max = given.markdownMax;
+            if (appends !== true && appends !== false) return null;
+            if (appends === true) {
+              if (position !== null) return null;
+            } else if (!(isCount(position))) return null;
+            if (typeof data !== 'string' || data.length === 0) return null;
+            var png = 'data:image/png;base64,';
+            var jpeg = 'data:image/jpeg;base64,';
+            var payload = null;
+            if (data.indexOf(png) === 0) payload = data.slice(png.length);
+            else if (data.indexOf(jpeg) === 0) payload = data.slice(jpeg.length);
+            if (payload === null || payload.length === 0) return null;
+            var alphabet = true;
+            for (var index = 0; index < payload.length; index += 1) {
+              var code = payload.charCodeAt(index);
+              var letter = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57);
+              if (!(letter || code === 43 || code === 47 || code === 61)) alphabet = false;
+            }
+            if (alphabet !== true) return null;
+            if (!(isCount(width) && width >= 1)) return null;
+            if (!(isCount(height) && height >= 1)) return null;
+            if (!(isCount(max) && max >= 1)) return null;
+            return [position, appends, data, width, height, max];
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var measured = measureImageRequest(request);
+            if (measured === null) return imageRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ADDRESS AND THE FORM ARE ONE FACT, and the pair is read into locals so every later member
+            // call lands on a variable the body itself bound: `paragraph` is `null` for the append form.
+            var address = measured[0];
+            var append = measured[1];
+            var data = measured[2];
+            var widthPx = measured[3];
+            var heightPx = measured[4];
+            var markdownMax = measured[5];
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return imageRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetAllParagraphs !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.CreateImage !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetAllImages !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetAllDrawingObjects !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.ToMarkdown !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+            // The per-form primitives are checked BEFORE anything is created, exactly like the hyperlink
+            // insert's: a build that cannot append must not create a picture first.
+            if (append === true && (typeof Api.CreateParagraph !== 'function' || typeof document.Push !== 'function')) {
+              return imageRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            // THE PRE-DISPATCH BASELINE: the document's own paragraph count, its own IMAGE and DRAWING counts,
+            // and — for the NAMED form — the addressed paragraph's own text. The index is checked against the
+            // SAME snapshot the text is read from, so a baseline that cannot be read and an index outside THIS
+            // document are closed refusals with ZERO writes. The APPEND form reads no address at all: the
+            // paragraph it will act on does not exist yet.
+            var before = document.GetAllParagraphs();
+            var countBefore = listSize(before);
+            if (countBefore === null) return imageRefusal('CAPABILITY_UNAVAILABLE');
+            var imagesBefore = imagesAt(document);
+            if (imagesBefore === null) return imageRefusal('CAPABILITY_UNAVAILABLE');
+            var drawingsBefore = drawingsAt(document);
+            if (drawingsBefore === null) return imageRefusal('CAPABILITY_UNAVAILABLE');
+            var textBefore = '';
+            var live = null;
+            if (append === false) {
+              if (!(address < countBefore)) return imageRefusal('TOOL_ERROR');
+              live = paragraphAt(before, address);
+              if (live === null || live === undefined) return imageRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof live.AddDrawing !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+              var readBefore = textAt(live);
+              if (typeof readBefore !== 'string') return imageRefusal('CAPABILITY_UNAVAILABLE');
+              textBefore = readBefore;
+            }
+            // THE PRE-WRITE EXPORT, and the gate of the whole insert: it is read BEFORE anything is created so
+            // that an unreadable export, or one above the ceiling this ticket carried, is the closed class with
+            // ZERO writes. The needle's own pre-count is the second half of the proof — a picture that was
+            // already in the document must not be able to satisfy it.
+            var markdownBefore = readMarkdown(document, markdownMax);
+            if (typeof markdownBefore !== 'string') return imageRefusal('BYTE_LIMIT');
+            var needle = '](' + data;
+            var needleBefore = imageNeedleCount(markdownBefore, needle);
+            // THE CREATION, before the phase turns: `Api.CreateImage` builds a picture object and registers it
+            // in the editor's own list, and it writes NOTHING to any paragraph. A picture the factory does not
+            // answer is the closed capability class with ZERO writes.
+            var image = Api.CreateImage(data, widthPx, heightPx);
+            if (image === null || image === undefined) return imageRefusal('CAPABILITY_UNAVAILABLE');
+            // THE MUTATION, and the exact boundary the two refusal classes are split on: the phase turns at —
+            // and immediately BEFORE — the ONE call that can change the DOCUMENT. The APPEND form adds the
+            // drawing into a paragraph that belongs to no document yet (`AddDrawing` on a detached paragraph
+            // writes nothing) and then PUSHES it; the NAMED form's ONE `AddDrawing` into a LIVE paragraph is
+            // itself the write.
+            if (append === true) {
+              var created = Api.CreateParagraph();
+              if (created === null || created === undefined) return imageRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof created.AddDrawing !== 'function') return imageRefusal('CAPABILITY_UNAVAILABLE');
+              created.AddDrawing(image);
+              phase = 'POST_INSERT';
+              document.Push(created);
+            } else {
+              phase = 'POST_INSERT';
+              live.AddDrawing(image);
+            }
+            // THE POST READ, and NOTHING is taken from the pre-mutation snapshot: a FRESH `GetAllParagraphs()`
+            // answers fresh wrappers, the two lists are read again, and the export is read once more. The
+            // post-write export is the ONLY read that cannot be a refusal: the write has already run, so an
+            // unreadable or over-ceiling one is the UNCERTAIN class with the slot HELD.
+            var after = document.GetAllParagraphs();
+            var countAfter = listSize(after);
+            var imagesAfter = imagesAt(document);
+            var drawingsAfter = drawingsAt(document);
+            // THE TEXT LEG, per form: the append form's created paragraph is re-taken at the baseline's own
+            // count (the position the measured `Push` lands it at) and must be EMPTY, while the named form
+            // re-takes its OWN address and must carry exactly the text it started with.
+            var textAfter = '';
+            var textEmpty = false;
+            var textUnchanged = false;
+            if (append === true) {
+              var createdAfter = paragraphAt(after, countBefore);
+              var createdText = textAt(createdAfter);
+              textAfter = typeof createdText === 'string' ? createdText : '';
+              textEmpty = typeof createdText === 'string' && createdText.length === 0;
+            } else {
+              var liveAfter = paragraphAt(after, address);
+              var liveText = textAt(liveAfter);
+              textAfter = typeof liveText === 'string' ? liveText : '';
+              textUnchanged = typeof liveText === 'string' && liveText === textBefore;
+            }
+            // THE POST-WRITE EXPORT AND THE NEEDLE. The needle is required to be ABSENT before the write and
+            // present EXACTLY once after it, so a pre-existing identical picture can never carry this proof.
+            var markdownAfter = readMarkdown(document, markdownMax);
+            if (typeof markdownAfter !== 'string') return imagePostExportRefusal(markdownBefore.length);
+            var needleAfter = imageNeedleCount(markdownAfter, needle);
+            // THE ANSWER. The phase slot, the eight counts, the two text lengths and the five proof flags are
+            // APPENDED rather than spelled as one array literal, for the authored-code-audit reason the block
+            // body states. Every member is folded through `counted` first, so a member the return validator
+            // would reject cannot destroy the whole answer.
+            var answer = [];
+            answer.push(phase);
+            answer.push(counted(imagesBefore));
+            answer.push(counted(imagesAfter));
+            answer.push(counted(drawingsBefore));
+            answer.push(counted(drawingsAfter));
+            answer.push(counted(countBefore));
+            answer.push(counted(countAfter));
+            answer.push(counted(markdownBefore.length));
+            answer.push(counted(append === true ? 0 : textBefore.length));
+            answer.push(counted(append === true ? 0 : textAfter.length));
+            answer.push(counted(needleBefore === 0 && needleAfter === 1));
+            answer.push(counted(imagesAfter === imagesBefore + 1));
+            answer.push(counted(drawingsAfter === drawingsBefore + 1));
+            answer.push(counted(append === false ? false : textEmpty));
+            answer.push(counted(append === true ? false : textUnchanged));
+            return answer;
+          } catch (error) { return imageRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -2081,7 +2411,13 @@ function preInsertRefusal(error, kind) {
   // export at all — its proof is an occurrence COUNT — so its pre-write refusals are exactly the two classes
   // above (`CAPABILITY_UNAVAILABLE` for a count it cannot read, `TOOL_ERROR` for zero occurrences and for a
   // `limit` below the count) and a phase-marked `BYTE_LIMIT` settles uncertain for it too.
-  if (kind === 'rangeformat') return error.code === ERROR_CODES.BYTE_LIMIT;
+  // THE IMAGE INSERT DOES HAVE THE CARVE-OUT, for the range format's reason and NOT by analogy: it reads a
+  // DOCUMENT-WIDE markdown export before its write and refuses a PRE-write export above the reused
+  // `LIMITS.insertImageMarkdownChars` with the closed `BYTE_LIMIT` and ZERO writes. Every other pre-write
+  // refusal on this leg is one of the two classes above (an address outside THIS document is the closed
+  // ARGUMENT class, a primitive or baseline the body cannot read is the capability class), and both are
+  // decided before the phase turns, so they are known refusals.
+  if (kind === 'rangeformat' || kind === 'imageinsert') return error.code === ERROR_CODES.BYTE_LIMIT;
   return false;
 }
 // The TABLE-INSERT answer, decoded with the same strictness as `decodeBlocks` and for the same reason: the
@@ -2695,6 +3031,158 @@ function exactReplaceDelta(outcome, requested, expected) {
   if (outcome.occurrencesAfter !== outcome.occurrencesBefore - expected) return false;
   if (requested.replace === '') return true;
   return outcome.replaceAfter === outcome.replaceBefore + expected;
+}
+// THE TWO MIMES the image insert accepts, spelled here beside the descriptor's own copy for the reason every
+// other shared rule on this branch is: the two modules cannot import each other, so the VOCABULARY lives in
+// each, and the values are the MEASURED pair (`Api.CreateImage` was measured with a `data:image/png;base64,`
+// payload; JPEG is the one other base64 image mime this leg's export needle can carry verbatim).
+const IMAGE_MIMES = Object.freeze(['data:image/png;base64,', 'data:image/jpeg;base64,']);
+// THE BASE64 ALPHABET, as a CHARACTER TEST rather than a pattern: the scan is a plain loop over code units,
+// so no `RegExp` is ever built from a caller-supplied payload, and `=` is accepted only as trailing padding.
+function imageBase64Payload(payload) {
+  if (payload.length === 0) return false;
+  const padding = payload.endsWith('==') ? 2 : (payload.endsWith('=') ? 1 : 0);
+  const end = payload.length - padding;
+  for (let index = 0; index < end; index += 1) {
+    const code = payload.charCodeAt(index);
+    const alphabet = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) ||
+      code === 43 || code === 47;
+    if (!alphabet) return false;
+  }
+  return true;
+}
+// THE CLOSED DATA-URL SHAPE at this public entry point, re-applied rather than taken on trust: one of the two
+// measured mime prefixes, a NON-EMPTY pure-base64 payload, inside the advertised byte bound, and NO
+// whitespace or control character anywhere. The no-whitespace rule is the one the export needle rests on —
+// the markdown export renders the exact stored string, so a character the editor would normalise could be
+// written and then never located verbatim.
+function requestedDataUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.insertImageDataUrlBytes) return null;
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return null;
+  let payload = null;
+  for (const prefix of IMAGE_MIMES) if (value.startsWith(prefix)) payload = value.slice(prefix.length);
+  return payload !== null && imageBase64Payload(payload) ? value : null;
+}
+// ONE DIMENSION of the picture: a whole positive number inside the advertised range and nothing else. Both
+// dimensions are REQUIRED by this leg's request, so neither is defaulted here.
+function requestedDimension(value) {
+  return Number.isSafeInteger(value) && value >= 1 && value <= LIMITS.insertImageDimensionPx ? value : null;
+}
+// THE IMAGE INSERT'S ANSWER, decoded with the same strictness as every decoder before it and for the same
+// reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES — `[POST_INSERT,
+// imagesBefore, imagesAfter, drawingsBefore, drawingsAfter, paragraphsBefore, paragraphsAfter,
+// markdownBeforeChars, textBeforeChars, textAfterChars, imageAppended, drawingAppended, needleLocated,
+// textEmpty, textUnchanged]`, FIFTEEN slots — because the native return validator keeps arrays of primitives
+// (it accepts deep arrays and booleans, and STRIPS a plain object). `Reflect.ownKeys` before any indexed read
+// closes symbols, holes and hidden extras, and every member is read through its own data descriptor, never
+// through a getter. Four rules are this leg's own contract, exactly as they are for the leg before it:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes are
+//     split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a KNOWN
+//     refusal whose code the caller republishes (nothing was written), and `[POST_INSERT, name]` — or any
+//     phase that is not the pre-insert one — is the UNCERTAIN class. A phase that is ABSENT (the one-slot
+//     answer a forged or damaged native can give AFTER a real write) or a pre-insert phase over a
+//     measurement can never be a known refusal either: the NAME does not carry the phase, only the marker.
+//   * THIS BODY HAS EXACTLY ONE BYTE-GATED REFUSAL, and it is the PRE-write export above
+//     `LIMITS.insertImageMarkdownChars` — reported as `[PRE_INSERT, 'BYTE_LIMIT']` with ZERO writes and kept
+//     as its known class by `preInsertRefusal`. Its other pre-write names are the closed ARGUMENT class (an
+//     address outside this document) and the CAPABILITY class (a primitive or a baseline the body could not
+//     read), both decided before the write.
+//   * the counts are NON-NEGATIVE SAFE INTEGERS — the document's own list lengths — and the flags are
+//     booleans; nothing else can cross this decoder.
+//   * the answer needs no byte ceiling beyond the one every native read passes, because at most ten bounded
+//     numbers and five booleans can cross; `assertByteLimit` is still applied, so the one window every read
+//     of this bridge is decoded under holds for this leg too.
+const IMAGE_PHASE_PRE = 'PRE_INSERT';
+const IMAGE_PHASE_POST = 'POST_INSERT';
+// THE SEVEN NUMERIC SLOTS the body always emits before the two text lengths: the document's four counts
+// (images, drawings, paragraphs — each on both sides of the write), the PRE-write export's own length, and
+// the two text lengths of the addressed/created paragraph. They are ONE slice because they are all measured
+// the same way and validated by ONE rule.
+const IMAGE_COUNTS = 7;
+const IMAGE_TEXT = 2;
+const IMAGE_FLAGS = 5;
+const IMAGE_LENGTH = 1 + IMAGE_COUNTS + IMAGE_TEXT + IMAGE_FLAGS;
+function decodeImage(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > IMAGE_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  // THE PHASE GATE, and the ONE pre-write name this body can emit that is BYTE-gated.
+  if (size === 2) {
+    if (members[0] !== IMAGE_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (members[1] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    if (members[1] === 'BYTE_LIMIT') throw new SafeError(ERROR_CODES.BYTE_LIMIT);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // THE POST-WRITE EXPORT OVER THE CEILING is its own THREE-slot shape, and it is the ONLY answer of that size
+  // this body can produce: the post-insert phase says the write has already run, so the class is the uncertain
+  // one with the slot HELD, and the extra slot carries the pre-write export's own length for the caller's log.
+  if (size === 3) {
+    if (members[0] !== IMAGE_PHASE_POST || members[1] !== 'BYTE_LIMIT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (!Number.isSafeInteger(members[2]) || members[2] < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (size !== IMAGE_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== IMAGE_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = members.slice(1, 1 + IMAGE_COUNTS);
+  for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const text = members.slice(1 + IMAGE_COUNTS, 1 + IMAGE_COUNTS + IMAGE_TEXT);
+  for (const chars of text) if (!Number.isSafeInteger(chars) || chars < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const flags = members.slice(1 + IMAGE_COUNTS + IMAGE_TEXT);
+  if (flags.length !== IMAGE_FLAGS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  for (const flag of flags) if (typeof flag !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({ imagesBefore: numbers[0], imagesAfter: numbers[1],
+    drawingsBefore: numbers[2], drawingsAfter: numbers[3],
+    paragraphsBefore: numbers[4], paragraphsAfter: numbers[5],
+    markdownBeforeChars: numbers[6],
+    textBeforeChars: text[0], textAfterChars: text[1],
+    // THE BODY'S OWN NEEDLE FLAG IS THE WHOLE VERDICT — it required the needle to be ABSENT before the write
+    // and present EXACTLY once after it — and it travels under the name the envelope's consumers read. The
+    // three remaining flags are the per-form text proof and the two count-growth flags the outcome rule
+    // re-checks; a flag whose own counts contradict it is settled uncertain rather than republished.
+    markdownNeedle: flags[0],
+    imageAppended: flags[1], drawingAppended: flags[2],
+    textEmpty: flags[3], textUnchanged: flags[4] });
+}
+// THE EXACT OUTCOME RULE the image insert rests on, in ONE place so the decision and its comment cannot
+// drift apart. It is judged against the SCOPE this ticket carried (`requested`), never against a value read
+// back out of the answer:
+//   1. THE TWO DOCUMENT COUNTS each grew by EXACTLY one: the picture really entered the document, and it
+//      really entered it as an IMAGE (the image list) and not merely as some other drawing (the drawing
+//      list). They are two independent reads of one fact, so a wrong one is told apart in the answer.
+//   2. THE PARAGRAPH DELTA IS THE REQUEST'S OWN FORM: an append grows the document by exactly one paragraph
+//      and that created paragraph is EMPTY (`textEmpty`), while a named address moves no count at all and
+//      leaves its own text UNCHANGED (`textUnchanged`).
+//   3. THE APPEND FLAG AND THE NEEDLE FLAG ARE BOTH REQUIRED, so an `ok` envelope produced for the other form,
+//      or one whose export does not hold `](` immediately before the EXACT requested data URL exactly once
+//      (and not at all before the write), can never be republished as this call's proof.
+// A false one is a mutation this tool cannot stand behind, and the mutation has already run, so the ticket
+// settles `APPLY_UNCERTAIN` with the slot HELD.
+function exactImageDelta(outcome, requested) {
+  if (outcome.imageAppended !== true || outcome.drawingAppended !== true) return false;
+  if (outcome.markdownNeedle !== true) return false;
+  if (requested.append === true) {
+    if (outcome.textEmpty !== true) return false;
+    if (outcome.paragraphsAfter - outcome.paragraphsBefore !== 1) return false;
+  } else {
+    if (outcome.textUnchanged !== true) return false;
+    if (outcome.paragraphsAfter !== outcome.paragraphsBefore) return false;
+  }
+  if (outcome.imagesAfter !== outcome.imagesBefore + 1) return false;
+  return outcome.drawingsAfter === outcome.drawingsBefore + 1;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -3334,6 +3822,22 @@ export function createR7Bridge(plugin, {
             result = Object.freeze({ occurrencesBefore: outcome.occurrencesBefore,
               occurrencesAfter: outcome.occurrencesAfter, replacements: expected });
           }
+          // THE IMAGE INSERT. Its answer is the authored flat array of primitives, decoded against the fixed
+          // FIFTEEN-slot shape — this leg addresses exactly ONE paragraph or ONE created one, and the
+          // document's OWN four counts are the evidence — so the phase gate is the whole of the length rule.
+          // The outcome rule then decides the ticket HERE, while it still owns the slot, and it is judged
+          // against the SCOPE (`params`) this ticket carried: an image count that did not grow by exactly one,
+          // a drawing count that did not, a paragraph delta that is not this request's own form, the wrong
+          // text flag for that form, and an export needle that was not located exactly once and absent before
+          // are all the UNCERTAIN class with the slot HELD, never a known error about a document this call may
+          // already carry the picture in. A decode that THROWS is classified by the catch below (a
+          // `[PRE_INSERT, name]` answer keeps its known code, and for THIS leg the pre-write export bound is
+          // one of them).
+          else if (kind === 'imageinsert') {
+            const outcome = decodeImage(value);
+            if (!exactImageDelta(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -3358,7 +3862,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -3649,6 +4153,33 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.replace(callback); }
           finally { clearScope(previousReplace); }
+        } else if (kind === 'imageinsert') {
+          // THE IMAGE INSERT: ONE command, and the SAME parameter channel the other read and write legs use —
+          // the validated `{ dataUrl, widthPx, heightPx, paragraph, append, markdownMax }` scope written into
+          // the page's `Asc.scope`, never composed into source (ADR 0002). It needs the entry point that OWNS
+          // that wrapper (`callCommand`); a build whose command channel is the bare `executeCommand` transport
+          // has no sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases
+          // the slot because nothing reached the editor.
+          // It carries NO document-identity probe, for the hyperlink insert's reason: this leg addresses a
+          // POSITION or the END of the document, not an owned TARGET, so there is no handle whose identity a
+          // probe could establish. What it does instead is the subject of the body's own comment: the
+          // document's own image list, drawing list, paragraph count and addressed text are read BEFORE the
+          // ONE `AddDrawing` (or the ONE `Push`), the document's own markdown export is read on BOTH sides of
+          // that write through `ToMarkdown(true, true)` — the BASE64 form, the only arm that embeds the data
+          // URL — and the outcome is the request's own form delta plus the needle that export holds. THERE IS
+          // NO ELEMENT READBACK ON THIS LEG: the pushed paragraph's own element was measured as a single `run`
+          // with EMPTY text, which is NOT an image proof, so this leg builds none on it.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a
+          // synchronous throw out of the transport must never release a slot whose work may already be queued,
+          // and the body's own pre-insert refusals keep their known class through the callback (they arrive as
+          // a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousImage;
+          try { previousImage = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.image(callback); }
+          finally { clearScope(previousImage); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -4247,6 +4778,76 @@ export function createR7Bridge(plugin, {
           elementsAfter: outcome.elementsAfter, textBeforeChars: outcome.textBeforeChars,
           textAfterChars: outcome.textAfterChars, textAppended: outcome.textAppended,
           elementCountGrew: outcome.elementCountGrew, elementAppended: outcome.elementAppended });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // THE IMAGE INSERT behind `insert_image` — the SEVENTH MUTATION of Sprint 3, the FOURTH write leg that
+    // APPENDS, and the FIRST leg whose proof is a DOCUMENT-WIDE EXPORT NEEDLE built from the caller's own
+    // payload. It has TWO FORMS and the request names which one it is: the NAMED form adds ONE drawing — an
+    // `Api.CreateImage` — into an EXISTING paragraph through that paragraph's own `AddDrawing` (an APPEND at
+    // the end of the paragraph's own content, the vendored body measured rather than deduced), while the
+    // APPEND form creates a DETACHED `Api.CreateParagraph()`, adds the same drawing to it, and `Push`es it at
+    // the END of the document. The body's own comment carries the mechanism (the document's own paragraph,
+    // image and drawing counts and the addressed text before the ONE write, then the same reads plus the
+    // document's own markdown export after it) and why no mutation primitive's return value is the signal;
+    // what matters HERE is the shape: ONE command on the ONE entry point that owns the parameter wrapper, the
+    // validated `{ dataUrl, widthPx, heightPx, paragraph, append, markdownMax }` scope carried as DATA through
+    // `Asc.scope`, and ONE strict decoder that turns the authored flat array — an explicit phase slot, eight
+    // counts, two text lengths and five proof flags — into the envelope below. The OUTCOME rule is then
+    // decided inside the ticket, before the slot is released, and the DOCUMENT'S OWN COUNTS are PRIMARY while
+    // the single needle flag can only REFUTE: an image count that did not grow by exactly one, a drawing count
+    // that did not, a paragraph delta that is not the request's own form, the wrong text flag for that form,
+    // an answer that cannot be interpreted and the body's own POST-write uncertainty are all `APPLY_UNCERTAIN`
+    // with the slot HELD and no retry, while the body's PRE-write refusals (an unusable baseline, an index
+    // outside the document, a missing primitive, and an export above the CEILING IT CARRIED) settle their
+    // closed KNOWN class with the slot released, because nothing was written — and they do so ONLY when the
+    // answer carries their phase.
+    // THE CEILING IS COMPOSED HERE, never read from the caller: `markdownMax` is
+    // `LIMITS.insertImageMarkdownChars` — the same number as `documentHtmlBytes`, the ceiling every document
+    // export in this module is decoded under — so a descriptor held directly, or a caller that guessed the
+    // key, cannot widen the export this body will read. No caller-supplied key reaches the body at all.
+    // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather
+    // than taken on trust: the bridge is a PUBLIC ENTRY POINT, and a payload, a dimension or a form this
+    // module never measured would let a caller write a picture the tool's own schema would have refused. The
+    // two mimes, the base64 alphabet, the no-whitespace rule, the two dimension bounds and the two-form rule
+    // are the SAME ones the descriptor advertises, spelled beside their twins in `src/tools/word.js` because
+    // the two modules cannot import each other.
+    async insertImage(raw) {
+      const dataUrl = requestedDataUrl(raw?.dataUrl);
+      const widthPx = requestedDimension(raw?.widthPx), heightPx = requestedDimension(raw?.heightPx);
+      const append = raw?.append, address = raw?.paragraph, signal = raw?.signal;
+      if (dataUrl === null || widthPx === null || heightPx === null) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (append !== true && append !== false) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (append === true) {
+        if (address !== null && address !== undefined) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      } else if (!Number.isSafeInteger(address) || address < 0 || address > LIMITS.insertImageIndexMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // THE SCOPE, and every value in it is composed HERE rather than read from the caller: a descriptor held
+        // directly, or a caller that guessed a key, cannot widen a bound or invent a form. `paragraph` is
+        // `null` for the append form, which is the form's OWN address rather than an invented index, and
+        // `markdownMax` is the module's own ceiling.
+        const outcome = await start('imageinsert', signal, {},
+          Object.freeze({ dataUrl, widthPx, heightPx, paragraph: append === true ? null : address, append,
+            markdownMax: LIMITS.insertImageMarkdownChars }));
+        // THE FORM AND THE TWO DIMENSIONS ARE ECHOED, not dropped, exactly as `url`/`text` and the four run
+        // switches are: the tool derives them from the closed request and carries them to the body, so the tool
+        // can require the answer to name the SAME request it made — an `ok` envelope produced for a different
+        // request is never republished as this one's proof. The counts and the flags beside them are the
+        // body's own measurement.
+        return Object.freeze({ ok: true, imagesBefore: outcome.imagesBefore, imagesAfter: outcome.imagesAfter,
+          drawingsBefore: outcome.drawingsBefore, drawingsAfter: outcome.drawingsAfter,
+          paragraphsBefore: outcome.paragraphsBefore, paragraphsAfter: outcome.paragraphsAfter,
+          appended: append, textBeforeChars: outcome.textBeforeChars, textAfterChars: outcome.textAfterChars,
+          textEmpty: outcome.textEmpty, textUnchanged: outcome.textUnchanged,
+          imageAppended: outcome.imageAppended, drawingAppended: outcome.drawingAppended,
+          markdownBeforeChars: outcome.markdownBeforeChars, markdownNeedle: outcome.markdownNeedle });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

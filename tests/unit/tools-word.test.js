@@ -64,7 +64,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
+  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_image', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.equal(tools.find(tool => tool.name === 'add_hyperlink').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_text').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'replace_text').kind, 'mutate');
@@ -106,7 +106,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading'],
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -324,7 +324,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -9727,3 +9727,730 @@ test('the replace body is self-contained: it answers the measured shapes in a fr
   assert.equal(fresh.doc.state.replaces, 1, 'and the ONE SearchAndReplace is where the change happens');
   assert.equal((await pending).replacements, 4);
 });
+
+// --- Sprint 3, tool 12: `insert_image` — the SEVENTH MUTATION of Sprint 3, the LAST creation tool of the
+// catalogue, and the ONE leg whose proof is a DOCUMENT-WIDE EXPORT NEEDLE built from the caller's own data
+// URL -------------------------------------------------------------------------------------------------------
+//
+// THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942, in the native session
+// that produced this round's brief):
+//   * `Api.CreateImage(dataUrl, 40, 40)` answers an OBJECT (the `ApiImage` wrapper);
+//   * `paragraph.AddDrawing(image)` answers an OBJECT and really adds the drawing to that paragraph — the
+//     vendored 2026.1.2 body is `AddDrawing = function (U) { var S = new ParaRun(this.Paragraph, !1);
+//     return U instanceof Nt ? (S.Add_ToContent(0, U.Drawing), _i(this.Paragraph, S), U.Drawing.Set_Parent(S),
+//     i(U), new F(S)) : new F(S) }` — an APPEND at the end of the paragraph's own content, exactly like
+//     `AddElement` (read out of `.local/stage-b-runtime/vendor-word-sdk-all.js` rather than assumed);
+//   * `doc.Push(paragraph)` appended it: the paragraph count went 3 -> 4;
+//   * `doc.GetAllImages()` went 0 -> 1 and `doc.GetAllDrawingObjects()` was 1;
+//   * the vendored bodies explain both counts: `GetAllImages = function () { … this.Document
+//     .GetAllDrawingObjects() … GraphicObj instanceof AscFormat.CImageShape && E.push(new jt(…)) }` — the
+//     image list is a FILTER of the drawing list, so the two grow together and neither is redundant;
+//   * the pushed paragraph's own element readback was a single element of class `run` with EMPTY text, so the
+//     PER-ELEMENT CLASS IS NOT AN IMAGE PROOF and this leg does not build one on it;
+//   * `doc.ToMarkdown(false, true)` renders `![](` + the EXACT data URL + `)` — the vendored converter's
+//     `case para_Drawing: if (va.IsPicture()) { if (S === 'markdown') ui += Fr.Config.base64img ? '![](' +
+//     va.GraphicObj.getBase64Img() + ')' : '![](' + va.GraphicObj.getImageUrl() + ')' …` — so the proof MUST
+//     ask for the BASE64 form (`base64img = true`); the default form embeds the image's URL instead and no
+//     data URL would ever appear. The markdown export is NOT entity-escaped (unlike `ToHtml`), which is
+//     exactly why the data URL is usable as a needle at all:
+//   * THE NEEDLE IS `](<dataUrl>` — the two characters that CLOSE the markdown image's `![` prefix, then the
+//     exact data URL. It is located by `indexOf`/`lastIndexOf`/`slice` comparisons, never by a dynamic
+//     `RegExp` (this module's authored-code audit forbids a computed pattern).
+// THE EXPORT BOUND IS THE EXISTING DOCUMENT-EXPORT CEILING, reused rather than invented: the one markdown
+// read this leg makes is a DOCUMENT-WIDE export, exactly like the insert confirmation's `GetFileHTML` read, so
+// `LIMITS.documentHtmlBytes` (262144 bytes) is the bound the bridge decodes it under and the body refuses a
+// PRE-write export above it with the closed `BYTE_LIMIT` and ZERO writes and a POST-write one as the UNCERTAIN
+// class with the slot HELD — the same two-phase rule `format_range` applies to its own export read.
+function insertImageTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'insert_image'); }
+function insertImageBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, insertImage: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+// A SMALL BUT REAL PNG payload: the eight-byte PNG signature plus one base64 chunk, so the data URL is a
+// legal `data:image/png;base64,` URL whose payload is non-empty pure base64.
+const IMAGE_PNG_PAYLOAD = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const IMAGE_URL = 'data:image/png;base64,' + IMAGE_PNG_PAYLOAD;
+const IMAGE_JPEG_URL = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==';
+const IMAGE_WIDTH = 40;
+const IMAGE_HEIGHT = 40;
+// THE APPEND FORM'S ADDRESS IS `paragraph: null` on the wire and the NAMED FORM carries the index, exactly
+// like `add_hyperlink`'s two-form scope.
+// THE CEILING IS PART OF THE SCOPE THE BRIDGE COMPOSES, never a caller key: `markdownMax` is
+// `LIMITS.insertImageMarkdownChars`, the same number as the document export ceiling, and the body refuses
+// any scope that carries something else. The fixtures spell it so a test drives the SAME closed request the
+// bridge really dispatches.
+const imageAppendScope = (overrides = {}) => ({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT,
+  paragraph: null, append: true, markdownMax: LIMITS.insertImageMarkdownChars, ...overrides });
+const imageNamedScope = (overrides = {}) => ({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT,
+  paragraph: 1, append: false, markdownMax: LIMITS.insertImageMarkdownChars, ...overrides });
+// The dispatched SCOPE's own byte size, measured on exactly the values that cross.
+function insertImageBytes(dataUrl = IMAGE_URL, widthPx = IMAGE_WIDTH, heightPx = IMAGE_HEIGHT, appended = true, paragraph = null) {
+  return utf8ByteLength(`${appended ? 'append' : paragraph}:${dataUrl}:${widthPx}x${heightPx}`);
+}
+// The APPEND FORM'S OWN ANSWER, exactly as the authored body emits it: `[POST_INSERT, imagesBefore,
+// imagesAfter, drawingsBefore, drawingsAfter, paragraphsBefore, paragraphsAfter, markdownBeforeChars,
+// textBeforeChars, textAfterChars, markdownNeedle, imageAppended, drawingAppended, textEmpty, textUnchanged]`.
+const IMAGE_ANSWER = Object.freeze(['POST_INSERT', 0, 1, 0, 1, 3, 4, 38, 0, 0, true, true, true, true, false]);
+// The tool-result entry the handler publishes, in the shape the runtime serializes.
+function insertImageEntry(data) { return JSON.stringify({ tool: 'insert_image', ok: true, data }); }
+// THE ONE EXPORT BOUND THIS LEG REUSES: the document-wide export ceiling the bridge decodes any document
+// export under (`LIMITS.documentHtmlBytes`). It is named as a FUNCTION rather than read twice, so the tool's
+// own constant and the bridge's ceiling are pinned against one another in one place.
+function documentExportBound() { return LIMITS.documentHtmlBytes; }
+// The envelope the REAL bridge publishes for a verified insert: the four counts its own body measured and the
+// nine proof facts it decided the outcome on.
+function imageProof(overrides = {}) {
+  const appended = overrides.appended ?? true;
+  const imagesBefore = overrides.imagesBefore ?? 0;
+  const imagesAfter = overrides.imagesAfter ?? 1;
+  const proof = { ok: true, imagesBefore, imagesAfter,
+    drawingsBefore: overrides.drawingsBefore ?? 0, drawingsAfter: overrides.drawingsAfter ?? 1,
+    paragraphsBefore: overrides.paragraphsBefore ?? 3,
+    paragraphsAfter: overrides.paragraphsAfter === undefined ? (appended ? 4 : 3) : overrides.paragraphsAfter,
+    appended,
+    textBeforeChars: overrides.textBeforeChars ?? (appended ? 0 : 12),
+    textAfterChars: overrides.textAfterChars === undefined ? (appended ? 0 : 12) : overrides.textAfterChars,
+    textEmpty: overrides.textEmpty ?? appended, textUnchanged: overrides.textUnchanged ?? !appended,
+    imageAppended: overrides.imageAppended ?? true, drawingAppended: overrides.drawingAppended ?? true,
+    markdownBeforeChars: overrides.markdownBeforeChars ?? 0, markdownAfterChars: overrides.markdownAfterChars ?? 64,
+    markdownNeedle: overrides.markdownNeedle ?? true };
+  // A NAMED OVERRIDE MAY DELETE A FIELD, which is how the malformed-envelope cases are built: setting it to
+  // `undefined` instead would be read back by the `??` default above and silently repaired.
+  for (const key of overrides.absent ?? []) delete proof[key];
+  return proof;
+}
+// THE DOCUMENT DOUBLE, built only on the measured primitives. Every mutation is REAL state: `AddDrawing`
+// appends a drawing to the paragraph's own content and writes the DOCUMENT only when that paragraph is
+// installed, `Push` installs the created paragraph at the END, and `GetAllImages` is the FILTER of
+// `GetAllDrawingObjects` the vendored SDK really implements — so the two counts cannot be moved independently
+// and a test that faults one of them faults a count the body must notice.
+function imageDocument(options = {}) {
+  const state = { drawings: 0, pushes: 0, created: 0, markdowns: 0 };
+  const doubles = (options.texts ?? ['первый абзац', 'второй абзац', 'третий абзац'])
+    .map(text => ({ text, content: [{ kind: 'marker' }], installed: true }));
+  function pictures() { return doubles.reduce((total, item) => total + item.content.filter(entry => entry.kind === 'image').length, 0); }
+  function drawingCount() {
+    if (options.drawingsThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+    return pictures();
+  }
+  function markdown() {
+    state.markdowns += 1;
+    if (options.markdownThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+    // THE TWO READS OF ONE TICKET ARE MODELLED SEPARATELY: a document that is already over the ceiling before
+    // the write (`markdownPad`), and one that only becomes over the ceiling after it (`markdownAfterPad`) —
+    // the second read is the one a real growing document leaves behind.
+    if (state.markdowns > 1 && options.markdownAfterPad !== undefined) return options.markdownAfterPad;
+    const body = doubles.map(item => {
+      const runs = item.content.filter(entry => entry.kind === 'image')
+        .map(entry => '![](' + entry.dataUrl + ')').join('');
+      return item.text + runs;
+    }).join('\n');
+    return options.markdownPad === undefined ? body : options.markdownPad + body;
+  }
+  function pictureFor(dataUrl) { return { kind: 'image', classType: options.classType ?? 'image', dataUrl }; }
+  function paragraphAt(list, position) { return position >= 0 && position < list.length ? list[position] : null; }
+  function wrapperFor(double) {
+    return {
+      // The SDK's own unwrap, which `ApiDocument.Push` uses to reject an element already in the document.
+      private_GetImpl() { return double; },
+      GetText() { return options.textAfterFault !== undefined && state.pushes > 0 ? options.textAfterFault : double.text; },
+      AddDrawing(image) {
+        if (options.addDrawingThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+        if (options.addDrawingAppends === false) return { kind: 'run' };
+        if (double.installed === true) state.drawings += 1;
+        double.content.push(pictureFor(image.dataUrl));
+        return { kind: 'run' };
+      }
+    };
+  }
+  const document = {
+    GetAllParagraphs() { return doubles.map(double => wrapperFor(double)); },
+    Push(element) {
+      state.pushes += 1;
+      const double = element && typeof element.private_GetImpl === 'function' ? element.private_GetImpl() : null;
+      // A PUSH THAT APPENDED NOTHING is modelled as a list that did not move: the document's own list is the
+      // only evidence there is, and the primitive's own answer is never this tool's signal.
+      if (double === null || double.installed === true || options.pushAppends === false) return false;
+      double.installed = true;
+      doubles.push(double);
+      state.drawings += double.content.filter(entry => entry.kind === 'image').length;
+      return true;
+    },
+    GetAllDrawingObjects() { return new Array(drawingCount()).fill(null); },
+    GetAllImages() {
+      if (options.imagesThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      const size = drawingCount();
+      return new Array(options.imagesFault === undefined ? size : options.imagesFault).fill(null);
+    },
+    // THE BASE64 ARM IS GATED ON BOTH ARGUMENTS, exactly as the vendored converter gates it: the first selects
+    // the markdown converter and the second is `base64img`. A build that takes only the second (or neither)
+    // renders the image's URL instead, which is the shape this tool cannot prove.
+    ToMarkdown(a, b) { return options.markdownIgnoresBase64 !== true && a === true && b === true ? markdown() : '[](image.png)'; },
+    InsertContent() { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); }
+  };
+  return {
+    state,
+    doubles,
+    document,
+    itemAt(position) { return paragraphAt(doubles, position); },
+    createParagraph() {
+      state.created += 1;
+      return wrapperFor({ text: '', content: [{ kind: 'marker' }], installed: false });
+    },
+    createImage(dataUrl, width, height) {
+      if (options.createImageAbsent === true) return null;
+      if (options.createImageThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (options.createImageIgnoresData !== true && (dataUrl !== IMAGE_URL || width !== IMAGE_WIDTH || height !== IMAGE_HEIGHT)) {
+        throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      }
+      return { dataUrl, width, height };
+    }
+  };
+}
+// The IN-EDITOR rig, exactly the carriage `linkRig`/`replaceRig` reproduce: the vendor wrapper reads
+// `Asc.scope` SYNCHRONOUSLY and evaluates the body in a fresh, module-free scope whose only bindings are `Api`
+// and `scope`. `forge` replaces the answer the body really produced AFTER that body ran to completion — the
+// one real write included — which is the only way to model a hostile native answer for a dispatched write.
+function imageRig(options = {}) {
+  const commands = [];
+  const methods = [];
+  const measured = imageDocument(options);
+  const api = { GetDocument: () => measured.document };
+  if (options.createImagePrimitive !== false) api.CreateImage = (...args) => measured.createImage(...args);
+  if (options.createParagraphPrimitive !== false) api.CreateParagraph = () => measured.createParagraph();
+  const carrier = options.namespace ?? { scope: {} };
+  const plugin = { info: { editorType: 'word' },
+    executeMethod: (...args) => { methods.push(args); return false; },
+    callCommand: options.command === false ? undefined : function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = carrier.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(options.forge === undefined ? answered : options.forge);
+      return false;
+    } };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  const bridge = bridgeWith(plugin, bridgeOptions);
+  return { bridge, plugin, commands, methods, namespace: carrier, api, doc: measured };
+}
+
+test('insert_image advertises the closed schema: TWO accepted mimes, bounded dimensions, an optional address', () => {
+  const tool = insertImageTool(insertImageBridge(imageProof()));
+  assert.equal(tool.name, 'insert_image');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  // THE ADDRESS IS OPTIONAL AND THAT IS THE FORM SWITCH, exactly as it is for `add_hyperlink`: an ABSENT
+  // `paragraph` is the APPEND form and no schema keyword can say "one of the two shapes", so the closed rule
+  // lives in the precondition, is re-decided by the handler and is re-decided once more by the bridge.
+  assert.deepEqual([...schema.required].sort(), ['dataUrl', 'heightPx', 'widthPx']);
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['dataUrl', 'heightPx', 'paragraph', 'widthPx']);
+  assert.equal(schema.properties.dataUrl.type, 'string');
+  assert.equal('minBytes' in schema.properties.dataUrl, false);
+  assert.equal(schema.properties.dataUrl.maxBytes, LIMITS.insertImageDataUrlBytes);
+  // BOTH DIMENSIONS ARE REQUIRED: `CreateImage` was measured with both, so an omitted dimension is
+  // UNMEASURED and no default is guessed — the schema simply demands the pair.
+  assert.equal(schema.properties.widthPx.type, 'integer');
+  assert.equal(schema.properties.widthPx.minimum, 1);
+  assert.equal(schema.properties.widthPx.maximum, LIMITS.insertImageDimensionPx);
+  assert.equal(schema.properties.heightPx.type, 'integer');
+  assert.equal(schema.properties.heightPx.minimum, 1);
+  assert.equal(schema.properties.heightPx.maximum, LIMITS.insertImageDimensionPx);
+  assert.equal(schema.properties.paragraph.type, 'integer');
+  assert.equal(schema.properties.paragraph.minimum, 0);
+  assert.equal(schema.properties.paragraph.maximum, LIMITS.insertImageIndexMax);
+  // THE FOUR BOUNDS ARE PINNED AS NUMBERS AND AS DISTINCT DECISIONS: a data URL is not an address, and a
+  // dimension is neither.
+  assert.equal(LIMITS.insertImageDataUrlBytes, 4096);
+  assert.equal(LIMITS.insertImageDimensionPx, 4096);
+  assert.notEqual(LIMITS.insertImageDataUrlBytes, LIMITS.insertImageIndexMax);
+  // THE EXPORT BOUND IS THE EXISTING DOCUMENT CEILING and this leg adds NO competing constant: it reads the
+  // SAME document-wide export the insert confirmation does, so it is bounded by the SAME number.
+  assert.equal(LIMITS.insertImageMarkdownChars, LIMITS.documentHtmlBytes);
+  assert.equal(documentExportBound(), LIMITS.documentHtmlBytes);
+  // EVERY LEGAL REQUEST SHAPE THE SCHEMA ADVERTISES.
+  const append = validateArguments(schema, { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT });
+  assert.equal(append.dataUrl, IMAGE_URL);
+  const named = validateArguments(schema, { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT, paragraph: 1 });
+  assert.equal(named.paragraph, 1);
+  assert.equal(validateArguments(schema, { dataUrl: IMAGE_JPEG_URL, widthPx: 1, heightPx: 1 }).widthPx, 1,
+    'the JPEG mime is the ONE other accepted vocabulary member, and the smallest dimension is legal');
+  assert.equal(tool.precondition({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }, { editor: 'word' }), null);
+  assert.equal(tool.precondition({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }, { editor: 'cell' }).code,
+    'CAPABILITY_UNAVAILABLE');
+});
+
+test('insert_image refuses every illegal argument with nothing dispatched', async () => {
+  const bridge = insertImageBridge(imageProof());
+  const tool = insertImageTool(bridge);
+  const legal = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT };
+  const overPayload = 'A'.repeat(LIMITS.insertImageDataUrlBytes);
+  const overUrl = 'data:image/png;base64,' + overPayload;
+  const illegal = [
+    ['no argument object', null],
+    ['missing dataUrl', { widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }],
+    ['missing widthPx', { dataUrl: IMAGE_URL, heightPx: IMAGE_HEIGHT }],
+    ['missing heightPx', { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH }],
+    ['an unknown top-level key', { ...legal, target: 'x' }],
+    ['a GIF mime', { ...legal, dataUrl: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' }],
+    ['an SVG mime', { ...legal, dataUrl: 'data:image/svg+xml;base64,PHN2Zy8+' }],
+    ['a data URL with NO mime at all', { ...legal, dataUrl: 'data:;base64,' + IMAGE_PNG_PAYLOAD }],
+    ['a data URL that is not base64', { ...legal, dataUrl: 'data:image/png,' + IMAGE_PNG_PAYLOAD }],
+    ['a NON-BASE64 payload', { ...legal, dataUrl: 'data:image/png;base64,@@@not base64@@@' }],
+    ['padding in the MIDDLE of the payload', { ...legal, dataUrl: 'data:image/png;base64,ab=cd' }],
+    ['a SPACE inside the payload', { ...legal, dataUrl: 'data:image/png;base64,' + IMAGE_PNG_PAYLOAD.slice(0, 8) + ' ' + IMAGE_PNG_PAYLOAD.slice(8) }],
+    ['a NEWLINE inside the payload', { ...legal, dataUrl: 'data:image/png;base64,' + IMAGE_PNG_PAYLOAD.slice(0, 8) + '\n' + IMAGE_PNG_PAYLOAD.slice(8) }],
+    ['a control character inside the payload', { ...legal, dataUrl: 'data:image/png;base64,' + IMAGE_PNG_PAYLOAD.slice(0, 8) + '\u0001' + IMAGE_PNG_PAYLOAD.slice(8) }],
+    ['leading whitespace before the scheme', { ...legal, dataUrl: ' ' + IMAGE_URL }],
+    ['a data URL over the advertised bound', { ...legal, dataUrl: overUrl }],
+    ['an empty data URL', { ...legal, dataUrl: '' }],
+    ['a non-string data URL', { ...legal, dataUrl: 7 }],
+    ['a fractional width', { ...legal, widthPx: 40.5 }],
+    ['a stringified width', { ...legal, widthPx: '40' }],
+    ['a ZERO width', { ...legal, widthPx: 0 }],
+    ['a negative height', { ...legal, heightPx: -1 }],
+    ['a width over the advertised range', { ...legal, widthPx: LIMITS.insertImageDimensionPx + 1 }],
+    ['a height over the advertised range', { ...legal, heightPx: LIMITS.insertImageDimensionPx + 1 }],
+    ['a fractional paragraph', { ...legal, paragraph: 1.5 }],
+    ['a negative paragraph', { ...legal, paragraph: -1 }],
+    ['a paragraph over the advertised bound', { ...legal, paragraph: LIMITS.insertImageIndexMax + 1 }],
+    ['a null paragraph', { ...legal, paragraph: null }],
+    ['a stringified paragraph', { ...legal, paragraph: '1' }]
+  ];
+  for (const [label, args] of illegal) {
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', `schema: ${label}`); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+  }
+  assert.equal((await tool.execute(legal, { editor: 'cell' })).code, 'CAPABILITY_UNAVAILABLE',
+    'a Word mutation offered to another editor refuses before any dispatch');
+  assert.equal(bridge.seen.length, 0, 'NOTHING was dispatched for any refused argument');
+  // THE TWO MIMES THE VOCABULARY NAMES ARE BOTH SERVED, and the URL the rejected-BOUND cases used really is
+  // over the bound by one byte rather than by a coincidence.
+  assert.ok(utf8ByteLength(overUrl) > LIMITS.insertImageDataUrlBytes);
+  for (const url of [IMAGE_URL, IMAGE_JPEG_URL]) {
+    const carried = insertImageBridge(imageProof());
+    const answer = await insertImageTool(carried).execute({ dataUrl: url, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }, { editor: 'word' });
+    assert.equal(answer.ok, true, url.slice(0, 22));
+    assert.equal(carried.seen.length, 1);
+  }
+});
+
+test('insert_image names the ADDRESS and adds the drawing INTO that paragraph, changing no count and no text', async () => {
+  const r = imageRig({ namespace: { scope: imageNamedScope() } });
+  const registry = createRegistry(createWordTools(r.bridge));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'insert_image');
+  assert.ok(offered, 'the offered catalogue contains insert_image');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.deepEqual([...offered.requires], ['document.write']);
+  assert.equal(offered.schema.properties.dataUrl.maxBytes, LIMITS.insertImageDataUrlBytes);
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' })
+    .some(entry => entry.name === 'insert_image'), false, 'no write capability, no mutation tool');
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' })
+    .some(entry => entry.name === 'insert_image'), false, 'ASK exposes no mutation tool');
+  // THE MODEL'S OWN CALL, through the registry's batch validation and ONE command dispatch: the named form
+  // adds the drawing to the paragraph at index 1 and moves NEITHER count nor THAT paragraph's text.
+  const batch = validateBatch(catalogue, [{ tool: 'insert_image',
+    arguments: { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT, paragraph: 1 } }]);
+  assert.equal(batch[0].descriptor.name, 'insert_image');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"insert_image","arguments":{"dataUrl":"' + IMAGE_URL +
+    '","widthPx":40,"heightPx":40,"paragraph":1}}]}', '{"type":"final","message":"картинка вставлена"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '18181818-1818-4818-8818-181818181818', request: 'вставь картинку во второй абзац',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_image', 'ok']]);
+  // The model really RECEIVES the proof through the runtime's own per-result serialization.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'insert_image');
+  assert.equal(published.data.appended, false);
+  assert.equal(published.data.paragraph, 1);
+  assert.equal(published.data.imagesBefore, 0);
+  assert.equal(published.data.imagesAfter, 1);
+  assert.equal(published.data.drawingsAfter, 1);
+  assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
+  assert.equal(r.doc.state.pushes, 0, 'the named form creates and pushes NO paragraph');
+  assert.equal(r.doc.doubles.length, 3, 'and the paragraph count did NOT move');
+  assert.equal(r.doc.doubles[1].text, 'второй абзац', 'and the addressed paragraph\u2019s own text is unchanged');
+  assert.equal(r.doc.doubles[1].content.filter(entry => entry.kind === 'image').length, 1,
+    'while that paragraph really carries the drawing');
+  // AND THE NAMED FORM'S OWN PROOF FIELDS ARE THE ONES THE HANDLER PUBLISHED, judged on the counts it read.
+  const direct = imageRig({ namespace: { scope: imageNamedScope() } });
+  const answer = await insertImageTool(direct.bridge).execute(
+    { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT, paragraph: 1 }, { editor: 'word' });
+  assert.deepEqual(answer, { ok: true, data: { appended: false, paragraph: 1,
+    widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT, imagesBefore: 0, imagesAfter: 1,
+    drawingsBefore: 0, drawingsAfter: 1, textUnchanged: true,
+    bytes: insertImageBytes(IMAGE_URL, IMAGE_WIDTH, IMAGE_HEIGHT, false, 1) } });
+});
+
+test('insert_image appends a NEW paragraph for the append form, and the count grows by exactly one', async () => {
+  const r = imageRig({ namespace: { scope: imageAppendScope() } });
+  const answer = await insertImageTool(r.bridge).execute(
+    { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }, { editor: 'word' });
+  assert.equal(answer.ok, true);
+  assert.equal(r.commands.length, 1, 'ONE command carries the whole insert');
+  assert.equal(r.doc.state.pushes, 1, 'the append form pushes exactly ONE created paragraph');
+  assert.equal(r.doc.doubles.length, 4, 'and the paragraph count grew by exactly one');
+  assert.equal(r.doc.doubles[3].text, '', 'the appended paragraph\u2019s own text is empty');
+  assert.equal(r.doc.doubles[3].content.filter(entry => entry.kind === 'image').length, 1);
+  // THE SCOPE THE BODY REALLY RECEIVED, and the route it really authored: the measured creation primitive,
+  // the measured drawing primitive and the measured append — and NEVER the legacy whole-array insert.
+  assert.deepEqual(Object.keys(r.commands[0].scope).sort(),
+    ['append', 'dataUrl', 'heightPx', 'markdownMax', 'paragraph', 'widthPx'],
+    'the scope is the closed request plus the ceiling this module composed, and nothing else');
+  assert.equal(r.commands[0].scope.paragraph, null, 'the append form names NO index');
+  const code = withoutComments(r.commands[0].source);
+  assert.match(code, /CreateImage\(/, 'the body creates the image through the measured primitive');
+  assert.match(code, /AddDrawing\(/, 'and adds the drawing through the measured paragraph primitive');
+  assert.match(code, /\.Push\(/, 'and appends the created paragraph with the measured document primitive');
+  assert.equal((code.match(/CreateImage\s*\(/g) ?? []).length, 1, 'the image is created exactly once');
+  // THE PER-FORM INVOCATION IS AUTHORED ONCE PER FORM, not once in the file: the append and the named branch
+  // each carry their own guarded call, and exactly ONE of them can run for one request. The absence of the
+  // bare member READ is what the typeof guard's `created.AddDrawing` would otherwise satisfy.
+  assert.equal((code.match(/\.AddDrawing\(/g) ?? []).length, 2, 'the drawing is added once per form');
+  assert.equal((code.match(/\.Push\(/g) ?? []).length, 1, 'and the append happens exactly once');
+  assert.equal(code.includes('InsertContent'), false,
+    'the legacy whole-array primitive inserts at the START (measured) and is authored nowhere');
+});
+
+test('insert_image maps every refusal class it can receive, and never invents a proof', async () => {
+  const legal = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT };
+  // A bridge that is absent, or that does not expose the entry point, is the closed capability class.
+  assert.equal((await insertImageTool({}).execute(legal, { editor: 'word' })).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal((await createWordTools(undefined).find(entry => entry.name === 'insert_image').execute(legal, { editor: 'word' })).code,
+    'CAPABILITY_UNAVAILABLE');
+  for (const [label, answer, code] of [
+    ['a bridge refusal carries the code it names', { ok: false, code: 'EDITOR_BUSY' }, 'EDITOR_BUSY'],
+    ['an unknown bridge code keeps the closed fallback', { ok: false, code: 'СЕКРЕТ-КЛАСС' }, 'TOOL_ERROR'],
+    ['a bridge refusal without a code', { ok: false }, 'TOOL_ERROR'],
+    ['a non-object answer', 'СЕКРЕТ-ОТВЕТ', 'TOOL_ERROR'],
+    ['an uninterpretable two-field answer', { ok: true, imagesBefore: 0 }, 'TOOL_ERROR'],
+    ['a missing drawings count', imageProof({ absent: ['drawingsBefore', 'drawingsAfter'], drawingsBefore: 0, drawingsAfter: 1 }), 'TOOL_ERROR'],
+    ['a fractional images count', imageProof({ imagesAfter: 1.5 }), 'TOOL_ERROR'],
+    ['a negative drawings count', imageProof({ drawingsBefore: -1 }), 'TOOL_ERROR'],
+    ['a stringified paragraph count', imageProof({ paragraphsBefore: '3' }), 'TOOL_ERROR'],
+    ['a non-boolean proof flag', imageProof({ imageAppended: 'да' }), 'TOOL_ERROR']
+  ]) {
+    const result = await insertImageTool(insertImageBridge(answer)).execute(legal, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, code, label);
+    assert.equal(result.data, undefined, label);
+  }
+  // THE UNCERTAIN CLASS OF A BRIDGE THAT MAY ALREADY HAVE WRITTEN, in BOTH shapes the bridge expresses it
+  // (the thrown `SafeError` and the returned envelope), exactly as the six mutations before this one map it.
+  for (const thrown of [Object.assign(new Error('СЕКРЕТ-ОШИБКА'), { code: 'APPLY_UNCERTAIN' }), { code: 'APPLY_UNCERTAIN' }]) {
+    const result = await insertImageTool(insertImageBridge(() => { throw thrown; })).execute(legal, { editor: 'word' });
+    assert.equal(result.code, 'TOOL_UNCERTAIN', 'a write whose outcome is unknown stops the run');
+  }
+  const returned = await insertImageTool(insertImageBridge({ ok: false, code: 'APPLY_UNCERTAIN' })).execute(legal, { editor: 'word' });
+  assert.equal(returned.code, 'TOOL_UNCERTAIN', 'and the RETURNED envelope is classified the same way');
+  // AN ORDINARY THROW keeps its closed local class and is never republished as a raw message.
+  const crashed = await insertImageTool(insertImageBridge(() => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); })).execute(legal, { editor: 'word' });
+  assert.equal(crashed.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(crashed).includes('СЕКРЕТ'), false, 'no native message ever crosses');
+});
+
+test('insert_image holds the run whenever ANY of the four measured legs is not exact', async () => {
+  const legal = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT };
+  const named = { ...legal, paragraph: 1 };
+  for (const [label, answer] of [
+    ['the image count did NOT grow', imageProof({ imagesAfter: 0 })],
+    ['the image count grew by TWO', imageProof({ imagesAfter: 2 })],
+    ['the drawing count did NOT grow', imageProof({ drawingsAfter: 0 })],
+    ['the drawing count grew by TWO', imageProof({ drawingsAfter: 2 })],
+    ['the two counts disagree', imageProof({ imagesAfter: 1, drawingsAfter: 2 })],
+    ['the markdown needle is absent', imageProof({ markdownNeedle: false })],
+    ['the appended paragraph is not empty', imageProof({ textEmpty: false })],
+    ['an append that moved no paragraph', imageProof({ paragraphsAfter: 3 })],
+    ['an append whose paragraph count did not grow', imageProof({ appended: true, paragraphsAfter: 3 })]
+  ]) {
+    const result = await insertImageTool(insertImageBridge(answer)).execute(legal, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  for (const [label, answer] of [
+    ['a publish that claims an append for a NAMED request', imageProof({ appended: true })],
+    ['a named form that moved the paragraph count', imageProof({ appended: false, paragraphsAfter: 4, textUnchanged: true })],
+    ['a named form whose text changed', imageProof({ appended: false, textUnchanged: false })],
+    ['a named form that claims the append proof flag', imageProof({ appended: false, textUnchanged: true, textEmpty: true })]
+  ]) {
+    const result = await insertImageTool(insertImageBridge(answer)).execute(named, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+  }
+  // AN `ok` ENVELOPE THAT CONTRADICTS THE REQUEST IT ANSWERS is never republished as this call's proof: the
+  // append request cannot be served by a named-form answer and vice versa.
+  const crossed = await insertImageTool(insertImageBridge(imageProof({ appended: false, textUnchanged: true })))
+    .execute(legal, { editor: 'word' });
+  assert.equal(crossed.code, 'TOOL_UNCERTAIN', 'the form is re-derived from the request, never read off the answer');
+  assert.equal(insertImageTool(insertImageBridge(imageProof())).precondition(legal, { editor: 'word' }), null);
+});
+
+test('insert_image refuses an over-bound export with ZERO writes, and holds the slot when it is over-bound AFTER the write', async () => {
+  const request = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT };
+  // THE PRE-WRITE BOUND, decided inside the ONE command the tool dispatches: the body reads the document's
+  // markdown BEFORE it creates anything, so an export above the reused ceiling is the closed BYTE_LIMIT with
+  // NOTHING created, NOTHING added and NOTHING pushed.
+  const pre = imageRig({ namespace: { scope: imageAppendScope() },
+    markdownPad: 'П'.repeat(documentExportBound() + 1) });
+  const refused = await insertImageTool(pre.bridge).execute(request, { editor: 'word' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'BYTE_LIMIT',
+    'the phase-marked pre-insert BYTE_LIMIT keeps its known class and releases the slot');
+  assert.equal(pre.bridge.getState().busy, false, 'nothing was written, so no slot is held');
+  assert.equal(pre.commands.length, 1, 'the ONE command is where the refusal happened');
+  assert.deepEqual(pre.commands[0].answered, ['PRE_INSERT', 'BYTE_LIMIT']);
+  assert.equal(pre.doc.doubles.length, 3, 'and the paragraph count did not move');
+  assert.equal(pre.doc.doubles.every(double => double.content.every(entry => entry.kind !== 'image')), true,
+    'NOTHING was added to any paragraph');
+  assert.equal(pre.doc.state.created, 0, 'and no image or paragraph was created at all');
+  // THE POST-WRITE BOUND: the same export is readable BEFORE the write and over it AFTER, which is the shape
+  // a document that really grew leaves behind. The mutation is already in the document, so the outcome is the
+  // UNCERTAIN class with the slot HELD and NO retry — never a known refusal about a write that ran.
+  const post = imageRig({ namespace: { scope: imageAppendScope() }, markdownAfterPad: 'П'.repeat(documentExportBound() + 1) });
+  const held = await insertImageTool(post.bridge).execute(request, { editor: 'word' });
+  assert.equal(held.ok, false);
+  assert.equal(held.code, 'TOOL_UNCERTAIN');
+  assert.equal(post.bridge.getState().busy, true, 'the slot stays HELD: the drawing is already in the document');
+  assert.equal(post.doc.state.drawings, 1, 'the measured route really ran before the unreadable read');
+  assert.equal(post.commands.length, 1, 'and no retry was issued');
+});
+
+test('the refusal PHASE is explicit in the image protocol: a phase-less or mis-phased answer is uncertain', async () => {
+  const request = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT };
+  // A build missing one step of the measured route, or one whose baseline cannot be read, answers the body's
+  // own `[PRE_INSERT, name]` with ZERO writes — and the decoder keeps that KNOWN class.
+  for (const [label, options, phase] of [
+    ['a build with no CreateImage primitive', { createImagePrimitive: false }, 'CAPABILITY_UNAVAILABLE'],
+    ['a build whose CreateImage answers nothing', { createImageAbsent: true }, 'CAPABILITY_UNAVAILABLE'],
+    ['a build with no CreateParagraph primitive', { createParagraphPrimitive: false }, 'CAPABILITY_UNAVAILABLE'],
+    ['a build with no GetAllImages primitive', { imagesThrows: true }, 'CAPABILITY_UNAVAILABLE'],
+    ['a build with no GetAllDrawingObjects primitive', { drawingsThrows: true }, 'CAPABILITY_UNAVAILABLE'],
+    ['a namespace that cannot carry the scope', { omitCarrier: true }, 'CAPABILITY_UNAVAILABLE']
+  ]) {
+    const r = imageRig({ ...options, namespace: { scope: imageAppendScope() } });
+    const result = await insertImageTool(r.bridge).execute(request, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, phase, label);
+    assert.equal(r.doc.state.drawings, 0, `${label}: and ZERO drawings reached the document`);
+    if (r.commands.length > 0) assert.equal(r.commands[0].answered[0], 'PRE_INSERT', label);
+  }
+  // AN INDEX OUTSIDE THIS DOCUMENT is the closed ARGUMENT class with ZERO writes.
+  const outside = imageRig({ namespace: { scope: imageNamedScope({ paragraph: 9 }) } });
+  const refused = await insertImageTool(outside.bridge).execute({ ...request, paragraph: 9 }, { editor: 'word' });
+  assert.equal(refused.code, 'TOOL_ERROR');
+  assert.deepEqual(outside.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR']);
+  assert.equal(outside.doc.state.drawings, 0);
+  // A PHASE-LESS answer over a dispatched write can never be confirmed as a pre-insert refusal: the name does
+  // not carry the phase, only the marker does — so it is the uncertain class with the slot HELD.
+  const forged = imageRig({ namespace: { scope: imageAppendScope() },
+    forge: ['CAPABILITY_UNAVAILABLE'] });
+  const forgedResult = await insertImageTool(forged.bridge).execute(request, { editor: 'word' });
+  assert.equal(forgedResult.code, 'TOOL_UNCERTAIN', 'a one-slot answer carries no phase at all');
+  assert.equal(forged.bridge.getState().busy, true);
+  // AND A PRE-INSERT PHASE OVER A MEASUREMENT is the same: this body has no seven-slot pre-insert answer.
+  const misphased = imageRig({ namespace: { scope: imageAppendScope() },
+    forge: ['PRE_INSERT', 1, 2, 3, 4, 5, 6] });
+  const misphasedResult = await insertImageTool(misphased.bridge).execute(request, { editor: 'word' });
+  assert.equal(misphasedResult.code, 'TOOL_UNCERTAIN');
+  assert.equal(misphasedResult.data, undefined);
+  assert.equal(misphased.bridge.getState().busy, true);
+});
+
+test('insertImage forwards the caller signal and touches exactly one bridge entry point', async () => {
+  const bridge = insertImageBridge(imageProof());
+  const controller = new AbortController();
+  const result = await insertImageTool(bridge).execute(
+    { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }, { editor: 'word', signal: controller.signal });
+  assert.equal(result.ok, true);
+  assert.equal(bridge.seen.length, 1);
+  assert.equal(bridge.seen[0].signal, controller.signal, 'the caller signal crosses as DATA');
+  assert.deepEqual(Object.keys(bridge.seen[0]).sort(), ['dataUrl', 'heightPx', 'paragraph', 'signal', 'widthPx', 'append'].sort(),
+    'and the dispatched scope is the closed request');
+});
+
+test('insert_image measures the exact entry it publishes, and its bounded fields cannot reach the ceiling', async () => {
+  const bridge = insertImageBridge(imageProof());
+  const result = await insertImageTool(bridge).execute(
+    { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  const entry = insertImageEntry(result.data);
+  assert.ok(utf8ByteLength(entry) <= AGENT_CEILINGS.toolResultBytes,
+    'the measured entry fits the ceiling the runtime bounds every tool result by');
+  assert.equal(JSON.stringify(result).includes(IMAGE_URL), false,
+    'and the caller\u2019s own data URL is NOT republished: the entry carries the proof, not the payload');
+  assert.equal(JSON.stringify(result).includes('base64'), false);
+  // THE HANDLER'S OWN GUARD, exercised on the answer it really publishes: the entry is measured, never assumed.
+  const frozen = Object.freeze({ ...result.data });
+  assert.equal(utf8ByteLength(insertImageEntry(frozen)), utf8ByteLength(entry));
+});
+
+test('bridge insertImage dispatches ONE command, carries the request as DATA and proves the exact route', async () => {
+  const r = imageRig({ namespace: { scope: imageAppendScope() } });
+  const result = await r.bridge.insertImage({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT,
+    append: true, paragraph: null });
+  assert.equal(result.ok, true);
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole insert');
+  assert.equal(r.methods.length, 0, 'and the executeMethod route is never taken');
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 0, 1, 0, 1, 3, 4, 38, 0, 0, true, true, true, true, false]);
+  // THE ANSWER IS THE FIFTEEN-SLOT FLAT ARRAY ITS OWN DECODER EXPECTS: the phase, the four counts, the two
+  // text lengths, the two export lengths, and the four proof flags.
+  assert.deepEqual(result, { ok: true, imagesBefore: 0, imagesAfter: 1, drawingsBefore: 0, drawingsAfter: 1,
+    paragraphsBefore: 3, paragraphsAfter: 4, appended: true, textBeforeChars: 0, textAfterChars: 0,
+    textEmpty: true, textUnchanged: false, imageAppended: true, drawingAppended: true,
+    markdownBeforeChars: 38, markdownNeedle: true });
+  // THE MARKDOWN READ ASKS FOR THE BASE64 FORM, which is the ONLY form that embeds the data URL: the default
+  // form embeds the image's URL instead, so no data URL needle could ever be found.
+  assert.match(withoutComments(r.commands[0].source), /ToMarkdown\(\s*true\s*,\s*true\s*\)/,
+    'the export is asked for the base64 form the vendored converter gates the data URL on');
+  // THE SAME ROUTE ON A DOCUMENT THAT ALREADY HOLDS A DRAWING moves both counts by exactly one.
+  const loaded = imageRig({ text: undefined, namespace: { scope: imageAppendScope() } });
+  // The rig's default document has none; the body's own delta is what is pinned above.
+  assert.equal(loaded.doc.state.drawings, 0);
+  // A build that renders the default (non-base64) form cannot serve this tool at all: the needle is absent
+  // and the dispatch settles uncertain with the slot HELD.
+  const defaultForm = imageRig({ namespace: { scope: imageAppendScope() }, markdownIgnoresBase64: true });
+  const unproven = await defaultForm.bridge.insertImage({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT,
+    append: true, paragraph: null });
+  assert.equal(unproven.code, 'APPLY_UNCERTAIN');
+  assert.equal(defaultForm.bridge.getState().busy, true);
+});
+
+test('bridge insertImage refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const request = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT, append: true, paragraph: null };
+  const noCarrier = imageRig({ omitCarrier: true });
+  assert.equal((await noCarrier.bridge.insertImage(request)).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(noCarrier.commands.length, 0, 'and nothing reached the editor');
+  const noCommand = imageRig({ command: false });
+  assert.equal((await noCommand.bridge.insertImage(request)).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(noCommand.commands.length, 0);
+  // A CLOSED PRECONDITION AT THE PUBLIC ENTRY POINT: a payload, a dimension or a form this module never
+  // measured is refused with NOTHING dispatched, because the bridge is a public entry point a descriptor held
+  // directly could bypass.
+  const idle = imageRig({ namespace: { scope: imageAppendScope() } });
+  for (const [label, raw] of [
+    ['a GIF mime', { ...request, dataUrl: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' }],
+    ['a data URL that is not base64', { ...request, dataUrl: 'data:image/png,' + IMAGE_PNG_PAYLOAD }],
+    ['a payload with a space', { ...request, dataUrl: 'data:image/png;base64,ab cd' }],
+    ['an over-bound data URL', { ...request, dataUrl: 'data:image/png;base64,' + 'A'.repeat(LIMITS.insertImageDataUrlBytes) }],
+    ['a zero width', { ...request, widthPx: 0 }],
+    ['a fractional height', { ...request, heightPx: 40.5 }],
+    ['a width over the range', { ...request, widthPx: LIMITS.insertImageDimensionPx + 1 }],
+    ['a named form with NO index', { ...request, append: false, paragraph: null }],
+    ['an append form WITH an index', { ...request, append: true, paragraph: 1 }],
+    ['a paragraph over the advertised bound', { ...request, append: false, paragraph: LIMITS.insertImageIndexMax + 1 }],
+    ['a fractional paragraph', { ...request, append: false, paragraph: 1.5 }],
+    ['a non-boolean append', { ...request, append: 'да' }]
+  ]) {
+    assert.equal((await idle.bridge.insertImage(raw)).code, 'TOOL_ERROR', label);
+  }
+  assert.equal(idle.commands.length, 0, 'and NOTHING was dispatched for any refused request');
+  assert.equal(idle.bridge.getState().busy, false);
+});
+
+test('bridge insertImage decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const request = { dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT, append: true, paragraph: null };
+  for (const [label, forge] of [
+    ['a phase-less answer', ['CAPABILITY_UNAVAILABLE']],
+    ['a short answer', ['POST_INSERT', 0, 1]],
+    ['an answer with an extra slot', [IMAGE_ANSWER[0], ...IMAGE_ANSWER.slice(1), 'лишний']],
+    ['a count that is not a whole number', [IMAGE_ANSWER[0], 0, 1.5, ...IMAGE_ANSWER.slice(3)]],
+    ['a count that is a string', [IMAGE_ANSWER[0], '0', ...IMAGE_ANSWER.slice(2)]],
+    ['a negative count', [IMAGE_ANSWER[0], -1, ...IMAGE_ANSWER.slice(2)]],
+    ['a text length that is not a whole number', [...IMAGE_ANSWER.slice(0, 9), 1.5, IMAGE_ANSWER[10]]],
+    ['a flag that is not a boolean', [...IMAGE_ANSWER.slice(0, 10), 1, ...IMAGE_ANSWER.slice(11)]],
+    ['a PRE_INSERT answer over a measurement', ['PRE_INSERT', ...IMAGE_ANSWER.slice(1)]],
+    ['a POST_INSERT refusal name', ['POST_INSERT', 'TOOL_ERROR']],
+    ['a pre-insert phase over an unknown name', ['PRE_INSERT', 'СЕКРЕТ-КЛАСС']],
+    ['a three-slot answer that is NOT the export refusal', ['POST_INSERT', 'TOOL_ERROR', 3]],
+    ['a plain object', { ok: true }]
+  ]) {
+    const r = imageRig({ namespace: { scope: imageAppendScope() }, forge });
+    const result = await r.bridge.insertImage(request);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    assert.equal(r.bridge.getState().busy, true, `${label}: the slot is HELD, never released on a dispatched write`);
+  }
+});
+
+test('insert_image is offered by the catalogue and served from the loop in ONE verified command', async () => {
+  const r = imageRig({ namespace: { scope: imageAppendScope() } });
+  const registry = createRegistry(createWordTools(r.bridge));
+  const full = ['document.read', 'document.write'];
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"insert_image","arguments":{"dataUrl":"' + IMAGE_URL +
+    '","widthPx":40,"heightPx":40}}]}', '{"type":"final","message":"картинка добавлена"}'];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '19191919-1919-4919-8919-191919191919', request: 'добавь картинку в конец',
+    transport: async () => ({ content: responses[step++] ?? responses[responses.length - 1] }) });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_image', 'ok']]);
+  assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
+  assert.equal(r.doc.state.pushes, 1, 'and the measured append really ran once');
+  assert.equal(r.doc.doubles.length, 4);
+});
+
+test('the image body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  // The native never CALLS the function: it stringifies it and evaluates the text inside the editor, where
+  // none of this module's bindings exist. The answer the rig captured is therefore re-evaluated in a scope
+  // whose ONLY bindings are `Api` and `scope` — a forward to a module-scope name would die right here.
+  const r = imageRig({ namespace: { scope: imageAppendScope() } });
+  const pending = r.bridge.insertImage({ dataUrl: IMAGE_URL, widthPx: IMAGE_WIDTH, heightPx: IMAGE_HEIGHT,
+    append: true, paragraph: null });
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|decodeHeading|decodeRange|decodeHyperlink|decodeReplace|decodeImage|exactImageDelta|exactReplaceDelta|exactHyperlinkDelta|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== ['"]undefined['"]/, 'and it builds the public Api facade itself');
+  // THE MEASURED ROUTE, pinned: the factory, the drawing append into the addressed paragraph, the ONE
+  // document append of the created paragraph, and the export needle the outcome is decided on.
+  const code = withoutComments(carried.source);
+  assert.match(code, /CreateImage\(/, 'the picture is created through the measured factory');
+  assert.match(code, /AddDrawing\(/, 'and placed through the measured paragraph drawing primitive');
+  assert.match(code, /CreateParagraph\(/, 'a new paragraph is built through the measured factory');
+  assert.match(code, /\.Push\(/, 'and the document append is the measured Push');
+  assert.match(code, /GetAllImages\(\)/, 'the proof reads the document\u2019s own image count');
+  assert.match(code, /GetAllDrawingObjects\(\)/, 'and its own drawing count');
+  assert.match(code, /ToMarkdown\(/, 'and the document\u2019s own markdown export');
+  assert.match(code, /ToMarkdown\(true, true\)/, 'in the BASE64 form the data URL requires, and only that form');
+  assert.equal(code.includes('ToHtml'), false, 'the HTML export is entity-escaped and is authored nowhere');
+  assert.equal(code.includes('InsertContent'), false,
+    'the legacy whole-array primitive is authored nowhere: it lands at the START (measured)');
+  assert.equal(code.includes('executeMethod'), false, 'and the executeMethod route is authored nowhere');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it.
+  const fresh = imageRig();
+  const evaluated = new Function('Api', 'scope', 'return (' + carried.source + ')();')(fresh.api, carried.scope);
+  assert.deepEqual(evaluated, ['POST_INSERT', 0, 1, 0, 1, 3, 4, 38, 0, 0, true, true, true, true, false],
+    'the request arrived as DATA and the counts are the document\u2019s own');
+  assert.equal(fresh.doc.state.pushes, 1, 'and the ONE Push is where the paragraph was appended');
+  // THE SAME BODY, RE-EVALUATED FOR THE NAMED FORM, moves no count and leaves that paragraph\u2019s text alone.
+  const second = imageRig();
+  const evaluatedNamed = new Function('Api', 'scope', 'return (' + carried.source + ')();')(second.api, imageNamedScope());
+  assert.deepEqual(evaluatedNamed, ['POST_INSERT', 0, 1, 0, 1, 3, 3, 38, 12, 12, true, true, true, false, true],
+    'the named form adds the drawing in place: the two counts grow, the paragraph count does not, and the export holds the needle');
+  assert.equal(second.doc.state.pushes, 0);
+  assert.equal(second.doc.doubles.length, 3);
+  assert.equal(second.doc.doubles[1].text, 'второй абзац');
+  assert.equal((await pending).appended, true);
+});
+

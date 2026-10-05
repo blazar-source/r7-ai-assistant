@@ -457,6 +457,85 @@ function replaceExpected(limit, before) {
   return limit === null ? before : Math.min(limit, before);
 }
 
+// `insert_image`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the two form fields, the echoed dimensions, the four document counts and the ONE proof flag.
+// The measurement is NOT a formality here either, even though every field is a bounded scalar, `null` or a
+// boolean (`LIMITS.insertImageDataUrlBytes`/`insertImageDimensionPx` state the arithmetic): it is the module's
+// single ENFORCED bound, and a field added to this result later must not be able to widen the entry
+// unmeasured. THE DATA URL IS NOT PART OF IT: it is the caller's own payload, and the export scan that proves
+// it happens INSIDE the editor — only the counts and the one derived flag cross.
+function insertImageEntryBytes(data) {
+  return toolResultEntryBytes('insert_image', data);
+}
+// THE TWO ACCEPTED MIMES, in ONE place so the schema, the precondition, the handler and the bridge's own
+// public entry point cannot disagree about the vocabulary. THE LIST IS CLOSED AND MEASURED: the brief's
+// measurement was taken with `Api.CreateImage(dataUrl, 40, 40)` and a `data:image/png;base64,` payload, and
+// `insertImageDataUrl` accepts exactly the PNG and JPEG base64 spellings — every other mime (GIF, SVG, a
+// mime-less `data:;base64,`) is the closed argument class with ZERO writes rather than a picture whose
+// rendering this tool has never seen.
+const IMAGE_MIMES = Object.freeze(['data:image/png;base64,', 'data:image/jpeg;base64,']);
+// THE BASE64 ALPHABET, as a CHARACTER TEST rather than a pattern: the scan is a plain loop over the code
+// units, so no dynamic `RegExp` is built from a payload — and the rule is exactly the RFC 4648 alphabet with
+// `=` allowed only as trailing padding.
+function imageBase64Payload(payload) {
+  if (payload.length === 0) return false;
+  const padding = payload.endsWith('==') ? 2 : (payload.endsWith('=') ? 1 : 0);
+  const end = payload.length - padding;
+  for (let index = 0; index < end; index += 1) {
+    const code = payload.charCodeAt(index);
+    const alphabet = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) ||
+      code === 43 || code === 47;
+    if (!alphabet) return false;
+  }
+  return true;
+}
+// THE CLOSED DATA-URL SHAPE: one of the two measured mime prefixes, a NON-EMPTY pure-base64 payload, inside
+// the advertised byte bound, and NO whitespace or control character ANYWHERE in the string. The last rule is
+// the one the export needle rests on: the markdown export renders the EXACT stored string
+// (`![](` + `getBase64Img()`), so a character the editor would normalise — a space, a newline, a tab, a C0
+// control — could be written and then never located verbatim. `utf8ByteLength` is the SAME measure the
+// schema applies, so the two cannot disagree about which URL is over the bound.
+function insertImageDataUrl(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  if (utf8ByteLength(value) > LIMITS.insertImageDataUrlBytes) return null;
+  if (/[\s\u0000-\u001f\u007f]/.test(value)) return null;
+  let payload = null;
+  for (const prefix of IMAGE_MIMES) {
+    if (value.startsWith(prefix)) payload = value.slice(prefix.length);
+  }
+  if (payload === null || !imageBase64Payload(payload)) return null;
+  return value;
+}
+// ONE DIMENSION of the picture. A whole positive number inside the advertised range and nothing else: the
+// schema re-checks the same two rules, and the handler re-decides them because a descriptor is also
+// executable when it is held directly. The bridge re-applies them at its own public entry point.
+function insertImageDimension(value) {
+  return measuredCount(value) && value >= 1 && value <= LIMITS.insertImageDimensionPx ? value : null;
+}
+// THE OPTIONAL ADDRESS, in the SAME two-shape form `hyperlinkAddress` uses: an ABSENT key is the APPEND form
+// (`{ appended: true, index: null }`), and a present one must be a whole non-negative number inside the
+// advertised bound. Anything else is the closed argument class with ZERO writes. An index PAST this
+// document's own paragraph list is refused by the bridge's body against the document's OWN array, never
+// guessed from this bound.
+function insertImageAddress(value) {
+  if (value === undefined) return Object.freeze({ appended: true, index: null });
+  return measuredCount(value) && value <= LIMITS.insertImageIndexMax
+    ? Object.freeze({ appended: false, index: value }) : null;
+}
+// THE CLOSED REQUEST, in ONE place so the schema advertises, the precondition refuses, the handler dispatches
+// and the result republishes the SAME rule. The ORDER of the four clauses is part of the contract: the PAYLOAD
+// is judged before the two dimensions, and both before the address, so a call that is wrong in two ways
+// receives the same class either way.
+function imageRequest(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const dataUrl = insertImageDataUrl(value.dataUrl);
+  const widthPx = insertImageDimension(value.widthPx);
+  const heightPx = insertImageDimension(value.heightPx);
+  const address = insertImageAddress(value.paragraph);
+  if (dataUrl === null || widthPx === null || heightPx === null || address === null) return null;
+  return Object.freeze({ dataUrl, widthPx, heightPx, appended: address.appended, paragraph: address.index });
+}
+
 export function createWordTools(bridge) {
   return [
     defineTool({
@@ -2505,6 +2584,175 @@ export function createWordTools(bridge) {
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the six
         // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
         const entry = replaceTextEntryBytes(published);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(published);
+      }
+    }),
+    // --- THE SEVENTH MUTATION OF SPRINT 3: `insert_image`, the TWELFTH Word tool, the LAST creation tool of
+    // the catalogue, and the FIRST leg whose proof is a DOCUMENT-WIDE EXPORT NEEDLE built from the caller's
+    // OWN payload -----------------------------------------------------------------------------------------
+    //
+    // THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942, in the native session
+    // that produced this round's brief) or read out of the vendored 2026.1.2 bundle
+    // (`.local/stage-b-runtime/vendor-word-sdk-all.js`) rather than assumed:
+    //   * `Api.CreateImage(dataUrl, 40, 40)` answered an OBJECT, and `paragraph.AddDrawing(image)` answered an
+    //     OBJECT while really adding the drawing to that paragraph. The vendored body explains both:
+    //     `CreateImage = function (U, S, E) { var V = Oe(S), ht = Oe(E), _t = new ParaDrawing(V, ht, null,
+    //     ci(), qt(), null), Ot = qt().DrawingObjects.createImage(U, 0, 0, V, ht); return Ot.setParent(_t),
+    //     _t.Set_GraphicObject(Ot), new jt(Ot) }` and `AddDrawing = function (U) { var S = new ParaRun(this
+    //     .Paragraph, !1); return U instanceof Nt ? (S.Add_ToContent(0, U.Drawing), _i(this.Paragraph, S),
+    //     U.Drawing.Set_Parent(S), i(U), new F(S)) : new F(S) }` — an APPEND at the end of the paragraph's own
+    //     content, exactly like `AddElement`.
+    //   * `doc.Push(paragraph)` appended it: the paragraph count went 3 -> 4.
+    //   * `doc.GetAllImages()` went 0 -> 1 and `doc.GetAllDrawingObjects()` was 1. The vendored bodies show
+    //     they are TWO independent reads of ONE fact: `GetAllImages = function () { … this.Document
+    //     .GetAllDrawingObjects() … GraphicObj instanceof AscFormat.CImageShape && E.push(new jt(…)) }` — the
+    //     image list is the `CImageShape` FILTER of the drawing list — so the two growths must be measured
+    //     separately and both are required.
+    //   * the pushed paragraph's own element readback was a single element of class `run` with EMPTY text.
+    //     THAT IS NOT A PROOF OF AN IMAGE, and this leg deliberately builds none on it: a run carrying empty
+    //     text is also what a drawing of any other kind would leave behind. What it DOES supply is the APPEND
+    //     form's second leg — the created paragraph really started and finished EMPTY — and the NAMED form's
+    //     invariance leg — the addressed paragraph's own text is untouched.
+    //   * `doc.ToMarkdown(false, true)` rendered `![](data:image/png;base64,…)` holding the EXACT data URL,
+    //     which makes it a unique, exact needle. The vendored converter gates that form explicitly — `case
+    //     para_Drawing: if (va.IsPicture()) { if (S === 'markdown') ui += Fr.Config.base64img ? '![](' +
+    //     va.GraphicObj.getBase64Img() + ')' : '![](' + va.GraphicObj.getImageUrl() + ')' …` — so the base64
+    //     arm is REQUIRED and the bridge body asks for it (`ToMarkdown(false, true)`); the default arm embeds
+    //     the image's URL instead and no data URL could ever be found. The markdown export is NOT
+    //     entity-escaped (unlike `ToHtml`), which is why the data URL survives verbatim in it.
+    //
+    // THE OUTCOME PROOF, one-to-one with those measurements:
+    //   1. `GetAllImages()` grew by EXACTLY one, read from the document on both sides of the write.
+    //   2. `GetAllDrawingObjects()` grew by EXACTLY one, read the same way — the independent half of the
+    //      picture's own identity.
+    //   3. the paragraph count delta is the REQUEST's own (0 for the named form, +1 for the append form), and
+    //      the text leg is the form's own: the append form's created paragraph is EMPTY, the named form's
+    //      addressed paragraph text is UNCHANGED.
+    //   4. the markdown export written AFTER the mutation holds `](` immediately followed by the requested
+    //      data URL. The bridge LOCATES that needle against the export it also read BEFORE the write (a
+    //      pre-existing identical image must not be able to carry the proof), and sends only the derived
+    //      boolean — the export itself is document data and never crosses.
+    // EVERY refusal on the path to the write is CLOSED with ZERO writes: a bad data URL, a bad dimension, an
+    // index outside this document, a missing primitive and an export already above the bound are all decided
+    // BEFORE the first call that can change the document. Anything not exact AFTER the write settles
+    // `TOOL_UNCERTAIN` (the bridge reports `APPLY_UNCERTAIN` and HOLDS its slot) with no retry. THE EXPORT IS
+    // BOUNDED BY THE EXISTING DOCUMENT-EXPORT CEILING (`LIMITS.insertImageMarkdownChars`, the same number as
+    // `documentHtmlBytes`): the bridge decodes the pre-write export under it and refuses a larger one with the
+    // closed `BYTE_LIMIT` and ZERO writes, while a POST-write export above it is the uncertain class.
+    // NO ELEMENT IS EVER INSPECTED and no mutation primitive's return value is read: the primitive's answers
+    // are objects in every direction, so the counts and the needle are the whole evidence.
+    defineTool({
+      name: 'insert_image', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['dataUrl', 'widthPx', 'heightPx'],
+        properties: {
+          // THE PAYLOAD IS BOUNDED IN BYTES AND ITS SHAPE IS RE-DECIDED BY THE HANDLER: the schema can express
+          // only a byte ceiling, while the MIME vocabulary, the base64 alphabet and the no-whitespace rule are
+          // closed rules the preconditions below apply.
+          dataUrl: { type: 'string', maxBytes: LIMITS.insertImageDataUrlBytes },
+          // BOTH DIMENSIONS ARE REQUIRED AND NEITHER HAS A DEFAULT: `CreateImage` was measured with both, so
+          // an omitted dimension is UNMEASURED behaviour rather than a default this module may invent.
+          widthPx: { type: 'integer', minimum: 1, maximum: LIMITS.insertImageDimensionPx },
+          heightPx: { type: 'integer', minimum: 1, maximum: LIMITS.insertImageDimensionPx },
+          // THE OPTIONAL ADDRESS, and its presence or absence IS the form switch, exactly as it is for
+          // `add_hyperlink` — which is why the schema expresses no default. An index past THIS document's own
+          // paragraph list is the closed argument class with ZERO writes, decided by the bridge's body against
+          // the document's own array rather than guessed from this bound.
+          paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.insertImageIndexMax }
+        } },
+      precondition: (args, ctx) => {
+        if (ctx?.editor !== 'word') return { code: ERROR_CODES.CAPABILITY_UNAVAILABLE, message: REFUSAL };
+        // Every closed argument rule is re-checked HERE and not only by the schema, because a descriptor is
+        // also executable when it is held directly and nothing this mutation cannot interpret may reach the
+        // bridge. `imageRequest` judges the payload, then the two dimensions, then the address, in ONE place.
+        return imageRequest(args) === null ? { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL } : null;
+      },
+      execute: async (args, ctx) => {
+        // The editor is re-checked HERE as well as in the precondition, for the reason the six mutations
+        // before this one state: a descriptor is also executable when it is held directly, and a Word
+        // mutation offered to a spreadsheet must never reach the bridge.
+        if (ctx?.editor !== 'word') return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (missingBridgeMethod(bridge, 'insertImage')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The closed request is resolved ONCE and carried to the bridge, so the data URL the editor stores,
+        // the dimensions it lays the picture out with, the address it acts on and the values this handler
+        // later judges the answer against cannot be different values. `appended` is the form and `paragraph`
+        // is `null` for the append form rather than an invented index.
+        const request = imageRequest(args);
+        if (request === null) return known();
+        const dispatched = { dataUrl: request.dataUrl, widthPx: request.widthPx, heightPx: request.heightPx,
+          append: request.appended, paragraph: request.paragraph,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        // `bytes` is the size of the dispatched SCOPE — the form or the address, the payload and the two
+        // dimensions — measured on exactly what is forwarded, never on the caller's raw object.
+        const bytes = utf8ByteLength(
+          `${request.appended ? 'append' : request.paragraph}:${request.dataUrl}:${request.widthPx}x${request.heightPx}`);
+        let result;
+        try { result = await bridge.insertImage(dispatched); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops the
+          // run. Every other bridge throw is a closed local failure.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing it)
+        // when the ticket has already been created, so the class is classified here before any ordinary
+        // refusal path can treat it as a known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own. The order of
+        // these checks is the CONTRACT and not a style choice: everything a real run of this bridge cannot
+        // produce is the module's unknown class (`known()`, the closed tool-error class), while the shapes it
+        // CAN produce and yet not stand behind are the runtime's own `TOOL_UNCERTAIN`.
+        if (!measuredCount(result.imagesBefore) || !measuredCount(result.imagesAfter)) return known();
+        if (!measuredCount(result.drawingsBefore) || !measuredCount(result.drawingsAfter)) return known();
+        if (!measuredCount(result.paragraphsBefore) || !measuredCount(result.paragraphsAfter)) return known();
+        if (typeof result.appended !== 'boolean') return known();
+        // BOTH TEXT LEGS ARE READ ON BOTH SIDES OF THE BOUNDARY and both are booleans: the append form's
+        // created paragraph really started and finished empty, and the named form's addressed paragraph really
+        // kept its own text. They are `null` for the form they do not describe — an absent measurement is
+        // reported as absent rather than invented as `false`.
+        if (typeof result.textEmpty !== 'boolean' || typeof result.textUnchanged !== 'boolean') return known();
+        if (typeof result.imageAppended !== 'boolean' || typeof result.drawingAppended !== 'boolean') return known();
+        if (typeof result.markdownNeedle !== 'boolean') return known();
+        // THE FOUR LEGS ARE RE-DERIVED HERE FROM THE REQUEST, exactly as the bridge's own outcome rule does,
+        // so an `ok` envelope whose own counts contradict this call is never republished as its proof.
+        //   * THE FORM IS THE REQUEST'S, never the answer's: an append request cannot be served by a
+        //     named-form answer, and a named request cannot be served by an append answer.
+        //   * THE TWO COUNT DELTAS ARE EXACTLY ONE each — the picture really entered the document, and it
+        //     really entered it as an IMAGE and not merely as some other drawing.
+        //   * THE PARAGRAPH DELTA IS THE FORM'S OWN: 0 for the named form, +1 for the append form.
+        //   * THE ONE PROOF FLAG must be the one the form owes: the append form's paragraph is EMPTY, the
+        //     named form's paragraph text is UNCHANGED.
+        //   * THE NEEDLE FLAG must be true: the export really holds the requested data URL where the picture
+        //     was written.
+        if (result.appended !== request.appended) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.imagesAfter !== result.imagesBefore + 1) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.drawingsAfter !== result.drawingsBefore + 1) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.paragraphsAfter - result.paragraphsBefore !== (request.appended ? 1 : 0)) {
+          return known(ERROR_CODES.TOOL_UNCERTAIN);
+        }
+        if (result.textEmpty !== request.appended || result.textUnchanged !== !request.appended) {
+          return known(ERROR_CODES.TOOL_UNCERTAIN);
+        }
+        if (result.imageAppended !== true || result.drawingAppended !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.markdownNeedle !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE PUBLISHED SHAPE echoes the resolved form and reports ONLY what was proven: the four counts the
+        // deltas were decided on, the ONE proof flag that form owes, and the dispatched scope's own byte size.
+        // `paragraph` is `null` for the append form rather than an invented index, and THE DATA URL IS NOT
+        // REPUBLISHED: it is the caller's own payload, the export scan that proves it ran inside the editor,
+        // and the entry stays a proof rather than a copy of the request.
+        const published = Object.freeze({ appended: request.appended, paragraph: request.paragraph,
+          widthPx: request.widthPx, heightPx: request.heightPx,
+          imagesBefore: result.imagesBefore, imagesAfter: result.imagesAfter,
+          drawingsBefore: result.drawingsBefore, drawingsAfter: result.drawingsAfter,
+          ...(request.appended ? { textEmpty: result.textEmpty } : { textUnchanged: result.textUnchanged }),
+          bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the six
+        // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
+        const entry = insertImageEntryBytes(published);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(published);
       }

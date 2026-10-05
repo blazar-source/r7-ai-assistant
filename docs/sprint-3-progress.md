@@ -3105,3 +3105,111 @@ alone. (3) That the five-character rewrite is the COMPLETE set for the replaceme
 the shipped builder; a sixth rewrite would turn an `ok`-shaped arithmetic into a false `TOOL_UNCERTAIN` with the
 slot held). (4) That the `Asc.scope` parameter carriage delivers `{ search, replace, matchCase, limit }` to an
 editor that has `callCommand` — the same carriage every command leg of this sprint already uses.
+
+## 19. `insert_image` — the TWELFTH Word tool, the SEVENTH MUTATION of Sprint 3, and the FIRST proof built from a DOCUMENT-WIDE EXPORT NEEDLE
+
+`insert_image` (`src/tools/word.js`, `insertImage` in `src/plugin/bridge.js`) places one picture into the
+document from a `data:image/png;base64,` or `data:image/jpeg;base64,` URL and proves the outcome from the
+document's OWN four counts plus the exact data URL located in the document's own markdown export.
+
+**The measured facts, on the target (Astra / R7 2026.1.2.1942) or read out of the vendored 2026.1.2 bundle.**
+
+* `Api.CreateImage(dataUrl, 40, 40)` answers an OBJECT. Its body is
+  `CreateImage = function (U, S, E) { var V = Oe(S), ht = Oe(E), _t = new ParaDrawing(V, ht, null, ci(), qt(),
+  null), Ot = qt().DrawingObjects.createImage(U, 0, 0, V, ht); return Ot.setParent(_t),
+  _t.Set_GraphicObject(Ot), new jt(Ot) }` — it builds and REGISTERS the picture and writes nothing to a paragraph,
+  so it runs BEFORE the phase turns.
+* `paragraph.AddDrawing(image)` answers an OBJECT and really adds the drawing:
+  `AddDrawing = function (U) { var S = new ParaRun(this.Paragraph, !1); return U instanceof Nt ?
+  (S.Add_ToContent(0, U.Drawing), _i(this.Paragraph, S), U.Drawing.Set_Parent(S), i(U), new F(S)) : new F(S) }` —
+  an APPEND at the END of that paragraph's own content, exactly like `AddElement`.
+* `doc.Push(paragraph)` appended the created paragraph: the paragraph count went **3 → 4**.
+* `doc.GetAllDrawingObjects()` answered **1** and `doc.GetAllImages()` went **0 → 1**. The vendored
+  `GetAllImages = function () { … this.Document.GetAllDrawingObjects() … GraphicObj instanceof
+  AscFormat.CImageShape && E.push(new jt(…)) }` shows the image list is the `CImageShape` **filter** of the
+  drawing list, so the two are read SEPARATELY and both must grow — neither is redundant.
+* `doc.ToMarkdown(true, true)` rendered `![](data:image/png;base64,…)` holding the **EXACT** data URL. The
+  vendored signature is `ToMarkdown(U, S, E, V)` with `ht = { convertType: "markdown", htmlHeadings: U || false,
+  base64img: S || false, … }`, and the converter's arm is
+  `case para_Drawing: if (va.IsPicture()) { if (S === "markdown") ui += Fr.Config.base64img ? "![](" +
+  va.GraphicObj.getBase64Img() + ")" : "![](" + va.GraphicObj.getImageUrl() + ")" …` — **both** arguments are
+  required, because the FIRST selects the markdown converter and the SECOND (`base64img`) is the ONLY arm that
+  embeds the data URL. The markdown export is NOT entity-escaped (unlike `ToHtml`), which is why the data URL
+  survives verbatim and why the HTML export is authored nowhere on this leg.
+* The pushed paragraph's own element readback was a single element of class `run` with **EMPTY** text. **THAT IS
+  NOT AN IMAGE PROOF** and this leg builds none on it: a run with empty text is what a drawing of any other kind
+  would leave behind too. What it supplies instead is the text leg of each form — the created paragraph really
+  started and finished EMPTY, and the addressed paragraph's own text is UNCHANGED.
+
+**The schema** is closed (`additionalProperties: false`) and requires `dataUrl`, `widthPx` and `heightPx`,
+with an optional 0-based `paragraph` in `[0, LIMITS.insertImageIndexMax]`; the presence of `paragraph` IS the
+form switch. `dataUrl` is bounded in BYTES by `LIMITS.insertImageDataUrlBytes` (**4096** — a little under half
+of `AGENT_CEILINGS.argumentsBytes`, the ceiling the runtime applies to one action's arguments, so a legal
+one-action call cannot be pushed past it by the payload alone, and 4096 is this module's established
+text-PAYLOAD scale), and the two dimensions are integers in `[1, LIMITS.insertImageDimensionPx]` (**4096** — the
+same order as a full-page raster at 300 dpi). **Both dimensions are REQUIRED**: `CreateImage` was measured with
+both, so an omitted dimension is UNMEASURED behaviour and no default is invented for it. The MIME vocabulary is
+the closed measured pair (`data:image/png;base64,`, `data:image/jpeg;base64,`); the payload must be the pure
+RFC 4648 base64 alphabet with `=` only as trailing padding, and the WHOLE string must be free of whitespace and
+control characters — the last rule is the one the export needle rests on, because the markdown export renders the
+EXACT stored string.
+
+**The two forms.** A NAMED `paragraph` adds the drawing into THAT existing paragraph through its own
+`AddDrawing`; the paragraph count must NOT change and that paragraph's own text must be UNCHANGED. An OMITTED
+`paragraph` creates a DETACHED `Api.CreateParagraph()`, adds the same drawing to it and `Push`es it at the
+END; the paragraph count must grow by EXACTLY one and the created paragraph's own text must be EMPTY.
+
+**The proof, one-to-one with the measurements.** `GetAllImages()` grew by exactly one AND
+`GetAllDrawingObjects()` grew by exactly one AND the paragraph delta is the REQUEST's own form delta AND the
+markdown export holds `](` immediately followed by the EXACT requested data URL — required to be ABSENT from the
+export read BEFORE the write and present EXACTLY once after it, so a picture that was already in the document can
+never carry this call's proof. The needle is located by `indexOf`/`slice` comparisons, NEVER by a `RegExp`
+built from the payload. The counts are read inside the ONE command body; the export is document data and never
+crosses — only the derived boolean does.
+
+**The export bound is the EXISTING document-export ceiling, reused rather than invented.**
+`LIMITS.insertImageMarkdownChars` is the SAME number as `documentHtmlBytes` (**262144**), because the one
+markdown read this leg makes is a DOCUMENT-WIDE export exactly like the insert confirmation's `GetFileHTML` read.
+The body refuses a PRE-write export above it with the closed `BYTE_LIMIT` and ZERO writes (kept as its known class
+by `preInsertRefusal`, which now names this leg); a POST-write export above it is the UNCERTAIN class with the
+slot HELD, and it is the ONE answer of that size the body can emit — the THREE-slot
+`[POST_INSERT, 'BYTE_LIMIT', markdownBeforeChars]`. The ceiling is COMPOSED BY THE BRIDGE
+(`markdownMax: LIMITS.insertImageMarkdownChars`) and never read from the caller, so a descriptor held directly
+cannot widen the export this body reads. The pre-read export is also a GATE: an unreadable export, an unusable
+baseline or a missing primitive all refuse with ZERO writes.
+
+**The failure map**, each class closed: wrong editor / missing bridge entry point / unusable baseline / missing
+`GetAllImages`, `GetAllDrawingObjects`, `CreateImage`, `CreateImage` returning nothing, `CreateParagraph`,
+`Push`, `AddDrawing` or `ToMarkdown` → `CAPABILITY_UNAVAILABLE`; a bad data URL (a foreign mime, a
+non-base64 payload, whitespace or a control character, an over-bound URL), a bad dimension, an out-of-document
+`paragraph`, and a pre-write export above the bound → the closed class with ZERO writes (the export one being
+`BYTE_LIMIT`); a bridge refusal → `refusalCode`; an uninterpretable envelope → `known()`; a thrown or returned
+`APPLY_UNCERTAIN` and every non-exact outcome → `TOOL_UNCERTAIN` with the slot HELD and no retry; an over-ceiling
+tool-result entry → `BYTE_LIMIT`.
+
+**RED.** The tests were written FIRST and run against the untouched tree: the focused set reported **15
+failures** — the three descriptor/catalogue lists (a 15th descriptor, `insert_image`) and all **15** new
+`insert_image` tests, every one failing on the missing descriptor or the missing bridge entry point
+(`insertImage is not a function`, `Cannot read properties of undefined`) — plus
+`package.test.js`'s classifier, which failed on the ten-leg bundle. **GREEN.** Focused set
+`tests/unit/tools-word.test.js tests/integration/package.test.js` → **307/307** (302 + 5), `fail 0`.
+
+**Verification (this round, final tree).** Full suite `node --test` → **934 tests, pass 934, fail 0, cancelled 0,
+skipped 0** (**919 → 934**, never shrunk); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+814610b39c1b44a81c91247c3db42a971ed7a6fcaca2dc35a377a09202ae01b2`. The classifier counts ELEVEN inline legs, and
+the image branch is placed FIRST on purpose: this body authors NEITHER `.Push(` NOR `CreateParagraph(` NOR
+`GetAllParagraphs`, so without its own branch it would have been blessed as the read-only CAPABILITY probe.
+`src/agent/*` is untouched and no dynamic execution was added to `src/`.
+
+**What only a native run can settle.** (1) That the real `ToMarkdown(true, true)` export embeds
+`getBase64Img()` as the EXACT string that was handed to `Api.CreateImage` — the needle is a byte-for-byte
+comparison, and the vendored arm is the evidence, not a native run of it. (2) That a document already holding an
+IDENTICAL picture really keeps the pre-count at one (the pre-count gate is what stops a pre-existing image from
+carrying the proof; a second identical image makes the needle count two, which also settles uncertain rather than
+claiming success). (3) That `GetAllImages()` and `GetAllDrawingObjects()` really move TOGETHER on the target for
+an `Api.CreateImage` drawing — the vendored filter is the evidence, and a build whose image list is not that filter
+can only cost a false `TOOL_UNCERTAIN` with the slot held, never a false `ok`. (4) That the image factory really
+accepts the two dimensions as PIXELS of the requested size. (5) That the `Asc.scope` parameter carriage delivers
+`{ dataUrl, widthPx, heightPx, paragraph, append, markdownMax }` to an editor that has `callCommand` — the same
+carriage every command leg of this sprint already uses.

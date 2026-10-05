@@ -505,6 +505,39 @@ export const LIMITS = Object.freeze({
   replaceTextSearchBytes: 256,
   replaceTextReplaceBytes: 2048,
   replaceTextLimitMax: 4096,
+  // The bounded IMAGE INSERT (`insert_image`) — the TWELFTH Word tool, the SEVENTH MUTATION of Sprint 3, and
+  // the FIRST leg whose proof is a DOCUMENT-WIDE EXPORT NEEDLE built from the caller's OWN payload. It adds
+  // THREE static per-call bounds and NO vocabulary:
+  //   * `insertImageDataUrlBytes` bounds the WHOLE data URL. 4096 is a LITTLE under HALF of
+  //     `AGENT_CEILINGS.argumentsBytes` (8192), which is the ceiling the runtime applies to ONE action's
+  //     arguments (`JSON.stringify` of the call's `arguments`): a data URL of 4096 bytes cannot on its own
+  //     push a legal one-action call past that ceiling, and the request's own shape — the two dimensions, the
+  //     optional index and the JSON envelope — is bounded by a FEW DOZEN bytes beside it. 4096 is also this
+  //     module's established text-PAYLOAD scale (`insertBlockBytes`/`addHyperlinkUrlBytes`/
+  //     `replaceTextReplaceBytes` are 2048, `formatRangeHtmlChars` is an export bound), and it is the SAME
+  //     order as a small real picture: a 3 KiB PNG encodes to about 4 KiB of base64. It is a CEILING, never a
+  //     truncation — a data URL above it is the closed argument class with ZERO writes.
+  //   * `insertImageDimensionPx` bounds EACH dimension. 4096 pixels is the same order as a full-page raster at
+  //     300 dpi (A4 is 2480 x 3508) and it is a whole number of pixels, which is what the measured
+  //     `Api.CreateImage(dataUrl, width, height)` takes. BOTH dimensions are REQUIRED by the schema: the
+  //     primitive was measured WITH both, so an omitted dimension has no measured behaviour at all and this
+  //     table states no default for it.
+  //   * `insertImageIndexMax` bounds the optional paragraph ADDRESS. It is its own constant rather than an
+  //     alias of `addHyperlinkIndexMax` for the reason that table states: an address is a per-tool decision,
+  //     and a later widening of the link leg's bound must not silently widen this one. The value is equal
+  //     today, and the equality is asserted as a SCALE rather than hidden behind an alias.
+  // THE EXPORT BOUND IS NOT A NEW CONSTANT: the needle is located in the document's OWN markdown export, so
+  // the read is a DOCUMENT-WIDE export read exactly like the insert confirmation's `GetFileHTML` read, and it
+  // is bounded by `documentHtmlBytes` (262144) — the SAME ceiling every document export in this module is
+  // decoded under. `insertImageMarkdownChars` names that decision explicitly (it is an ALIAS of
+  // `documentHtmlBytes` on purpose: one ceiling, two readers) so the tool, its test and the bridge can name
+  // the bound without reaching for a constant that belongs to another leg. The data URL is ASCII by
+  // construction (this leg refuses any character outside `[A-Za-z0-9+/=]`), so the export's byte length and
+  // its character length are the same number, and a 4096-byte needle cannot approach the ceiling on its own.
+  insertImageDataUrlBytes: 4096,
+  insertImageDimensionPx: 4096,
+  insertImageIndexMax: 128,
+  insertImageMarkdownChars: 262144,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
