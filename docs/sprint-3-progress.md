@@ -2683,7 +2683,7 @@ export above `LIMITS.formatRangeHtmlChars` is `BYTE_LIMIT` with ZERO writes, and
 outcome is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot HELD and no retry — never an `ok` with the slot
 released.
 
-## 16a. The MEASURED round on `format_range` — the export is ENTITY-ESCAPED, the markers NEST, and `align` is OPTIONAL
+## 16c. The MEASURED round on `format_range` — the export is ENTITY-ESCAPED, the markers NEST, and `align` is OPTIONAL
 
 **The native run the Lead made, and the two facts it settled.** The shipped tool was called with
 `{"paragraph":1,"start":0,"end":8,"format":{"align":"center","bold":true}}` and answered
@@ -2771,8 +2771,11 @@ nothing else.** The mechanics, each one pinned by a test:
   the descriptor loop, and `runProof` inherits that marking — so a `runProof.charAt(...)` read is reported as
   a method call on computed data, while a constant-indexed read through a helper is not.
 
-**TDD: the exact RED, then GREEN.** The tests were written FIRST and run against `eb4cfdc`: the focused file
-`tests/unit/tools-word.test.js` → **244 tests, pass 231, fail 13**. The escaping and nesting tests failed
+**TDD: the exact RED, then GREEN.** The tests were written FIRST and run against `eb4cfdc`. **THE EXACT SPLIT
+WAS REPRODUCED BY THE INDEPENDENT REVIEWER, NOT BY THE IMPLEMENTER**, whose own record said `pass 231, fail 13`:
+running the HEAD tests against a `git archive` of the previous commit gives the focused file
+`tests/unit/tools-word.test.js` → **244 tests, pass 230, fail 14**. The 244 total is unchanged; only the split
+is corrected here, and it is the reviewer's reproduction that stands. The escaping and nesting tests failed
 exactly as the native run did and for the same reason:
 * `format_range proves EACH measured run property through its own HTML marker` → `bold: the call is served`
   `false !== true` (the body searched the RAW `<strong>` form in an ESCAPED export);

@@ -249,8 +249,10 @@ function formatAlign(value) {
 // the paragraph-wide `align` and the four measured run switches — and a `format: {}` names NONE of them, so
 // there is nothing to apply and nothing to prove: that request is the closed argument class with ZERO writes.
 // The rule is a REQUEST-side test only; a run switch that is EXPLICITLY `false` does not count, because the
-// bridge (and the editor) treat `false` as "write the false this switch names", which is a write the proof
-// would have to cover.
+// authored body authors a `true`-valued setter per property and NO removal call — a `false` (like an omitted)
+// switch dispatches nothing, so a `format` whose only keys are `false` switches has nothing to apply and
+// nothing to prove. THIS TOOL TURNS FORMATTING ON, which is all it can prove: no removal marker was measured,
+// so an explicit `false` is published back as `false` and never becomes an off-write.
 function emptyFormat(value) {
   if (value === null || typeof value !== 'object') return true;
   if (formatAlign(value.align) !== null) return false;
@@ -1815,9 +1817,17 @@ export function createWordTools(bridge) {
           // REQUIRED, and that is the contract rather than an omission: the caller must name AT LEAST ONE of
           // the five properties, which no schema keyword can express, so the rule lives in the precondition
           // below (and is re-decided at the bridge entry point) instead of being guessed by a `required` list.
-          // A RUN SWITCH the caller sets is applied as it stands — including an explicit `false`, which is the
-          // OFF write the editor's own setter takes — so a property nobody names is never touched, and an
-          // omitted `align` is NEVER an alignment: it leaves the paragraph's own alignment alone.
+          // A RUN SWITCH THE CALLER SETS IS A REQUEST TO TURN THAT PROPERTY ON, and an explicit `false` is NOT
+          // the OFF write: the authored body authors a `true`-valued setter per property
+          // (`SetBold(true)`-shape) and NO removal call at all, so a `false` switch dispatches NOTHING and is
+          // merely published back as `false`. THAT IS WHY `false` cannot count as "a property": `{ bold: false }`
+          // alone is the closed argument class with ZERO writes (nothing to apply, nothing to prove), while
+          // `{ align: 'left', bold: false }` is served by the alignment write alone and publishes
+          // `bold: false` with no off-write behind it. THIS TOOL TURNS FORMATTING ON, which is the whole of
+          // what it can prove — no marker for a REMOVAL was measured, so no off-write is advertised and none
+          // is applied; a caller that wants a property off must reach it another way. A property NOBODY names
+          // is likewise never touched, and an omitted `align` is NEVER an alignment: it leaves the paragraph's
+          // own alignment alone.
           format: { type: 'object', additionalProperties: false,
             properties: { align: { type: 'string', enum: [...LIMITS.formatRangeAlign] },
               bold: { type: 'boolean' }, italic: { type: 'boolean' },

@@ -957,7 +957,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       //
       // THE ANSWER is ONE flat array of primitives (the native return validator keeps those and strips a
       // plain object): `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted,
-      // runProof, align, alignBefore, alignAfter]` — ELEVEN slots, the run proof being ONE four-character
+      // runProof, align, alignBefore, alignAfter]` — TEN slots, the run proof being ONE four-character
       // string, one character per measured property in the body's own fixed order — or a TWO-slot refusal
       // `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and the decoder turns a
       // phase-less or post-insert refusal into the uncertain class — the name alone can never release a slot
@@ -1154,6 +1154,22 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // property — the very defect this round removes. The uniqueness requirement below is what keeps
             // the tolerance honest: the region text must stand exactly once in the whole export, so the pair
             // being located is around THAT occurrence and never around a different one.
+            // THE ONE CONDITION THAT MAKES THE LOCATED PAIR A PAIR, and it is the correction an independent
+            // review forced on this round. The LAST opener before the region and the FIRST closer after it are
+            // not necessarily ONE pair: in the markup `&lt;strong&gt;Ц&lt;/strong&gt;ел&lt;strong&gt;ь&lt;/strong&gt;`
+            // with the region `ел` requested bold, the last opener is the one before `Ц` and the first closer
+            // after the region is the one after `ь`, so the rule as it stood answered 1 for a region that
+            // carries NO bold at the address — the pair the located opener really belongs to CLOSES before the
+            // region, and a second, unrelated pair reopens after it. The reviewer reproduced exactly that
+            // against this bridge and received `{"ok":true,…,"boldVerified":true}`: a FAIL-OPEN false proof,
+            // the one direction this module must never answer. The condition below requires the judged closer
+            // to be the FIRST closer the judged opener reaches (`markup.indexOf(close, openAt) === closeAt`),
+            // which is true exactly when that opener is still OPEN where the region stands and the pair
+            // therefore really covers it. It excludes the reproduced markup (that opener's own closer sits
+            // before the region) and leaves every legitimate shape untouched: the exact pair, a wider pair
+            // around the region, and the measured nesting
+            // (`&lt;em&gt;&lt;strong&gt;REGION&lt;/strong&gt;&lt;/em&gt;` judged for the OUTER property) all have
+            // that opener's first closer exactly where the closer was found.
             function wrappedRegion(markup, region, pair) {
               if (region === '' || typeof markup !== 'string') return 0;
               // THE NEEDLE MUST STAND EXACTLY ONCE: a region text that occurs twice — inside the addressed
@@ -1182,6 +1198,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               if (openEnd < 0 || openEnd >= found) return 0;
               var closeAt = markup.indexOf(close, found);
               if (closeAt < 0 || closeAt >= toParagraph) return 0;
+              // THE PAIR MUST BE ONE PAIR, and this is the line the review's repro turns on: the located opener
+              // must still be OPEN at the region, i.e. its OWN first closer is the closer this rule judged. When
+              // a pair closes before the region and a different pair reopens after it
+              // (`&lt;strong&gt;Ц&lt;/strong&gt;ел&lt;strong&gt;ь&lt;/strong&gt;`, region `ел`), the opener's
+              // first closer is the one after `Ц` and NOT the one after `ь`, so the answer is 0 — the region is
+              // not inside the pair the opener belongs to. The exact pair, a wider pair around the region and
+              // the measured nesting all keep their opener's first closer at `closeAt`, so they are unaffected.
+              if (markup.indexOf(close, openAt) !== closeAt) return 0;
               var closeStart = markup.lastIndexOf('&lt;', closeAt);
               if (closeStart < 0 || closeStart <= found) return 0;
               return 1;
@@ -2079,7 +2103,7 @@ function exactHeadingDelta(outcome) {
 //     refusal: it is decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the marker does.
 //   * the answer's LENGTH IS FIXED, because this leg's work does not scale with a caller-supplied
 //     collection: there is exactly ONE addressed paragraph and ONE region, so an answer with anything but
-//     the THIRTEEN slots below is not one this body can have produced. There is no per-item array to pin,
+//     the TEN slots below is not one this body can have produced. There is no per-item array to pin,
 //     which is precisely what makes the phase gate the whole of the length rule.
 //   * the RANGE FLAGS are EXACTLY `0` or `1`, the FOUR RUN FLAGS are EXACTLY `0` or `1` (a property that was
 //     requested AND whose measured marker wrapped the addressed region is 1, everything else is 0), and the
@@ -2207,9 +2231,16 @@ function decodeRange(value) {
   if (!['0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111',
     '1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'].includes(runProof)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const alignments = members.slice(1 + RANGE_FLAGS + 1);
-  // THE ALIGNMENT TRIPLE IS MEASURED, and only the REQUEST slot may carry the sentinel: the two READBACK
-  // slots answer either a measured word or the sentinel the body echoes for a request that named none, so a
-  // build that answered `'none'` where it should have measured is an answer this decoder cannot stand behind.
+  // THE ALIGNMENT TRIPLE, and the `'none'` sentinel is admitted in EVERY ONE of its three slots rather than in
+  // the request slot alone — the loop below refuses only a member that is neither the sentinel nor one of the
+  // four measured words. That is what the SHIPPED body really answers: it echoes the request into the first
+  // slot and, in the `align === 'none'` branch, echoes the SAME sentinel into BOTH readback slots
+  // (`align === 'none' ? 'none' : readAlign(...)`), so a run-only answer legitimately carries `'none'` three
+  // times. The case an earlier wording claimed this loop refused — a readback answering `'none'` while a WORD
+  // was requested — is not refused HERE and does not need to be: it is UNREACHABLE from the real body, which
+  // writes the sentinel into a readback slot only inside that branch, and it is settled by `exactRangeFormat`
+  // instead, which requires both the echoed request and `alignAfter` to EQUAL the requested word — so such an
+  // answer is a non-success (UNCERTAIN, slot held), never an accepted proof.
   if (rangeRequestedAlign(alignments[0]) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
   for (const alignment of alignments) if (alignment !== RANGE_ALIGN_NONE && rangeAlign(alignment) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
   assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);

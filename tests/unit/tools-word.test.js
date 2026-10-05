@@ -7812,6 +7812,90 @@ test('a marker pair covering a WIDER span than the address still verifies — th
   assert.equal(r.bridge.getState().busy, false);
 });
 
+// THE PAIR RULE, and it is the boundary an independent review found UNTESTED — which is exactly what let a
+// FAIL-OPEN defect live in `wrappedRegion`. The rule takes the property's LAST opener before the region and its
+// FIRST closer after it; taking those two INDEPENDENTLY proves a region that carries nothing, whenever a pair
+// closes before the region and another pair of the SAME property reopens after it:
+//   `&lt;strong&gt;Ц&lt;/strong&gt;ел&lt;strong&gt;ь&lt;/strong&gt;`  with the region `ел`
+// has its last opener before `Ц` and its first closer after `ь`, so the old rule answered 1 for a region that
+// is BOLD-FREE at the address. The reviewer reproduced that against the REAL bridge and got
+// `{"ok":true,…,"boldVerified":true}`. The rule now requires the judged closer to be the FIRST closer the
+// judged opener reaches, i.e. that opener is still OPEN where the region stands. BOTH directions are pinned
+// below, because a fix that merely tightened the rule until the repro passed would have broken the measured
+// nesting instead — and the split form proves the rule is not "the property may appear only once".
+test('format_range requires the judged opener OWN closer: a pair that closes before the region and reopens after it is UNCERTAIN with the slot HELD', async () => {
+  // (a) THE REVIEWER'S REPRO, byte for byte the export it used: bold on `Ц` and on `ь`, NOT on the region
+  // `ел`. The setter really runs and the export really carries TWO `&lt;strong&gt;` pairs; the address is
+  // simply not inside either of them, so the authored proof must answer 0.
+  const gap = '&lt;p&gt;Ноль&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Ц&lt;/strong&gt;ел&lt;strong&gt;ь&lt;/strong&gt;&lt;/p&gt;';
+  const request = rangeScope({ paragraph: 1, start: 1, end: 3, align: 'center', bold: true });
+  const r = formatRig({ texts: ['Ноль', 'Цель'], aligns: ['left', 'left'], toHtml: gap, toHtmlAfter: gap,
+    namespace: { scope: request } });
+  const outcome = await r.bridge.formatRange(request);
+  assert.equal(outcome.code, 'APPLY_UNCERTAIN', 'the gap pair is NOT a proof');
+  // THE AUTHORED ANSWER, read before the decoder: the alignment leg is satisfied (`center`), the region flags
+  // are satisfied, and the RUN PROOF is `0000` — the body itself refused to claim the property, so no decoder
+  // leniency is involved.
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 1, 1, 1, 1, 0, '0000', 'center', 'left', 'center']);
+  assert.equal(r.doc.state.runs.length, 1, 'the run write WAS dispatched exactly once');
+  assert.equal(r.doc.state.mutations, 1, 'and the alignment write too');
+  assert.equal(r.doc.document.ToHtml().includes('&lt;strong&gt;Ц&lt;/strong&gt;ел&lt;strong&gt;ь&lt;/strong&gt;'), true,
+    'the export really holds the gap the repro describes');
+  assert.equal(r.bridge.getState().busy, true, 'the slot is HELD: the write may have landed');
+  assert.equal(r.bridge.getState().uncertain, true);
+  assert.equal(r.bridge.getState().writePending, true);
+  assert.deepEqual(await r.bridge.formatRange(request), { ok: false, code: 'EDITOR_BUSY' }, 'no retry');
+  assert.equal(r.commands.length, 1);
+  // (b) THE POSITIVE CONTROL, and it keeps the rule from being "the property must appear once": a split
+  // expression of the SAME property in which the opener immediately before the region DOES close right after
+  // it — `&lt;strong&gt;Ц&lt;/strong&gt;&lt;strong&gt;ел&lt;/strong&gt;&lt;strong&gt;ь&lt;/strong&gt;` — is a real
+  // wrap of the region and is proven.
+  const split = '&lt;p&gt;Ноль&lt;/p&gt;&lt;p&gt;&lt;strong&gt;Ц&lt;/strong&gt;&lt;strong&gt;ел&lt;/strong&gt;&lt;strong&gt;ь&lt;/strong&gt;&lt;/p&gt;';
+  const splitRig = formatRig({ texts: ['Ноль', 'Цель'], aligns: ['left', 'left'], toHtml: split,
+    toHtmlAfter: split, namespace: { scope: request } });
+  const envelope = await splitRig.bridge.formatRange(request);
+  assert.equal(envelope.ok, true, 'a split form whose own pair covers the region IS proven');
+  assert.equal(envelope.boldVerified, true);
+  assert.deepEqual(splitRig.commands[0].answered, ['POST_INSERT', 1, 1, 1, 1, 0, '1000', 'center', 'left', 'center']);
+  assert.equal(splitRig.bridge.getState().busy, false, 'and the slot is RELEASED');
+});
+
+test('format_range keeps the exact pair, the wider pair and the measured nesting proven under the one-pair rule', async () => {
+  const request = rangeScope({ paragraph: 1, start: 1, end: 3, align: 'center', bold: true });
+  // (a) THE EXACT PAIR: the opener sits immediately before the region and its own closer immediately after it.
+  const exact = '&lt;p&gt;Ноль&lt;/p&gt;&lt;p&gt;Ц&lt;strong&gt;ел&lt;/strong&gt;ь&lt;/p&gt;';
+  const exactRig = formatRig({ texts: ['Ноль', 'Цель'], aligns: ['left', 'left'], toHtml: exact,
+    toHtmlAfter: exact, namespace: { scope: request } });
+  const exactEnvelope = await exactRig.bridge.formatRange(request);
+  assert.equal(exactEnvelope.ok, true, 'the exact pair verifies');
+  assert.equal(exactEnvelope.boldVerified, true);
+  assert.deepEqual(exactRig.commands[0].answered, ['POST_INSERT', 1, 1, 1, 1, 0, '1000', 'center', 'left', 'center']);
+  assert.equal(exactRig.bridge.getState().busy, false);
+  // (b) THE WIDER PAIR AROUND THE REGION: the pair covers `ель` while the address is `ел`. Its opener's first
+  // closer is still the closer the rule judged, so the tolerance is untouched by the new condition.
+  const wider = '&lt;p&gt;Ноль&lt;/p&gt;&lt;p&gt;Ц&lt;strong&gt;ель&lt;/strong&gt;ь&lt;/p&gt;';
+  const widerRig = formatRig({ texts: ['Ноль', 'Цель'], aligns: ['left', 'left'], toHtml: wider,
+    toHtmlAfter: wider, namespace: { scope: request } });
+  const widerEnvelope = await widerRig.bridge.formatRange(request);
+  assert.equal(widerEnvelope.ok, true, 'a wider pair around the region verifies');
+  assert.equal(widerEnvelope.boldVerified, true);
+  assert.deepEqual(widerRig.commands[0].answered, ['POST_INSERT', 1, 1, 1, 1, 0, '1000', 'center', 'left', 'center']);
+  assert.equal(widerRig.bridge.getState().busy, false);
+  // (c) THE MEASURED NESTING, judged for the OUTER property ALONE: the region is wrapped by bold inside italic
+  // and ONLY italic is requested. The outer pair's own closer is the first closer its opener reaches, so the
+  // condition that closes the fail-open cannot reopen the false UNCERTAIN the nesting round removed.
+  const nested = '&lt;p&gt;&lt;em&gt;&lt;strong&gt;ел&lt;/strong&gt;&lt;/em&gt;&lt;/p&gt;';
+  const outer = rangeScope({ paragraph: 1, start: 1, end: 3, align: 'center', italic: true });
+  const nestedRig = formatRig({ texts: ['Ноль', 'Цель'], aligns: ['left', 'left'], toHtml: nested,
+    toHtmlAfter: nested, namespace: { scope: outer } });
+  const nestedEnvelope = await nestedRig.bridge.formatRange(outer);
+  assert.equal(nestedEnvelope.ok, true, 'the OUTER property of the measured nesting is still proven');
+  assert.equal(nestedEnvelope.italicVerified, true);
+  assert.equal(nestedEnvelope.boldVerified, false, 'and the unrequested inner property claims nothing');
+  assert.deepEqual(nestedRig.commands[0].answered, ['POST_INSERT', 1, 1, 1, 1, 0, '0100', 'center', 'left', 'center']);
+  assert.equal(nestedRig.bridge.getState().busy, false);
+});
+
 test('a region the export does not hold is UNCERTAIN, and the PRE-read region text is the needle', async () => {
   const request = rangeScope({ paragraph: 1, start: 0, end: 2, align: 'center', bold: true });
   // (a) THE REGION IS ABSENT from the export, even though a marker and other text are there.
