@@ -1,11 +1,23 @@
 // src/tools/registry.js
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
+import { utf8ByteLength } from '../shared/bytes.js';
 import { validateToolSchema } from './schemas.js';
 
 const kinds = new Set(['read', 'mutate']);
 const policies = new Set(['auto', 'confirm', 'deny']);
 const editors = new Set(['word', 'cell', 'slide']);
-const fieldNames = ['name', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute'];
+// `description` is the MODEL-FACING field: one short, static, authored sentence saying what the tool is
+// FOR and — where it matters — what it does NOT do. It is authored data with no dynamic content: no
+// document text, no arguments, nothing computed, so it can neither leak nor drift between the
+// descriptor and the model.
+const fieldNames = ['name', 'description', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute'];
+// The bound is a BYTE measure, not a character count: the list is one line of the model-facing rules and
+// the product's own vocabulary is Russian (2 bytes a character), so 256 bytes is ~128 Cyrillic
+// characters — one or two clauses, which is all a description is allowed to be.
+export const TOOL_DESCRIPTION_BYTES = 256;
+// A description must stay on ONE line: a newline would inject a second line into the model-facing rules,
+// and a control character has no business in a sentence the model is meant to read.
+const descriptionControl = /[\u0000-\u001f\u007f]/;
 const capabilityFor = { read: 'document.read', mutate: 'document.write' };
 
 export function defineTool(raw) {
@@ -14,6 +26,11 @@ export function defineTool(raw) {
   // no non-enumerable key — those must never be able to contribute a field to the tool either.
   for (const key of Object.keys(raw)) if (!fieldNames.includes(key)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (typeof raw.name !== 'string' || !/^[a-z][a-z0-9_]{2,39}$/.test(raw.name)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // The guidance is REQUIRED, never optional: a descriptor without it is a tool the model is offered
+  // with no statement of what it is for, which is the measured pilot defect.
+  if (typeof raw.description !== 'string' || raw.description.trim() === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (utf8ByteLength(raw.description) > TOOL_DESCRIPTION_BYTES) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (descriptionControl.test(raw.description)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (!kinds.has(raw.kind)) throw new SafeError(ERROR_CODES.INVALID_DATA);
   if (!Array.isArray(raw.editors) || raw.editors.length === 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
   for (const editor of raw.editors) if (!editors.has(editor)) throw new SafeError(ERROR_CODES.INVALID_DATA);
@@ -77,5 +94,22 @@ export function createRegistry(list) {
     if (typeof name !== 'string') return null;
     return list.find(entry => entry.name === name) ?? null;
   }
-  return Object.freeze({ tools: Object.freeze(publishable), catalogue, resolve });
+  // THE LIST THE MODEL IS NAMED. The model-facing tool list is one line per entry, and a `confirm` entry
+  // can only ever END an authoring run: the runtime refuses to execute it inside the loop and finishes
+  // `PREVIEW_READY` (runtime.js:172), which the panel publishes as `CAPABILITY_UNAVAILABLE` whenever the
+  // run has no preview candidate (controller.js:181). Measured on the owner's pilot request: after eight
+  // successful actions the model proposed `replace_selection` — the only remaining confirm tool — and the
+  // whole authoring run ended there. So a confirm tool is never NAMED to the model.
+  // It stays in `catalogue`, deliberately: `validateBatch` resolves a batch against that array, and the
+  // panel's Preview/Apply flow needs the descriptor it finds there. Withholding it from `catalogue`
+  // instead is NOT available — measured on this tree, that breaks 12 controller preview/apply tests
+  // (preview -> canApply -> apply -> APPLY_ACKNOWLEDGED), because `catalogue` is the same array the
+  // runtime validates with. This filter is therefore the model-facing VIEW of a catalogue (or of
+  // `registry.tools`), never a second source of truth: it can only remove entries, preserves the input
+  // order, and adds nothing.
+  function modelCatalogue(list) {
+    if (!Array.isArray(list)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    return Object.freeze(list.filter(entry => entry.policy !== 'confirm'));
+  }
+  return Object.freeze({ tools: Object.freeze(publishable), catalogue, modelCatalogue, resolve });
 }

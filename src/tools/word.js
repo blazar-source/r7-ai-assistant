@@ -595,6 +595,7 @@ export function createWordTools(bridge) {
   return [
     defineTool({
       name: 'read_selection', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      description: 'Читает выделенный в редакторе текст. Только чтение, документ не меняет.',
       schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async () => {
@@ -631,6 +632,7 @@ export function createWordTools(bridge) {
       // It answers with exactly ONE bounded chunk; nothing in this module sends the whole document
       // anywhere, and no model or transport call exists on this path at all.
       name: 'read_document_text', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      description: 'Читает текст документа частями (offset, maxChars) — обзор содержимого. Только чтение.',
       // Closed and bounded. Both keys are OPTIONAL and each is bounded by the named LIMITS entry it
       // advertises: an omitted `offset` is 0 and an omitted `maxChars` is the documented default chunk.
       // `offset` may address anything inside `readDocumentOffsetMax` — past the end of the document that
@@ -879,6 +881,7 @@ export function createWordTools(bridge) {
       // The registry's `defineTool` field allowlist carries no `description` field, so the truth lives
       // in `scope` (which the model sees), in this comment, and in the failure contract below.
       name: 'read_paragraph', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      description: 'Читает предложение в позиции курсора. Это не чтение всего документа.',
       // CLOSED and EMPTY: the primitive takes no parameters (`GetCurrentSentence` is dispatched with
       // `[]`), so the schema advertises none. A caller that guesses an argument — including the `scope`
       // the RESULT names — is refused by the schema itself, and nothing the model sends can widen the
@@ -959,6 +962,7 @@ export function createWordTools(bridge) {
       //     holds no occurrence" IS the complete answer to a search, deliberately unlike an empty CARET
       //     context (`read_paragraph`), where `''` means there was nothing to answer.
       name: 'find_text', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      description: 'Ищет строку в документе и возвращает совпадения; 0 совпадений — это ok, а не ошибка.',
       // CLOSED and bounded. `query` is required and is bounded by `LIMITS.findQueryBytes` — a search
       // string, not a document read — and `limit` is bounded by `LIMITS.findMatchesMax`, which is ALSO
       // the default: the advertised space is a size a default call really returns. An omitted
@@ -1085,6 +1089,7 @@ export function createWordTools(bridge) {
       // the complete answer to "what is this document's structure", deliberately unlike an empty CARET
       // context (`read_paragraph`), where `''` means there was nothing to reason about.
       name: 'read_structure', kind: 'read', editors: ['word'], policy: 'auto', requires: ['document.read'],
+      description: 'Читает структуру документа: заголовки и таблицы. Аргументов не принимает.',
       // CLOSED and EMPTY: every primitive this read dispatches takes no model parameter, so the schema
       // advertises none and a caller that guesses an argument (including `scope`, which the WITHHELD
       // `read_context` schema names) is refused by the schema itself. An optional argument no measurement
@@ -1202,6 +1207,7 @@ export function createWordTools(bridge) {
       // is what withholds them; the descriptor itself is still executable if held directly), which is
       // what makes the probe-driven switch back a one-value change. PENDING NATIVE VERIFICATION.
       name: 'read_context', kind: 'read', editors: ['word'], policy: 'deny', requires: ['document.read'],
+      description: 'Читает фрагмент по адресу scope/index. Политика deny: модель его не получает.',
       schema: { type: 'object', additionalProperties: false, required: ['scope', 'index'],
         properties: { scope: { type: 'string', enum: ['paragraph', 'section', 'structure'] },
           index: { type: 'integer', minimum: 0, maximum: MAX_CONTEXT_INDEX } } },
@@ -1253,6 +1259,10 @@ export function createWordTools(bridge) {
     }),
     defineTool({
       name: 'insert_paragraph', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      // PILOT-CRITICAL GUIDANCE. Measured: the model chose this tool for whole-document authoring and
+      // called it eight times; every call landed inside the paragraph holding the caret (the title) and
+      // the document's paragraph count never moved. The caret semantics must therefore be unmistakable.
+      description: 'Вставляет текст В ПОЗИЦИЮ КУРСОРА (или выделения), а НЕ в конец документа.',
       // The schema advertises the per-action argument ceiling on `text`; the handler applies that same
       // ceiling to the payload the bridge actually dispatches, so the advertised and the enforced bound
       // are one value on both sides. The handler's note below states the `end` consequence: the appended
@@ -1396,6 +1406,9 @@ export function createWordTools(bridge) {
       // and the same style as `'Heading1'`, `'heading 1'` and `'Заголовок 1'` all resolve on the target),
       // so the mapping is not a guess about the document's language.
       name: 'insert_blocks', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      // PILOT-CRITICAL GUIDANCE, and the tool the pilot never called: this is the ONLY mutation that
+      // appends at the END of the document, and `heading: n` on a block is what makes it a heading.
+      description: 'Добавляет блоки В КОНЕЦ документа; поле heading: n делает блок заголовком уровня n. Это инструмент для глав и абзацев.',
       schema: { type: 'object', additionalProperties: false, required: ['blocks'],
         properties: { blocks: { type: 'array', maxItems: LIMITS.insertBlocksMax,
           items: { type: 'object', additionalProperties: false, required: ['text'],
@@ -1580,6 +1593,7 @@ export function createWordTools(bridge) {
       // being created or filled is a known refusal (the phase is still pre-insert, and provably nothing
       // reached the document). The bridge holds its slot for anything unprovable and issues NO retry.
       name: 'insert_table', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      description: 'Вставляет таблицу из матрицы строк data. Стилей и строки заголовка не применяет.',
       schema: { type: 'object', additionalProperties: false, required: ['data'],
         properties: { data: { type: 'array', maxItems: LIMITS.insertTableRowsMax,
           items: { type: 'array', maxItems: LIMITS.insertTableColumnsMax,
@@ -1802,6 +1816,9 @@ export function createWordTools(bridge) {
       // state. The phase is an explicit slot of every answer, exactly as `insert_blocks`/`insert_table`
       // state it: a throw out of the mutation is never a known refusal with the slot released.
       name: 'set_heading', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      // PILOT-CRITICAL GUIDANCE: this tool styles an address that already exists, so it is never the
+      // tool that writes a chapter — `insert_blocks` is.
+      description: 'Превращает СУЩЕСТВУЮЩИЙ абзац (по индексу paragraph) в заголовок уровня level. Текст не вставляет.',
       schema: { type: 'object', additionalProperties: false, required: ['paragraph', 'level'],
         properties: { paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.setHeadingIndexMax },
           level: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } },
@@ -1903,6 +1920,7 @@ export function createWordTools(bridge) {
     }),
     defineTool({
       name: 'replace_selection', kind: 'mutate', editors: ['word'], policy: 'confirm',
+      description: 'Заменяет текущее выделение на text; запись — только после подтверждения в панели (предпросмотр, затем Apply).',
       requires: ['document.read', 'document.write'],
       schema: { type: 'object', additionalProperties: false, required: ['text'],
         properties: { text: { type: 'string', maxBytes: AGENT_CEILINGS.argumentsBytes, minBytes: 1 } } },
@@ -2028,6 +2046,7 @@ export function createWordTools(bridge) {
     // refusal with the slot released.
     defineTool({
       name: 'format_range', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      description: 'Включает оформление диапазона абзаца: align, bold, italic, underline, strikeout. Выключить свойство нельзя.',
       schema: { type: 'object', additionalProperties: false, required: ['paragraph', 'start', 'end', 'format'],
         properties: {
           paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeIndexMax },
@@ -2330,6 +2349,7 @@ export function createWordTools(bridge) {
     // over-ceiling result entry is `BYTE_LIMIT`.
     defineTool({
       name: 'add_hyperlink', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      description: 'Добавляет гиперссылку url с текстом text — в конец документа или в абзац paragraph.',
       schema: { type: 'object', additionalProperties: false, required: ['url', 'text'],
         properties: {
           url: { type: 'string', minBytes: 1, maxBytes: LIMITS.addHyperlinkUrlBytes },
@@ -2535,6 +2555,7 @@ export function createWordTools(bridge) {
     //     post-counts use), so this tool proves what the editor did and not a text substitution of its own.
     defineTool({
       name: 'replace_text', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      description: 'Заменяет вхождения search на replace во всём документе (replace: "" — удаление). Курсор и выделение не читает.',
       schema: { type: 'object', additionalProperties: false, required: ['search', 'replace'],
         properties: {
           search: { type: 'string', minBytes: 1, maxBytes: LIMITS.replaceTextSearchBytes },
@@ -2706,6 +2727,7 @@ export function createWordTools(bridge) {
     // are objects in every direction, so the counts and the needle are the whole evidence.
     defineTool({
       name: 'insert_image', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      description: 'Вставляет картинку dataUrl размерами widthPx×heightPx — в конец документа или в абзац paragraph.',
       schema: { type: 'object', additionalProperties: false, required: ['dataUrl', 'widthPx', 'heightPx'],
         properties: {
           // THE PAYLOAD IS BOUNDED IN BYTES AND ITS SHAPE IS RE-DECIDED BY THE HANDLER: the schema can express
@@ -2867,6 +2889,7 @@ export function createWordTools(bridge) {
     // a null id) → `TOOL_UNCERTAIN` with the slot HELD and NO retry; an over-ceiling result entry → `BYTE_LIMIT`.
     defineTool({
       name: 'insert_comment', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      description: 'Добавляет комментарий с текстом text. Текст документа больше нигде не меняет.',
       schema: { type: 'object', additionalProperties: false, required: ['text'],
         properties: {
           // THE ONE AND ONLY ARGUMENT. The schema expresses the two rules it can — non-empty and inside the

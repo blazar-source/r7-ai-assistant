@@ -8,6 +8,7 @@ import { createRegistry } from '../../src/tools/registry.js';
 import { createWordTools } from '../../src/tools/word.js';
 
 const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
+  description: 'Тестовый дескриптор протокола.',
   schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
   precondition: () => null, execute: () => ({ ok: true, data: {} }) };
 const blocks = { type: 'object', additionalProperties: false, required: [],

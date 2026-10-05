@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defineTool, createRegistry } from '../../src/tools/registry.js';
+import { defineTool, createRegistry, TOOL_DESCRIPTION_BYTES } from '../../src/tools/registry.js';
+import { validateArguments } from '../../src/tools/schemas.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 
-const readTool = { name: 'read_selection', kind: 'read', editors: ['word'], policy: 'auto', requires: [],
+const readTool = { name: 'read_selection', description: 'Читает выделенный текст.', kind: 'read', editors: ['word'], policy: 'auto', requires: [],
   schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
   precondition: () => null, execute: () => ({ ok: true, data: {} }) };
 const insertTool = { ...readTool, name: 'insert_paragraph', kind: 'mutate', policy: 'auto',
@@ -102,10 +104,10 @@ test('resolve is an allowlist lookup and never returns an unlisted handler', () 
   assert.equal(registry.resolve(catalogue, '__proto__'), null);
 });
 
-test('defineTool constructs exactly the eight validated fields from a normal descriptor', () => {
+test('defineTool constructs exactly the nine validated fields from a normal descriptor', () => {
   const tool = defineTool(readTool);
   assert.deepEqual(Object.keys(tool),
-    ['name', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute']);
+    ['name', 'description', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute']);
   assert.equal(tool.name, 'read_selection');
   assert.equal(tool.kind, 'read');
   assert.equal(tool.schema, readTool.schema);
@@ -120,13 +122,13 @@ test('defineTool constructs exactly the eight validated fields from a normal des
 test('a descriptor carrying its fields on the prototype still yields a complete usable tool', () => {
   // Object.keys() only enumerates own properties, so the enumerable-key allowlist cannot see
   // these fields; the tool must be assembled from the validated values, never from the spread.
-  const proto = { name: 'read_proto', kind: 'read', editors: ['word'], policy: 'auto', requires: [],
+  const proto = { name: 'read_proto', description: 'Читает прототипный дескриптор.', kind: 'read', editors: ['word'], policy: 'auto', requires: [],
     schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
     precondition: () => null, execute: () => ({ ok: true, data: { from: 'proto' } }) };
   const descriptor = Object.create(proto);
   const tool = defineTool(descriptor);
   assert.deepEqual(Object.keys(tool),
-    ['name', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute']);
+    ['name', 'description', 'kind', 'editors', 'schema', 'policy', 'requires', 'precondition', 'execute']);
   assert.equal(tool.execute, proto.execute);
   const registry = createRegistry([descriptor]);
   const listed = registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' });
@@ -167,4 +169,82 @@ test('createRegistry rejects a descriptors argument that is not an array', () =>
   assert.throws(() => createRegistry(null), /INVALID_DATA/);
   assert.throws(() => createRegistry(undefined), /INVALID_DATA/);
   assert.throws(() => createRegistry('read_selection'), /INVALID_DATA/);
+});
+
+// --- THE MODEL-FACING GUIDANCE: an authored, bounded, static field of the descriptor ----------------
+//
+// The measured defect: the owner's pilot request named no tool, the model called `insert_paragraph`
+// eight times (which inserts at the CURRENT CARET, so every call landed inside the title paragraph and
+// the paragraph count never moved), and it never called `insert_blocks`, `set_heading`, `insert_table`
+// or `format_range`. The model was given `name (kind, policy)` and nothing about what a tool is FOR, so
+// the guidance has to be authored data on the descriptor rather than a guess in the model's head.
+const described = description => ({ ...readTool, description });
+
+test('defineTool requires one authored, non-empty, single-line description inside the byte bound', () => {
+  assert.equal(TOOL_DESCRIPTION_BYTES, 256, 'the model-facing text bound is a named, pinned constant');
+  assert.equal(defineTool(described('Читает выделение.')).description, 'Читает выделение.');
+  assert.throws(() => defineTool({ ...readTool, description: undefined }), /INVALID_DATA/, 'a descriptor with no description');
+  assert.throws(() => defineTool({ ...readTool, description: null }), /INVALID_DATA/);
+  assert.throws(() => defineTool(described('')), /INVALID_DATA/, 'an empty description');
+  assert.throws(() => defineTool(described('   ')), /INVALID_DATA/, 'a whitespace-only description');
+  assert.throws(() => defineTool(described(7)), /INVALID_DATA/, 'a non-string description');
+  assert.throws(() => defineTool(described('я'.repeat(300))), /INVALID_DATA/, 'past the byte bound');
+  assert.throws(() => defineTool(described('первая\nвторая')), /INVALID_DATA/,
+    'a second line would be injected into the one-line model-facing tool list');
+});
+
+test('the description is authored on the descriptor and can never come from call arguments', () => {
+  // The authored string is COPIED onto the frozen descriptor, so a caller-controlled object is never
+  // consulted again: a getter that answers differently on every read cannot make the tool's own
+  // guidance change after construction.
+  let reads = 0;
+  const changing = { ...readTool };
+  Object.defineProperty(changing, 'description', { enumerable: true,
+    get() { reads += 1; return `АВТОРСКОЕ ${reads}`; } });
+  const tool = defineTool(changing);
+  const buildReads = reads;
+  assert.ok(buildReads >= 1, 'the authored string is read while the descriptor is validated and built');
+  assert.equal(tool.description, tool.description, 'the frozen tool answers one stable value');
+  assert.equal(tool.description.startsWith('АВТОРСКОЕ'), true);
+  assert.equal(reads, buildReads, 'no later read of the tool touches the caller-supplied object');
+  assert.equal(Object.isFrozen(tool), true);
+  // The model supplies `arguments`, never descriptor fields: arguments are validated against the
+  // closed SCHEMA (unknown keys are refused), so nothing a caller sends can become the guidance.
+  assert.throws(() => validateArguments(tool.schema, { description: 'ПОДМЕНА' }, 1024), /TOOL_ERROR/);
+  assert.equal(tool.description.startsWith('АВТОРСКОЕ'), true);
+});
+
+test('the model-facing catalogue withholds confirm tools while their descriptors still resolve', () => {
+  const registry = createRegistry([readTool, insertTool, cellTool, confirmTool]);
+  const request = { editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' };
+  const catalogue = registry.catalogue(request);
+  assert.deepEqual(catalogue.map(tool => tool.name), ['read_selection', 'insert_paragraph', 'replace_selection']);
+  const modelFacing = registry.modelCatalogue(catalogue);
+  assert.deepEqual(modelFacing.map(tool => tool.name), ['read_selection', 'insert_paragraph'],
+    'a confirm-policy tool is never named to the model, so a proposal cannot reach the run-ending PREVIEW_READY');
+  assert.equal(Object.isFrozen(modelFacing), true);
+  assert.deepEqual(registry.modelCatalogue(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' }))
+    .map(tool => tool.name), ['read_selection']);
+  assert.deepEqual(registry.modelCatalogue([]), []);
+  assert.throws(() => registry.modelCatalogue('read_selection'), /INVALID_DATA/);
+  // ... while the confirm descriptor STILL RESOLVES, which is what keeps the panel's Preview/Apply
+  // path alive: the runtime validates the batch against `catalogue` and publishes PREVIEW_READY from
+  // the descriptor it finds there (measured: withholding it from `catalogue` instead breaks 12
+  // controller preview/apply tests, because `validateBatch` resolves through that very array).
+  assert.equal(registry.resolve(catalogue, 'replace_selection').policy, 'confirm');
+  assert.equal(registry.resolve(registry.tools, 'replace_selection').policy, 'confirm');
+});
+
+test('every published and offered descriptor carries a bounded non-empty description', () => {
+  const registry = createRegistry([readTool, insertTool, cellTool, confirmTool]);
+  const request = { editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' };
+  const lists = [registry.tools, registry.catalogue(request), registry.modelCatalogue(registry.catalogue(request))];
+  for (const list of lists) {
+    for (const tool of list) {
+      assert.equal(typeof tool.description, 'string', `${tool.name} carries a description`);
+      assert.ok(tool.description.trim().length > 0, `${tool.name} description is not empty`);
+      assert.ok(utf8ByteLength(tool.description) <= TOOL_DESCRIPTION_BYTES, `${tool.name} is inside the byte bound`);
+      assert.equal(/[\u0000-\u001f\u007f]/.test(tool.description), false, `${tool.name} stays on one line`);
+    }
+  }
 });

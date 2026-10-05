@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createWordTools } from '../../src/tools/word.js';
-import { createRegistry } from '../../src/tools/registry.js';
+import { createRegistry, TOOL_DESCRIPTION_BYTES } from '../../src/tools/registry.js';
 import { validateArguments } from '../../src/tools/schemas.js';
 import { validateBatch, toolResultMessages } from '../../src/agent/protocol.js';
 import { runAgent } from '../../src/agent/runtime.js';
@@ -89,8 +89,8 @@ test('read_context is withheld from every catalogue until a public document read
   // place so a confirmed native probe turns read_context back on by changing this policy alone.
   assert.equal(context.policy, 'deny', 'never offered, never executable');
   assert.deepEqual(Object.keys(context).sort(),
-    ['editors', 'execute', 'kind', 'name', 'policy', 'precondition', 'requires', 'schema'],
-    'the descriptor keeps exactly the eight registry fields');
+    ['description', 'editors', 'execute', 'kind', 'name', 'policy', 'precondition', 'requires', 'schema'],
+    'the descriptor keeps exactly the nine registry fields');
   assert.equal(typeof context.execute, 'function', 'the handler is kept for the probe-driven switch');
   assert.deepEqual(context.schema.properties.scope.enum, ['paragraph', 'section', 'structure'],
     'the schema is kept intact for the same reason');
@@ -108,6 +108,56 @@ test('read_context is withheld from every catalogue until a public document read
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
     ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_comment', 'insert_image', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading'],
     'every non-denied Word descriptor is still published');
+});
+
+// --- THE MODEL-FACING GUIDANCE ON THE REAL WORD CATALOGUE ------------------------------------------
+//
+// Measured on the owner's pilot request, across three runs of the raised guardrails: `insert_paragraph`
+// was called eight times (it inserts at the CURRENT CARET, so the text landed inside the title
+// paragraph and the paragraph count never moved) while `insert_blocks`, `set_heading`, `insert_table`
+// and `format_range` were never called even once. Where the request NAMED a tool the model used it
+// correctly, so the plumbing was never the problem: what the model lacked was a statement of what each
+// tool is FOR. These three carry the pilot's weight and are pinned VERBATIM, because they are the
+// deliverable itself rather than an implementation detail.
+const PILOT_GUIDANCE = Object.freeze({
+  insert_blocks: 'Добавляет блоки В КОНЕЦ документа; поле heading: n делает блок заголовком уровня n. Это инструмент для глав и абзацев.',
+  insert_paragraph: 'Вставляет текст В ПОЗИЦИЮ КУРСОРА (или выделения), а НЕ в конец документа.',
+  set_heading: 'Превращает СУЩЕСТВУЮЩИЙ абзац (по индексу paragraph) в заголовок уровня level. Текст не вставляет.'
+});
+
+test('every offered Word tool carries an authored description inside the model-facing byte bound', () => {
+  const registry = createRegistry(createWordTools(fakeBridge()));
+  const full = ['document.read', 'document.write'];
+  const lists = [registry.tools];
+  for (const mode of ['ASK', 'EDIT']) lists.push(registry.catalogue({ editor: 'word', capabilities: full, mode }));
+  lists.push(registry.modelCatalogue(registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' })));
+  for (const list of lists) {
+    for (const tool of list) {
+      assert.equal(typeof tool.description, 'string', `${tool.name} carries a description`);
+      assert.ok(tool.description.trim().length > 0, `${tool.name} description is not empty`);
+      assert.ok(utf8ByteLength(tool.description) <= TOOL_DESCRIPTION_BYTES, `${tool.name} is inside the byte bound`);
+    }
+  }
+  // A denied tool is offered nowhere, but its descriptor keeps its authored guidance whole: the switch
+  // back to `auto` is one policy value and must not need a second edit.
+  const denied = createWordTools(fakeBridge()).find(tool => tool.name === 'read_context');
+  assert.equal(typeof denied.description, 'string', 'the withheld descriptor carries its guidance too');
+});
+
+test('the three pilot-critical tools are unmistakable and no confirm tool is named to the model', () => {
+  const registry = createRegistry(createWordTools(fakeBridge()));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  const guidance = new Map(catalogue.map(tool => [tool.name, tool.description]));
+  for (const [name, text] of Object.entries(PILOT_GUIDANCE)) assert.equal(guidance.get(name), text, name);
+  // A confirm-policy tool is not part of the list the model is offered, so a `replace_selection`
+  // proposal cannot end an authoring run at the run-ending PREVIEW_READY, while the descriptor stays
+  // in the catalogue the runtime validates against, which is what keeps the panel's Preview/Apply
+  // path (PREVIEW_READY -> canApply -> apply -> APPLY_ACKNOWLEDGED) reachable.
+  const modelFacing = registry.modelCatalogue(catalogue).map(tool => tool.name);
+  assert.equal(modelFacing.includes('replace_selection'), false, 'no confirm tool in the model-facing list');
+  assert.equal(modelFacing.length, 14, 'every non-denied, non-confirm Word tool is still offered');
+  assert.equal(registry.resolve(catalogue, 'replace_selection').policy, 'confirm', 'still resolvable');
 });
 
 test('read_selection returns bounded data and marks refusals as known errors', async () => {

@@ -7,6 +7,7 @@ import { AGENT_CEILINGS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
+  description: 'Тестовый дескриптор рантайма.',
   schema: { type: 'object', additionalProperties: false, required: [], properties: {} } };
 const calls = [];
 const registry = createRegistry([

@@ -3425,3 +3425,137 @@ of `insert_blocks` calls a 10-page document really costs, the per-step wall cloc
 whether `maxSteps` 120 and the 30-minute deadline bracket it or the task needs the next calibration step. This
 round moved the configuration the design says is meant to move; the calibration itself (design §15.2) is still a
 measurement, not a claim.
+
+## 22. The pilot's last two blockers — the model-facing guidance, and a confirm tool the loop must never name
+
+The raised guardrails (§21) removed the step budget as the pilot's failure mode and exposed the two defects behind
+it. Both were measured on the target with the raised set in force.
+
+**Defect 1 — schema-only guidance.** On «создай структурированный документ примерно на 10 страниц, добавь главы,
+несколько таблиц, списки, выводы и оформи его» the model called `insert_paragraph` **eight times** across three
+runs. `insert_paragraph` inserts at the **CURRENT CARET**, so every call landed inside the paragraph holding the
+caret (the title) and the document's paragraph count **never moved**; `insert_blocks`, `set_heading`, `insert_table`
+and `format_range` were **never called at all**. Where a request NAMED a tool the model used it correctly — measured:
+one `insert_blocks` call carrying a heading and two paragraphs took the document from **2 to 5 paragraphs and 1 to 2
+headings**. The plumbing was therefore never the problem: the model was offered `name (kind, policy)` and **nothing
+about what a tool is FOR**.
+
+**Defect 2 — a confirm tool ended the run.** On one run, after eight successful actions, the model proposed
+`replace_selection` — the only remaining `policy: 'confirm'` tool. A confirm action **never executes in the loop by
+design**: the runtime finishes `PREVIEW_READY` (`src/agent/runtime.js:172`), and the panel publishes
+`CAPABILITY_UNAVAILABLE` when the run has no preview candidate (`src/ui/controller.js:181`), so the whole authoring
+run **ended there**.
+
+### THE WIRING, measured before anything was changed
+
+There is **no `tools` array anywhere in the request**. The HTTP body is exactly
+`{ model, messages, max_tokens, temperature }` (`src/ai/protocol.js:32`), and the ONLY model-facing tool
+information is a single **system message authored inside `src/agent/`**:
+
+* `src/agent/runtime.js:112` — `const catalogue = registry.catalogue({ editor, capabilities, mode });`
+* `src/agent/runtime.js:120` — `context.append({ role: 'system', content: systemRules(catalogue, mode) });`
+* `src/agent/runtime.js:222-226` — `function systemRules(catalogue, mode) { const lines = catalogue.map(tool =>
+  \`${tool.name} (${tool.kind}, ${tool.policy})\`); … }`
+
+Nothing copies a registry field into that string, and the three fields it does read are closed by construction
+(`name` is `/^[a-z][a-z0-9_]{2,39}$/`, `kind` ∈ {read, mutate}, `policy` ∈ {auto, confirm, deny}), so **no
+registry-side value can reach the model without a runtime edit**. `src/agent/` is therefore left untouched, and the
+runtime side is reported below as the exact patch rather than made here.
+
+### What landed: the description is authored DATA on the descriptor
+
+* `src/tools/registry.js` — `description` joins the `fieldNames` allowlist, so the frozen descriptor is CONSTRUCTED
+  from the validated value exactly like every other field (read once, never re-read from a caller-controlled
+  object). It is **required**: a descriptor without it is `INVALID_DATA`, because a tool offered with no statement of
+  what it is for is the measured defect itself. It must be a non-empty string, **at most
+  `TOOL_DESCRIPTION_BYTES` = 256 BYTES** (a byte measure, not a character count: the product's model-facing
+  vocabulary is Russian at 2 bytes a character), and it must contain **no control character** — a newline would
+  inject a second line into the one-line model-facing rules. It is static authored data: no document text, no
+  arguments, nothing computed.
+* `src/tools/word.js` — one `description:` per descriptor, for all **16** tools (the withheld `read_context`
+  included, so the probe-driven switch back stays a one-value change). Longest is **205 bytes**
+  (`insert_blocks`); the bound is 256.
+
+**The three the pilot's weight rests on, verbatim (they are the deliverable, and
+`tests/unit/tools-word.test.js` pins them as literals):**
+
+| tool | `description` |
+| --- | --- |
+| `insert_blocks` | `Добавляет блоки В КОНЕЦ документа; поле heading: n делает блок заголовком уровня n. Это инструмент для глав и абзацев.` |
+| `insert_paragraph` | `Вставляет текст В ПОЗИЦИЮ КУРСОРА (или выделения), а НЕ в конец документа.` |
+| `set_heading` | `Превращает СУЩЕСТВУЮЩИЙ абзац (по индексу paragraph) в заголовок уровня level. Текст не вставляет.` |
+
+### What landed: the confirm tool is withheld from the MODEL-FACING list, and why it is not withheld from `catalogue`
+
+* `src/tools/registry.js` — a new `modelCatalogue(list)`: the model-facing **view** of a catalogue (or of
+  `registry.tools`). It can only REMOVE entries, it preserves the input order, it adds nothing, and it drops exactly
+  the `policy: 'confirm'` tools. In the real Word catalogue: **15 offered in EDIT, 14 named to the model**.
+
+**The withholding CANNOT be done in `catalogue()`, and this was measured, not reasoned.** `validateBatch` resolves
+a batch against that very array (`src/agent/protocol.js:54` — `catalogue.find(tool => tool.name === call.tool)`),
+and the runtime's confirm branch is what produces the `PREVIEW_READY` that `src/ui/controller.js:171` turns into the
+Sprint 1 Preview. Scratch experiment on this tree: with `entry.policy === 'confirm'` filtered out of `catalogue`
+(reverted immediately), `node --test tests/unit/controller.test.js` → **tests 54, pass 42, fail 12** — exactly the
+preview chain ("EDIT creates immutable sanitized preview and explicit Apply delegates only private owned target",
+"preview expires at exactly 120000 milliseconds", "Apply checks preview deadline even without timer task delivery",
+the eight "clears an already published uncommitted preview" cases, and "PREVIEW_READY publishes the Sprint 1
+Preview from the validated confirm arguments with the TTL intact"). So `catalogue()` keeps the confirm descriptor —
+which is also what keeps it **resolvable** — and only the model-facing list drops it.
+
+### REQUIRED, NOT MADE HERE: the one-region runtime pass-through
+
+`src/agent/runtime.js` is untouched. Two one-line edits in the region quoted above are what make both defects
+actually disappear, and both are in the SAME place (the model-facing listing region):
+
+```js
+// src/agent/runtime.js:112 and :120 — the SAME catalogue still validates and still carries confirm
+const catalogue = registry.catalogue({ editor, capabilities, mode });
+const offered = registry.modelCatalogue(catalogue);                       // NEW: model-facing list
+context.append({ role: 'system', content: systemRules(offered, mode) });  // was systemRules(catalogue, mode)
+// src/agent/runtime.js:223 — render the authored guidance
+const lines = catalogue.map(tool => `${tool.name} (${tool.kind}, ${tool.policy}): ${tool.description}`);
+```
+
+Until that lands, the registry holds a tested, complete contract that nothing consumes for the model: the guidance
+is authored and bounded but **not yet read**, and the confirm tool is **still named** in the runtime's own system
+rules. Neither can be fixed from `src/tools/`: the payload is composed inside `src/agent/`. That is the decision
+this round puts to the owner.
+
+### RED, then GREEN
+
+**RED (stage 1, no implementation).** `node --test tests/unit/tools-registry.test.js tests/unit/tools-word.test.js`
+→ both files fail at **link time**: `SyntaxError: The requested module '../../src/tools/registry.js' does not provide
+an export named 'TOOL_DESCRIPTION_BYTES'`, and `tests 2, pass 0, fail 2` — the field, the bound and the
+model-facing list do not exist.
+
+**RED (stage 2, registry landed, `word.js` not yet).** `node --test tests/unit/tools-word.test.js` →
+**tests 318, pass 137, fail 181**, every failure `SafeError: INVALID_DATA` from the now-required `description` on the
+16 real descriptors.
+
+**GREEN.** Focused set `node --test tests/unit/tools-registry.test.js tests/unit/tools-word.test.js
+tests/unit/controller.test.js tests/unit/agent-runtime.test.js tests/unit/agent-protocol.test.js
+tests/unit/view.test.js` → **450 tests, pass 450, fail 0** — the 54 controller tests that drive preview →
+`canApply` → `apply()` → `APPLY_ACKNOWLEDGED` are all in it, unchanged.
+
+**What pins it.** `tests/unit/tools-registry.test.js` (4 new cases): the field is required and bounded (missing,
+empty, whitespace-only, non-string, over-bound, and a newline are each `INVALID_DATA`; the bound is pinned at 256);
+the description is **authored, never caller-supplied** (a caller-controlled getter that answers differently on every
+read cannot change the frozen tool's own value, and an argument literally named `description` is refused by the
+closed schema); `modelCatalogue` drops exactly the confirm tool while `catalogue` and `resolve` still carry it, and
+it rejects a non-array. `tests/unit/tools-word.test.js` (2 new cases): every published/offered Word descriptor
+carries a bounded, non-empty, single-line description — including the withheld `read_context` — and the three
+pilot-critical sentences above are pinned **verbatim**, with `replace_selection` absent from the model-facing list
+(14 entries) and still resolvable in `catalogue`. The eight-field descriptor assertions in three test files became
+nine-field ones, because the field set grew on purpose.
+
+**Verification (this round, final tree).** `node --test` → **958 tests, pass 958, fail 0, cancelled 0, skipped 0,
+todo 0** (**952 → 958**, never shrunk); `node scripts/static-audit.mjs` → **`Authored-code audit PASS`**, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+e01d54f169604d08eeb643272afab37e2dbf12f05f437cb20836860e7f953fab`**. `git diff HEAD -- src/agent` is empty.
+
+**What only a native run can settle.** Whether the three sentences actually change what the model reaches for: the
+registry now has the field but the model does not read it yet, so the pilot's ten-page request has NOT been re-run
+against a build carrying the pass-through. The unmeasured quantity is the model's choice under the new guidance —
+in particular whether `insert_blocks` replaces `insert_paragraph` for chapters, and whether dropping
+`replace_selection` from the list removes the run-ending `PREVIEW_READY` without also losing the Preview/Apply
+feature the panel still has to offer for a genuine selection edit.
