@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defineTool, createRegistry, TOOL_DESCRIPTION_BYTES } from '../../src/tools/registry.js';
+import { defineTool, createRegistry, TOOL_DESCRIPTION_BYTES, PROFILE_INSTRUCTION_BYTES } from '../../src/tools/registry.js';
 import { validateArguments } from '../../src/tools/schemas.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
 
@@ -246,5 +246,82 @@ test('every published and offered descriptor carries a bounded non-empty descrip
       assert.ok(utf8ByteLength(tool.description) <= TOOL_DESCRIPTION_BYTES, `${tool.name} is inside the byte bound`);
       assert.equal(/[\u0000-\u001f\u007f]/.test(tool.description), false, `${tool.name} stays on one line`);
     }
+  }
+});
+
+// --- THE BULK-GENERATION PROFILE: a closed name for a model-facing SUBSET ----------------------------
+//
+// The measured defect the profile exists for: on the owner's free-form ten-page request the model, with
+// the full catalogue in front of it, drifted into `insert_paragraph` — which inserts at the CURRENT
+// CARET, so every call landed inside the title paragraph and the paragraph count never moved (2 -> 2) —
+// and never called `insert_blocks` or `insert_table`. When it did reach the append-anchored tools the
+// same request grew 2 -> 30 paragraphs, 1 -> 7 headings and 0 -> 2 tables in ONE run. The profile is a
+// VIEW, never a second source of truth: it can only remove entries from what the model is NAMED.
+const BULK_OFFERED = Object.freeze(['read_structure', 'read_document_text', 'insert_blocks', 'insert_table', 'format_range']);
+const BULK_WITHHELD = Object.freeze(['read_selection', 'read_paragraph', 'find_text', 'insert_paragraph', 'set_heading',
+  'add_hyperlink', 'insert_image', 'insert_comment', 'replace_text', 'replace_selection']);
+const BULK_KINDS = Object.freeze({ read_structure: 'read', read_document_text: 'read', read_selection: 'read',
+  read_paragraph: 'read', find_text: 'read', insert_blocks: 'mutate', insert_table: 'mutate', insert_paragraph: 'mutate',
+  set_heading: 'mutate', add_hyperlink: 'mutate', insert_image: 'mutate', insert_comment: 'mutate',
+  replace_text: 'mutate', replace_selection: 'mutate', format_range: 'mutate' });
+function profiledRegistry() {
+  return createRegistry([...BULK_OFFERED, ...BULK_WITHHELD].map(name => ({
+    ...(BULK_KINDS[name] === 'mutate' ? insertTool : readTool), name, kind: BULK_KINDS[name],
+    policy: name === 'replace_selection' ? 'confirm' : 'auto' })));
+}
+
+test('the bulk profile offers exactly the five append-anchored tools and withholds nothing else', () => {
+  const registry = profiledRegistry();
+  const request = { editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' };
+  const catalogue = registry.catalogue(request);
+  assert.deepEqual(catalogue.map(tool => tool.name), [...BULK_OFFERED, ...BULK_WITHHELD],
+    'the full catalogue still carries every tool, in one stable order');
+  const bulk = registry.modelCatalogue(catalogue, 'bulk');
+  assert.deepEqual(bulk.map(tool => tool.name), [...BULK_OFFERED], 'the profiled view is the five-tool subset');
+  assert.equal(Object.isFrozen(bulk), true);
+  for (const name of BULK_WITHHELD) {
+    assert.equal(bulk.map(tool => tool.name).includes(name), false, `${name} is not named to the model in bulk`);
+    // ... and nothing was DELETED: the descriptor a profile withholds is still resolvable by name, which
+    // is what keeps `validateBatch` and the panel's preview/apply path working off the full catalogue.
+    assert.notEqual(registry.resolve(catalogue, name), null, `${name} is still resolvable`);
+    assert.notEqual(registry.resolve(registry.tools, name), null, `${name} is still published`);
+  }
+  // The default view is UNCHANGED by the new parameter: only the confirm tools are dropped.
+  assert.deepEqual(registry.modelCatalogue(catalogue).map(tool => tool.name), catalogue
+    .filter(tool => tool.policy !== 'confirm').map(tool => tool.name));
+  assert.deepEqual(registry.modelCatalogue([]), []);
+  assert.deepEqual(registry.modelCatalogue([], 'bulk'), []);
+});
+
+test('a profile name is a closed enum: an unknown one is a refusal, never a silent full list', () => {
+  const registry = profiledRegistry();
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  assert.equal(registry.modelCatalogue(catalogue, 'bulk').length, 5, 'the declared profile is accepted');
+  for (const unknown of ['BULK', 'bulk ', '', 'default', 'ask', 0, null, {}, [], ['bulk']]) {
+    assert.throws(() => registry.modelCatalogue(catalogue, unknown), /INVALID_DATA/,
+      `an unknown profile (${JSON.stringify(unknown)}) must refuse rather than answer the full list`);
+  }
+  assert.throws(() => registry.modelCatalogue('not a list', 'bulk'), /INVALID_DATA/);
+});
+
+test('the bulk instruction is authored, bounded, single-line and states the plan-first and continue rules', () => {
+  // The instruction is the DELIVERABLE, so it is pinned verbatim: any rewrite of the orchestration
+  // contract has to be a deliberate edit of this string and of the contract it makes the model follow.
+  const EXPECTED = "Профиль 'bulk' — длинный документ: (1) сначала верни ТОЛЬКО ПЛАН документа — разделы, целевой объём и обязательные элементы (таблицы, списки, выводы) — без вызовов инструментов; (2) затем выполняй план по частям; (3) объём набирай insert_blocks (блок добавляется В КОНЕЦ; поле heading делает блок заголовком) и insert_table для таблиц; (4) после прохода перечитай структуру через read_structure и сверь обязательные элементы и фактический объём; (5) если план не выполнен — ПРОДОЛЖАЙ, а не завершай ответ; (6) не повторяй действие, вернувшее TOOL_UNCERTAIN.";
+  assert.equal(PROFILE_INSTRUCTION_BYTES, 1024, 'the model-facing text bound is a named, pinned constant');
+  const registry = profiledRegistry();
+  assert.equal(registry.profileInstruction(undefined), null, 'a profile-less run has no instruction at all');
+  assert.equal(registry.profileInstruction('bulk'), EXPECTED);
+  assert.ok(utf8ByteLength(EXPECTED) <= PROFILE_INSTRUCTION_BYTES, 'inside the named byte bound');
+  assert.equal(/[\u0000-\u001f\u007f]/.test(EXPECTED), false, 'one line: no newline is injected into the system text');
+  // Each rule the profile exists to state, by the token that makes it actionable.
+  for (const token of ['ПЛАН', 'без вызовов инструментов', 'по частям', 'insert_blocks', 'В КОНЕЦ', 'heading',
+    'insert_table', 'read_structure', 'фактический объём', 'ПРОДОЛЖАЙ', 'TOOL_UNCERTAIN']) {
+    assert.ok(EXPECTED.includes(token), `the instruction must state: ${token}`);
+  }
+  // The instruction may only name tools the profile actually offers.
+  for (const name of BULK_WITHHELD) assert.equal(EXPECTED.includes(name), false, `${name} must not be named here`);
+  for (const unknown of ['BULK', '', 0, null, {}, 'default']) {
+    assert.throws(() => registry.profileInstruction(unknown), /INVALID_DATA/, `no instruction for ${JSON.stringify(unknown)}`);
   }
 });

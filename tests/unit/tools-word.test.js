@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createWordTools } from '../../src/tools/word.js';
-import { createRegistry, TOOL_DESCRIPTION_BYTES } from '../../src/tools/registry.js';
+import { createRegistry, TOOL_DESCRIPTION_BYTES, PROFILE_INSTRUCTION_BYTES } from '../../src/tools/registry.js';
 import { validateArguments } from '../../src/tools/schemas.js';
 import { validateBatch, toolResultMessages } from '../../src/agent/protocol.js';
 import { runAgent } from '../../src/agent/runtime.js';
@@ -158,6 +158,31 @@ test('the three pilot-critical tools are unmistakable and no confirm tool is nam
   assert.equal(modelFacing.includes('replace_selection'), false, 'no confirm tool in the model-facing list');
   assert.equal(modelFacing.length, 14, 'every non-denied, non-confirm Word tool is still offered');
   assert.equal(registry.resolve(catalogue, 'replace_selection').policy, 'confirm', 'still resolvable');
+});
+
+test('the bulk profile offers exactly the five append-anchored Word tools and deletes nothing', () => {
+  const registry = createRegistry(createWordTools(fakeBridge()));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  assert.equal(catalogue.length, 15, 'the full catalogue keeps every non-denied Word tool');
+  const bulk = registry.modelCatalogue(catalogue, 'bulk').map(tool => tool.name);
+  assert.deepEqual(bulk, ['read_document_text', 'read_structure', 'insert_blocks', 'insert_table', 'format_range'],
+    'the measured bulk set, in the catalogue\'s own order');
+  // The tools the profile exists to withhold — the caret-anchored insert, the index-addressed heading, the
+  // three single-object decorations, the in-place rewrite, the confirm proposal and the reads the bulk
+  // task does not need — are each STILL RESOLVABLE by name, so the dispatch and preview paths are intact.
+  for (const withheld of ['insert_paragraph', 'set_heading', 'add_hyperlink', 'insert_image', 'insert_comment',
+    'replace_text', 'replace_selection', 'read_selection', 'read_paragraph', 'find_text']) {
+    assert.equal(bulk.includes(withheld), false, `${withheld} is not named in the bulk view`);
+    assert.notEqual(registry.resolve(catalogue, withheld), null, `${withheld} stays resolvable`);
+  }
+  // The default view is unchanged by the new parameter: exactly the confirm tools are dropped.
+  assert.deepEqual(registry.modelCatalogue(catalogue).map(tool => tool.name), catalogue
+    .filter(tool => tool.policy !== 'confirm').map(tool => tool.name));
+  const instruction = registry.profileInstruction('bulk');
+  assert.ok(utf8ByteLength(instruction) <= PROFILE_INSTRUCTION_BYTES, 'the real instruction is inside its bound');
+  assert.match(instruction, /ПЛАН/);
+  assert.match(instruction, /TOOL_UNCERTAIN/);
 });
 
 test('read_selection returns bounded data and marks refusals as known errors', async () => {

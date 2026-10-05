@@ -19,6 +19,34 @@ export const TOOL_DESCRIPTION_BYTES = 256;
 // and a control character has no business in a sentence the model is meant to read.
 const descriptionControl = /[\u0000-\u001f\u007f]/;
 const capabilityFor = { read: 'document.read', mutate: 'document.write' };
+// A profile is a CLOSED name for a model-facing SUBSET of the catalogue. It exists because the model
+// must be shown a task-appropriate list, and the reason is measured: on the owner's free-form
+// ten-page request with the FULL catalogue the model drifted into `insert_paragraph`, which inserts at
+// the CURRENT CARET — every call landed inside the title paragraph, the paragraph count never moved,
+// and the document never grew — while for the same request, once it reached `insert_blocks` and
+// `insert_table`, the document grew 2 -> 30 paragraphs, 1 -> 7 headings and 0 -> 2 tables in ONE run.
+const profiles = new Set(['bulk']);
+// The ONE bulk (long document generation) list is a closed AUTHORED allowlist rather than a flag spread
+// over sixteen descriptors: the membership is one place to read, the profile can only REMOVE entries
+// from the model-facing view, and every excluded tool stays defined, published and resolvable through
+// the full `catalogue()`. The excluded ones and the measured reason:
+//   `insert_paragraph` inserts at the CURRENT CARET and so cannot build volume (the measured defect);
+//   `set_heading` addresses an EXISTING paragraph by index and inserts nothing;
+//   `add_hyperlink`, `insert_image` and `insert_comment` each decorate ONE object instead of adding text;
+//   `replace_text` rewrites text that already exists rather than appending any.
+const BULK_TOOLS = Object.freeze(['read_structure', 'read_document_text', 'insert_blocks', 'insert_table', 'format_range']);
+// The bound is a BYTE measure on ONE authored line, like every other model-facing string: the text is
+// Russian (2 bytes a character), so 1024 bytes is ~500 characters — six short orchestration rules and
+// nothing more, measured at 939 bytes below with the slack left for one more measured rule.
+export const PROFILE_INSTRUCTION_BYTES = 1024;
+// The profile's orchestration contract, authored HERE and rendered verbatim by the runtime: a profile
+// that filtered the list without stating HOW to work would leave the model to invent the plan-and-check
+// cycle that the bulk task needs, which is the same defect the descriptor guidance exists to remove.
+// It is bound to its profile by NAME EQUALITY below, never by a computed lookup: the bundle-wide static
+// audit classifies a non-constant computed property READ as a dynamic-property sink, and ONE such read
+// taints every identifier it is assigned to across the whole composed bundle (measured: a single
+// `INSTRUCTIONS[profile]` read took the audit's clean bundle from 0 to 139 findings).
+const BULK_INSTRUCTION = "Профиль 'bulk' — длинный документ: (1) сначала верни ТОЛЬКО ПЛАН документа — разделы, целевой объём и обязательные элементы (таблицы, списки, выводы) — без вызовов инструментов; (2) затем выполняй план по частям; (3) объём набирай insert_blocks (блок добавляется В КОНЕЦ; поле heading делает блок заголовком) и insert_table для таблиц; (4) после прохода перечитай структуру через read_structure и сверь обязательные элементы и фактический объём; (5) если план не выполнен — ПРОДОЛЖАЙ, а не завершай ответ; (6) не повторяй действие, вернувшее TOOL_UNCERTAIN.";
 
 export function defineTool(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new SafeError(ERROR_CODES.INVALID_DATA);
@@ -107,9 +135,33 @@ export function createRegistry(list) {
   // runtime validates with. This filter is therefore the model-facing VIEW of a catalogue (or of
   // `registry.tools`), never a second source of truth: it can only remove entries, preserves the input
   // order, and adds nothing.
-  function modelCatalogue(list) {
+  function modelCatalogue(list, profile) {
     if (!Array.isArray(list)) throw new SafeError(ERROR_CODES.INVALID_DATA);
-    return Object.freeze(list.filter(entry => entry.policy !== 'confirm'));
+    // A profile is a CLOSED name: "no profile" is the ABSENT argument, and anything else that is not a
+    // declared profile is a refusal — never a silent full list, which would hand a bulk task every
+    // position-dependent tool again while the caller believed the run had been constrained.
+    if (profile !== undefined && !profiles.has(profile)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const offered = list.filter(entry => entry.policy !== 'confirm');
+    if (profile !== 'bulk') return Object.freeze(offered);
+    // The profiled view is still a VIEW of the same array: order-preserving, frozen, and only ever a
+    // REMOVAL — the excluded descriptors remain in `catalogue` and remain resolvable by name.
+    return Object.freeze(offered.filter(entry => BULK_TOOLS.includes(entry.name)));
   }
-  return Object.freeze({ tools: Object.freeze(publishable), catalogue, modelCatalogue, resolve });
+  // The profile's bounded, authored orchestration line, or null when there is none. It is ONE string
+  // (never a line array): it is joined into the runtime's single system message, so a second line would
+  // inject an unaccounted-for rule into that text. The closed shape is enforced here, exactly like the
+  // descriptor guidance: a non-string, an over-bound text or a control character is INVALID_DATA.
+  function profileInstruction(profile) {
+    if (profile === undefined) return null;
+    // The same CLOSED set the view is checked against decides whether there is an instruction at all.
+    if (!profiles.has(profile)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    // The authored line is selected by NAME EQUALITY, never by a computed lookup: `bulk` is the one
+    // declared profile, and the bound below is what keeps its single-line shape.
+    const text = BULK_INSTRUCTION;
+    if (typeof text !== 'string' || utf8ByteLength(text) > PROFILE_INSTRUCTION_BYTES || descriptionControl.test(text)) {
+      throw new SafeError(ERROR_CODES.INVALID_DATA);
+    }
+    return text;
+  }
+  return Object.freeze({ tools: Object.freeze(publishable), catalogue, modelCatalogue, profileInstruction, resolve });
 }

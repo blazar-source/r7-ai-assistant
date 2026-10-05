@@ -3606,3 +3606,137 @@ never shrunk); `node scripts/static-audit.mjs` → **`Authored-code audit PASS`*
 → exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
 83a7620498ed3093cc1d46a76308ef2c5ea9031cef7619a9c2e54eb2afa3d08f`** (the bundle now carries the composed system
 rules, hence a new SHA).
+
+---
+
+## 23. The BULK-GENERATION tool profile — the model is shown the append-anchored subset, plus its own orchestration contract
+
+The owner's free-form request («создай структурированный документ примерно на 10 страниц, добавь главы,
+несколько таблиц, списки, выводы и оформи его») is a BULK GENERATION task, and the full catalogue is the wrong
+list for it. **Measured on the target:** with all fifteen non-denied Word tools in front of it the model drifted
+into `insert_paragraph` — which inserts at the CURRENT CARET — so every call landed inside the TITLE paragraph and
+the paragraph count never moved, while `insert_blocks` and `insert_table` were never called. Where it did use the
+append-anchored tools the same document grew **2 -> 30 paragraphs, 1 -> 7 headings and 0 -> 2 tables in ONE run**.
+The fix is therefore not a new tool but a task-appropriate VIEW plus the wording that tells the model how to work.
+
+### What landed: `registry.modelCatalogue(list, profile)`, a closed enum over a closed allowlist
+
+`modelCatalogue` keeps its existing behaviour for an ABSENT profile (drop every `policy: 'confirm'` entry,
+order-preserving, frozen, and a non-array is still `INVALID_DATA`) and gains one declared profile:
+
+- `profiles = new Set(['bulk'])` — the CLOSED set. `undefined` (absent) is the only other legal value; `'BULK'`,
+  `'bulk '`, `''`, `null`, `{}`, `[]`, `0` are each `INVALID_DATA`, never a silent full list.
+- `BULK_TOOLS = ['read_structure', 'read_document_text', 'insert_blocks', 'insert_table', 'format_range']` — the
+  profiled view filters to this AUTHORED allowlist, so the membership is one place to read instead of a flag
+  scattered over sixteen descriptors.
+- Withheld in `'bulk'`, and why: `insert_paragraph` (inserts at the caret, so it cannot build volume — the
+  measured defect), `set_heading` (re-labels an EXISTING paragraph by index and inserts nothing), `add_hyperlink`
+  / `insert_image` / `insert_comment` (each decorates ONE object rather than adding text), `replace_text`
+  (rewrites text that already exists). Confirm tools stay dropped in every profile, and `read_selection` /
+  `read_paragraph` / `find_text` are not offered either: the five-name list is the whole bulk set, not a
+  subtraction.
+- **Nothing is deleted.** `catalogue()` and `resolve` keep every tool (tests resolve all ten withheld names
+  through both), so `validateBatch` still validates against the FULL catalogue and the panel's Preview/Apply path
+  is untouched — a test pins that an EXCLUDED name emitted by the model still dispatches and records `ok`, i.e.
+  the profile governs what the model is NAMED, not what the run accepts.
+
+### What landed: `registry.profileInstruction(profile)` — the authored orchestration contract
+
+`profileInstruction(undefined)` is `null`; `profileInstruction('bulk')` returns the string below; any other value
+is `INVALID_DATA`. It is ONE authored line, bounded by the named `PROFILE_INSTRUCTION_BYTES = 1024` (measured 939
+bytes), and refused if it is not a string, is over the bound, or carries a control character/newline — the same
+closed shape the descriptor guidance keeps. The text, verbatim:
+
+> Профиль 'bulk' — длинный документ: (1) сначала верни ТОЛЬКО ПЛАН документа — разделы, целевой объём и
+> обязательные элементы (таблицы, списки, выводы) — без вызовов инструментов; (2) затем выполняй план по частям;
+> (3) объём набирай insert_blocks (блок добавляется В КОНЕЦ; поле heading делает блок заголовком) и insert_table
+> для таблиц; (4) после прохода перечитай структуру через read_structure и сверь обязательные элементы и
+> фактический объём; (5) если план не выполнен — ПРОДОЛЖАЙ, а не завершай ответ; (6) не повторяй действие,
+> вернувшее TOOL_UNCERTAIN.
+
+(The block quote above wraps for the page; the authored value is single-line, and the test pins it verbatim as one
+string.)
+
+### The pass-through, and one deliberate reading of the brief
+
+`src/agent/runtime.js` changes ONLY in the model-facing region §22a documented: **20 insertions, 8 deletions, one
+file**.
+
+```js
+// runtime.js:107 — the agent request now carries the profile beside `request`
+const { registry, editor, capabilities, mode, settings, uuid, request, profile, guardrails: requested, ... } = options ?? {};
+// runtime.js:124-129 — the SAME fallback shape, extended to the profile
+let offered = catalogue;
+let instruction = null;
+try {
+  if (typeof registry.modelCatalogue === 'function') offered = registry.modelCatalogue(catalogue, profile);
+  if (typeof registry.profileInstruction === 'function') instruction = registry.profileInstruction(profile);
+} catch { offered = catalogue; instruction = null; }
+// runtime.js:137 — ONE system message, still built only from registry-authored data
+context.append({ role: 'system', content: systemRules(offered, mode, instruction) });
+// runtime.js:239-251 — systemRules renders the instruction verbatim, before the two protocol rules
+```
+
+**The brief wrote `registry.modelCatalogue(catalogue, request.profile)`; that expression cannot work here and
+would have been a permanently dead read.** In this runtime `request` is the USER TEXT — `runtime.js:108`
+destructures it and `:138` appends it as the user message — so `request.profile` is `undefined` on every run: a
+profile that silently does nothing. The profile is therefore read from the agent-request OBJECT (the same
+`options` the fallback and the rest of the setup already come from) and passed at the same call site. Everything
+else is exactly as briefed: no change to the loop, to `validateBatch`, to the guardrails, to the confirm branch or
+to the error handling, and `validateBatch(catalogue, …)` still receives the FULL catalogue. The instruction is
+rendered in the SAME system message rather than left unread — a filtered list with no statement of HOW to work
+would repeat §22's own finding that authored registry data nothing renders changes nothing.
+
+### The audit's whole-bundle rule, measured — and the one trap this round hit
+
+`scripts/static-audit.mjs` is name-based and scope-insensitive over the COMPOSED bundle: a single non-constant
+computed property READ is a `DYNAMIC_PROPERTY` sink whose taint then propagates to every identifier assigned from
+it. The first draft selected the instruction with `const text = PROFILE_INSTRUCTIONS[profile];` **and took the
+clean bundle from 0 findings to 139** (`text.charCodeAt`, `lines.join`, `answer.push`, `actions.push` — none of
+them related to this change). The final code binds the instruction by NAME EQUALITY (`if (profile !== 'bulk')
+throw` then `const text = BULK_INSTRUCTION;`), and the measured bundle audit for HEAD + this change is **0
+findings**.
+
+### RED, then GREEN
+
+**RED.** With the two `src/` files stashed (the new tests in place), `node --test tests/unit/tools-registry.test.js
+tests/unit/agent-runtime.test.js` → **tests 40, pass 38, fail 2**: `tests/unit/tools-registry.test.js` fails at
+LINK time (`does not provide an export named 'PROFILE_INSTRUCTION_BYTES'`), and the runtime's profiled-text case
+fails on its first half — the unprofiled listing really does name `insert_paragraph`.
+
+**GREEN.** Focused set `node --test tests/unit/tools-registry.test.js tests/unit/agent-runtime.test.js
+tests/unit/tools-word.test.js tests/unit/controller.test.js tests/unit/agent-protocol.test.js
+tests/unit/view.test.js` → **460 tests, pass 460, fail 0** (the 54 controller preview/apply tests are in it,
+unchanged).
+
+**What pins it.** `tests/unit/tools-registry.test.js` (3 new cases): the bulk view is EXACTLY the five tools in
+catalogue order and frozen; each of ten withheld names is absent from it and still resolvable through both
+`catalogue` and `registry.tools`; the default view is unchanged; an unknown profile is `INVALID_DATA` for ten probe
+values; and the instruction is pinned VERBATIM, inside its 1024-byte bound, single-line, and carries the plan-only
+/ continue / `TOOL_UNCERTAIN` rules without naming any withheld tool. `tests/unit/tools-word.test.js` (1 new
+case): the REAL catalogue's bulk view is exactly `read_document_text, read_structure, insert_blocks, insert_table,
+format_range`, all ten withheld descriptors stay resolvable, and the full catalogue still carries its 15 non-denied
+tools. `tests/unit/agent-runtime.test.js` (4 new cases): a bulk run's own system message carries `insert_blocks`
+and its sentence and the instruction, names neither `insert_paragraph` nor its sentence, still publishes
+`PREVIEW_READY` with the confirm descriptor intact, still DISPATCHES an excluded name, and shows the default view
+when the profile is absent — with the documented full-list fallback for an unknown one.
+
+**Verification (this round, final tree).** Measured on an isolated copy of HEAD + this round's five files (two
+`src/`, three test files), because a CONCURRENT session is editing `src/ui/` in the shared worktree:
+`node --test` → **968 tests, pass 968, fail 0, cancelled 0, skipped 0, todo 0** (**960 → 968**, never shrunk);
+`node scripts/static-audit.mjs` → **`Authored-code audit PASS`**, exit 0; `node scripts/build-plugin.mjs` → exit 0,
+**`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+993c7791ce86544fdb137667836c67e08e4ecd09e116df627aa60e6eb35eb4e9`**. Bundle-audit attribution, measured by
+bundling `src/ui/entry.js` with esbuild and running `auditSource` on it: pristine HEAD **0 findings**, HEAD + this
+round's `src/` files **0 findings**, the shared worktree **5 findings that all come from the concurrent session's
+uncommitted `src/ui/` work** — so `build-plugin.mjs` currently fails `BUNDLE_AUDIT_FAILED` in the SHARED tree, and
+this commit is pathspec-limited to this round's files.
+
+### What only a native run can settle
+
+Whether the five-tool list plus the plan-first wording actually produces a ten-page document. The model's choice
+under the narrower list is unmeasured: in particular whether it (a) returns the PLAN with NO tool calls as rule 1
+demands, (b) reaches `insert_blocks` / `insert_table` for volume instead of stalling, and (c) truly CONTINUES
+after a `read_structure` pass instead of answering `final` early. Nothing here changes what the loop accepts, so a
+model that ignores the list can still call any tool: the profile is a shorter list plus guidance, never a
+permission.
