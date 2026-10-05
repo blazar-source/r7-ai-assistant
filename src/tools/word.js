@@ -182,6 +182,16 @@ function findEntryBytes(data) {
 function structureEntryBytes(data) {
   return toolResultEntryBytes('read_structure', data);
 }
+// `insert_blocks`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the appended block count, the heading count derived from the blocks that asked for one,
+// the two document counts the delta was decided on, and the dispatched payload's own byte size. The
+// measurement is NOT a formality here either, even though FIVE bounded integers cannot approach the
+// ceiling (`LIMITS.insertBlocksBytes` states the arithmetic and the tool's own test pins it): it is the
+// module's single ENFORCED bound, and a field added to this result later must not be able to widen the
+// entry unmeasured.
+function insertBlocksEntryBytes(data) {
+  return toolResultEntryBytes('insert_blocks', data);
+}
 // A count this module publishes is a NON-NEGATIVE SAFE INTEGER and nothing else. The bridge decodes the
 // same rule, and the handler re-applies it because a descriptor is also executable when it is held
 // directly: publishing a fractional, negative, NaN or stringified count as "the document's own number"
@@ -928,6 +938,165 @@ export function createWordTools(bridge) {
         // `bytes` is the dispatched payload's own size, the same value the bound above measured (so an
         // `end` insert reports the newline too, exactly like the bytes that crossed to the editor).
         return ok({ acknowledged: true, bytes: utf8ByteLength(dispatched), ...(verified ? { effectVerified: true } : {}) });
+      }
+    }),
+    defineTool({
+      // Sprint 3 tool 5: the BLOCK APPEND — the FIRST MUTATION of this sprint and the only tool in this
+      // module whose success is a claim about what the DOCUMENT now holds. It is therefore the one
+      // descriptor with an OUTCOME CONTRACT rather than a result shape, and the mutation ground truth is
+      // the document's own structure, never the primitive that changed it.
+      //
+      // WHY THE PRIMITIVE'S RETURN VALUE IS NOT THE SIGNAL. Measured on the target (Astra / R7
+      // 2026.1.2.1942, this round): inside a `callCommand` body, `Api.CreateParagraph()` +
+      // `paragraph.AddText(text)` + `doc.InsertContent([paragraph])` works, and `InsertContent` returns
+      // `true` EVEN FOR `[]`, `[null]` and `'nonsense'` — so its boolean is not a result signal in either
+      // direction (and a `false` is not proof of failure, which is why the rule is not written as "true
+      // means inserted" with a fallback). What IS measured is the document's own shape: after
+      // `InsertContent` the paragraph IS a heading — `GetAllHeadingParagraphs()` went 3 → 4 while
+      // `GetAllParagraphs()` went 10 → 11 — so the delta between the two reads is the evidence, and this
+      // handler verifies it EXACTLY.
+      //
+      // THE OUTCOME CONTRACT, in one sentence: `ok` is published ONLY when the post read shows the exact
+      // expected delta — paragraphs grew by exactly the number of blocks, headings grew by exactly the
+      // number of blocks that asked for a heading, and every block's text is present in the document.
+      // Anything else is `TOOL_UNCERTAIN` (the runtime stops the run fail-safe), the bridge keeps its
+      // callback slot HELD, and there is NO retry of the append.
+      //
+      // THE MECHANISM is ONE authored command body in the bridge (`insertBlocks` → `command.blocks`),
+      // static and self-contained exactly like the search and structure bodies: it builds the `Api`
+      // facade itself, receives the blocks as DATA through the `Asc.scope` parameter channel (never
+      // interpolated into source), reads the baseline, builds every paragraph and resolves every heading
+      // style, inserts the WHOLE array in ONE `InsertContent` call, and reads the document back. It
+      // authors NO positioning option: the append is at the END of the document, which is what the
+      // measured `InsertContent` does, and no positioning primitive was measured.
+      //
+      // THE SCHEMA is closed. `blocks` is required, bounded above by `LIMITS.insertBlocksMax`, and each
+      // item is a closed object of `text` (bounded by `LIMITS.insertBlockBytes`) and an optional integer
+      // `heading` (bounded by `LIMITS.insertHeadingMax`, and mapped to the style name `Heading <n>`). The
+      // lower bound of the array is 1 and it is NOT a schema keyword: this module's closed schema
+      // vocabulary (src/tools/schemas.js) allowlists every keyword it enforces, and it carries no
+      // `minItems`, so advertising one would advertise a constraint nothing applies. The empty array is
+      // therefore refused by THIS handler (and by the bridge) as the closed argument class with nothing
+      // dispatched — the same treatment every other deep rule of this schema gets.
+      //
+      // THE FAILURE MAP, each class closed: a wrong editor is `CAPABILITY_UNAVAILABLE` (precondition); a
+      // missing bridge entry point is `CAPABILITY_UNAVAILABLE`; a bridge refusal keeps the closed class it
+      // reported (`refusalCode`); an envelope this handler cannot interpret is the module's unknown
+      // convention, `known()`; a returned or thrown `APPLY_UNCERTAIN` is `TOOL_UNCERTAIN`; an
+      // UNRESOLVABLE heading style is `TOOL_ERROR`; and an over-ceiling result entry is `BYTE_LIMIT`.
+      //
+      // WHY AN UNRESOLVABLE STYLE IS `TOOL_ERROR` RATHER THAN `CAPABILITY_UNAVAILABLE` OR UNCERTAIN. The
+      // editor's heading machinery is intact — it resolves styles and it inserts content — so the
+      // capability class would misname the failure as "this editor cannot do headings". What this
+      // DOCUMENT does not define is the requested `Heading <n>`, so the failure is about the ARGUMENT,
+      // and it is not uncertain either: the authored body resolves EVERY style BEFORE its single
+      // `InsertContent`, so nothing was inserted, and an uncertain outcome would be false information
+      // about a mutation that provably did not happen. The style name is still the MEASURED one — the
+      // lookup accepts the English `'Heading <n>'` on a localized document too (`GetStyle('Heading 1')`
+      // and the same style as `'Heading1'`, `'heading 1'` and `'Заголовок 1'` all resolve on the target),
+      // so the mapping is not a guess about the document's language.
+      name: 'insert_blocks', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['blocks'],
+        properties: { blocks: { type: 'array', maxItems: LIMITS.insertBlocksMax,
+          items: { type: 'object', additionalProperties: false, required: ['text'],
+            properties: { text: { type: 'string', minBytes: 1, maxBytes: LIMITS.insertBlockBytes },
+              heading: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } } } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'insertBlocks')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also
+        // executable when it is held directly, and an argument this append cannot interpret must be a
+        // closed refusal with NOTHING dispatched, never an append of whatever a coercion produced. The
+        // SHAPE family is the module's argument class and the BYTE family is its byte class, the same two
+        // the bridge reports for the same two families.
+        const blocks = args?.blocks;
+        if (!Array.isArray(blocks) || blocks.length < 1 || blocks.length > LIMITS.insertBlocksMax) return known();
+        const forwarded = [];
+        let bytes = 0;
+        let headings = 0;
+        for (const block of blocks) {
+          if (block === null || typeof block !== 'object' || Array.isArray(block)) return known();
+          if (typeof block.text !== 'string' || block.text === '') return known();
+          const textBytes = utf8ByteLength(block.text);
+          if (textBytes > LIMITS.insertBlockBytes) return known(ERROR_CODES.BYTE_LIMIT);
+          const hasHeading = Object.hasOwn(block, 'heading');
+          if (hasHeading && (!Number.isSafeInteger(block.heading) || block.heading < 1 || block.heading > LIMITS.insertHeadingMax)) return known();
+          bytes += textBytes;
+          if (hasHeading) headings += 1;
+          forwarded.push(hasHeading ? { text: block.text, heading: block.heading } : { text: block.text });
+        }
+        // The advertised whole-payload bound, applied to the payload the bridge actually dispatches: the
+        // SAME ceiling the runtime applies to one action's arguments (`AGENT_CEILINGS.argumentsBytes`), so
+        // this bound can only refuse a call the runtime would have refused anyway. The caller's signal
+        // crosses with the blocks so a Stop cancels before dispatch and marks a dispatched append
+        // uncertain.
+        if (bytes > LIMITS.insertBlocksBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        const request = { blocks: Object.freeze(forwarded),
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        let result;
+        try { result = await bridge.insertBlocks(request); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops
+          // the run. Every other bridge throw is a closed local failure.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing
+        // it) when the ticket has already been created, so the class is classified here before any
+        // ordinary-refusal path can treat it as a known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own: the four
+        // counts are the document's own non-negative safe integers and `present` is EXACTLY one boolean
+        // per block. An answer of any other shape is not one this bridge can have produced — the real
+        // bridge's decoder guarantees this shape and turns its own uninterpretable answer into the
+        // uncertain class — so publishing it would let a forged envelope pass as a verified append.
+        const before = result.paragraphsBefore;
+        const after = result.paragraphsAfter;
+        const headingsBefore = result.headingsBefore;
+        const headingsAfter = result.headingsAfter;
+        const present = result.present;
+        if (!measuredCount(before) || !measuredCount(after)) return known();
+        if (!measuredCount(headingsBefore) || !measuredCount(headingsAfter)) return known();
+        if (!Array.isArray(present) || present.length !== blocks.length) return known();
+        // The flags are read by INDEX, never through `present.some(...)`/`present.every(...)`. That is not
+        // a style choice: this module's authored-code audit treats an invocation reached through a value
+        // its local alias analysis has tainted as a computed-execution sink, the analysis is NAME-based
+        // and scope-insensitive over the whole bundle, and this local's name is derived from a
+        // `result` that another leg taints. An indexed READ of a data array is exactly what it is, and
+        // every argument rule below is still checked one flag at a time.
+        let everyBlockPresent = true;
+        for (let index = 0; index < present.length; index += 1) {
+          if (typeof present[index] !== 'boolean') return known();
+          if (present[index] !== true) everyBlockPresent = false;
+        }
+        // THE EXACT-DELTA OUTCOME CONTRACT. Three independent conditions, all of them required, and none
+        // of them the primitive's return value: the paragraphs grew by exactly the requested block count,
+        // the headings by exactly the blocks that asked for one, and every block's text is present in the
+        // document. A delta that is short, long, or accompanied by a missing text is NOT a verified
+        // append: the tool publishes the runtime's own uncertain class, the bridge has held its slot, and
+        // no retry is ever issued. The presence half is required in addition to the counts because the
+        // counts alone could describe an unrelated concurrent edit; the counts are required in addition
+        // to presence because a text that already existed in the document proves nothing by itself.
+        const exact = after - before === blocks.length && headingsAfter - headingsBefore === headings &&
+          everyBlockPresent;
+        if (!exact) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        const data = Object.freeze({ inserted: blocks.length, headings, paragraphsBefore: before,
+          paragraphsAfter: after, bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads measure it:
+        // the runtime bounds `JSON.stringify({tool, ...result})` by `AGENT_CEILINGS.toolResultBytes`
+        // (16384) and replaces an entry above it with the model-visible literal "the tool result could not
+        // be serialized" — the model would receive NO result while the action log recorded `ok`. Every
+        // field here is a non-negative safe integer, so this guard cannot fire for any shape this handler
+        // can publish (`LIMITS.insertBlocksBytes` states the arithmetic: 195 bytes at every field's widest
+        // legal width); it is retained because it is the module's ONE entry measurement, and the failure
+        // class for it is closed regardless of reachability.
+        const entry = insertBlocksEntryBytes(data);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
       }
     }),
     defineTool({

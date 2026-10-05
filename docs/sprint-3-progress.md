@@ -1319,3 +1319,146 @@ added lines (`overWide`, `published`, and the two `published` substitutions) in 
 `src/shared/limits.js` comment-only. Read-only by construction and by test: exactly **one** bridge call
 (`readStructure`) and no write method reachable; `src/agent/*` untouched.
 
+## 13. Sprint 3, tool 5 — `insert_blocks`, the FIRST MUTATION, under an exact-delta outcome contract
+
+The first creation tool of Sprint 3. It is the only tool in this module whose success is a claim about
+what the **document** now holds, so it is the only one with an outcome contract rather than a result
+shape. Exactly **one** bridge entry point was added (`insertBlocks`), **one** authored command body
+(`command.blocks`), **one** decoder (`decodeBlocks`), **one** ticket kind (`blocksinsert`) and **one**
+result wrapper (`insertBlocksEntryBytes`). No limit VALUE moved, `src/agent/*` is untouched, and only
+`src/tools/word.js`, `src/plugin/bridge.js`, `src/shared/limits.js`, two test files and this document
+changed.
+
+**The mutation ground truth is the document, never the primitive's return value.** Measured on the
+target (Astra / R7 2026.1.2.1942, this round): inside a `callCommand` body, `Api.CreateParagraph()` +
+`paragraph.AddText(text)` + `doc.InsertContent([paragraph])` works, and `InsertContent` returns `true`
+**even for `[]`, `[null]` and `'nonsense'`** — so its boolean is not a result signal in either direction
+(a `false` is not proof of failure either, which is why the rule is not written as "true means inserted"
+with a fallback). What **is** measured is the document's own shape: after `InsertContent` the paragraph
+**IS** a heading — `GetAllHeadingParagraphs()` went **3 → 4** while `GetAllParagraphs()` went **10 → 11**
+— and `paragraph.SetStyle(style)` applies. Two bridge tests drive both halves of that: a document that
+really grew while the primitive answered `false` is **verified**, and a primitive that answered `true`
+while the document did not move is `APPLY_UNCERTAIN` with the slot **held**.
+
+**The mechanism is ONE self-contained static body** (`command.blocks`, a full inline function literal
+exactly like the search and structure bodies, so the native can stringify and evaluate it where none of
+`bridge.js`'s module bindings exist) which does all three phases in ONE synchronous evaluation: a
+**pre-dispatch baseline** of `GetAllParagraphs()`/`GetAllHeadingParagraphs()`, then every paragraph built
+(`Api.CreateParagraph` + `AddText`, and `SetStyle(doc.GetStyle('Heading ' + n))` where a heading was
+asked for) with **every style resolved BEFORE anything is inserted**, then **ONE**
+`document.InsertContent(paragraphs)`, then the **post read** of the same two counts plus every block's
+own text out of the document's own paragraph texts. The model data crosses as the `Asc.scope` parameter
+channel (`{ blocks }`), never interpolated into source (ADR 0002). Position is the **END** of the
+document — what the measured `InsertContent` does and what the pilot's "add a chapter" needs — and the
+body authors **no** positioning option, because no positioning primitive was measured.
+
+**The schema is closed** (`additionalProperties: false`, `required: ['blocks']`): `blocks` is an array
+with `maxItems: LIMITS.insertBlocksMax`, each item a closed object of `text` (`minBytes: 1`,
+`maxBytes: LIMITS.insertBlockBytes`) and an optional integer `heading` (`1..LIMITS.insertHeadingMax`).
+Three bounds and one level bound are named in `src/shared/limits.js` with their reasoning: **64** blocks
+(one `ApiParagraph` array the body materialises before the single `InsertContent`; twice the module's
+other report caps because a chapter is a *sequence* of paragraphs), **2048** bytes per text (a written
+paragraph, deliberately not an alias of a read budget), **8192** bytes for the whole payload — the same
+number as `AGENT_CEILINGS.argumentsBytes`, because the blocks *are* the action's arguments and JSON
+escaping never shrinks a text, so the sum of text bytes cannot exceed the serialized arguments the
+runtime already bounds. There is deliberately **no `minItems` keyword**: this module's closed schema
+vocabulary allowlists every keyword it enforces (`src/tools/schemas.js`) and carries none, and
+advertising a constraint nothing applies is worse than enforcing the lower bound where the upper one is
+enforced — the handler **and** the bridge both refuse `blocks: []` as the closed argument class with
+nothing dispatched, and that is tested.
+
+**The outcome contract.** `ok` is published **only** when the post read shows the exact expected delta:
+paragraphs grew by **exactly** the number of blocks, headings grew by **exactly** the number of blocks
+that asked for one, and every block's text is **present** in the document. The third leg is not
+redundant — the counts alone could describe an unrelated concurrent edit, and a text that already existed
+proves nothing — and the counts are not redundant either. Anything else is `TOOL_UNCERTAIN`, the bridge
+keeps its callback slot **HELD** (`getState()` keeps reporting `busy`/`uncertain`/`writePending`, the
+panel's write lock stays engaged, the next call is `EDITOR_BUSY`) and there is **no retry**. The
+exact-delta rule is decided **twice on purpose**: inside the ticket, while it still owns the slot (that
+is where the slot is actually held), and again in the handler over the decoded envelope (a descriptor is
+executable when it is held directly, with any bridge). Both read the same numbers, so this is one rule
+applied twice, not two competing measurements.
+
+**The failure map**, each class closed: wrong editor → `CAPABILITY_UNAVAILABLE` (precondition); missing
+bridge entry point → `CAPABILITY_UNAVAILABLE`; an **unusable baseline** → `CAPABILITY_UNAVAILABLE` with
+**no `InsertContent`** (the body answers before the one mutation); an **unresolvable heading style** →
+`TOOL_ERROR` with no `InsertContent` (the editor's heading machinery is intact, so the capability class
+would misname the failure; what the document does not define is the requested `Heading <n>`; and it is
+not uncertain, because the body resolves every style before it inserts); a bridge refusal → its own
+closed `refusalCode`; an uninterpretable envelope → `known()`; a returned or thrown `APPLY_UNCERTAIN` →
+`TOOL_UNCERTAIN`; an over-ceiling result entry → `BYTE_LIMIT`. The body's own sentinel **name carries the
+phase** of the refusal (`CAPABILITY_UNAVAILABLE`/`STYLE_UNAVAILABLE` = before the mutation,
+`APPLY_UNCERTAIN` = after it), which is what lets the bridge keep a *known* class for a refusal that
+inserted nothing while turning any answer it cannot interpret — after a callback that proved the body
+ran — into the uncertain class **with the slot held**. `owned.dispatched` alone cannot decide this: it is
+set before the command is handed to the native, so it does not mean "`InsertContent` ran".
+
+**The mutation boundary is the call, not its return.** The body's phase turns uncertain
+**immediately before** `InsertContent(created)`, so a native that **throws out of** the mutation is
+`APPLY_UNCERTAIN` with the slot held, never a known refusal with the slot released — a throwing mutation
+may already have applied part of the array. That path is covered.
+
+**The result entry is measured** through the module's one `toolResultEntryBytes` shape
+(`insertBlocksEntryBytes`): `ok({ inserted, headings, paragraphsBefore, paragraphsAfter, bytes })`,
+published as exactly those five fields. The arithmetic is pinned by measurement: a real append measures
+**125** bytes, and the **widest shape the handler can publish** — all five fields at
+`Number.MAX_SAFE_INTEGER` — measures **195** bytes, i.e. more than sixteen thousand bytes inside the
+16384-byte ceiling. The `BYTE_LIMIT` branch is retained as the module's **one enforced bound** and is
+**unreachable** for five non-negative safe integers; that is stated as arithmetic in the limit, the
+descriptor and the test rather than left as an untested claim.
+
+**TDD, and the exact RED.** The new test blocks were written FIRST and run against the unmodified tree —
+`node --test tests/unit/tools-word.test.js` → **tests 155, pass 136, fail 19** (`fail 0` on that file
+before the round) with `TypeError: Cannot read properties of undefined (reading 'execute')`,
+`insert_blocks` missing from the descriptor set and `r.bridge.insertBlocks is not a function`; the 19 are
+exactly the 16 new blocks plus the 3 existing enumerations (`the representative descriptor set…`,
+`read_context is withheld from every catalogue…`, `registry accepts the word tools…`), which grew by the
+new name rather than being weakened. Green: **155/155** in that file. No test was weakened or deleted
+anywhere in this round.
+
+**A NEW TRAP, recorded because it cost a full round:** `scripts/static-audit.mjs` passes on `src/` while
+`node scripts/build-plugin.mjs` **fails**, because the audit's local alias analysis is **name-based and
+scope-insensitive** and it runs per FILE on `src/…` but on the whole **bundle** for `panel.js`. The first
+build after the new body reported **16 `DYNAMIC_PROPERTY` findings**, none of them in pre-existing code
+paths of their own: esbuild renames colliding bindings across concatenated modules, so (a) my body's
+`var answer = [paragraphsBefore, …]` became a "computed value" because the handler also declares
+`headingsBefore`/`headingsAfter` from a tainted `result`, and (b) my body's helper `function closed()`
+was renamed to the same `closed3` that `registry.js` writes through a computed key
+(`closed3[key] = raw[key]`) — a call on a computed receiver by name. The repair is threefold and is
+stated in the code: the four counts are **appended** to an array that starts as a literal, the presence
+flags and the delta are read **by index** instead of `present.some(...)`/`present.every(...)`, and the
+helper is named `blocksRefusal` so no other module's binding can collide with it. The built bundle now
+audits with **0 findings**. The general rule this reinforces: audit the BUNDLE, never only `src/`, and
+never route a call through a value whose name another scope may have tainted.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js`
+→ **176/176**, `fail 0`; full suite `node --test` → **787**, `pass 787`, `fail 0` (771 → 787: 16 added
+test blocks); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+0fb625d4057ec938a8f7156375c2ad5c9ae3ce75fe02c6ba7723fb2f9ef73e25`, re-measured twice on the final tree
+with the same value. The builder runs with `minify: false`, so the comment text inside the new descriptor
+and body is rebuilt into the bundle and the SHA **moved** from the `e5d3f6f` pin
+`eab165582c68d3cb3ba9ad5f5ffe5a5fa3ac725854a6219fbb41db4d162e926b`; the moved bytes are comments and one
+new authored body. The `package` test's authored-command-leg classifier grew **4 → 5**
+(`['blocks', 'capability', 'context', 'search', 'structure']`, classified by the primitive each body
+authors — the append body is recognised by `.InsertContent(` **before** the structure branch, because
+both read `GetAllHeadingParagraphs`). The registry offers the tool in `EDIT` only (`kind: 'mutate'`), with
+`policy: 'auto'` and `requires: ['document.write']`, and a model batch dispatches exactly **one** command
+for the whole run; `src/agent/*` untouched.
+
+**Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What
+the host-side suite cannot prove is the **shipped** carriage of this leg: (1) that `{ blocks }` written
+into the page's `Asc.scope` reaches the body's `scope` binding, (2) that `Api.CreateParagraph()` /
+`paragraph.AddText` / `document.GetStyle('Heading <n>')` / `document.InsertContent([…])` answer from
+**inside** this exact body, (3) that the native return validator passes a flat array of `4 + n`
+primitives unaltered, and (4) that the post read inside the same body observes the append (i.e. that the
+two document reads around a synchronous `InsertContent` really differ). Each unknown lands on a closed
+path: a scope that does not arrive makes the body answer its own refusal sentinel
+(`CAPABILITY_UNAVAILABLE`, nothing inserted, slot released); a missing primitive does the same; a style
+the document does not define answers `STYLE_UNAVAILABLE` → `TOOL_ERROR` with nothing inserted; an
+uninterpretable or non-exact answer is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot held and no
+retry; and an editor that never calls back settles `APPLY_UNCERTAIN` (a dispatched write-class ticket),
+never a verified append. A native run on the target is required before this tool's delta can be called
+measured; it is recorded here as PENDING NATIVE VERIFICATION.
+

@@ -37,12 +37,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // because the `executeCommand` fallback composes their source as text, and `auditSource` above proves
   // they are static and read `Api` only.
   //
-  // FOUR legs are carried inline, and the fourth is the STRUCTURE read: like the search it is a READ that
-  // builds the `Api` facade itself and receives DATA — here the extraction cap — from the `scope` binding
-  // the vendor's `callCommand` wrapper injects (never from source text). It carries its own primitives
-  // (`GetStatistics`, `GetPageCount`, `GetAllHeadingParagraphs`, …) instead of the identity probe, so the
-  // classification below is by the primitive each body authors rather than by the refusal literal every
-  // body now contains.
+  // FIVE legs are carried inline, and the fifth is the BLOCK APPEND: the FIRST body that mutates the
+  // document through the `Api` builder. Like the search and the structure read it builds the facade
+  // itself and receives DATA — here the whole block array — from the `scope` binding the vendor's
+  // `callCommand` wrapper injects (never from source text), and it is classified by its own mutating
+  // primitive (`InsertContent`), which is what distinguishes it from the structure body it shares
+  // `GetAllParagraphs`/`GetAllHeadingParagraphs` with.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -55,7 +55,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(carried), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(carried, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      if (carried.includes('.GetAllHeadingParagraphs(')) {
+      if (carried.includes('.InsertContent(')) {
+        assert.match(carried, /\bscope\b/, 'the append body takes its blocks from the injected command scope');
+        assert.match(carried, /CreateParagraph/, 'and builds each paragraph through the measured factory');
+        assert.match(carried, /GetAllParagraphs/, 'and reads the document\u2019s own counts around the append');
+        legs.push('blocks');
+      } else if (carried.includes('.GetAllHeadingParagraphs(')) {
         assert.match(carried, /\bscope\b/, 'the structure body takes its extraction cap from the injected command scope');
         assert.match(carried, /GetStatistics/, 'and reads the measured statistics primitive');
         legs.push('structure');
@@ -69,8 +74,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 4, 'the adapter dispatches exactly the four authored command legs');
-  assert.deepEqual(legs.sort(), ['capability', 'context', 'search', 'structure'],
+  assert.equal(commands, 5, 'the adapter dispatches exactly the five authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'search', 'structure'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

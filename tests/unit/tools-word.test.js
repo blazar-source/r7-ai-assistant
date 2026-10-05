@@ -28,8 +28,10 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['find_text', 'insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+  assert.deepEqual(names, ['find_text', 'insert_blocks', 'insert_paragraph', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
+  assert.equal(tools.find(tool => tool.name === 'insert_blocks').policy, 'auto');
+  assert.equal(tools.find(tool => tool.name === 'insert_blocks').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
     'an unverified public read may be neither offered nor executed');
@@ -60,7 +62,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection'],
+    ['find_text', 'insert_blocks', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -278,7 +280,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['find_text', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+    ['find_text', 'insert_blocks', 'insert_paragraph', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -3841,4 +3843,626 @@ test('read_structure is offered with policy auto and a model call dispatches exa
   assert.deepEqual(published.data.headings.map(heading => heading.text), [...MEASURED_HEADINGS]);
   assert.equal(published.data.truncated, false);
 });
+
+
+// --- Sprint 3, tool 5: `insert_blocks` — the FIRST MUTATION, under an EXACT-DELTA contract ----------
+//
+// THE MECHANISM'S GROUND TRUTH IS THE DOCUMENT, NEVER THE PRIMITIVE'S RETURN VALUE. Measured on the
+// target (Astra / R7 2026.1.2.1942, this round): `InsertContent` answers `true` even for `[]`, `[null]`
+// and `'nonsense'`, so its boolean carries NO information about what the document now holds — neither a
+// `true` nor a `false` does. The evidence is the delta between the document's OWN counts before and
+// after (`GetAllParagraphs()` went 10 → 11 and `GetAllHeadingParagraphs()` 3 → 4 for one inserted
+// heading paragraph). The tool is therefore a pure arbiter over four counts and one presence flag per
+// block, and every test below drives exactly those.
+function blocksBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, insertBlocks: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+function insertBlocksTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'insert_blocks'); }
+// The envelope the REAL bridge publishes for an append of `count` blocks, `headingCount` of them
+// headings: the four counts around the append (the delta is what is verified) and one presence flag per
+// block, in the order the blocks were asked for.
+function appended(before, headingsBefore, count, headingCount, overrides = {}) {
+  return { ok: true, paragraphsBefore: before, paragraphsAfter: before + count,
+    headingsBefore, headingsAfter: headingsBefore + headingCount,
+    present: new Array(count).fill(true), ...overrides };
+}
+const TWO_BLOCKS = Object.freeze([{ text: 'Глава', heading: 1 }, { text: 'Текст' }]);
+
+test('insert_blocks advertises the closed bounded schema and the four bounds it names', () => {
+  const tool = insertBlocksTool(blocksBridge(appended(10, 3, 1, 0)));
+  assert.equal(tool.name, 'insert_blocks');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ['blocks']);
+  assert.deepEqual(Object.keys(schema.properties), ['blocks']);
+  const blocks = schema.properties.blocks;
+  assert.equal(blocks.type, 'array');
+  assert.equal(blocks.maxItems, LIMITS.insertBlocksMax);
+  assert.equal(blocks.minItems, undefined,
+    'the closed schema vocabulary has no minItems keyword (src/tools/schemas.js allowlists every keyword), so the lower bound is NOT advertised as a keyword nothing would enforce: it is enforced by the handler and by the bridge, and both are tested below');
+  assert.equal(blocks.items.type, 'object');
+  assert.equal(blocks.items.additionalProperties, false);
+  assert.deepEqual(blocks.items.required, ['text']);
+  assert.deepEqual(Object.keys(blocks.items.properties), ['text', 'heading']);
+  assert.equal(blocks.items.properties.text.type, 'string');
+  assert.equal(blocks.items.properties.text.minBytes, 1);
+  assert.equal(blocks.items.properties.text.maxBytes, LIMITS.insertBlockBytes);
+  assert.equal(blocks.items.properties.heading.type, 'integer');
+  assert.equal(blocks.items.properties.heading.minimum, 1);
+  assert.equal(blocks.items.properties.heading.maximum, LIMITS.insertHeadingMax);
+  // The four named bounds, pinned as NUMBERS and as distinct quantities: none is an alias of another
+  // tool's scope, and the whole-payload bound is the per-action argument ceiling the runtime applies.
+  assert.deepEqual([LIMITS.insertBlocksMax, LIMITS.insertBlockBytes, LIMITS.insertBlocksBytes, LIMITS.insertHeadingMax],
+    [64, 2048, 8192, 9]);
+  assert.equal(LIMITS.insertBlocksBytes, AGENT_CEILINGS.argumentsBytes, 'the whole payload IS the per-action argument ceiling');
+  assert.notEqual(LIMITS.insertBlockBytes, AGENT_CEILINGS.argumentsBytes, 'one block is not the whole action');
+  assert.notEqual(LIMITS.insertHeadingMax, LIMITS.structureHeadingsMax, 'a heading LEVEL is not a heading COUNT');
+  // And the module's own validator really carries it, so the descriptor is accepted whole.
+  assert.equal(validateArguments(schema, { blocks: [{ text: 'а', heading: 2 }] }).blocks.length, 1);
+});
+
+test('insert_blocks refuses every illegal argument with nothing dispatched, at the schema or in the handler', async () => {
+  // The closed schema vocabulary expresses ONE of this tool's two array bounds (`maxItems`), so the
+  // lower bound and every deep rule the schema does carry are asserted the same way: an illegal argument
+  // is refused — by `validateArguments` as TOOL_ERROR or by the handler as a closed refusal — and
+  // NOTHING reaches the bridge. The empty array is the one row the schema cannot refuse, which is
+  // exactly why the handler owns it.
+  const illegal = [
+    ['no argument object', null], ['missing blocks', {}], ['blocks is not an array', { blocks: 'а' }],
+    ['an unknown top-level key', { blocks: [{ text: 'а' }], text: 'а' }],
+    ['an EMPTY array (minItems 1, handler-owned)', { blocks: [] }],
+    ['too many items', { blocks: new Array(LIMITS.insertBlocksMax + 1).fill({ text: 'а' }) }],
+    ['an item that is not an object', { blocks: [null] }], ['an item with no text', { blocks: [{}] }],
+    ['an item with an empty text', { blocks: [{ text: '' }] }], ['a non-string text', { blocks: [{ text: 7 }] }],
+    ['an unknown key inside an item', { blocks: [{ text: 'а', style: 'Heading 1' }] }],
+    ['a fractional heading', { blocks: [{ text: 'а', heading: 1.5 }] }],
+    ['a heading below the bound', { blocks: [{ text: 'а', heading: 0 }] }],
+    ['a heading above the bound', { blocks: [{ text: 'а', heading: LIMITS.insertHeadingMax + 1 }] }],
+    ['a stringified heading', { blocks: [{ text: 'а', heading: '1' }] }],
+    ['a null heading', { blocks: [{ text: 'а', heading: null }] }]
+  ];
+  for (const [label, args] of illegal) {
+    const bridge = blocksBridge(appended(10, 3, 1, 0));
+    const tool = insertBlocksTool(bridge);
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', label); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+    assert.deepEqual(bridge.seen, [], `${label}: nothing is dispatched for an illegal argument`);
+  }
+  // The two BYTE bounds are the closed byte class, not the argument-shape class, on both sides of the
+  // boundary: one text above its own bound (which the SCHEMA can already refuse), and a payload whose
+  // texts are each legal while their SUM is not (which only the handler can). The bridge applies the
+  // same two numbers, so a descriptor held directly is bounded too.
+  const single = blocksBridge(appended(10, 3, 1, 0));
+  assert.throws(() => validateArguments(insertBlocksTool(single).schema, { blocks: [{ text: 'я'.repeat(2048) }] }),
+    /TOOL_ERROR/, 'a single text above its own bound is refused at the schema, before the handler');
+  const sumBridge = blocksBridge(appended(10, 3, 1, 0));
+  const sumTool = insertBlocksTool(sumBridge);
+  const fiveLegal = { blocks: new Array(5).fill({ text: 'я'.repeat(900) }) };
+  assert.equal(validateArguments(sumTool.schema, fiveLegal).blocks.length, 5,
+    'the schema bounds ONE text and the COUNT: it cannot sum a payload, which is why the handler does');
+  const sumResult = await sumTool.execute(fiveLegal, { editor: 'word' });
+  assert.equal(sumResult.code, 'BYTE_LIMIT', 'five texts each inside insertBlockBytes, whose sum exceeds the payload bound');
+  const overBlock = blocksBridge(appended(10, 3, 1, 0));
+  const blockResult = await insertBlocksTool(overBlock).execute({ blocks: [{ text: 'я'.repeat(2048) }] }, { editor: 'word' });
+  assert.equal(blockResult.code, 'BYTE_LIMIT', 'one text above insertBlockBytes is the closed byte class');
+  assert.deepEqual([...overBlock.seen, ...sumBridge.seen], [],
+    'neither over-bound payload reaches the bridge, and the handler owns the sum the schema cannot see');
+});
+
+test('insert_blocks appends through exactly ONE bridge call and publishes the measured delta', async () => {
+  const bridge = blocksBridge(appended(10, 3, 2, 1));
+  const controller = new AbortController();
+  const result = await insertBlocksTool(bridge).execute({ blocks: TWO_BLOCKS }, { editor: 'word', signal: controller.signal });
+  assert.equal(result.ok, true);
+  // `bytes` is the dispatched payload's own size — the sum of the block texts' UTF-8 bytes — so the
+  // result reports what crossed to the editor and not the result's own size.
+  assert.deepEqual(result.data, { inserted: 2, headings: 1, paragraphsBefore: 10, paragraphsAfter: 12, bytes: 20 });
+  assert.deepEqual(Object.keys(result.data), ['inserted', 'headings', 'paragraphsBefore', 'paragraphsAfter', 'bytes'],
+    'the five measured fields and nothing else: an envelope cannot smuggle a field into the entry');
+  // EXACTLY one bridge call: the append is dispatched once and never retried, and the caller's signal
+  // crosses with it so a Stop cancels before the dispatch.
+  assert.equal(bridge.seen.length, 1);
+  assert.deepEqual(bridge.seen[0].blocks, TWO_BLOCKS);
+  assert.equal(bridge.seen[0].signal, controller.signal);
+  assert.equal(utf8ByteLength('Глава') + utf8ByteLength('Текст'), 20);
+});
+
+test('insert_blocks publishes a verified append ONLY for the exact delta, and never retries otherwise', async () => {
+  const wrong = [
+    ['one paragraph SHORT', appended(10, 3, 2, 1, { paragraphsAfter: 11 })],
+    ['one paragraph OVER', appended(10, 3, 2, 1, { paragraphsAfter: 13 })],
+    ['a document that SHRANK', appended(10, 3, 2, 1, { paragraphsAfter: 9 })],
+    ['no paragraph growth at all', appended(10, 3, 2, 1, { paragraphsAfter: 10 })],
+    ['a heading count that did not grow', appended(10, 3, 2, 0)],
+    ['a heading count that grew twice over', appended(10, 3, 2, 2)]
+  ];
+  const run = async (answer, blocks = TWO_BLOCKS) => {
+    const bridge = blocksBridge(answer);
+    return { result: await insertBlocksTool(bridge).execute({ blocks }, { editor: 'word' }), bridge };
+  };
+  const verified = await run(appended(10, 3, 2, 1));
+  assert.equal(verified.result.ok, true);
+  assert.equal(verified.bridge.seen.length, 1);
+  for (const [label, answer] of wrong) {
+    const { result, bridge } = await run(answer);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.message, 'отказ', label);
+    assert.equal(result.data, undefined, `${label}: an uncertain outcome publishes no delta`);
+    assert.equal(bridge.seen.length, 1, `${label}: NO retry — the append was dispatched exactly once`);
+  }
+  // A block text that is NOT in the document is the third leg of the same rule, even when both counts
+  // grew exactly: the counts alone could be an unrelated edit, so presence is required as well.
+  for (const present of [[true, false], [false, true], [false, false]]) {
+    const { result, bridge } = await run(appended(10, 3, 2, 1, { present }));
+    assert.equal(result.ok, false, JSON.stringify(present));
+    assert.equal(result.code, 'TOOL_UNCERTAIN', JSON.stringify(present));
+    assert.equal(bridge.seen.length, 1, JSON.stringify(present));
+  }
+  // A flag that is not a boolean is not a presence check at all: that envelope is UNINTERPRETABLE, and
+  // the module's convention for one is the closed known class (`known()`), exactly as for a count that is
+  // not an integer. The failure is not reachable through the real bridge — its decoder requires exactly
+  // `0` or `1` per flag, publishes booleans, and turns its OWN uninterpretable answer into the uncertain
+  // class with the slot held — so this leg closes the direct-descriptor path only.
+  for (const present of [[1, 1], ['true', 'true'], [true, 0]]) {
+    const { result } = await run(appended(10, 3, 2, 1, { present }));
+    assert.equal(result.ok, false, JSON.stringify(present));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(present));
+  }
+});
+
+test('insert_blocks refuses an unusable baseline or a heading style it cannot resolve, with nothing inserted', async () => {
+  // THE BASELINE GATE. A bridge that cannot establish where the document started cannot establish the
+  // delta either, so it refuses BEFORE the append: the closed capability class, and no `data` at all.
+  const gated = await insertBlocksTool(blocksBridge({ ok: false, code: 'CAPABILITY_UNAVAILABLE' }))
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.equal(gated.ok, false);
+  assert.equal(gated.code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal(gated.data, undefined);
+  // THE STYLE GATE, and the code is TOOL_ERROR by a DECISION that is stated here: the editor's heading
+  // capability is intact (it resolves styles and inserts content) — what this document does not define
+  // is the requested `Heading <n>`, so the failure is about the ARGUMENT. It is not the uncertain class
+  // either: the body resolves every style BEFORE `InsertContent`, so nothing was inserted, and an
+  // uncertain outcome would be false information about a documented mutation that provably did not
+  // happen. The real bridge leg below proves the no-insert half of that statement.
+  const styled = await insertBlocksTool(blocksBridge({ ok: false, code: 'TOOL_ERROR' }))
+    .execute({ blocks: [{ text: 'Глава', heading: 1 }] }, { editor: 'word' });
+  assert.equal(styled.ok, false);
+  assert.equal(styled.code, 'TOOL_ERROR');
+  assert.equal(styled.data, undefined);
+});
+
+test('insert_blocks republishes the closed class the bridge reported, never a raw failure', async () => {
+  for (const code of ['CAPABILITY_UNAVAILABLE', 'TOOL_ERROR', 'BYTE_LIMIT', 'EDITOR_BUSY', 'TIMEOUT', 'CANCELLED', 'INVALID_DATA']) {
+    const bridge = blocksBridge({ ok: false, code });
+    const result = await insertBlocksTool(bridge).execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+    assert.equal(result.ok, false, code);
+    assert.equal(result.code, code, code);
+    assert.equal(result.message, 'отказ', code);
+    assert.equal(result.data, undefined, code);
+    assert.equal(bridge.seen.length, 1, code);
+  }
+  // A code the closed vocabulary does not define is never republished, and a raw throw never leaks its
+  // message: both keep the module's fallback class.
+  const forged = await insertBlocksTool(blocksBridge({ ok: false, code: 'СЕКРЕТ-ДОКУМЕНТА' }))
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.equal(forged.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(forged).includes('СЕКРЕТ'), false);
+  const thrown = await insertBlocksTool(blocksBridge(null, { insertBlocks: async () => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); } }))
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.equal(thrown.code, 'TOOL_ERROR');
+  assert.equal(JSON.stringify(thrown).includes('СЕКРЕТ'), false);
+  const thrownClosed = await insertBlocksTool(blocksBridge(null, { insertBlocks: async () => { throw Object.assign(new Error('x'), { code: 'EDITOR_BUSY' }); } }))
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.equal(thrownClosed.code, 'EDITOR_BUSY');
+  // An envelope this tool cannot interpret is the module's closed unknown convention — `{ok:true}` with
+  // no counts, a non-object, a non-boolean flag and a flag array of the wrong LENGTH are all refused
+  // rather than published as a verified append. The real bridge cannot produce any of them (its decoder
+  // guarantees the four integers and one boolean per block, and turns its OWN uninterpretable answer
+  // into the uncertain class with the slot held), so this leg closes the direct-descriptor path.
+  for (const answer of [null, undefined, 7, 'текст', [], { ok: true }, { ok: true, paragraphsBefore: 1 },
+    appended(10, 3, 2, 1, { paragraphsBefore: '10' }), appended(10, 3, 2, 1, { headingsAfter: null }),
+    appended(10, 3, 2, 1, { present: [true] }), appended(10, 3, 2, 1, { present: 'true' })]) {
+    const bridge = blocksBridge(answer);
+    const result = await insertBlocksTool(bridge).execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(answer));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(answer));
+    assert.equal(bridge.seen.length, 1, JSON.stringify(answer));
+  }
+});
+
+test('insert_blocks maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run', async () => {
+  // Both legs the bridge expresses one class in: a THROWN SafeError (a decode that could not interpret a
+  // dispatched append) and a RETURNED envelope (the bridge's own settlement form). They classify
+  // identically, and neither is retried.
+  const returned = await insertBlocksTool(blocksBridge({ ok: false, code: 'APPLY_UNCERTAIN' }))
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.deepEqual({ ...returned }, { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' });
+  const seen = [];
+  const thrown = await insertBlocksTool({ insertBlocks: async (args) => { seen.push(args); throw Object.assign(new Error('x'), { code: 'APPLY_UNCERTAIN' }); } })
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.equal(thrown.code, 'TOOL_UNCERTAIN');
+  assert.equal(seen.length, 1, 'no retry of an uncertain append');
+  // TOOL_UNCERTAIN is the runtime-facing class this handler already produces: a bridge that returns it
+  // must NOT have it laundered into an ordinary known error...
+  const passthrough = await insertBlocksTool(blocksBridge({ ok: false, code: 'TOOL_UNCERTAIN' }))
+    .execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+  assert.equal(passthrough.code, 'TOOL_UNCERTAIN');
+  // ...and the runtime really records the outcome as the uncertain one that stops the run fail-safe.
+  const registry = createRegistry([insertBlocksTool(blocksBridge({ ok: false, code: 'APPLY_UNCERTAIN' }))]);
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '66666666-6666-4666-8666-666666666666', request: 'добавь главу',
+    transport: async () => ({ content: '{"type":"tool_calls","calls":[{"tool":"insert_blocks","arguments":{"blocks":[{"text":"Глава"}]}}]}' }) });
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_blocks', 'uncertain']]);
+});
+
+test('insert_blocks refuses a non-Word editor and a bridge that cannot serve the append, before any dispatch', async () => {
+  const tool = insertBlocksTool(blocksBridge(appended(10, 3, 1, 0)));
+  assert.equal(tool.precondition({ blocks: TWO_BLOCKS }, { editor: 'word' }), null);
+  for (const editor of ['cell', 'slide', 'unknown', undefined, null]) {
+    const refusal = tool.precondition({ blocks: TWO_BLOCKS }, { editor });
+    assert.equal(refusal.code, 'CAPABILITY_UNAVAILABLE', String(editor));
+    assert.equal(refusal.message, 'отказ', String(editor));
+  }
+  for (const bridge of [{}, { insertBlocks: 7 }, { insertBlocks: null }, null, undefined]) {
+    const result = await insertBlocksTool(bridge).execute({ blocks: TWO_BLOCKS }, { editor: 'word' });
+    assert.equal(result.ok, false, JSON.stringify(bridge));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', JSON.stringify(bridge));
+    assert.equal(result.data, undefined);
+  }
+});
+
+test('insert_blocks measures the exact entry it publishes, and its five bounded integers cannot reach the ceiling', async () => {
+  const bridge = blocksBridge(appended(10, 3, 2, 1));
+  const blocks = [{ text: 'я'.repeat(1024), heading: 1 }, { text: 'т'.repeat(1024) }];
+  const result = await insertBlocksTool(bridge).execute({ blocks }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.bytes, 4096, 'two 2048-byte texts');
+  // The measurement is the entry the runtime PUBLISHES — `JSON.stringify({ tool, ...result })` — and it
+  // must be inside the same ceiling `stringifyToolResults` enforces, so the model receives the delta
+  // instead of the literal "the tool result could not be serialized".
+  const entry = utf8ByteLength(JSON.stringify({ tool: 'insert_blocks', ...result }));
+  assert.equal(entry, 125, 'the measured entry of a real append');
+  assert.ok(entry <= AGENT_CEILINGS.toolResultBytes);
+  const messages = toolResultMessages([{ tool: 'insert_blocks', result }]);
+  assert.equal(messages.length, 1);
+  const modelVisible = JSON.parse(messages[0].content);
+  assert.equal(modelVisible.results[0].tool, 'insert_blocks');
+  assert.deepEqual(modelVisible.results[0].data, { inserted: 2, headings: 1, paragraphsBefore: 10, paragraphsAfter: 12, bytes: 4096 });
+  // THE ENFORCED BOUND IS THE MEASUREMENT, and this test states exactly how much room it has: every
+  // field of this result is a non-negative safe integer, so even the WIDEST shape the handler can
+  // publish — all five at `Number.MAX_SAFE_INTEGER` — measures 195 bytes, more than sixteen thousand
+  // bytes inside the ceiling. The `BYTE_LIMIT` branch is retained because it is the module's ONE entry
+  // measurement (a field added to this result later must not widen the entry unmeasured), and it is
+  // unreachable for the five integers this handler publishes — which is a fact about the shape, not a
+  // claim that the check does nothing.
+  const widest = utf8ByteLength(JSON.stringify({ tool: 'insert_blocks', ok: true,
+    data: { inserted: Number.MAX_SAFE_INTEGER, headings: Number.MAX_SAFE_INTEGER, paragraphsBefore: Number.MAX_SAFE_INTEGER,
+      paragraphsAfter: Number.MAX_SAFE_INTEGER, bytes: Number.MAX_SAFE_INTEGER } }));
+  assert.equal(widest, 195);
+  assert.ok(AGENT_CEILINGS.toolResultBytes - widest > 16000, `${AGENT_CEILINGS.toolResultBytes - widest} bytes of slack`);
+  assert.doesNotThrow(() => toolResultMessages([{ tool: 'insert_blocks', result: { ...result, data: { inserted: Number.MAX_SAFE_INTEGER,
+    headings: Number.MAX_SAFE_INTEGER, paragraphsBefore: Number.MAX_SAFE_INTEGER, paragraphsAfter: Number.MAX_SAFE_INTEGER,
+    bytes: Number.MAX_SAFE_INTEGER } } }]));
+});
+
+// --- the real bridge: the FIFTH authored command body, and the FIRST one that mutates ---------------
+// The rig reproduces the vendor wrapper exactly as `findRig`/`structureRig` do: it reads `Asc.scope`
+// SYNCHRONOUSLY, hands the body that value, and evaluates the body the way the EDITOR does — in a fresh,
+// module-free scope whose only bindings are `Api` and `scope`.
+function paragraphDouble() {
+  const state = { text: '', heading: false };
+  return { state, AddText(text) { state.text = text; }, SetStyle() { state.heading = true; } };
+}
+// The DOCUMENT double. Its ONE mutating primitive really appends (pushing the paragraphs the body built
+// onto the document's own arrays), which is what the measured primitive does: `GetAllParagraphs()` went
+// 10 → 11 and `GetAllHeadingParagraphs()` 3 → 4. `appends: false` models a primitive that answered and
+// changed nothing, and `answer` is its own RETURN VALUE — which the body never consults, so the two are
+// deliberately independent knobs.
+function blocksDocument({ paragraphs = 10, headings = 3, styles = true, appends = true, answer = true } = {}) {
+  const texts = [];
+  for (let index = 0; index < paragraphs; index += 1) texts.push(`абзац-${index + 1}`);
+  const styled = [];
+  for (let index = 0; index < headings; index += 1) styled.push(texts[index]);
+  const calls = { inserts: 0, styleNames: [] };
+  return { texts, styled, calls, document: {
+    GetAllParagraphs() { return texts.map(text => ({ GetClassType() { return 'paragraph'; }, GetText() { return text; } })); },
+    GetAllHeadingParagraphs() { return styled.map(text => ({ GetText() { return text; } })); },
+    GetStyle(name) { calls.styleNames.push(name); return styles ? { GetName() { return name; } } : null; },
+    InsertContent(items) {
+      calls.inserts += 1;
+      if (appends) for (const item of items) { texts.push(item.state.text); if (item.state.heading) styled.push(item.state.text); }
+      return answer;
+    }
+  } };
+}
+function evaluateBlocksBody(body, api, scope) {
+  return new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(api, scope);
+}
+function blocksRig({ paragraphs = 10, headings = 3, styles = true, appends = true, answer = true,
+  command = true, namespace = { scope: 'сентинел' }, omitCarrier = false, document = undefined } = {}) {
+  const commands = [];
+  const measured = blocksDocument({ paragraphs, headings, styles, appends, answer });
+  const api = { GetDocument() { return document === undefined ? measured.document : document; },
+    CreateParagraph() { return paragraphDouble(); } };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: command ? function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = namespace?.scope;
+      const answered = evaluateBlocksBody(body, api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(answered);
+      return false;
+    } : undefined };
+  const options = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (!omitCarrier) options.ascNamespace = namespace;
+  const bridge = bridgeWith(plugin, options);
+  return { bridge, plugin, commands, namespace, api, doc: measured };
+}
+
+test('bridge insertBlocks dispatches ONE command, carries the blocks as DATA and verifies the measured delta', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = blocksRig({ namespace });
+  const blocks = [{ text: 'Глава первая', heading: 1 }, { text: 'Первый абзац.' }];
+  const pending = r.bridge.insertBlocks({ blocks });
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole append');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, { blocks }, 'the blocks cross as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no blocks outlive their dispatch');
+  assert.equal(r.doc.calls.inserts, 1, 'ONE InsertContent call carries the whole array, and only one exists');
+  assert.deepEqual(r.doc.calls.styleNames, ['Heading 1'], 'the level is mapped to the measured style name');
+  assert.deepEqual(carried.answered, [10, 12, 3, 4, 1, 1], 'the body encodes the four counts and one flag per block');
+  assert.deepEqual(await pending, { ok: true, paragraphsBefore: 10, paragraphsAfter: 12, headingsBefore: 3, headingsAfter: 4,
+    present: [true, true] });
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('the blocks body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  const r = blocksRig({ paragraphs: 2, headings: 0 });
+  const pending = r.bridge.insertBlocks({ blocks: [{ text: 'Один' }, { text: 'Два', heading: 2 }] });
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|exactBlocksDelta|blocksPreInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== 'undefined'/, 'and it builds the public Api facade itself');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it. Only `Api` and `scope` are bound here, so a body that closed
+  // over a module binding would raise ReferenceError exactly as it did natively on 2026.3.1.
+  const fresh = blocksDocument({ paragraphs: 2, headings: 0 });
+  const freshApi = { GetDocument() { return fresh.document; }, CreateParagraph() { return paragraphDouble(); } };
+  const evaluated = evaluateBlocksBody(carried.body, freshApi, carried.scope);
+  assert.deepEqual(evaluated, [2, 4, 0, 1, 1, 1], 'the blocks arrived as DATA and the counts are the document\'s own');
+  assert.equal(fresh.calls.inserts, 1, 'and the ONE InsertContent call is where the mutation happens');
+  assert.deepEqual(fresh.texts, ['абзац-1', 'абзац-2', 'Один', 'Два']);
+  assert.deepEqual(fresh.styled, ['Два'], 'only the block that asked for a heading became one');
+  assert.deepEqual(carried.scope, { blocks: [{ text: 'Один' }, { text: 'Два', heading: 2 }] });
+  assert.deepEqual((await pending).present, [true, true]);
+});
+
+test('the InsertContent boolean is never the signal: a false that appended verifies, a true that appended nothing does not', async () => {
+  // BOTH halves of the measured primitive's uselessness. `InsertContent` answered `true` even for `[]`,
+  // `[null]` and `'nonsense'`, so a `true` proves nothing; and a `false` does not prove failure either.
+  // The document's own delta is the only evidence, and it is what these two rigs vary.
+  const lied = blocksRig({ paragraphs: 3, headings: 1, answer: false });
+  assert.deepEqual(await lied.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }),
+    { ok: true, paragraphsBefore: 3, paragraphsAfter: 4, headingsBefore: 1, headingsAfter: 1, present: [true] },
+    'the document really grew by one paragraph, so the append IS verified although the primitive answered false');
+  assert.equal(lied.bridge.getState().busy, false);
+  const noop = blocksRig({ paragraphs: 3, headings: 1, appends: false });
+  assert.deepEqual(await noop.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }),
+    { ok: false, code: 'APPLY_UNCERTAIN' },
+    'the primitive answered true and the document did not move: never a verified append');
+  assert.equal(noop.doc.calls.inserts, 1, 'the mutation was dispatched exactly once and is never retried');
+  const state = noop.bridge.getState();
+  assert.equal(state.busy, true, 'the slot is HELD for an uncertain append');
+  assert.equal(state.uncertain, true);
+  assert.equal(state.writePending, true, 'and the write lock stays engaged, so no second mutation can start');
+  assert.deepEqual(await noop.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] }), { ok: false, code: 'EDITOR_BUSY' },
+    'no retry: the held slot refuses the next append');
+  assert.equal(noop.commands.length, 1, 'and the refused call dispatches nothing at all');
+  // THE PHASE BOUNDARY IS THE CALL, NOT ITS RETURN. A native that THROWS out of `InsertContent` may
+  // already have applied part of the array, so the body's phase turns uncertain IMMEDIATELY BEFORE the
+  // call: a throwing mutation is never reported as a known refusal with the slot released.
+  const base = blocksDocument();
+  const calls = { inserts: 0 };
+  const document = { ...base.document, InsertContent() { calls.inserts += 1; throw new Error('СЕКРЕТ-ДОКУМЕНТА'); } };
+  const threw = blocksRig({ document });
+  assert.deepEqual(await threw.bridge.insertBlocks({ blocks: [{ text: 'Новое' }] }), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a primitive that threw out of the mutation is the uncertain class');
+  assert.equal(calls.inserts, 1);
+  assert.equal(threw.bridge.getState().busy, true, 'the slot is HELD: a throwing mutation may still have applied part of the array');
+  assert.equal(threw.bridge.getState().writePending, true);
+  assert.equal(JSON.stringify(await threw.bridge.insertBlocks({ blocks: [{ text: 'Ещё' }] })).includes('СЕКРЕТ'), false);
+  assert.equal(calls.inserts, 1, 'and the uncertain append is never retried');
+});
+
+test('bridge insertBlocks refuses an unusable baseline or an unresolvable style with a closed class and NO InsertContent', async () => {
+  // THE PRE-DISPATCH GATE. Every shape below is a document whose BASELINE cannot be established, so the
+  // delta the outcome rests on can never be computed: the body answers before it inserts.
+  const gated = (override) => {
+    const base = blocksDocument();
+    const calls = { inserts: 0 };
+    const document = { ...base.document, InsertContent() { calls.inserts += 1; return true; }, ...override };
+    return { r: blocksRig({ document }), calls };
+  };
+  for (const [label, override] of [
+    ['no GetAllParagraphs at all', { GetAllParagraphs: null }],
+    ['GetAllParagraphs is not a function', { GetAllParagraphs: 7 }],
+    ['GetAllParagraphs answers no array', { GetAllParagraphs: () => 7 }],
+    ['GetAllParagraphs answers a fractional length', { GetAllParagraphs: () => ({ length: 1.5 }) }],
+    ['GetAllHeadingParagraphs answers null', { GetAllHeadingParagraphs: () => null }],
+    ['no InsertContent at all', { InsertContent: null }],
+    ['no GetStyle at all', { GetStyle: null }],
+    ['no Api.CreateParagraph', {}]
+  ]) {
+    const { r, calls } = gated(override);
+    if (label === 'no Api.CreateParagraph') r.api.CreateParagraph = null;
+    const result = await r.bridge.insertBlocks({ blocks: [{ text: 'а' }] });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', label);
+    assert.equal(calls.inserts, 0, `${label}: InsertContent is never reached`);
+    assert.equal(r.bridge.getState().busy, false, label);
+  }
+  // THE STYLE GATE, and it is a TOOL_ERROR rather than the uncertain class because the body resolves the
+  // style BEFORE `InsertContent`: nothing was inserted, so an uncertain outcome would be false
+  // information about a mutation that provably did not happen.
+  const style = blocksRig({ styles: false });
+  assert.deepEqual(await style.bridge.insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] }),
+    { ok: false, code: 'TOOL_ERROR' });
+  assert.deepEqual(style.doc.calls.styleNames, ['Heading 1'], 'the level WAS mapped to the measured name before the refusal');
+  assert.equal(style.doc.calls.inserts, 0, 'never a plain paragraph where a heading was asked for');
+  assert.equal(style.bridge.getState().busy, false);
+  // The same document serves a heading-less append: the style bound is about the ARGUMENT it cannot
+  // serve, never about the document's ability to append.
+  const plain = await style.bridge.insertBlocks({ blocks: [{ text: 'Просто текст' }] });
+  assert.equal(plain.ok, true);
+  assert.equal(style.doc.calls.inserts, 1);
+});
+
+test('bridge insertBlocks refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const noCommand = blocksRig({ command: false });
+  assert.deepEqual(await noCommand.bridge.insertBlocks({ blocks: [{ text: 'а' }] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(noCommand.commands, [], 'no command is dispatched by a facade that has none');
+  for (const shape of [{ omitCarrier: true }, { namespace: null }, { namespace: Object.freeze({}) },
+    { namespace: Object.freeze({ scope: 'предыдущая-область' }) }]) {
+    const r = blocksRig(shape);
+    assert.deepEqual(await r.bridge.insertBlocks({ blocks: [{ text: 'а' }] }), { ok: false, code: 'CAPABILITY_UNAVAILABLE' },
+      JSON.stringify(shape));
+    assert.deepEqual(r.commands, [], 'nothing is dispatched when the scope cannot cross');
+    assert.equal(r.bridge.getState().busy, false, 'and the slot is released');
+  }
+  // A request this bridge cannot interpret is refused with the closed argument class and NO SDK work: the
+  // shape rules and the two byte bounds are closed preconditions, not optional refinements.
+  const malformed = [undefined, null, {}, { blocks: [] }, { blocks: 'а' }, { blocks: [null] }, { blocks: [{}] },
+    { blocks: [{ text: '' }] }, { blocks: [{ text: 7 }] }, { blocks: [{ text: 'а', heading: 0 }] },
+    { blocks: [{ text: 'а', heading: 1.5 }] }, { blocks: [{ text: 'а', heading: LIMITS.insertHeadingMax + 1 }] },
+    { blocks: [{ text: 'а', heading: '1' }] }, { blocks: [{ text: 'а', heading: null }] },
+    { blocks: new Array(LIMITS.insertBlocksMax + 1).fill({ text: 'а' }) }];
+  for (const raw of malformed) {
+    const r = blocksRig();
+    const result = await r.bridge.insertBlocks(raw);
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(raw));
+    assert.deepEqual(r.commands, [], JSON.stringify(raw));
+    assert.equal(r.bridge.getState().busy, false, JSON.stringify(raw));
+  }
+  for (const raw of [{ blocks: [{ text: 'я'.repeat(LIMITS.insertBlockBytes) }] },
+    { blocks: new Array(5).fill({ text: 'я'.repeat(1024) }) }]) {
+    const r = blocksRig();
+    const result = await r.bridge.insertBlocks(raw);
+    assert.equal(result.code, 'BYTE_LIMIT', JSON.stringify(raw));
+    assert.deepEqual(r.commands, []);
+    assert.equal(r.bridge.getState().busy, false);
+  }
+  // Exactly at both byte bounds is served, so the bound is a boundary and not an off-by-one.
+  const largest = blocksRig();
+  const atBound = await largest.bridge.insertBlocks({ blocks: [{ text: 'я'.repeat(LIMITS.insertBlockBytes / 2) }] });
+  assert.equal(atBound.ok, true, 'one block of exactly insertBlockBytes is served');
+  const controller = new AbortController();
+  controller.abort();
+  const aborted = blocksRig();
+  assert.deepEqual(await aborted.bridge.insertBlocks({ blocks: [{ text: 'а' }], signal: controller.signal }),
+    { ok: false, code: 'CANCELLED' });
+  assert.deepEqual(aborted.commands, [], 'a pre-aborted signal never reaches the editor');
+  assert.equal(aborted.bridge.getState().busy, false);
+});
+
+test('bridge insertBlocks decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const poisoned = (raw) => {
+    const plugin = { info: { editorType: 'word' }, callCommand: (_body, _close, _recalculate, callback) => { callback(raw); return false; } };
+    return bridgeWith(plugin, { editorType: 'word', ascNamespace: { scope: undefined }, clock: { now: () => 0 },
+      timers: { schedule() { return {}; }, clear() {} } });
+  };
+  // The two PRE-insert sentinels are KNOWN refusals with the slot released (nothing was inserted); the
+  // POST-insert sentinel and every other uninterpretable answer are the UNCERTAIN class with the slot
+  // HELD, because the command body ran and the document may already hold the append.
+  const table = [
+    [['CAPABILITY_UNAVAILABLE'], 'CAPABILITY_UNAVAILABLE', false],
+    [['STYLE_UNAVAILABLE'], 'TOOL_ERROR', false],
+    [['APPLY_UNCERTAIN'], 'APPLY_UNCERTAIN', true],
+    [['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ'], 'APPLY_UNCERTAIN', true],
+    [null, 'APPLY_UNCERTAIN', true], [undefined, 'APPLY_UNCERTAIN', true], [7, 'APPLY_UNCERTAIN', true],
+    ['текст', 'APPLY_UNCERTAIN', true], [{}, 'APPLY_UNCERTAIN', true], [[true], 'APPLY_UNCERTAIN', true],
+    [[], 'APPLY_UNCERTAIN', true], [[1], 'APPLY_UNCERTAIN', true], [[10, 11, 3, 4], 'APPLY_UNCERTAIN', true],
+    [[10, 11, 3, 4, 1, 0], 'APPLY_UNCERTAIN', true], [[10.5, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [[-1, 11, 3, 4, 1], 'APPLY_UNCERTAIN', true], [[10, 11, 3, 4, 2], 'APPLY_UNCERTAIN', true],
+    [[10, 11, 3, 4, '1'], 'APPLY_UNCERTAIN', true], [['10', 11, 3, 4, 1], 'APPLY_UNCERTAIN', true],
+    [[10, 10, 3, 3, 0], 'APPLY_UNCERTAIN', true], [[10, 11, 3, 4, 'я'.repeat(40000)], 'APPLY_UNCERTAIN', true]
+  ];
+  for (const [raw, code, held] of table) {
+    const result = await poisoned(raw).insertBlocks({ blocks: [{ text: 'а' }] });
+    assert.equal(result.ok, false, JSON.stringify(raw));
+    assert.equal(result.code, code, JSON.stringify(raw));
+    assert.equal(JSON.stringify(result).includes('НЕИЗВЕСТНЫЙ'), false, 'no native text leaks through a refusal');
+  }
+  for (const [raw, code, held] of table) {
+    const bridge = poisoned(raw);
+    await bridge.insertBlocks({ blocks: [{ text: 'а' }] });
+    const state = bridge.getState();
+    assert.equal(state.busy, held, `busy for ${JSON.stringify(raw)}`);
+    assert.equal(state.writePending, held, `writePending for ${JSON.stringify(raw)}`);
+  }
+  // The authored MEASUREMENT is the one shape that publishes, and it publishes exactly the decoded delta.
+  // The probe's single block asks for NO heading, so the document's heading count must not move either.
+  assert.deepEqual(await poisoned([10, 11, 3, 3, 1]).insertBlocks({ blocks: [{ text: 'а' }] }),
+    { ok: true, paragraphsBefore: 10, paragraphsAfter: 11, headingsBefore: 3, headingsAfter: 3, present: [true] });
+  const headingProbe = await poisoned([10, 11, 3, 4, 1]).insertBlocks({ blocks: [{ text: 'Глава', heading: 1 }] });
+  assert.deepEqual(headingProbe, { ok: true, paragraphsBefore: 10, paragraphsAfter: 11, headingsBefore: 3, headingsAfter: 4, present: [true] },
+    'the same answer is UNCERTAIN for a heading-less block set and verified for this one: the expected delta is derived from the blocks, never from the answer');
+});
+
+test('insert_blocks is offered with policy auto and a model call appends exactly one block batch', async () => {
+  const r = blocksRig();
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'insert_blocks');
+  assert.ok(offered, 'the offered catalogue contains insert_blocks');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.equal(offered.requires.includes('document.write'), true);
+  assert.equal(catalogue.find(entry => entry.name === 'insert_blocks').schema.properties.blocks.maxItems, LIMITS.insertBlocksMax);
+  const batch = validateBatch(catalogue, [{ tool: 'insert_blocks', arguments: { blocks: [{ text: 'Глава', heading: 1 }] } }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'insert_blocks');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"insert_blocks","arguments":{"blocks":[{"text":"Глава","heading":1}]}}]}',
+    '{"type":"final","message":"глава добавлена"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '77777777-7777-4777-8777-777777777777', request: 'добавь главу в конец',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['insert_blocks', 'ok']]);
+  assert.equal(r.commands.length, 1, 'one command for the whole run, and no read/write path touched');
+  assert.equal(r.doc.calls.inserts, 1);
+  assert.equal(r.bridge.getState().busy, false);
+  assert.equal(r.bridge.getState().writePending, false);
+  // The model really RECEIVES the measured delta through the runtime's own per-result serialization.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'insert_blocks');
+  assert.equal(published.ok, true);
+  assert.deepEqual(published.data, { inserted: 1, headings: 1, paragraphsBefore: 10, paragraphsAfter: 11, bytes: 10 },
+    'the tool publishes the five fields it names; the four counts are the ones the bridge measured');
+});
+
 

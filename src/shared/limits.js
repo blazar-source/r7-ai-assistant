@@ -211,6 +211,54 @@ export const LIMITS = Object.freeze({
   // to drift from the truth.
   structureHeadingsMax: 32,
   structureHeadingBytes: 256,
+  // The bounded BLOCK APPEND (`insert_blocks`) — the FIRST Sprint 3 MUTATION, the FIFTH authored command
+  // body and the only leg that both WRITES and VERIFIES inside ONE command. It adds FOUR static per-call
+  // bounds, and none of them is a READ bound reused from another scope, because an append is neither a
+  // read nor a single paragraph:
+  //   * `insertBlocksMax` bounds how many paragraphs ONE call may append. Every block becomes one
+  //     `ApiParagraph` the editor-side body materialises BEFORE the single `InsertContent` call, so this
+  //     cap bounds both the array the body builds and the arithmetic the result publishes. 64 is twice
+  //     the module's other per-report cap (`findMatchesMax`/`structureHeadingsMax` = 32) because a
+  //     chapter is a SEQUENCE of paragraphs — a heading plus its body — rather than a list of independent
+  //     items, and the total payload is bounded separately below, so 64 can never make the dispatched
+  //     payload unbounded.
+  //   * `insertBlockBytes` bounds ONE block's TEXT in UTF-8 bytes. A block is a paragraph the model
+  //     WRITES, not a document chunk the editor reads: 2048 bytes is 1024 Cyrillic or 2048 ASCII
+  //     characters, longer than any realistic single paragraph, and it is deliberately NOT an alias of
+  //     `readParagraphBytes` (a caret READ's budget) or of `structureHeadingBytes` (a title's): a written
+  //     paragraph and a read one are different quantities, and aliasing them would tie one tool's input
+  //     width to another tool's output width.
+  //   * `insertBlocksBytes` bounds the WHOLE payload — the sum of every block's text bytes — and its
+  //     value is `AGENT_CEILINGS.argumentsBytes` (8192; the two are pinned equal by a test, because this
+  //     table is declared before that one and cannot name it). That is not a coincidence and not an alias
+  //     of convenience: the blocks ARE the action's arguments, the bridge writes that very array into
+  //     `Asc.scope` (which the vendor wrapper serializes with `JSON.stringify`), and JSON escaping never
+  //     shrinks a text, so the sum of text bytes can never EXCEED the serialized arguments the runtime
+  //     already bounds. The handler applies the same number, so a descriptor held directly — where no
+  //     runtime bound runs — is bounded too, and the bound can only refuse a call the runtime would also
+  //     have refused.
+  //   * `insertHeadingMax` bounds the `heading` LEVEL, and it exists to keep the style NAME derivable:
+  //     the body maps the level to the style `'Heading <n>'`, the OOXML built-in heading family runs
+  //     `Heading1`…`Heading9`, and the lookup accepts the English name on a localized document too
+  //     (measured on the target: `GetStyle('Heading 1')` and the same style as `'Heading1'`, `'heading 1'`
+  //     and the localized `'Заголовок 1'` all resolve). The bound does NOT replace the fail-closed
+  //     resolution: a document that does not DEFINE `Heading <n>` answers `null` and the whole call
+  //     refuses with NOTHING inserted — never a plain paragraph where a heading was asked for.
+  // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
+  // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({tool, ok, data})`, the shape
+  // `stringifyToolResults` measures and `runtime.js:27-36` replaces with the literal "the tool result
+  // could not be serialized" when it is exceeded). The entry is
+  // `{"tool":"insert_blocks","ok":true,"data":{"inserted":N,"headings":N,"paragraphsBefore":N,"paragraphsAfter":N,"bytes":N}}`
+  // and EVERY field is a non-negative safe integer: three of them bounded by the limits above and two by
+  // the document's own array lengths (decoded as non-negative safe integers). Five integers cannot fill
+  // 16384 bytes: with all five at `Number.MAX_SAFE_INTEGER` the entry measures 195 bytes — measured in the
+  // tool's own test — so this guard cannot fire for any shape this handler can publish. The measurement
+  // is nevertheless the ENFORCED bound: it is the module's ONE entry measurement, and a field added to
+  // this result later must not be able to widen the entry unmeasured.
+  insertBlocksMax: 64,
+  insertBlockBytes: 2048,
+  insertBlocksBytes: 8192,
+  insertHeadingMax: 9,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
