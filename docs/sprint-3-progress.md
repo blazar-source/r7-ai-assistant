@@ -3002,3 +3002,100 @@ answering the uncertain class, so the failure direction is fail-safe. (2) That
 `Api.CreateParagraph()` + `AddElement` + `Push` really lands the created paragraph as the document's LAST one,
 which is the index the append form's own readback addresses. Each unknown lands on a closed path: an unreadable
 element means `TOOL_UNCERTAIN` with the slot held and no retry, and no write means a known refusal.
+
+## 18. `replace_text` — the ELEVENTH Word tool, the SIXTH MUTATION of Sprint 3, and the FIRST proof that is an exact OCCURRENCE COUNT
+
+`replace_text` (`src/tools/word.js`, `replaceText` in `src/plugin/bridge.js`) rewrites `search` into `replace`
+across the whole document and proves the outcome by COUNTING the occurrences of both strings through
+`doc.Search`, before and after the ONE write, with no export involved at all.
+
+**The policy is `confirm`, on the plan's own authority.** Phase 0 of the sprint plan recorded `confirm` for this
+tool because a text-replacing operation is confirmed by the human before it runs, exactly like
+`replace_selection`. A `confirm` descriptor is never reached from the runtime loop (§6.3 publishes
+PREVIEW_READY from the descriptor and the validated arguments), so the handler is exercised directly by the
+tests; it is nevertheless a COMPLETE mutation rather than a stub, because a descriptor is also executable when
+it is held directly and because a later one-value switch (`policy: 'auto'`) must turn on a handler that is
+already finished.
+
+**The measured facts, on the target (Astra / R7 2026.1.2.1942) or read out of the vendored 2026.1.2 bundle.**
+
+* `doc.SearchAndReplace({ searchString, replaceString, matchCase })` MUTATES the document and returns
+  `undefined`. No return value can ever be this tool's signal.
+* `doc.Search(query, matchCase)` answers a REAL ARRAY of ranges — measured 4 for a strict query, 5 for the same
+  query case-insensitively, 0 for a query the document does not hold. That is the count the whole arithmetic is
+  built on, and it needs no export.
+* The builder's own body is
+  `SearchAndReplace = function (U) { var S = new AscCommon.CSearchSettings; S.SetText(U.searchString); S.SetMatchCase(U.matchCase !== void 0 ? U.matchCase : true); var E = this.Document.Search(S); if (E) { var V = U.replaceString; V = V.replaceAll("\t","^t"), V = V.replaceAll("\v","^l"), V = V.replaceAll("\f","^m"), V = V.replaceAll("\u000e","^n"), V = V.replaceAll("\u001e","^~"), this.Document.ReplaceSearchElement(V, true, null, false) } }`.
+  Three consequences, each load-bearing: `matchCase` **defaults to `true`** when the key is absent (so the wire
+  always carries an explicit boolean and the tool's own absent form is resolved to `false` in exactly one
+  place); it replaces **every** match and carries **no count parameter** (so a partial limit is unservable —
+  see the gate); and it **rewrites five characters** of the replacement before storing it — code units 9, 11,
+  12, 14 and 30 — so a replacement holding one of them could never be counted back.
+* `executeMethod('SearchAndReplace', …)` never called back within 12 s and is authored NOWHERE.
+
+**The schema** is closed (`additionalProperties: false`), requires `search` and `replace`, and adds an optional
+`matchCase` boolean (absent = `false`, stated in one place) and an optional `limit` integer in
+`[1, LIMITS.replaceTextLimitMax]` (omitted = replace every occurrence). `search` is non-empty and bounded by
+`LIMITS.replaceTextSearchBytes` (256); `replace` is bounded by `LIMITS.replaceTextReplaceBytes` (2048) and is
+**allowed to be empty**, because deleting the search text is a legitimate replace. A `replace` that CONTAINS
+`search` is refused as a closed argument class with ZERO writes (the primitive would leave occurrences this call
+wrote behind, and the count arithmetic would be meaningless rather than merely unproven), as is a `replace`
+holding one of the five editor-rewritten characters.
+
+**The proof, and the expectation is derived from the request on BOTH sides.** PRE: count the needle; ZERO
+occurrences is a closed argument refusal with ZERO writes ("nothing to replace is not a write") and an
+unreadable count is the closed capability class, also with ZERO writes. ONE `doc.SearchAndReplace`. POST: count
+the needle again and the replacement again when it is non-empty (there is no count of the empty string to read,
+so the body emits a THREE-slot answer instead of inventing a zero). `ok` only when
+`occurrencesAfter === occurrencesBefore - min(limit, occurrencesBefore)` and
+`replacements === min(limit, occurrencesBefore)` — with no limit that is `... - occurrencesBefore` and
+`replacements === occurrencesBefore` — plus, for a non-empty replacement, the independent leg
+`replaceAfter === replaceBefore + expected`. Anything else is `APPLY_UNCERTAIN` / `TOOL_UNCERTAIN` with the
+write slot HELD and no retry. An empty replacement is proven by `occurrencesAfter === 0` with
+`replacements === occurrencesBefore`, the deletion count.
+
+**The limit is a CEILING, not a truncation, and the gate is the measured consequence.** `min(k, before)` can
+only be exact when the write replaces ALL counted occurrences, which the primitive always does. A `limit`
+strictly below the occurrence count is therefore the closed argument class ("a bad limit") decided by the body
+BEFORE its one write: serving it would rewrite more text than the caller authorized, and there is no route to a
+proper subset. For every request this tool actually serves `min(k, before) === before`, and that is stated
+rather than hidden.
+
+**The failure map**, each class closed: wrong editor / missing bridge entry point / unusable baseline / missing
+or throwing count primitive → `CAPABILITY_UNAVAILABLE`; an empty or over-bound needle, a non-string or
+over-bound replacement, a non-boolean `matchCase`, a `limit` outside `[1, 4096]`, a replacement containing the
+needle, a replacement holding an editor-rewritten character, and — from the body — zero pre-occurrences and a
+limit below that count → the closed argument class with ZERO writes, decided BEFORE the mutation; a bridge
+refusal → `refusalCode`; an uninterpretable envelope → `known()`; a thrown or returned `APPLY_UNCERTAIN` and
+every non-exact outcome → `TOOL_UNCERTAIN` with the slot HELD and no retry; an over-ceiling entry →
+`BYTE_LIMIT`.
+
+**RED.** The tests were written FIRST and run against the untouched tree: the focused set reported **24
+failures** — the three descriptor/catalogue lists (a 14th descriptor, `replace_text`) and **20** new
+`replace_text` tests, every one of them failing on `replaceText is not a function` or on the missing
+descriptor — plus `package.test.js`'s `generated authored browser bundle passes audit…`, which failed with
+`the adapter dispatches exactly the ten authored command legs` against the nine-leg bundle. **GREEN.** Focused
+set `tests/unit/tools-word.test.js tests/integration/package.test.js` → **292/292** (287 + 5), `fail 0`. The
+first GREEN run reported **1** failure, and it was a defect in the TEST's own document model rather than in the
+tool: the case written as "a native that replaced more than it counted" (a document already holding four
+occurrences of the replacement) actually SATISFIES the request arithmetic, so it was rewritten as a
+replacement that swallows occurrences of itself (`аб` → `б` over `абаб`), which the needle leg accepts and the
+independent replacement leg refutes. One redundant assertion in the self-contained-body test was dropped.
+
+**Verification (this round, final tree).** Full suite `node --test` → **919 tests, pass 919, fail 0, cancelled
+0, skipped 0** (**899 → 919**, never shrunk); `node scripts/static-audit.mjs` → `Authored-code audit PASS`,
+exit 0; `node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+1afcd2138a27ee4ca9b570a729db34375058b36cead0208fc5fab83301d9a247`. The classifier counts TEN inline legs, and
+the replace branch is placed FIRST on purpose: this body also authors `document.Search`, so without its own
+branch it would have been blessed as the read-only SEARCH leg. `src/agent/*` is untouched and no dynamic
+execution was added to `src/`.
+
+**What only a native run can settle.** (1) That the API-level `doc.Search(query, matchCase)` count and the
+internal search `SearchAndReplace` performs agree EXACTLY on the same document (the arithmetic rests on that
+identity; a disagreement can only cost a false `TOOL_UNCERTAIN` with the slot held, never a false `ok`). (2)
+That an EMPTY `replaceString` really deletes, rather than inserting a literal: the vendored body ends in
+`ReplaceSearchElement(V, true, null, false)` with `V === ''`, and the empty case is proven by the needle count
+alone. (3) That the five-character rewrite is the COMPLETE set for the replacement (the list was read out of
+the shipped builder; a sixth rewrite would turn an `ok`-shaped arithmetic into a false `TOOL_UNCERTAIN` with the
+slot held). (4) That the `Asc.scope` parameter carriage delivers `{ search, replace, matchCase, limit }` to an
+editor that has `callCommand` — the same carriage every command leg of this sprint already uses.

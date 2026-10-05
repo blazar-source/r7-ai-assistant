@@ -28,7 +28,10 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // paragraph, or — for its OTHER form — ONE `Api.CreateParagraph` plus the same `AddElement` plus ONE
 // `document.Push` that lands the created paragraph at the END of the document. It is therefore BOTH an
 // in-place write and an append, and it is named here explicitly for the range format's reason.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert']));
+// `replaceinsert` is the text replace: it rewrites existing text IN PLACE through ONE
+// `document.SearchAndReplace` inside its own command body, and it is named here explicitly for the same
+// reason the heading assignment and the range format are.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -1657,6 +1660,135 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return linkRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE TEXT REPLACE, and the ONLY leg in this bridge whose proof is a COUNT OF THE DOCUMENT'S OWN
+      // OCCURRENCES rather than the shape of an object it built. It is the same carriage as the six bodies
+      // before it — a FULL inline static literal, whose ONLY model data arrives as the `scope` binding the
+      // vendor wrapper composes from `Asc.scope` (never composed into source, ADR 0002), and no
+      // composed-source transport at all — and it does four things in ONE synchronous evaluation:
+      //   1. a PRE-DISPATCH BASELINE read of the needle's own occurrence count through the MEASURED
+      //      `document.Search(query, matchCase)`, which is the gate: an unreadable count, ZERO occurrences
+      //      and a `limit` below the count are the body's own closed refusals BEFORE anything is written, so
+      //      no rewrite is ever dispatched without evidence to judge it by;
+      //   2. the replacement's own PRE count, read only when the replacement is non-empty (there is no count
+      //      of the empty string to read, and this body never invents one);
+      //   3. ONE `document.SearchAndReplace({ searchString, replaceString, matchCase })`, the measured
+      //      mutating primitive — with an EXPLICIT `matchCase`, because the vendored builder defaults the
+      //      flag to `true` when the key is absent (`U.matchCase !== void 0 ? U.matchCase : true`);
+      //   4. a POST read of the SAME two counts, so both the needle's fall and the replacement's rise are
+      //      measured INSIDE the editor by the primitive the Lead measured (4 strict / 5 insensitive / 0
+      //      absent).
+      // NO MUTATION PRIMITIVE'S RETURN VALUE IS READ, and that is MEASURED rather than cautious:
+      // `SearchAndReplace` mutates the document and returns `undefined`, so it is never a result signal in
+      // either direction and the counts are the only evidence this body reports.
+      // THE `limit` GATE. The measured primitive carries NO count parameter — its own body ends in
+      // `this.Document.ReplaceSearchElement(V, true, null, false)`, which replaces EVERY match — so a
+      // `limit` strictly below the occurrence count cannot be honoured: serving it would destroy text the
+      // caller did not authorize. It is therefore the closed ARGUMENT class, decided here BEFORE the write.
+      // The request's own arithmetic is still `min(limit, before)` on both sides of the boundary, and this
+      // gate is exactly what makes every request this body writes satisfy it.
+      // The answer is ONE flat array of primitives (the native return validator keeps those and strips a
+      // plain object): `[POST_INSERT, occurrencesBefore, occurrencesAfter, replaceBefore, replaceAfter]`, or
+      // the THREE-slot `[POST_INSERT, occurrencesBefore, occurrencesAfter]` for an empty replacement, or a
+      // TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER: it turns at —
+      // and immediately BEFORE — the ONE call that can change the document, so a throw out of the count
+      // reads keeps a known refusal while a throw out of the write is the uncertain class.
+      replace(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
+          // bodies state: the alias analysis is NAME-based and scope-insensitive over the whole bundle, so an
+          // array literal built from identifier names could make the receiver of every later call on it a
+          // computed value.
+          function replaceRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check reaches
+          // for NO global at all, so the stringified body depends on nothing but the two bindings the vendor
+          // wrapper creates.
+          function isCount(value) {
+            return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+          }
+          // THE PRIMITIVE'S OWN ARRAY LENGTH, read through a helper: `list.length` is a property READ of
+          // editor data, and taking it here keeps every later value on a CALL's own result rather than on a
+          // variable read out of an array — the authored-code-audit rule the other bodies state.
+          function countMatches(list) {
+            if (list === null || list === undefined) return null;
+            var size = list.length;
+            return isCount(size) ? size : null;
+          }
+          // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The scope is the ONE thing that crosses,
+          // so a shape the bridge would never compose is this body's own closed refusal rather than a
+          // rewrite driven by `undefined`. The return is an ARRAY so the caller binds each measured value
+          // separately.
+          function measureReplaceRequest(given) {
+            if (given === null || given === undefined || typeof given !== 'object') return null;
+            var needle = given.search;
+            var replacement = given.replace;
+            var cased = given.matchCase;
+            var atMost = given.limit;
+            if (typeof needle !== 'string' || needle === '') return null;
+            if (typeof replacement !== 'string') return null;
+            if (typeof cased !== 'boolean') return null;
+            if (atMost !== null && !(isCount(atMost) && atMost >= 1)) return null;
+            return [needle, replacement, cased, atMost];
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var measured = measureReplaceRequest(request);
+            if (measured === null) return replaceRefusal('CAPABILITY_UNAVAILABLE');
+            var needle = measured[0];
+            var replacement = measured[1];
+            var matchCase = measured[2];
+            var limit = measured[3];
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return replaceRefusal('CAPABILITY_UNAVAILABLE');
+            // Every primitive this body authors is a FUNCTION CHECK before any call, exactly like the six
+            // bodies before it: an editor without the count read cannot be given a rewrite whose proof could
+            // never run, and an editor without the mutating primitive is not one this body may act on.
+            if (typeof document.Search !== 'function') return replaceRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.SearchAndReplace !== 'function') return replaceRefusal('CAPABILITY_UNAVAILABLE');
+            // THE PRE-DISPATCH BASELINE. The count is the gate: unreadable is the closed capability class,
+            // and ZERO is the closed ARGUMENT class — there would be nothing to replace, and a write that
+            // replaces nothing is not a write.
+            var countBefore = countMatches(document.Search(needle, matchCase));
+            if (countBefore === null) return replaceRefusal('CAPABILITY_UNAVAILABLE');
+            if (countBefore === 0) return replaceRefusal('TOOL_ERROR');
+            // A LIMIT BELOW THE COUNT is the closed argument class for the measured reason stated above.
+            if (limit !== null && limit < countBefore) return replaceRefusal('TOOL_ERROR');
+            var counted = replacement !== '';
+            var replaceBefore = 0;
+            if (counted) {
+              var readBefore = countMatches(document.Search(replacement, matchCase));
+              if (readBefore === null) return replaceRefusal('CAPABILITY_UNAVAILABLE');
+              replaceBefore = readBefore;
+            }
+            // THE MUTATION, and the exact boundary the two refusal classes are split on: `phase` turns at,
+            // and immediately before, the ONE call that can change the document.
+            phase = 'POST_INSERT';
+            document.SearchAndReplace({ searchString: needle, replaceString: replacement, matchCase: matchCase });
+            // THE POST READ, and NOTHING is taken from the pre-mutation count: a FRESH `Search` answers the
+            // document's own state after the write.
+            var countAfter = countMatches(document.Search(needle, matchCase));
+            if (countAfter === null) return replaceRefusal('CAPABILITY_UNAVAILABLE');
+            var answer = [];
+            answer.push(phase);
+            answer.push(countBefore);
+            answer.push(countAfter);
+            if (counted) {
+              var replaceAfter = countMatches(document.Search(replacement, matchCase));
+              if (replaceAfter === null) return replaceRefusal('CAPABILITY_UNAVAILABLE');
+              answer.push(replaceBefore);
+              answer.push(replaceAfter);
+            }
+            return answer;
+          } catch (error) { return replaceRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -1945,6 +2077,10 @@ function preInsertRefusal(error, kind) {
   // pre-insert phase can therefore only be a forged or damaged native answer about a dispatch that wrote, and
   // it settles `APPLY_UNCERTAIN` with the slot HELD instead of releasing the slot on a refusal this leg cannot
   // produce.
+  // THE TEXT REPLACE IS IN THE SAME POSITION for the same reason and never had the carve-out: it reads no
+  // export at all — its proof is an occurrence COUNT — so its pre-write refusals are exactly the two classes
+  // above (`CAPABILITY_UNAVAILABLE` for a count it cannot read, `TOOL_ERROR` for zero occurrences and for a
+  // `limit` below the count) and a phase-marked `BYTE_LIMIT` settles uncertain for it too.
   if (kind === 'rangeformat') return error.code === ERROR_CODES.BYTE_LIMIT;
   return false;
 }
@@ -2217,6 +2353,45 @@ function requestedText(value) {
   if (utf8ByteLength(value) > LIMITS.addHyperlinkTextBytes) return null;
   return /[\u0000-\u001f\u007f]/.test(value) ? null : value;
 }
+// THE TEXT REPLACE'S CLOSED REQUEST, in the same two places as the hyperlink's url and label: this one
+// comment is the measurement both `replaceSearch` (src/tools/word.js) and this bridge-side twin rest on, so
+// the schema's advertised bound, the descriptor's precondition and the public entry point can never
+// disagree about which request is servable.
+//   * THE NEEDLE must be a NON-EMPTY string inside `replaceTextSearchBytes`. Nothing else is a query the
+//     editor's `Search` can be asked, and an empty needle is not "everything" — it is a request with no
+//     occurrences to count, so it never reaches the editor.
+//   * THE REPLACEMENT may be EMPTY (deleting the needle is a legitimate replace) and is bounded ABOVE by
+//     `replaceTextReplaceBytes`.
+//   * A REPLACEMENT THAT CONTAINS THE NEEDLE is REFUSED, closed, with ZERO writes. The vendored 2026.1.2
+//     `SearchAndReplace` replaces every match of the needle, so a replacement holding the needle would leave
+//     occurrences behind that THIS call wrote, and the occurrence arithmetic — `after === before - expected`
+//     — could never be exact. The count would be meaningless rather than merely unproven, which is exactly
+//     the class of request this module refuses instead of writing.
+//   * A REPLACEMENT HOLDING ONE OF THE FIVE CHARACTERS THE EDITOR REWRITES is refused for the same reason,
+//     and it is MEASURED rather than conservative: the builder's own body is
+//     `V = U.replaceString; V = V.replaceAll("\t","^t"), V = V.replaceAll("\v","^l"),
+//     V = V.replaceAll("\f","^m"), V = V.replaceAll("\u000e","^n"), V = V.replaceAll("\u001e","^~")`
+//     (code units 9, 11, 12, 14 and 30), so the document would hold `^t` where the caller wrote a TAB and
+//     the post-count of the REQUESTED replacement could never match what was stored. A replacement the
+//     editor would rewrite is refused BEFORE the write rather than written and left unprovable.
+//     THE NEEDLE IS NOT SUBJECT TO THIS RULE: it is passed to `CSearchSettings.SetText` verbatim, so a
+//     needle holding any of those five characters is counted exactly as it stands.
+function replaceSearch(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  return utf8ByteLength(value) > LIMITS.replaceTextSearchBytes ? null : value;
+}
+function replaceReplacement(value) {
+  if (typeof value !== 'string') return null;
+  return utf8ByteLength(value) > LIMITS.replaceTextReplaceBytes ? null : value;
+}
+function recursiveReplacement(search, replacement) {
+  return replacement !== '' && replacement.includes(search);
+}
+const REWRITTEN_REPLACEMENT = Object.freeze(['\t', '\u000b', '\u000c', '\u000e', '\u001e']);
+function rewrittenReplacement(replacement) {
+  for (const character of REWRITTEN_REPLACEMENT) if (replacement.includes(character)) return true;
+  return false;
+}
 function decodeRange(value) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -2430,6 +2605,96 @@ function exactHyperlinkDelta(outcome, requested) {
   } else if (outcome.paragraphsAfter !== outcome.paragraphsBefore) return false;
   if (outcome.elementsAfter !== outcome.elementsBefore + 1) return false;
   return outcome.textAfterChars === outcome.textBeforeChars + requested.text.length;
+}
+// THE TEXT REPLACE'S ANSWER, decoded with the same strictness as every decoder before it and for the same
+// reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES — `[POST_INSERT,
+// occurrencesBefore, occurrencesAfter, replaceBefore, replaceAfter]` for a non-empty replacement, and
+// `[POST_INSERT, occurrencesBefore, occurrencesAfter]` when the replacement is EMPTY (there is no count of
+// the empty string to read, so the body drops those two slots rather than inventing a zero) — because the
+// native return validator keeps arrays of primitives and STRIPS a plain object. `Reflect.ownKeys` before any
+// indexed read closes symbols, holes and hidden extras, and every member is read through its own data
+// descriptor, never through a getter. Four rules are this leg's own contract:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes are
+//     split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a KNOWN
+//     refusal whose code the caller republishes (nothing was written), and `[POST_INSERT, name]` — or any
+//     phase that is not the pre-insert one — is the UNCERTAIN class (the document may already have been
+//     rewritten). A phase that is ABSENT — the one-slot `['CAPABILITY_UNAVAILABLE']` a forged or damaged
+//     native can answer AFTER a real replace — or a pre-insert phase over a measurement can never be a known
+//     refusal either: the NAME does not carry the phase, only the marker does.
+//   * THE EXPECTED LENGTH IS DERIVED FROM THE REQUEST, never from the answer: `replace !== ''` fixes the
+//     FIVE-slot shape and an empty replacement the THREE-slot one, so an answer of the other size is not one
+//     this body can have produced.
+//   * the counts are NON-NEGATIVE SAFE INTEGERS — the primitive's own array lengths — and nothing else.
+//   * the answer needs no byte ceiling beyond the one every native read passes, because at most four bounded
+//     integers can cross; `assertByteLimit` is still applied, so the one window every read of this bridge is
+//     decoded under holds for this leg too.
+const REPLACE_PHASE_PRE = 'PRE_INSERT';
+const REPLACE_PHASE_POST = 'POST_INSERT';
+const REPLACE_NEEDLE_SLOTS = 2;
+const REPLACE_LENGTH = 1 + REPLACE_NEEDLE_SLOTS;
+const REPLACE_COUNTED_LENGTH = REPLACE_LENGTH + 2;
+function decodeReplace(value, counted) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  const expected = counted ? REPLACE_COUNTED_LENGTH : REPLACE_LENGTH;
+  if (!Number.isSafeInteger(size) || size < 1 || size > expected) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  // THE PHASE GATE. The two names the body emits only from its pre-write half keep their KNOWN classes ONLY
+  // when the answer itself carries the pre-insert phase; a missing phase, a post-insert phase, or a
+  // pre-insert phase over a measurement is the uncertain class, because the body ran and the document may
+  // already hold the rewrite. THE BODY HAS NO BYTE-GATED REFUSAL: it reads no export and counts no text, so
+  // a `BYTE_LIMIT` carrying this phase is NOT one of its refusals and falls through to the uncertain class.
+  if (size === 2) {
+    if (members[0] !== REPLACE_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (members[1] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== expected) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== REPLACE_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = members.slice(1);
+  for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return counted
+    ? Object.freeze({ occurrencesBefore: numbers[0], occurrencesAfter: numbers[1],
+      replaceBefore: numbers[2], replaceAfter: numbers[3] })
+    : Object.freeze({ occurrencesBefore: numbers[0], occurrencesAfter: numbers[1],
+      replaceBefore: null, replaceAfter: null });
+}
+// THE EXPECTATION, DERIVED FROM THE REQUEST on this side and re-derived by the tool on its own side: the
+// number of replacements a call authorizes is `limit` when one was named and EVERY pre-counted occurrence
+// otherwise, i.e. `min(limit, before)`. It is a pure function of the request and the measured pre-count, so
+// neither side ever reads an expectation back out of the answer it is judging.
+function replaceExpected(requested, before) {
+  return requested.limit === null ? before : Math.min(requested.limit, before);
+}
+// THE EXACT OUTCOME RULE the text replace rests on, in ONE place so the decision and its comment cannot
+// drift apart. It is judged against the SCOPE this ticket carried (`requested`) and the expectation derived
+// from it, never against a value read back out of the answer:
+//   1. A POST answer that claims ZERO pre-occurrences is not one this body can produce — it refuses that
+//      case BEFORE its one write — so it can only be a forged or damaged answer about a dispatch that ran.
+//   2. THE NEEDLE'S OWN COUNT must fall by EXACTLY the expectation: `after === before - expected`. With no
+//      limit that is zero, which is the whole of the replace-all proof.
+//   3. THE REPLACEMENT'S OWN COUNT must rise by the SAME expectation when the replacement is non-empty:
+//      `replaceAfter === replaceBefore + expected`. It is the independent leg: a needle count that fell
+//      correctly while the document gained something other than the requested text is refuted here.
+//   4. AN EMPTY REPLACEMENT has no count of its own; its proof is the needle's count alone, and the deletion
+//      count is exactly the expectation (`expected` occurrences were removed).
+function exactReplaceDelta(outcome, requested, expected) {
+  if (outcome.occurrencesBefore < 1) return false;
+  if (outcome.occurrencesAfter !== outcome.occurrencesBefore - expected) return false;
+  if (requested.replace === '') return true;
+  return outcome.replaceAfter === outcome.replaceBefore + expected;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -3052,6 +3317,23 @@ export function createR7Bridge(plugin, {
             if (!exactHyperlinkDelta(outcome, params)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE TEXT REPLACE. Its answer is the authored flat array of primitives, decoded against the
+          // REQUEST's own shape — `replace !== ''` fixes the five-slot answer and an empty replacement the
+          // three-slot one — so the decode and the body can never disagree about which counts are owed. The
+          // exact arithmetic then decides the ticket HERE, while it still owns the slot, and it is judged
+          // against the SCOPE (`params`) this ticket carried: the expectation is derived from the REQUEST
+          // (`min(limit, before)`) and never read back out of the answer. A needle count that did not fall by
+          // exactly the expectation, a replacement count that did not rise by it, and a POST answer claiming
+          // zero pre-occurrences are all the UNCERTAIN class with the slot HELD, never a known error about a
+          // document this call may already have rewritten. A decode that THROWS is classified by the catch
+          // below (a `[PRE_INSERT, name]` answer keeps its known code; everything else is uncertain).
+          else if (kind === 'replaceinsert') {
+            const outcome = decodeReplace(value, params.replace !== '');
+            const expected = replaceExpected(params, outcome.occurrencesBefore);
+            if (!exactReplaceDelta(outcome, params, expected)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = Object.freeze({ occurrencesBefore: outcome.occurrencesBefore,
+              occurrencesAfter: outcome.occurrencesAfter, replacements: expected });
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -3076,7 +3358,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -3341,6 +3623,32 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.hyperlink(callback); }
           finally { clearScope(previousHyperlink); }
+        } else if (kind === 'replaceinsert') {
+          // THE TEXT REPLACE: ONE command, and the SAME parameter channel the other read and write legs use —
+          // the validated `{ search, replace, matchCase, limit }` scope written into the page's `Asc.scope`,
+          // never composed into source (ADR 0002). It needs the entry point that OWNS that wrapper
+          // (`callCommand`); a build whose command channel is the bare `executeCommand` transport has no
+          // sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases the
+          // slot because nothing reached the editor.
+          // It carries NO document-identity probe, for the range format's reason: this leg addresses a STRING
+          // and not an owned TARGET, so there is no handle whose identity a probe could establish. What it
+          // does instead is the subject of the body's own comment: the needle's own occurrence count is read
+          // through the MEASURED `document.Search` before the ONE `SearchAndReplace` and again after it, the
+          // replacement's own count is read on BOTH sides of the write when the replacement is non-empty, and
+          // the outcome is the REQUEST's own arithmetic — `after === before - min(limit, before)` — with the
+          // expectation derived from the request rather than read back out of the answer. There is no export,
+          // no marker and no object shape on this leg.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg:
+          // a synchronous throw out of the transport must never release a slot whose work may already be
+          // queued, and the body's own pre-insert refusals keep their known class through the callback (they
+          // arrive as a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousReplace;
+          try { previousReplace = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.replace(callback); }
+          finally { clearScope(previousReplace); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -3939,6 +4247,58 @@ export function createR7Bridge(plugin, {
           elementsAfter: outcome.elementsAfter, textBeforeChars: outcome.textBeforeChars,
           textAfterChars: outcome.textAfterChars, textAppended: outcome.textAppended,
           elementCountGrew: outcome.elementCountGrew, elementAppended: outcome.elementAppended });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // THE TEXT REPLACE behind `replace_text` — the SIXTH MUTATION of Sprint 3, the FOURTH write leg that
+    // changes EXISTING text in place, and the FIRST whose whole proof is an EXACT OCCURRENCE COUNT read out
+    // of the document itself. The body's own comment carries the mechanism (a pre-dispatch count of the
+    // needle through the measured `doc.Search`, a pre-count of the replacement when it is non-empty, ONE
+    // `doc.SearchAndReplace` with an EXPLICIT `matchCase`, and the two post counts) and why no mutation
+    // primitive's return value is the signal; what matters HERE is the shape: ONE command on the ONE entry
+    // point that owns the parameter wrapper, the validated `{ search, replace, matchCase, limit }` scope
+    // carried as DATA through `Asc.scope`, and ONE strict decoder that turns the authored flat array into the
+    // counts below. The OUTCOME rule is decided inside the ticket, before the slot is released, and it is
+    // judged against the SCOPE (`params`) this ticket carried: the expectation is DERIVED FROM THE REQUEST
+    // (`replaceExpected`), a needle count that did not fall by exactly it and a replacement count that did not
+    // rise by it are `APPLY_UNCERTAIN` with the slot HELD and no retry, while the body's PRE-write refusals
+    // (an unreadable count, ZERO occurrences and a `limit` below the count) settle their closed KNOWN class
+    // with the slot released, because nothing was written — and they do so ONLY when the answer carries their
+    // phase. THERE IS NO EXPORT AND NO BYTE-GATED REFUSAL ON THIS LEG: it counts occurrences and reads no
+    // string the document built, so a `[PRE_INSERT, 'BYTE_LIMIT']` can only be a forged or damaged answer
+    // about a dispatch that wrote.
+    // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather
+    // than taken on trust: the bridge is a PUBLIC ENTRY POINT, and a needle, a replacement, a case flag or a
+    // limit this module never measured would let a caller rewrite text the tool's own schema would have
+    // refused. The bounds and the two closed rules (a replacement that CONTAINS the needle, and a replacement
+    // holding one of the five characters the measured builder REWRITES) are the SAME ones the descriptor
+    // advertises (`LIMITS` and the commented twins in `src/tools/word.js`), and `matchCase` is REQUIRED as an
+    // explicit boolean because the vendored builder defaults it to `true` when the key is absent.
+    async replaceText(raw) {
+      const search = replaceSearch(raw?.search), replacement = replaceReplacement(raw?.replace);
+      const matchCase = raw?.matchCase, limit = raw?.limit, signal = raw?.signal;
+      if (search === null || replacement === null) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (typeof matchCase !== 'boolean') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      // THE LIMIT IS OPTIONAL AND `null` IS ITS ABSENT FORM, exactly as the descriptor composes it: an
+      // explicit `null` means "replace every occurrence". Anything else must be a whole number inside the
+      // advertised ceiling, so a limit of zero — a request to write nothing — is the closed argument class.
+      if (limit !== null && limit !== undefined) {
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > LIMITS.replaceTextLimitMax) {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
+      if (recursiveReplacement(search, replacement)) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (rewrittenReplacement(replacement)) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('replaceinsert', signal, {},
+          Object.freeze({ search, replace: replacement, matchCase, limit: limit === undefined ? null : limit }));
+        return Object.freeze({ ok: true, occurrencesBefore: outcome.occurrencesBefore,
+          occurrencesAfter: outcome.occurrencesAfter, replacements: outcome.replacements });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

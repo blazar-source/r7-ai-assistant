@@ -64,8 +64,10 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+  assert.deepEqual(names, ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.equal(tools.find(tool => tool.name === 'add_hyperlink').policy, 'auto');
+  assert.equal(tools.find(tool => tool.name === 'replace_text').policy, 'confirm');
+  assert.equal(tools.find(tool => tool.name === 'replace_text').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'add_hyperlink').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').policy, 'auto');
@@ -104,7 +106,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading'],
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -322,7 +324,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+    ['add_hyperlink', 'find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'replace_text', 'set_heading']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -9032,4 +9034,678 @@ test('add_hyperlink is offered with policy auto and a model call appends exactly
   assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
   assert.equal(r.doc.doubles[1].content.filter(item => item.kind === 'link').length, 1,
     'and the addressed paragraph really carries the link');
+});
+
+// --- Sprint 3, tool 11: `replace_text` — the SIXTH MUTATION of Sprint 3, and the FIRST tool whose whole
+// proof is an EXACT OCCURRENCE COUNT read back through `doc.Search`, with no export anywhere -----------
+//
+// THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942):
+//   * `doc.SearchAndReplace({ searchString, replaceString, matchCase })` MUTATES the document and returns
+//     `undefined`. It is therefore NEVER a result signal, and the proof must come from the document.
+//   * `doc.Search(query, matchCase)` answers a REAL ARRAY of range objects, measured: 4 for a strict
+//     query, 5 for the same query case-insensitively and 0 for a query the document does not hold. An
+//     EXACT occurrence count is therefore available BEFORE and AFTER the one write, per object.
+//   * the vendored 2026.1.2 SDK shows why the arithmetic is what it is. The builder's own
+//     `SearchAndReplace = function (U) { var S = new AscCommon.CSearchSettings; S.SetText(U.searchString);
+//     S.SetMatchCase(U.matchCase !== void 0 ? U.matchCase : true); var E = this.Document.Search(S);
+//     if (E) { var V = U.replaceString; V = V.replaceAll("\t","^t"), … ; this.Document.ReplaceSearchElement(V, true, null, false) } }`
+//     has THREE measured consequences:
+//       1. `matchCase` DEFAULTS TO `true` when the key is absent, so the dispatched scope always carries an
+//          explicit boolean and the tool's own default is stated in one place (absent = `false`);
+//       2. it replaces EVERY match and carries NO count/limit parameter at all, which is why a `limit`
+//          below the occurrence count can only be REFUSED CLOSED before the write (below);
+//       3. it REWRITES five characters of the replacement before storing it — TAB -> `^t`, `\v` -> `^l`,
+//          `\f` -> `^m`, U+000E -> `^n`, U+001E -> `^~` (the exact code units 9, 11, 12, 14 and 30, read
+//          out of the bundle) — so a replacement holding one of them could never be counted back and is
+//          the closed argument class with ZERO writes.
+//   * `executeMethod('SearchAndReplace', …)` NEVER called back within 12 s and is authored NOWHERE.
+function replaceTextTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'replace_text'); }
+function replaceTextBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, replaceText: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+const REPLACE_SEARCH = 'черновик';
+const REPLACE_WITH = 'финал';
+const REPLACE_PILOT = 'черновик один, черновик два, черновик три, черновик четыре';
+// The envelope the REAL bridge publishes for a verified replace-all: four occurrences counted BEFORE the
+// one `SearchAndReplace` and none left after it. The wording is the bridge's own three fields.
+function replaced(overrides = {}) {
+  return { ok: true, occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4, ...overrides };
+}
+// The dispatched SCOPE's own byte size, measured on exactly the values that cross.
+function replaceTextBytes(limit, search = REPLACE_SEARCH, replace = REPLACE_WITH, matchCase = false) {
+  return utf8ByteLength(`${search}:${replace}:${matchCase ? 'case' : 'nocase'}:${limit === null ? 'all' : limit}`);
+}
+const replaceTextScope = (overrides = {}) => ({ search: REPLACE_SEARCH, replace: REPLACE_WITH,
+  matchCase: false, limit: null, ...overrides });
+// The tool-result entry the handler publishes, in the shape the runtime serializes.
+function replaceTextEntry(data) { return JSON.stringify({ tool: 'replace_text', ok: true, data }); }
+
+// NON-OVERLAPPING occurrence counting, the measured primitive's own semantics.
+function replaceOccurrences(haystack, needle, matchCase) {
+  if (needle === '') return 0;
+  const source = matchCase ? haystack : haystack.toLowerCase();
+  const target = matchCase ? needle : needle.toLowerCase();
+  let count = 0;
+  for (let index = source.indexOf(target); index >= 0; index = source.indexOf(target, index + target.length)) count += 1;
+  return count;
+}
+// The substitution the native performs: EVERY match, left to right, non-overlapping.
+function replaceSubstitute(haystack, needle, replacement, matchCase, atMost) {
+  if (needle === '') return { text: haystack, replaced: 0 };
+  const source = matchCase ? haystack : haystack.toLowerCase();
+  const target = matchCase ? needle : needle.toLowerCase();
+  const ceiling = atMost === undefined ? Number.MAX_SAFE_INTEGER : atMost;
+  let out = ''; let cursor = 0; let replaced = 0;
+  for (let index = source.indexOf(target, cursor); index >= 0 && replaced < ceiling; index = source.indexOf(target, cursor)) {
+    out += haystack.slice(cursor, index) + replacement;
+    cursor = index + target.length;
+    replaced += 1;
+  }
+  return { text: out + haystack.slice(cursor), replaced };
+}
+// THE DOCUMENT DOUBLE, built only on the two measured primitives:
+//   * `Search(query, matchCase)` answers a REAL ARRAY whose length is the number of non-overlapping
+//     matches, and it really honours the case flag (the measured 4 strict / 5 insensitive / 0 absent);
+//   * `SearchAndReplace({ searchString, replaceString, matchCase })` replaces EVERY match and returns
+//     `undefined`, exactly as measured — a write that changed nothing is modelled as text that did not
+//     move, which is the ONLY evidence there is;
+//   * `replaceAtMost` models a native that replaced FEWER occurrences than it counted, which is the
+//     non-exact outcome the tool must settle uncertain rather than claim.
+function replaceDocument(options = {}) {
+  const state = { searches: 0, replaces: 0, replaced: 0 };
+  let text = options.text ?? REPLACE_PILOT;
+  const document = {
+    Search(query, matchCase) {
+      state.searches += 1;
+      if (options.searchThrowsAt !== undefined && state.searches === options.searchThrowsAt) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (typeof options.searchAnswer === 'function') return options.searchAnswer(state, query, matchCase, text);
+      return new Array(replaceOccurrences(text, query, matchCase)).fill(null);
+    },
+    SearchAndReplace(settings) {
+      state.replaces += 1;
+      if (options.replaceThrows === true) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+      if (options.replaceApplies !== false) {
+        const done = replaceSubstitute(text, settings.searchString, settings.replaceString, settings.matchCase, options.replaceAtMost);
+        text = done.text;
+        state.replaced += done.replaced;
+      }
+      // MEASURED: the primitive answers `undefined`, which is exactly why no return value can ever be
+      // this tool's signal.
+      return undefined;
+    }
+  };
+  return { state, document, text: () => text };
+}
+// The IN-EDITOR rig, the same carriage `linkRig` reproduces. `executeMethod` is a spy so the suite can
+// pin that this leg dispatches through the COMMAND channel alone.
+function replaceRig(options = {}) {
+  const commands = [];
+  const methods = [];
+  const measured = replaceDocument(options);
+  const api = { GetDocument: () => measured.document };
+  const carrier = options.namespace ?? { scope: {} };
+  const plugin = { info: { editorType: 'word' },
+    executeMethod: (...args) => { methods.push(args); return false; },
+    callCommand: options.command === false ? undefined : function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = carrier.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(options.forge === undefined ? answered : options.forge);
+      return false;
+    } };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  const bridge = bridgeWith(plugin, bridgeOptions);
+  return { bridge, plugin, commands, methods, namespace: carrier, api, doc: measured };
+}
+
+test('replace_text advertises the closed bounded schema, the confirm policy and the limit vocabulary', () => {
+  const tool = replaceTextTool(replaceTextBridge(replaced()));
+  assert.equal(tool.name, 'replace_text');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  // THE POLICY IS `confirm`, and the plan's Phase 0 recorded it for this tool: a text-replacing
+  // operation is confirmed by the human before it runs, exactly like `replace_selection`.
+  assert.equal(tool.policy, 'confirm');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual([...schema.required].sort(), ['replace', 'search']);
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['limit', 'matchCase', 'replace', 'search']);
+  assert.equal(schema.properties.search.type, 'string');
+  assert.equal(schema.properties.search.minBytes, 1, 'a needle nothing could match is not a request');
+  assert.equal(schema.properties.search.maxBytes, LIMITS.replaceTextSearchBytes);
+  // THE REPLACEMENT MAY BE EMPTY and the schema says so by carrying NO lower bound: deleting the search
+  // text is a legitimate replace.
+  assert.equal(schema.properties.replace.type, 'string');
+  assert.equal('minBytes' in schema.properties.replace, false);
+  assert.equal(schema.properties.replace.maxBytes, LIMITS.replaceTextReplaceBytes);
+  assert.equal(schema.properties.matchCase.type, 'boolean');
+  assert.equal('default' in schema.properties.matchCase, false,
+    'the schema expresses no default; the handler applies `false` for an ABSENT flag in one place');
+  assert.equal(schema.properties.limit.type, 'integer');
+  assert.equal(schema.properties.limit.minimum, 1, 'a limit of 0 authorizes no replacement at all');
+  assert.equal(schema.properties.limit.maximum, LIMITS.replaceTextLimitMax);
+  // THE THREE BOUNDS ARE PINNED AS NUMBERS AND AS DISTINCT DECISIONS: a needle is not a replacement and
+  // neither is the occurrence ceiling.
+  assert.equal(LIMITS.replaceTextSearchBytes, 256);
+  assert.equal(LIMITS.replaceTextReplaceBytes, 2048);
+  assert.equal(LIMITS.replaceTextLimitMax, 4096);
+  assert.notEqual(LIMITS.replaceTextReplaceBytes, LIMITS.replaceTextSearchBytes);
+  assert.notEqual(LIMITS.replaceTextReplaceBytes, LIMITS.replaceTextLimitMax);
+  // EVERY LEGAL REQUEST SHAPE THE SCHEMA ADVERTISES.
+  assert.deepEqual(validateArguments(schema, { search: REPLACE_SEARCH, replace: REPLACE_WITH }),
+    { search: REPLACE_SEARCH, replace: REPLACE_WITH });
+  assert.deepEqual(validateArguments(schema, { search: REPLACE_SEARCH, replace: '' }),
+    { search: REPLACE_SEARCH, replace: '' }, 'an EMPTY replacement is legal');
+  assert.deepEqual(validateArguments(schema, { search: 'a', replace: 'b', matchCase: true, limit: 3 }),
+    { search: 'a', replace: 'b', matchCase: true, limit: 3 });
+  assert.equal(tool.precondition({ search: REPLACE_SEARCH, replace: REPLACE_WITH }, { editor: 'word' }), null);
+  assert.equal(tool.precondition({ search: REPLACE_SEARCH, replace: REPLACE_WITH }, { editor: 'cell' }).code,
+    'CAPABILITY_UNAVAILABLE');
+});
+
+test('replace_text refuses every illegal argument with nothing dispatched', async () => {
+  const bridge = replaceTextBridge(replaced());
+  const tool = replaceTextTool(bridge);
+  const legal = { search: REPLACE_SEARCH, replace: REPLACE_WITH };
+  const illegal = [
+    ['no argument object', null],
+    ['missing search', { replace: REPLACE_WITH }],
+    ['missing replace', { search: REPLACE_SEARCH }],
+    ['an unknown top-level key', { ...legal, target: 'x' }],
+    ['an empty search', { search: '', replace: REPLACE_WITH }],
+    ['a non-string search', { search: 7, replace: REPLACE_WITH }],
+    ['a non-string replace', { search: REPLACE_SEARCH, replace: 7 }],
+    ['a non-boolean matchCase', { ...legal, matchCase: 'да' }],
+    ['a non-integer limit', { ...legal, limit: 1.5 }],
+    ['a stringified limit', { ...legal, limit: '2' }],
+    ['a negative limit', { ...legal, limit: -1 }],
+    ['a zero limit', { ...legal, limit: 0 }],
+    ['a limit over the advertised cap', { ...legal, limit: LIMITS.replaceTextLimitMax + 1 }],
+    ['an over-bound search', { search: 'я'.repeat(LIMITS.replaceTextSearchBytes), replace: REPLACE_WITH }],
+    ['an over-bound replace', { search: REPLACE_SEARCH, replace: 'я'.repeat(LIMITS.replaceTextReplaceBytes) }]
+  ];
+  for (const [label, args] of illegal) {
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', `schema: ${label}`); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+  }
+  assert.equal((await tool.execute(legal, { editor: 'cell' })).code, 'CAPABILITY_UNAVAILABLE',
+    'a Word mutation offered to another editor refuses before any dispatch');
+  assert.equal(bridge.seen.length, 0, 'NOTHING was dispatched for any refused argument');
+  // THE SHAPES THE SCHEMA CANNOT EXPRESS, refused by the handler and by the precondition because a
+  // descriptor is also executable when it is held directly:
+  //   * a REPLACEMENT THAT CONTAINS THE NEEDLE, which could never be proven — the recursive replacement
+  //     would leave occurrences of the needle behind that this call did not write, so the count
+  //     arithmetic would be meaningless;
+  //   * a replacement holding one of the FIVE characters the measured native REWRITES before storing it,
+  //     so the replacement could never be counted back.
+  for (const raw of [{ search: 'а', replace: 'аа' }, { search: 'черновик', replace: 'черновик-2' },
+    { search: 'а', replace: 'а' }, { search: 'х', replace: 'а\tб' }, { search: 'х', replace: 'а\vб' },
+    { search: 'х', replace: 'а\fб' }, { search: 'х', replace: 'а\u000eб' }, { search: 'х', replace: 'а\u001eб' }]) {
+    validateArguments(tool.schema, raw);
+    assert.equal((await tool.execute(raw, { editor: 'word' })).code, 'TOOL_ERROR', JSON.stringify(raw));
+    assert.equal(tool.precondition(raw, { editor: 'word' }).code, 'TOOL_ERROR', JSON.stringify(raw));
+  }
+  assert.equal(bridge.seen.length, 0, 'and none of the shaped refusals reached the bridge either');
+  // AN EMPTY REPLACEMENT IS NOT RECURSIVE and is served: the rule is about a replacement that CONTAINS
+  // the needle, and the empty string contains nothing.
+  assert.equal(tool.precondition({ search: REPLACE_SEARCH, replace: '' }, { editor: 'word' }), null);
+});
+
+test('replace_text is offered with policy confirm and never executes inside the loop', async () => {
+  const r = replaceRig({ namespace: { scope: replaceTextScope() } });
+  const registry = createRegistry(createWordTools(r.bridge));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'replace_text');
+  assert.ok(offered, 'the offered catalogue contains replace_text');
+  assert.equal(offered.policy, 'confirm');
+  assert.equal(offered.kind, 'mutate');
+  assert.deepEqual([...offered.requires], ['document.write']);
+  assert.equal(offered.schema.properties.search.maxBytes, LIMITS.replaceTextSearchBytes);
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' })
+    .some(entry => entry.name === 'replace_text'), false, 'no write capability, no mutation tool');
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' })
+    .some(entry => entry.name === 'replace_text'), false, 'ASK exposes no mutation tool');
+  // §6.3: the loop PUBLISHES the preview and never executes; the document is untouched and no command
+  // was dispatched.
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"replace_text","arguments":{"search":"' + REPLACE_SEARCH +
+    '","replace":"' + REPLACE_WITH + '"}}]}', '{"type":"final","message":"предложение готово"}'];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '16161616-1616-4616-8616-161616161616', request: 'замени черновик на финал',
+    transport: async () => ({ content: responses[step++] ?? responses[responses.length - 1] }) });
+  assert.equal(run.status, 'PREVIEW_READY');
+  assert.equal(run.preview.descriptor.name, 'replace_text');
+  assert.deepEqual({ ...run.preview.arguments }, { search: REPLACE_SEARCH, replace: REPLACE_WITH });
+  assert.equal(r.commands.length, 0, 'a confirm descriptor dispatches NOTHING from the loop');
+  assert.equal(r.doc.state.replaces, 0, 'and the document is not written');
+});
+
+test('replace_text publishes the exact replace-all arithmetic it proved', async () => {
+  const bridge = replaceTextBridge(replaced());
+  const result = await replaceTextTool(bridge).execute({ search: REPLACE_SEARCH, replace: REPLACE_WITH }, { editor: 'word' });
+  assert.equal(bridge.seen.length, 1, 'exactly ONE bridge call for the whole operation');
+  assert.deepEqual(bridge.seen[0], { search: REPLACE_SEARCH, replace: REPLACE_WITH, matchCase: false, limit: null },
+    'the resolved defaults cross as DATA: the absent flag is `false` and the absent limit is `null`');
+  assert.deepEqual(result, { ok: true, data: { search: REPLACE_SEARCH, replace: REPLACE_WITH, matchCase: false,
+    limit: null, occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4, bytes: replaceTextBytes(null) } });
+});
+
+test('replace_text proves the REQUEST-derived arithmetic for a bounded limit', async () => {
+  // THE EXPECTATION IS DERIVED FROM THE REQUEST on both sides: `min(limit, before)`. A limit at the
+  // occurrence count and one above it are both exact replacements of all four occurrences.
+  for (const limit of [4, 10, LIMITS.replaceTextLimitMax]) {
+    const bridge = replaceTextBridge(replaced());
+    const result = await replaceTextTool(bridge).execute({ search: REPLACE_SEARCH, replace: REPLACE_WITH, limit }, { editor: 'word' });
+    assert.equal(result.ok, true, `limit ${limit}`);
+    assert.equal(result.data.limit, limit);
+    assert.equal(result.data.replacements, 4, `limit ${limit}: min(limit, 4) is 4`);
+    assert.equal(result.data.occurrencesAfter, 0);
+    assert.equal(bridge.seen[0].limit, limit);
+    assert.equal(result.data.bytes, replaceTextBytes(limit));
+  }
+  // A `matchCase: true` request crosses as `true` — the measured native DEFAULTS TO CASE-SENSITIVE when
+  // the key is absent, which is why the scope never omits it.
+  const cased = replaceTextBridge(replaced());
+  await replaceTextTool(cased).execute({ search: REPLACE_SEARCH, replace: REPLACE_WITH, matchCase: true }, { editor: 'word' });
+  assert.deepEqual(cased.seen[0], { search: REPLACE_SEARCH, replace: REPLACE_WITH, matchCase: true, limit: null });
+});
+
+test('replace_text proves an EMPTY replacement as a deletion of the exact expected count', async () => {
+  // The derivation: with no limit the expectation is `min(before, before) = before`, so an empty
+  // replacement is proven by `occurrencesAfter === 0` and `replacements === before` — the deletion count.
+  const bridge = replaceTextBridge(replaced());
+  const result = await replaceTextTool(bridge).execute({ search: REPLACE_SEARCH, replace: '' }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { search: REPLACE_SEARCH, replace: '', matchCase: false, limit: null,
+    occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4, bytes: replaceTextBytes(null, REPLACE_SEARCH, '') });
+  assert.equal(bridge.seen[0].replace, '', 'an empty replacement really crosses as the empty string');
+  // A deletion that left ONE occurrence behind is not exact: the write has already run, so the run stops
+  // fail-safe.
+  const partial = await replaceTextTool(replaceTextBridge(replaced({ occurrencesAfter: 1, replacements: 3 })))
+    .execute({ search: REPLACE_SEARCH, replace: '' }, { editor: 'word' });
+  assert.equal(partial.code, 'TOOL_UNCERTAIN');
+});
+
+test('replace_text holds the run whenever the arithmetic is not exactly what the request derived', async () => {
+  const args = { search: REPLACE_SEARCH, replace: REPLACE_WITH };
+  for (const [label, answer] of [
+    ['the needle still stands where the count says it does not', replaced({ occurrencesAfter: 1, replacements: 3 })],
+    ['the count did not move at all', replaced({ occurrencesAfter: 4, replacements: 0 })],
+    ['the reported replacement count is not the request\'s own', replaced({ occurrencesAfter: 0, replacements: 3 })],
+    ['the reported replacement count exceeds the occurrences', replaced({ occurrencesAfter: 0, replacements: 5 })],
+    ['the post count claims a write this body never makes', replaced({ occurrencesBefore: 0, occurrencesAfter: 0, replacements: 0 })],
+    ['the post count grew instead of falling', replaced({ occurrencesAfter: 6, replacements: 0 })]
+  ]) {
+    const result = await replaceTextTool(replaceTextBridge(answer)).execute(args, { editor: 'word' });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  // A `limit` the answer ignored is the same class: the expectation is `min(limit, before)` — derived
+  // from the REQUEST — and an answer that replaced more than the caller authorized cannot be `ok`.
+  const ignored = await replaceTextTool(replaceTextBridge(replaced({ occurrencesAfter: 0, replacements: 4 })))
+    .execute({ ...args, limit: 2 }, { editor: 'word' });
+  assert.equal(ignored.code, 'TOOL_UNCERTAIN');
+  assert.equal((await replaceTextTool(replaceTextBridge(replaced())).execute(args, { editor: 'word' })).ok, true);
+});
+
+test('replace_text maps every refusal class it can receive, and never invents a proof', async () => {
+  const legal = { search: REPLACE_SEARCH, replace: REPLACE_WITH };
+  assert.equal((await replaceTextTool(replaceTextBridge(replaced())).execute(legal, { editor: 'word' })).ok, true);
+  // A bridge that does not expose the entry point is the closed capability class, never a crash.
+  assert.equal((await replaceTextTool({ seen: [] }).execute(legal, { editor: 'word' })).code, 'CAPABILITY_UNAVAILABLE');
+  // The bridge's own closed classes are REPUBLISHED as they are.
+  for (const code of ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT', 'EDITOR_BUSY', 'CANCELLED']) {
+    const refused = await replaceTextTool(replaceTextBridge(null, { replaceText: async () => ({ ok: false, code }) }))
+      .execute(legal, { editor: 'word' });
+    assert.equal(refused.code, code, code);
+  }
+  const odd = await replaceTextTool(replaceTextBridge(null, { replaceText: async () => ({ ok: false, code: 'НЕИЗВЕСТНО' }) }))
+    .execute(legal, { editor: 'word' });
+  assert.equal(odd.code, 'TOOL_ERROR');
+  // A THROWN or RETURNED `APPLY_UNCERTAIN` is the runtime's own uncertain class, so the run stops fail-safe.
+  const thrown = replaceTextBridge(null, { replaceText: async () => { throw Object.assign(new Error('x'), { code: 'APPLY_UNCERTAIN' }); } });
+  assert.equal((await replaceTextTool(thrown).execute(legal, { editor: 'word' })).code, 'TOOL_UNCERTAIN');
+  const returned = replaceTextBridge(null, { replaceText: async () => ({ ok: false, code: 'APPLY_UNCERTAIN' }) });
+  assert.equal((await replaceTextTool(returned).execute(legal, { editor: 'word' })).code, 'TOOL_UNCERTAIN');
+  // AN UNINTERPRETABLE ENVELOPE is the module's unknown convention: a count that is not a non-negative
+  // safe integer is not a measurement this bridge can have published.
+  for (const answer of [null, 'ответ', { ok: true }, { ok: true, occurrencesBefore: 4 },
+    { ok: true, occurrencesBefore: '4', occurrencesAfter: 0, replacements: 4 },
+    { ok: true, occurrencesBefore: 4, occurrencesAfter: 1.5, replacements: 4 },
+    { ok: true, occurrencesBefore: 4, occurrencesAfter: 0, replacements: -1 }]) {
+    const broken = await replaceTextTool(replaceTextBridge(answer)).execute(legal, { editor: 'word' });
+    assert.equal(broken.ok, false, JSON.stringify(answer));
+    assert.equal(broken.code, 'TOOL_ERROR', JSON.stringify(answer));
+  }
+});
+
+test('replaceText forwards the caller signal and touches exactly one bridge entry point', async () => {
+  const controller = new AbortController();
+  const bridge = replaceTextBridge(replaced());
+  await replaceTextTool(bridge).execute({ search: REPLACE_SEARCH, replace: REPLACE_WITH },
+    { editor: 'word', signal: controller.signal });
+  assert.deepEqual(Object.keys(bridge.seen[0]).sort(), ['limit', 'matchCase', 'replace', 'search', 'signal']);
+  assert.equal(bridge.seen[0].signal, controller.signal);
+});
+
+test('replace_text measures the exact entry it publishes, and its bounded fields cannot reach the ceiling', async () => {
+  const bridge = replaceTextBridge(replaced());
+  const result = await replaceTextTool(bridge).execute({ search: REPLACE_SEARCH, replace: REPLACE_WITH }, { editor: 'word' });
+  assert.ok(utf8ByteLength(replaceTextEntry(result.data)) < AGENT_CEILINGS.toolResultBytes,
+    'the published entry is far inside the per-result ceiling the runtime applies');
+  // THE WIDEST SHAPE THE HANDLER CAN PUBLISH, and this leg's entry is the FIRST that echoes the caller's
+  // own words, so the worst case has to be MEASURED rather than asserted: both strings at their byte
+  // bound and in their most expensive serialization. A LONE SURROGATE is three UTF-8 bytes and SIX
+  // escaped characters in `JSON.stringify`, which is the 2x the arithmetic below allows for.
+  const surrogateSearch = '\ud800'.repeat(Math.floor(LIMITS.replaceTextSearchBytes / 3));
+  const surrogateReplace = '\ud800'.repeat(Math.floor(LIMITS.replaceTextReplaceBytes / 3));
+  assert.ok(utf8ByteLength(surrogateSearch) <= LIMITS.replaceTextSearchBytes);
+  assert.ok(utf8ByteLength(surrogateReplace) <= LIMITS.replaceTextReplaceBytes);
+  const widestData = { search: surrogateSearch, replace: surrogateReplace, matchCase: true,
+    limit: LIMITS.replaceTextLimitMax, occurrencesBefore: Number.MAX_SAFE_INTEGER,
+    occurrencesAfter: Number.MAX_SAFE_INTEGER, replacements: Number.MAX_SAFE_INTEGER,
+    bytes: Number.MAX_SAFE_INTEGER };
+  const widest = utf8ByteLength(replaceTextEntry(widestData));
+  assert.ok(widest < AGENT_CEILINGS.toolResultBytes,
+    `the widest legal entry (${widest}) is inside ${AGENT_CEILINGS.toolResultBytes}`);
+  // The escape-doubling bound the guard rests on, stated as arithmetic rather than as one sample.
+  assert.ok(2 * (LIMITS.replaceTextSearchBytes + LIMITS.replaceTextReplaceBytes) + 512 < AGENT_CEILINGS.toolResultBytes,
+    'two bounded strings at their byte bound cannot double past the entry ceiling');
+  const messages = toolResultMessages([{ tool: 'replace_text', result: { ok: true, data: widestData } }]);
+  assert.equal(JSON.parse(messages[0].content).results[0].data.limit, LIMITS.replaceTextLimitMax);
+});
+
+test('bridge replaceText dispatches ONE command, carries the request as DATA and proves the exact arithmetic', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = replaceRig({ namespace });
+  const pending = r.bridge.replaceText(replaceTextScope());
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole operation');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, replaceTextScope(),
+    'the request crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no request outlives its dispatch');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 4, 0, 0, 4],
+    'the body encodes the explicit phase, the needle count before and after, and the replacement count before and after');
+  assert.deepEqual(await pending, { ok: true, occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4 });
+  assert.equal(r.doc.state.replaces, 1, 'exactly ONE SearchAndReplace call made the whole change');
+  assert.equal(r.methods.length, 0, 'and executeMethod is authored nowhere on this leg');
+  assert.equal(r.doc.text(), 'финал один, финал два, финал три, финал четыре',
+    'the document really carries the replacement, so the counts were read off a real write');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('bridge replaceText counts the REPLACEMENT too, and an empty one is the empty-string deletion', async () => {
+  // A document that ALREADY holds two occurrences of the replacement: the pre-count of `replace` is 2 and
+  // the request's own arithmetic requires 2 + 4 after the write.
+  const r = replaceRig({ text: 'финал и финал, черновик один, черновик два, черновик три, черновик четыре' });
+  const pending = r.bridge.replaceText(replaceTextScope());
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 4, 0, 2, 6],
+    'the replacement counts are measured on BOTH sides of the write');
+  assert.deepEqual(await pending, { ok: true, occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4 });
+  assert.equal(r.doc.state.replaced, 4);
+  // AN EMPTY REPLACEMENT has no count of its own to read — the measured `Search('')` is not a query this
+  // leg can interpret — so the body drops those two slots entirely and the answer is THREE long.
+  const deletion = replaceRig({ text: 'черновик один, черновик два, черновик три, черновик четыре' });
+  const removal = deletion.bridge.replaceText(replaceTextScope({ replace: '' }));
+  assert.deepEqual(deletion.commands[0].answered, ['POST_INSERT', 4, 0],
+    'an empty replacement carries NO replacement counts at all');
+  assert.deepEqual(await removal, { ok: true, occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4 });
+  assert.equal(deletion.doc.state.replaced, 4, 'all four occurrences were deleted');
+  assert.deepEqual(deletion.doc.text(), ' один,  два,  три,  четыре');
+});
+
+test('a zero pre-count is a CLOSED refusal with ZERO writes and ZERO SearchAndReplace calls', async () => {
+  const r = replaceRig({ text: 'документ без иглы' });
+  assert.deepEqual(await r.bridge.replaceText(replaceTextScope()), { ok: false, code: 'TOOL_ERROR' });
+  assert.deepEqual(r.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'],
+    'the body decided it BEFORE its one write, so the answer carries the pre-insert phase');
+  assert.equal(r.doc.state.replaces, 0, 'ZERO SearchAndReplace calls');
+  assert.equal(r.doc.state.searches, 1, 'the one read that decided it was the pre-count');
+  assert.equal(r.doc.text(), 'документ без иглы', 'the document is untouched');
+  assert.equal(r.bridge.getState().busy, false, 'nothing was written, so the slot is RELEASED');
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('a limit BELOW the occurrence count is a closed refused class with ZERO writes', async () => {
+  // The measured primitive has NO count parameter: `SearchAndReplace` replaces EVERY match. A `limit`
+  // strictly below the occurrence count could therefore only be honoured by destroying more text than the
+  // caller authorized, so it is refused closed BEFORE the write — a "bad limit" is the closed argument
+  // class, and the request's own arithmetic (`min(limit, before)`) can only ever be exact for the limits
+  // this leg serves.
+  for (const limit of [1, 2, 3]) {
+    const r = replaceRig();
+    assert.deepEqual(await r.bridge.replaceText(replaceTextScope({ limit })), { ok: false, code: 'TOOL_ERROR' },
+      `limit ${limit}`);
+    assert.deepEqual(r.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'], `limit ${limit}`);
+    assert.equal(r.doc.state.replaces, 0, `limit ${limit}: ZERO SearchAndReplace calls`);
+    assert.equal(r.doc.text(), REPLACE_PILOT, `limit ${limit}: the document is untouched`);
+    assert.equal(r.bridge.getState().busy, false, `limit ${limit}: the slot is RELEASED`);
+  }
+  // A limit AT or ABOVE the count is served, and the dispatched scope names it.
+  for (const limit of [4, 9]) {
+    const r = replaceRig();
+    assert.deepEqual(await r.bridge.replaceText(replaceTextScope({ limit })),
+      { ok: true, occurrencesBefore: 4, occurrencesAfter: 0, replacements: 4 }, `limit ${limit}`);
+    assert.equal(r.commands[0].scope.limit, limit);
+    assert.equal(r.doc.state.replaces, 1, `limit ${limit}`);
+  }
+});
+
+test('an unexplained count after the write is UNCERTAIN with the slot HELD and no retry', async () => {
+  // A NATIVE THAT CHANGED NOTHING: the one `SearchAndReplace` really ran, the document really did not
+  // move, and the counts say so. The mutation may already have applied, so the slot stays HELD.
+  const silent = replaceRig({ replaceApplies: false });
+  assert.deepEqual(await silent.bridge.replaceText(replaceTextScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(silent.doc.state.replaces, 1, 'the mutation WAS dispatched exactly once');
+  assert.equal(silent.doc.text(), REPLACE_PILOT, 'and the document really did not change');
+  assert.equal(silent.bridge.getState().busy, true, 'so the slot is HELD and there is no retry');
+  assert.equal(silent.bridge.getState().uncertain, true);
+  assert.equal(silent.bridge.getState().writePending, true);
+  assert.deepEqual(await silent.bridge.replaceText(replaceTextScope()), { ok: false, code: 'EDITOR_BUSY' });
+  // A NATIVE THAT REPLACED FEWER OCCURRENCES THAN IT COUNTED: two of four. The post count is a real
+  // measurement and it disagrees with the request's own arithmetic.
+  const partial = replaceRig({ replaceAtMost: 2 });
+  assert.deepEqual(await partial.bridge.replaceText(replaceTextScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(partial.doc.state.replaces, 1);
+  assert.equal(partial.doc.state.replaced, 2);
+  assert.equal(partial.bridge.getState().busy, true);
+  // A NATIVE WHOSE REPLACEMENT SWALLOWED OCCURRENCES OF ITSELF: the needle really fell by the exact
+  // expectation, so ONLY the independent replacement leg can refute it — which is why both legs are
+  // measured. Two `аб` became one `б` each, so the replacement count is 2 and the request requires 2 + 2.
+  const swallowed = replaceRig({ text: 'абаб' });
+  assert.deepEqual(await swallowed.bridge.replaceText(replaceTextScope({ search: 'аб', replace: 'б' })),
+    { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(swallowed.doc.state.replaces, 1);
+  assert.equal(swallowed.doc.text(), 'бб', 'the needle leg is satisfied and the replacement leg is not');
+  assert.equal(swallowed.bridge.getState().busy, true);
+});
+
+test('a Search that throws is a closed class BEFORE the write and uncertain after it', async () => {
+  // BEFORE: the PRE count is the first read of the body and it decides whether anything may be written at
+  // all. A count this body cannot read is the closed capability class with ZERO writes.
+  const before = replaceRig({ searchThrowsAt: 1 });
+  assert.deepEqual(await before.bridge.replaceText(replaceTextScope()), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(before.commands[0].answered, ['PRE_INSERT', 'CAPABILITY_UNAVAILABLE'],
+    'the answered phase is the body\u2019s own: nothing had been written yet');
+  assert.equal(before.doc.state.replaces, 0, 'ZERO SearchAndReplace calls');
+  assert.equal(before.bridge.getState().busy, false, 'the slot is RELEASED');
+  assert.equal(before.bridge.getState().uncertain, false);
+  // The PRE count of the REPLACEMENT is the second read and it is still before the write.
+  const preReplace = replaceRig({ searchThrowsAt: 2 });
+  assert.deepEqual(await preReplace.bridge.replaceText(replaceTextScope()), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(preReplace.commands[0].answered, ['PRE_INSERT', 'CAPABILITY_UNAVAILABLE']);
+  assert.equal(preReplace.doc.state.replaces, 0);
+  assert.equal(preReplace.bridge.getState().busy, false);
+  // AFTER: the POST count throws once the write has run, so the phase is POST and the class is uncertain
+  // with the slot HELD.
+  const after = replaceRig({ searchThrowsAt: 3 });
+  assert.deepEqual(await after.bridge.replaceText(replaceTextScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(after.doc.state.replaces, 1, 'the write really happened');
+  assert.equal(after.bridge.getState().busy, true, 'the slot is HELD');
+  assert.equal(after.bridge.getState().uncertain, true);
+  assert.deepEqual(await after.bridge.replaceText(replaceTextScope()), { ok: false, code: 'EDITOR_BUSY' });
+  // A THROW OUT OF THE WRITE ITSELF is the same uncertain class: the phase turned immediately before it.
+  const threw = replaceRig({ replaceThrows: true });
+  assert.deepEqual(await threw.bridge.replaceText(replaceTextScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(threw.doc.state.replaces, 1);
+  assert.equal(threw.bridge.getState().busy, true);
+});
+
+test('the refusal PHASE is explicit in the replace protocol: a phase-less answer after a real write is uncertain', async () => {
+  const request = replaceTextScope();
+  // THE FORGERY THE PHASE GATE EXISTS FOR. The body turns its phase at the ONE `SearchAndReplace`, so an
+  // answer that cannot be confirmed as PRE-insert must never be read as a known refusal.
+  for (const forged of [['CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR'], ['APPLY_UNCERTAIN'],
+    ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ'], ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'], ['POST_INSERT', 'TOOL_ERROR']]) {
+    const r = replaceRig({ forge: forged });
+    const result = await r.bridge.replaceText(request);
+    assert.equal(r.doc.state.replaces, 1, `${JSON.stringify(forged)}: the body really mutated before the answer`);
+    assert.equal(result.ok, false, JSON.stringify(forged));
+    assert.equal(result.code, 'APPLY_UNCERTAIN',
+      `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, JSON.stringify(forged));
+    assert.equal(state.uncertain, true, JSON.stringify(forged));
+    assert.equal(state.writePending, true, `${JSON.stringify(forged)}: the write lock stays engaged`);
+    assert.deepEqual(await r.bridge.replaceText(request), { ok: false, code: 'EDITOR_BUSY' },
+      `${JSON.stringify(forged)}: no retry`);
+    assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
+  }
+  // THE DECODER'S OWN GATE, one class per phase-marked name: a `[PRE_INSERT, name]` answer keeps its
+  // name's class EXACTLY when the body can really make that refusal before its write. This leg has NO
+  // byte-gated refusal at all, so a forged `[PRE_INSERT, 'BYTE_LIMIT']` settles uncertain.
+  for (const [name, code] of [['CAPABILITY_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR', 'TOOL_ERROR'],
+    ['BYTE_LIMIT', 'APPLY_UNCERTAIN']]) {
+    const r = replaceRig({ forge: ['PRE_INSERT', name] });
+    assert.equal((await r.bridge.replaceText(request)).code, code, name);
+  }
+  const measuredAsRefusal = replaceRig({ forge: ['PRE_INSERT', 4, 0, 0, 4] });
+  assert.equal((await measuredAsRefusal.bridge.replaceText(request)).code, 'APPLY_UNCERTAIN');
+});
+
+test('bridge replaceText decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const request = replaceTextScope();
+  const run = (forge) => replaceRig({ forge }).bridge.replaceText(request);
+  // The authored shapes are FIVE slots for a non-empty replacement (the phase, the needle count before
+  // and after, the replacement count before and after) and THREE for the empty-string deletion. A
+  // malformed answer is a dispatched write whose outcome cannot be interpreted: UNCERTAIN, never a known
+  // error and never an `ok`.
+  for (const [label, forge] of [
+    ['a non-array answer', 'POST_INSERT'],
+    ['a plain object answer', { phase: 'POST_INSERT' }],
+    ['an answer with too few slots', ['POST_INSERT', 4, 0, 0]],
+    ['an answer with an extra slot', ['POST_INSERT', 4, 0, 0, 4, 'лишний']],
+    ['an answer that drops the replacement counts', ['POST_INSERT', 4, 0]],
+    ['a count that is not a whole number', ['POST_INSERT', 4.5, 0, 0, 4]],
+    ['a count that is negative', ['POST_INSERT', -1, 0, 0, 4]],
+    ['a count that is a string', ['POST_INSERT', '4', 0, 0, 4]],
+    ['a replacement count that is not a whole number', ['POST_INSERT', 4, 0, 0, 4.5]],
+    ['a PRE_INSERT answer over a measurement', ['PRE_INSERT', 4, 0, 0, 4]],
+    ['a one-slot answer', ['CAPABILITY_UNAVAILABLE']]
+  ]) {
+    const result = await run(forge);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  // The empty-replacement shape is the THREE-slot one, so a five-slot answer for it is not this body's.
+  const deletion = replaceRig({ forge: ['POST_INSERT', 4, 0, 0, 4] });
+  assert.equal((await deletion.bridge.replaceText(replaceTextScope({ replace: '' }))).code, 'APPLY_UNCERTAIN');
+  // The genuine PRE-INSERT refusals are the ONE shape that keeps a known class, and they carry their phase.
+  const empty = replaceRig({ text: 'ничего' });
+  assert.equal((await empty.bridge.replaceText(request)).code, 'TOOL_ERROR');
+  assert.deepEqual(empty.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR']);
+});
+
+test('bridge replaceText refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const request = replaceTextScope();
+  const noCommand = replaceRig({ command: false, namespace: { scope: request } });
+  assert.deepEqual(await noCommand.bridge.replaceText(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noCommand.commands.length, 0);
+  const noNamespace = replaceRig({ omitCarrier: true, namespace: { scope: request } });
+  assert.deepEqual(await noNamespace.bridge.replaceText(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noNamespace.commands.length, 0, 'nothing reached the editor');
+  assert.equal(noNamespace.bridge.getState().busy, false, 'and no slot is held for work that never ran');
+  const frozen = replaceRig({ namespace: Object.freeze({ scope: request }) });
+  assert.deepEqual(await frozen.bridge.replaceText(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(frozen.commands.length, 0);
+  // THE REQUEST IS CROSS-CHECKED AT THE ENTRY POINT, not taken on trust: a descriptor held directly and an
+  // uninterpretable scope both settle the closed argument class with NO dispatch.
+  const bounded = replaceRig({ namespace: { scope: request } });
+  for (const [label, raw] of [
+    ['an empty search', { ...request, search: '' }],
+    ['a non-string search', { ...request, search: 7 }],
+    ['an over-bound search', { ...request, search: 'я'.repeat(LIMITS.replaceTextSearchBytes) }],
+    ['a non-string replace', { ...request, replace: 7 }],
+    ['an over-bound replace', { ...request, replace: 'я'.repeat(LIMITS.replaceTextReplaceBytes) }],
+    ['a replacement that CONTAINS the needle', { ...request, replace: `${REPLACE_SEARCH}${REPLACE_WITH}` }],
+    ['a replacement holding an editor-rewritten TAB', { ...request, replace: 'а\tб' }],
+    ['a replacement holding an editor-rewritten U+001E', { ...request, replace: 'а\u001eб' }],
+    ['a non-boolean matchCase', { ...request, matchCase: 'да' }],
+    ['an omitted matchCase', { search: REPLACE_SEARCH, replace: REPLACE_WITH, limit: null }],
+    ['a zero limit', { ...request, limit: 0 }],
+    ['a fractional limit', { ...request, limit: 1.5 }],
+    ['a limit over the cap', { ...request, limit: LIMITS.replaceTextLimitMax + 1 }]
+  ]) {
+    assert.deepEqual(await bounded.bridge.replaceText(raw), { ok: false, code: 'TOOL_ERROR' }, label);
+  }
+  assert.equal(bounded.commands.length, 0, 'none of the refused requests reached the editor');
+  assert.equal(bounded.bridge.getState().busy, false, 'and none of them holds a slot');
+  // A PRE-ABORTED signal dispatches nothing at all.
+  const controller = new AbortController();
+  controller.abort();
+  const aborted = replaceRig({ namespace: { scope: request } });
+  assert.deepEqual(await aborted.bridge.replaceText({ ...request, signal: controller.signal }),
+    { ok: false, code: 'CANCELLED' });
+  assert.equal(aborted.commands.length, 0, 'an aborted caller never reaches the editor');
+});
+
+test('the replace body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  const r = replaceRig({ namespace: { scope: replaceTextScope() } });
+  const pending = r.bridge.replaceText(replaceTextScope());
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|decodeHeading|decodeRange|decodeHyperlink|decodeReplace|exactBlocksDelta|exactTableDelta|exactHeadingDelta|exactRangeFormat|exactHyperlinkDelta|exactReplaceDelta|replaceExpected|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== ['"]undefined['"]/, 'and it builds the public Api facade itself');
+  // THE MEASURED ROUTE, pinned: the count read and the ONE mutating call, each authored exactly once.
+  const code = withoutComments(carried.source);
+  assert.match(code, /\.Search\(/, 'the counts come from the measured Search primitive');
+  assert.equal((code.match(/SearchAndReplace\s*\(/g) ?? []).length, 1, 'the ONE mutation is authored exactly once');
+  assert.match(code, /PRE_INSERT/, 'the refusal phase is an explicit slot the body builds');
+  assert.match(code, /POST_INSERT/, 'and so is the phase it turns at its one write');
+  assert.equal(/executeMethod/.test(code), false,
+    'the executeMethod route never called back within 12 s and is authored nowhere');
+  assert.equal(/InsertContent/.test(code), false, 'and the legacy whole-array primitive is authored nowhere');
+  assert.equal(/\.Push\(/.test(code), false, 'this leg appends nothing: it rewrites text in place');
+  assert.equal(/ToMarkdown|ToHtml/.test(code), false, 'and it reads no export at all: the counts are the proof');
+  assert.equal(/\.AddText\(|CreateParagraph/.test(code), false, 'nothing is constructed on this leg');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it. Only `Api` and `scope` are bound here, so a body that closed over
+  // a module binding would raise ReferenceError exactly as it did natively on 2026.3.1.
+  const fresh = replaceRig();
+  const evaluated = new Function('Api', 'scope', 'return (' + carried.source + ')();')(fresh.api, carried.scope);
+  assert.deepEqual(evaluated, ['POST_INSERT', 4, 0, 0, 4],
+    'the request arrived as DATA and the counts are the document\u2019s own');
+  assert.equal(fresh.doc.state.replaces, 1, 'and the ONE SearchAndReplace is where the change happens');
+  assert.equal((await pending).replacements, 4);
 });

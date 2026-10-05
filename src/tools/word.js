@@ -232,6 +232,17 @@ function formatRangeEntryBytes(data) {
 function addHyperlinkEntryBytes(data) {
   return toolResultEntryBytes('add_hyperlink', data);
 }
+// `replace_text`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the echoed request (the needle, the replacement, the resolved case flag and the limit or
+// `null`), the two occurrence counts and the derived replacement count, plus the dispatched scope's own byte
+// size. THE MEASUREMENT IS NOT A FORMALITY ON THIS LEG, and it is the FIRST result on this branch that
+// echoes the caller's own words: `search` and `replace` are bounded in BYTES, and `JSON.stringify` serializes
+// a LONE SURROGATE — three UTF-8 bytes — as six ASCII characters, so the entry can be up to twice those
+// bounds. `LIMITS.replaceTextSearchBytes`/`replaceTextReplaceBytes` carry the arithmetic that keeps even that
+// worst case under `AGENT_CEILINGS.toolResultBytes`, and the handler measures the real entry regardless.
+function replaceTextEntryBytes(data) {
+  return toolResultEntryBytes('replace_text', data);
+}
 // THE CLOSED ALIGNMENT VOCABULARY, in ONE place so the value the schema advertises, the value the body
 // applies, the value the readback is compared against and the value the result publishes can never be four
 // different strings. It is MEASURED rather than invented: the vendored 2026.1.2 editor SDK's
@@ -375,6 +386,75 @@ function hyperlinkAddress(value) {
   if (value === undefined) return Object.freeze({ appended: true, index: null });
   return measuredCount(value) && value <= LIMITS.addHyperlinkIndexMax
     ? Object.freeze({ appended: false, index: value }) : null;
+}
+
+// THE CLOSED REQUEST OF `replace_text`, in ONE place so the schema advertises, the precondition refuses, the
+// handler dispatches and the result republishes the SAME rule. The measurements every clause rests on are
+// stated beside their twins in `src/plugin/bridge.js` (`replaceSearch`, `replaceReplacement`,
+// `recursiveReplacement`, `rewrittenReplacement`) — the two modules cannot import each other, so each side
+// reads the SAME `LIMITS` table in the same words. The five measured facts, all on the target
+// (Astra / R7 2026.1.2.1942) or read out of the vendored 2026.1.2 bundle:
+//   * `doc.SearchAndReplace({ searchString, replaceString, matchCase })` MUTATES the document and returns
+//     `undefined`, so no return value can ever be this tool's signal;
+//   * `doc.Search(query, matchCase)` answers a REAL ARRAY of ranges (measured 4 strict / 5 insensitive / 0
+//     absent), which is the count the whole arithmetic is built on;
+//   * the builder's own `SearchAndReplace` replaces EVERY match (`ReplaceSearchElement(V, true, null, false)`)
+//     and carries NO count parameter — which is why a `limit` below the occurrence count is refused below;
+//   * it DEFAULTS `matchCase` to `true` when the key is absent (`U.matchCase !== void 0 ? U.matchCase : true`),
+//     which is why the resolved flag is always an explicit boolean on the wire and why the ABSENT form is
+//     resolved HERE, in one place, to `false`;
+//   * it REWRITES five characters of the replacement before storing it (`\t`→`^t`, `\v`→`^l`, `\f`→`^m`,
+//     U+000E→`^n`, U+001E→`^~` — code units 9, 11, 12, 14 and 30), so a replacement holding one of them could
+//     never be counted back and is refused BEFORE the write rather than written and left unprovable.
+// A REPLACEMENT THAT CONTAINS THE NEEDLE is refused for a reason of its own rather than for tidiness: the
+// primitive replaces every match of the needle, so a replacement holding the needle would leave occurrences
+// behind that THIS call wrote, and `occurrencesAfter === occurrencesBefore - expected` could never be exact.
+// The count arithmetic would not merely be unproven; it would be meaningless.
+// THE NEEDLE IS NOT SUBJECT TO THE CONTROL-CHARACTER RULE: it is passed to `CSearchSettings.SetText`
+// verbatim and is counted exactly as it stands, so a needle holding any of the five characters above is
+// served. Only the REPLACEMENT is rewritten by the editor.
+function replaceSearch(value) {
+  if (typeof value !== 'string' || value === '') return null;
+  return utf8ByteLength(value) > LIMITS.replaceTextSearchBytes ? null : value;
+}
+function replaceReplacement(value) {
+  if (typeof value !== 'string') return null;
+  return utf8ByteLength(value) > LIMITS.replaceTextReplaceBytes ? null : value;
+}
+// THE ABSENT CASE FLAG IS `false` AND THAT IS THE DOCUMENTED DEFAULT, resolved in ONE place: the schema
+// expresses no default (its closed keyword set has none), the precondition and the handler both read it
+// through this function, and the dispatched scope therefore never carries `undefined` — which matters,
+// because the editor would read that as `true`.
+function replaceMatchCase(value) {
+  if (value === undefined) return false;
+  return typeof value === 'boolean' ? value : null;
+}
+// THE OPTIONAL LIMIT, in the same two-shape form as the optional paragraph address above: an ABSENT key is
+// the unlimited form (`{ limited: false, max: null }`), and a present one must be a whole number at least 1
+// and inside the advertised ceiling. Anything else — a fractional, a negative, a zero, a string — is the
+// closed argument class with ZERO writes. The limit is a CEILING on the replacements a caller authorizes, not
+// a truncation: the measured primitive cannot replace a proper subset, so a limit below the occurrence count
+// is refused by the bridge body BEFORE its one write.
+function replaceLimit(value) {
+  if (value === undefined) return Object.freeze({ limited: false, max: null });
+  return measuredCount(value) && value >= 1 && value <= LIMITS.replaceTextLimitMax
+    ? Object.freeze({ limited: true, max: value }) : null;
+}
+function recursiveReplacement(search, replacement) {
+  return replacement !== '' && replacement.includes(search);
+}
+const REWRITTEN_REPLACEMENT = Object.freeze(['\t', '\u000b', '\u000c', '\u000e', '\u001e']);
+function rewrittenReplacement(replacement) {
+  for (const character of REWRITTEN_REPLACEMENT) if (replacement.includes(character)) return true;
+  return false;
+}
+// THE EXPECTATION, DERIVED FROM THE REQUEST and re-derived HERE as well as in the bridge's ticket, so an
+// `ok` envelope whose own counts contradict the call that produced it is never republished as its proof. It
+// is a pure function of the request's own `limit` and the measured pre-count: `min(limit, before)`, and
+// `before` when no limit was named. (`replaceExpected` in src/plugin/bridge.js is the twin of this function;
+// the two modules cannot import each other, so both spell the same formula.)
+function replaceExpected(limit, before) {
+  return limit === null ? before : Math.min(limit, before);
 }
 
 export function createWordTools(bridge) {
@@ -2219,6 +2299,207 @@ export function createWordTools(bridge) {
         // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the four
         // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
         const entry = addHyperlinkEntryBytes(published);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(published);
+      }
+    }),
+    // --- THE SIXTH MUTATION OF SPRINT 3: `replace_text`, the ELEVENTH Word tool, and the FIRST whose whole
+    // proof is an EXACT OCCURRENCE COUNT ---
+    //
+    // THE POLICY IS `confirm`, AND THAT IS THE PLAN'S OWN DECISION rather than this module's taste: Phase 0
+    // of the sprint plan recorded `confirm` for this tool because replacing text is a document-wide rewrite
+    // the human confirms before it runs, exactly like `replace_selection`. A `confirm` descriptor is never
+    // reached from the loop — the runtime publishes PREVIEW_READY from the descriptor and the validated
+    // arguments (§6.3) — and the handler below is kept intact anyway because a descriptor is also executable
+    // when it is held directly, and because a later one-value switch (`policy: 'auto'`) must turn on a
+    // handler that is already complete rather than a stub. THE HANDLER IS THEREFORE FULLY IMPLEMENTED AND
+    // FULLY TESTED AS A MUTATION.
+    //
+    // THE MEASURED FACTS THIS LEG RESTS ON, all on the target (Astra / R7 2026.1.2.1942) or read out of the
+    // vendored 2026.1.2 bundle (`.local/stage-b-runtime/vendor-word-sdk-all.js`) rather than assumed:
+    //   * `doc.SearchAndReplace({ searchString, replaceString, matchCase })` MUTATES the document and
+    //     returns `undefined`. It is therefore never a result signal, and the proof must come from the
+    //     document.
+    //   * `doc.Search(query, matchCase)` answers a REAL ARRAY of range objects, measured: a query with 4
+    //     strict matches answers 4, the same query case-insensitively answers 5, and a missing query answers
+    //     0. An EXACT occurrence count is therefore available BEFORE and AFTER the one write, per object,
+    //     without exporting anything.
+    //   * the builder's own body is
+    //     `SearchAndReplace = function (U) { var S = new AscCommon.CSearchSettings; S.SetText(U.searchString);
+    //     S.SetMatchCase(U.matchCase !== void 0 ? U.matchCase : true); var E = this.Document.Search(S);
+    //     if (E) { var V = U.replaceString; V = V.replaceAll("\t","^t"), V = V.replaceAll("\v","^l"),
+    //     V = V.replaceAll("\f","^m"), V = V.replaceAll("\u000e","^n"), V = V.replaceAll("\u001e","^~"),
+    //     this.Document.ReplaceSearchElement(V, true, null, false) } }`
+    //     and it has three consequences this tool is built on: `matchCase` DEFAULTS TO `true` when the key is
+    //     absent (so the wire always carries an explicit boolean); it replaces EVERY match and carries NO
+    //     count parameter (so a partial limit is unservable — see the gate below); and it REWRITES five
+    //     characters of the replacement before storing it (code units 9, 11, 12, 14 and 30), so a
+    //     replacement holding one of them could never be counted back.
+    //   * `executeMethod('SearchAndReplace', …)` NEVER called back within 12 s and is authored NOWHERE: this
+    //     leg goes through the command channel alone.
+    //
+    // THE OUTCOME PROOF IS EXACT OCCURRENCE ARITHMETIC, PER OBJECT AND WITHOUT ANY EXPORT:
+    //   1. PRE: the needle is counted with `doc.Search(search, matchCase)`. A count of ZERO is a CLOSED
+    //      ARGUMENT refusal with ZERO writes — nothing to replace is not a write — and an unreadable count is
+    //      the closed CAPABILITY class, also with ZERO writes.
+    //   2. ONE `doc.SearchAndReplace({...})` call. Nothing else on this leg mutates.
+    //   3. POST: the needle is counted again, and the replacement too WHEN IT IS NON-EMPTY (there is no count
+    //      of the empty string to read, so the body drops those two slots rather than inventing a zero).
+    //   4. `ok` ONLY when the arithmetic is exactly the REQUEST's own:
+    //        no limit         → occurrencesAfter === 0 and replacements === occurrencesBefore;
+    //        a limit of k     → occurrencesAfter === occurrencesBefore - min(k, occurrencesBefore)
+    //                           and replacements === min(k, occurrencesBefore).
+    //      The expectation is derived from the REQUEST on BOTH sides — `replaceExpected` here and its twin in
+    //      the bridge's ticket — and never read back out of the answer, so a flipped count cannot carry a
+    //      contradiction. When the replacement is non-empty the bridge additionally requires
+    //      `replaceAfter === replaceBefore + expected`, the independent leg that refutes a document which
+    //      gained something other than the requested text.
+    //   5. ANYTHING ELSE — a count that does not match, a search that throws, an unreadable count, a
+    //      non-integer count — is `APPLY_UNCERTAIN` / `TOOL_UNCERTAIN` with the write slot HELD and NO retry.
+    //      On the native side that is the decoder's `INVALID_DATA` and the ticket's own exact-delta rule; on
+    //      this side it is the re-derived arithmetic below.
+    //
+    // AN EMPTY REPLACEMENT IS PROVEN, AND THE DERIVATION IS THE REQUEST'S: with no limit the expectation is
+    // `min(occurrencesBefore, occurrencesBefore) = occurrencesBefore`, so a deletion is proven by
+    // `occurrencesAfter === 0` and `replacements === occurrencesBefore` — the deletion count is the number of
+    // occurrences that were there and are not any more.
+    //
+    // THE LIMIT IS A CEILING, NOT A TRUNCATION, and the distinction is MEASURED. `min(k, before)` is the
+    // request's own expectation, and it can only be exact when the write replaces ALL of the counted
+    // occurrences — which the primitive always does. A `limit` strictly below the occurrence count is
+    // therefore refused by the body as the closed argument class ("a bad limit") BEFORE its one write: serving
+    // it would rewrite more text than the caller authorized, and there is no route to a proper subset. The
+    // consequence is stated rather than hidden: for every request this tool actually serves,
+    // `min(k, before) === before`, and the arithmetic above is `... - occurrencesBefore`.
+    //
+    // THE FAILURE MAP, each class closed: a wrong editor is `CAPABILITY_UNAVAILABLE` (precondition AND
+    // handler, because a descriptor is also executable when it is held directly); an empty or over-bound
+    // needle, a non-string or over-bound replacement, a non-boolean `matchCase`, a `limit` that is not a whole
+    // number in [1, replaceTextLimitMax], a replacement that CONTAINS the needle, a replacement holding one of
+    // the five editor-rewritten characters, and — from the body, where the count is known — ZERO
+    // pre-occurrences and a limit below that count are the closed argument class with ZERO writes, decided
+    // BEFORE the mutation; a missing bridge entry point is `CAPABILITY_UNAVAILABLE`; an unusable baseline and
+    // a missing or throwing count primitive are `CAPABILITY_UNAVAILABLE` / `TOOL_ERROR` with ZERO writes,
+    // decided in the body before the phase turns; a bridge refusal keeps the closed class it reported
+    // (`refusalCode`); an envelope this handler cannot interpret is the module's unknown convention,
+    // `known()`; a returned or thrown `APPLY_UNCERTAIN` and any outcome that is not the exact arithmetic
+    // above are `TOOL_UNCERTAIN` with the slot HELD and NO retry; and an over-ceiling result entry is
+    // `BYTE_LIMIT`.
+    //
+    // THE LIMITATIONS AT THE POINT A CALLER MEETS THEM, so a later round does not have to rediscover them:
+    //   * the replacement is COUNTED, so a replacement that creates or destroys OTHER occurrences of the
+    //     needle (e.g. needle `ab`, replacement `ba` over `abab`) fails the arithmetic and settles uncertain
+    //     with the slot held — fail-safe, never a false `ok`;
+    //   * `matchCase` is resolved to `false` when absent, and the wire never omits it, because the editor's
+    //     own default is the opposite;
+    //   * the needle is matched with the editor's OWN search semantics (the same primitive the pre- and
+    //     post-counts use), so this tool proves what the editor did and not a text substitution of its own.
+    defineTool({
+      name: 'replace_text', kind: 'mutate', editors: ['word'], policy: 'confirm', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['search', 'replace'],
+        properties: {
+          search: { type: 'string', minBytes: 1, maxBytes: LIMITS.replaceTextSearchBytes },
+          // THE REPLACEMENT MAY BE EMPTY, and the schema says so by carrying NO lower bound: deleting the
+          // search text is a legitimate replace, and `minBytes: 1` would advertise a refusal this tool must
+          // not make.
+          replace: { type: 'string', maxBytes: LIMITS.replaceTextReplaceBytes },
+          // THE OPTIONAL CASE FLAG. The schema expresses no default because its closed keyword set has none;
+          // the ABSENT form is resolved to `false` in `replaceMatchCase`, in one place, and the dispatched
+          // scope always carries the resolved boolean.
+          matchCase: { type: 'boolean' },
+          // THE OPTIONAL LIMIT: the maximum number of replacements this call authorizes. Omitted = replace
+          // every occurrence. At least 1 (a limit of 0 authorizes no replacement at all), and it is a ceiling
+          // rather than a truncation for the measured reason stated above.
+          limit: { type: 'integer', minimum: 1, maximum: LIMITS.replaceTextLimitMax }
+        } },
+      precondition: (args, ctx) => {
+        if (ctx?.editor !== 'word') return { code: ERROR_CODES.CAPABILITY_UNAVAILABLE, message: REFUSAL };
+        // Every closed argument rule is re-checked HERE and not only by the schema, because a descriptor is
+        // also executable when it is held directly and nothing this mutation cannot interpret may reach the
+        // bridge. The ORDER is part of the contract: the four shapes are judged before the two relational
+        // rules, so a call that is wrong in two ways receives the same class either way.
+        const search = replaceSearch(args?.search);
+        const replacement = replaceReplacement(args?.replace);
+        const matchCase = replaceMatchCase(args?.matchCase);
+        const limit = replaceLimit(args?.limit);
+        if (search === null || replacement === null || matchCase === null || limit === null) {
+          return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        }
+        if (recursiveReplacement(search, replacement) || rewrittenReplacement(replacement)) {
+          return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        }
+        return null;
+      },
+      execute: async (args, ctx) => {
+        // The editor is re-checked HERE as well as in the precondition, for the reason the other mutations
+        // state: a descriptor is also executable when it is held directly, and a Word mutation offered to a
+        // spreadsheet must never reach the bridge.
+        if (ctx?.editor !== 'word') return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (missingBridgeMethod(bridge, 'replaceText')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The four closed arguments are resolved ONCE and carried to the bridge, so the needle the editor
+        // counts, the replacement it stores, the case flag it applies, the ceiling the body enforces and the
+        // values this handler later judges the answer against cannot be different values. `limit` is the
+        // request's own `null`-or-number form, and the absent key is the unlimited form rather than an
+        // invented bound.
+        const search = replaceSearch(args?.search);
+        const replacement = replaceReplacement(args?.replace);
+        const matchCase = replaceMatchCase(args?.matchCase);
+        const limit = replaceLimit(args?.limit);
+        if (search === null || replacement === null || matchCase === null || limit === null) return known();
+        if (recursiveReplacement(search, replacement) || rewrittenReplacement(replacement)) return known();
+        const requested = limit.limited ? limit.max : null;
+        const request = { search, replace: replacement, matchCase, limit: requested,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        // `bytes` is the size of the dispatched SCOPE and it is measured on exactly what is forwarded, never
+        // on the caller's raw object: the needle, the replacement, the resolved case flag and the limit or
+        // the `all` sentinel that stands for its absence.
+        const bytes = utf8ByteLength(`${search}:${replacement}:${matchCase ? 'case' : 'nocase'}:${requested === null ? 'all' : requested}`);
+        let result;
+        try { result = await bridge.replaceText(request); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops the
+          // run. Every other bridge throw is a closed local failure.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing it)
+        // when the ticket has already been created, so the class is classified here before any ordinary
+        // refusal path can treat it as a known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own. The order of
+        // these checks is the CONTRACT and not a style choice: the three FIELDS must be counts the bridge's
+        // own decoder guarantees (a non-negative safe integer), so a value of another type is a shape this
+        // bridge cannot have published — the module's unknown class — while the ARITHMETIC below is decided
+        // over values it really can publish, and a wrong arithmetic is the runtime's own `TOOL_UNCERTAIN`,
+        // because the write has already run and a count is not a proof.
+        if (!measuredCount(result.occurrencesBefore) || !measuredCount(result.occurrencesAfter) ||
+            !measuredCount(result.replacements)) return known();
+        // THE EXPECTATION IS RE-DERIVED HERE FROM THE REQUEST, exactly as the bridge's ticket derives it, so
+        // an `ok` envelope whose own counts contradict this call is never republished as its proof.
+        //   * A POST answer claiming ZERO pre-occurrences describes a write this tool's body never makes (it
+        //     refuses that case BEFORE its one `SearchAndReplace`), and the run stops fail-safe rather than
+        //     publishing a replacement count of zero.
+        //   * `occurrencesAfter` must be `occurrencesBefore - expected`, which is zero for every request this
+        //     leg serves and is the whole of the replace-all proof.
+        //   * `replacements` must BE that expectation: it is derived from the request and never taken from
+        //     the answer, so an editor that replaced fewer or more occurrences is refuted.
+        if (result.occurrencesBefore < 1) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        const expected = replaceExpected(requested, result.occurrencesBefore);
+        if (result.occurrencesAfter !== result.occurrencesBefore - expected) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.replacements !== expected) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // THE PUBLISHED SHAPE echoes the resolved request and reports ONLY the counts that were proven. An
+        // empty replacement is published as the empty string it was; `limit` is `null` for the unlimited form
+        // rather than an invented bound.
+        const published = Object.freeze({ search, replace: replacement, matchCase, limit: requested,
+          occurrencesBefore: result.occurrencesBefore, occurrencesAfter: result.occurrencesAfter,
+          replacements: result.replacements, bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the six
+        // other mutations measure it (see `toolResultEntryBytes`); the failure class is closed regardless.
+        const entry = replaceTextEntryBytes(published);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(published);
       }

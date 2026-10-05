@@ -132,6 +132,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // `this.Paragraph.SelectAll(1)` and would replace the paragraph's content, so it must never appear in this
   // body. The legacy whole-array insert primitive — measured to land at the START and to replace existing text
   // under a selection — is absent too.
+  // TEN legs are carried inline, and the last one is the TEXT REPLACE (`replace_text`): the SIXTH body that
+  // MUTATES the document through the `Api` builder, the FOURTH one that changes existing text, and the FIRST
+  // whose proof is an exact OCCURRENCE COUNT. It is classified by its OWN mutating primitive
+  // (`SearchAndReplace`, which no other leg authors) BEFORE the `.Search(` branch, because its counts come
+  // from that same measured `Search` primitive — without its own branch it would be blessed as the read-only
+  // SEARCH leg. It takes its `{ search, replace, matchCase, limit }` scope as DATA, counts the needle (and,
+  // when the replacement is non-empty, the replacement) BEFORE the one write and again after it, and proves
+  // the request's OWN arithmetic: `occurrencesAfter === occurrencesBefore - min(limit, occurrencesBefore)`.
+  // `doc.SearchAndReplace` really MUTATES and returns `undefined` (measured), so no primitive's return value
+  // is read; the counts are the proof. `executeMethod('SearchAndReplace', …)` never called back within 12 s
+  // and is authored nowhere, the export readers (`ToHtml`/`ToMarkdown`) are absent because no export is
+  // involved, and nothing is constructed or appended, so `Push`/`CreateParagraph`/`InsertContent` must stay
+  // unauthored on this leg.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -145,8 +158,22 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(code, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      // The ninth leg, whose narrative is stated once at the head of this classifier.
-      if (code.includes('CreateHyperlink')) {
+      // The tenth leg, whose narrative is stated once at the head of this classifier.
+      if (code.includes('SearchAndReplace')) {
+        assert.match(code, /\bscope\b/, 'the replace body takes its needle, replacement, case flag and limit from the injected command scope');
+        assert.match(code, /\.Search\(/, 'and counts the occurrences through the measured Search primitive');
+        assert.match(code, /PRE_INSERT/, 'and marks its pre-write refusals with an explicit phase');
+        assert.match(code, /POST_INSERT/, 'and turns that phase at its ONE mutating call');
+        assert.equal((code.match(/SearchAndReplace\s*\(/g) ?? []).length, 1,
+          'the ONE mutation is authored exactly once, and never through a second route');
+        assert.equal(code.includes('executeMethod'), false,
+          'the executeMethod route never called back within 12 s and is authored nowhere');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        assert.equal(code.includes('document.Push('), false, 'this leg appends nothing: it rewrites text in place');
+        assert.equal(code.includes('ToHtml'), false, 'and reads no export: the occurrence counts are the proof');
+        assert.equal(code.includes('ToMarkdown'), false, 'neither export is involved');
+        legs.push('replace');
+      } else if (code.includes('CreateHyperlink')) {
         assert.match(code, /\bscope\b/, 'the hyperlink body takes its url, label and address from the injected command scope');
         assert.match(code, /GetAllParagraphs/, 'and checks the address against the document\u2019s own paragraph list');
         assert.match(code, /AddElement\(/, 'and places the link through the measured element append');
@@ -223,8 +250,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 9, 'the adapter dispatches exactly the nine authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'hyperlink', 'search', 'structure', 'table'],
+  assert.equal(commands, 10, 'the adapter dispatches exactly the ten authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'hyperlink', 'replace', 'search', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

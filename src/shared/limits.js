@@ -471,6 +471,40 @@ export const LIMITS = Object.freeze({
   addHyperlinkTextBytes: 512,
   addHyperlinkIndexMax: 128,
   addHyperlinkSchemes: Object.freeze(['http://', 'https://']),
+  // The bounded TEXT REPLACE (`replace_text`) — the ELEVENTH Word tool, the SIXTH MUTATION of Sprint 3, and
+  // the FIRST tool whose whole proof is an EXACT OCCURRENCE COUNT read out of the document itself. It adds
+  // THREE static per-call bounds and NO vocabulary:
+  //   * `replaceTextSearchBytes` bounds the NEEDLE. 256 is the same scale as `findQueryBytes` and it is
+  //     deliberately its own constant rather than an alias: a needle is what the document is COUNTED by, so
+  //     a later widening of the search read must not silently widen two tools.
+  //   * `replaceTextReplaceBytes` bounds the REPLACEMENT, which MAY BE EMPTY (deleting the needle is a
+  //     legitimate replace) and is therefore bounded ABOVE only. 2048 is this module's existing text-PAYLOAD
+  //     scale (`insertBlockBytes`/`addHyperlinkUrlBytes`) because a replacement becomes document text.
+  //   * `replaceTextLimitMax` bounds the optional `limit` — the number of replacements the caller authorizes
+  //     in ONE confirmed call. It is its own constant and not an alias of `findMatchesMax` (32) or of an
+  //     index bound: those bound a REPORT and an ADDRESS, while this bounds how much text one confirmation
+  //     may rewrite, and a chapter-sized document routinely holds thousands of occurrences of a common word.
+  //     It is an UPPER CEILING on the request, never a truncation: the measured primitive carries NO count
+  //     parameter (the vendored 2026.1.2 `SearchAndReplace` replaces EVERY match through
+  //     `ReplaceSearchElement(V, true, null, false)`), so a `limit` strictly below the occurrence count is
+  //     REFUSED CLOSED before the write — a partial replacement cannot be honoured and destroying more text
+  //     than the caller authorized is not an option. The consequence is that the request's own arithmetic,
+  //     `occurrencesAfter === occurrencesBefore - min(limit, occurrencesBefore)`, is exactly `... - occurrencesBefore`
+  //     for every request this leg actually serves.
+  // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
+  // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({tool, ok, data})`, the shape
+  // `stringifyToolResults` measures and `runtime.js:27-36` replaces with the literal "the tool result
+  // could not be serialized" when it is exceeded). This is the FIRST result on this branch that echoes the
+  // caller's own words, so its bound is ARITHMETIC rather than a count of scalars: `search` and `replace`
+  // are at most `replaceTextSearchBytes` (256) and `replaceTextReplaceBytes` (2048) UTF-8 bytes, and the
+  // most expensive serialization of a string is a LONE SURROGATE — three UTF-8 bytes that `JSON.stringify`
+  // emits as six ASCII characters, a doubling. Even at 2 × (256 + 2048) = 4608 bytes, plus five bounded
+  // numbers (at most 16 digits each) and the fixed envelope, the entry stays under 5 KiB against 16384, so
+  // the tool's own guard cannot fire for any shape its handler can publish; it is nevertheless the ENFORCED
+  // bound, exactly as it is for the six mutations before it.
+  replaceTextSearchBytes: 256,
+  replaceTextReplaceBytes: 2048,
+  replaceTextLimitMax: 4096,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,
