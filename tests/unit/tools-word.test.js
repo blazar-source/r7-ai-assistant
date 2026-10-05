@@ -5724,7 +5724,8 @@ function headingAssigned(headingsBefore, overrides = {}) {
     textUnchanged: true, styleRead: true, styleMatches: true, ...overrides };
 }
 function headingDocument({ texts = ['первый абзац', 'второй абзац'], headingIndexes = [], styles = true,
-  apply = true, restyle = null, grow = 1, concurrent = null, noParaPr = false, paraPrThrows = false } = {}) {
+  apply = true, restyle = null, grow = 1, concurrent = null, noParaPr = false, paraPrThrows = false,
+  freshHeadingWrappers = false, readback = null } = {}) {
   const state = { styleNames: [], styles: [], pushes: 0, pushed: [], insertContents: 0, setStyles: 0 };
   let resolved = null;
   let dispatches = 0;
@@ -5760,15 +5761,26 @@ function headingDocument({ texts = ['первый абзац', 'второй а�
   for (const double of doubles) {
     if (noParaPr) continue;
     if (paraPrThrows) double.GetParaPr = () => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); };
-    else double.GetParaPr = function () { const self = this; return { GetStyle() { return self.style; } }; };
+    // `readback` (when given) rewrites the name the paragraph's OWN `GetStyle()` answers, which is how a
+    // build whose getter spells the same style differently is modelled without weakening the primitive.
+    else double.GetParaPr = function () {
+      const self = this;
+      return { GetStyle() { return readback === null ? self.style : readback(self.style); } };
+    };
   }
   // THE HEADING LIST IS DERIVED FROM THE PARAGRAPHS THAT CARRY A HEADING STYLE, exactly as the real editor
   // reports it: the double is told NOTHING about a request, so every count the body measures is the
-  // document's own.
+  // document's own. UNLESS `freshHeadingWrappers` is asked for, the list answers THE PARAGRAPH OBJECTS
+  // THEMSELVES — the same objects `GetAllParagraphs()` answers — because that is what the body's identity
+  // leg compares against. `freshHeadingWrappers: true` models the one build this tool cannot verify through:
+  // a heading list that answers a NEW wrapper per call, which no reference comparison can match.
   const headingDoubles = () => doubles.filter(double => double.style !== null);
+  const headingList = () => (freshHeadingWrappers
+    ? headingDoubles().map(double => ({ GetText() { return double.text; } }))
+    : headingDoubles());
   return { state, doubles, document: {
     GetAllParagraphs() { return doubles.slice(); },
-    GetAllHeadingParagraphs() { return headingDoubles().map(double => ({ GetText() { return double.text; } })); },
+    GetAllHeadingParagraphs() { return headingList(); },
     GetStyle(name) { state.styleNames.push(name); resolved = styles ? styleFor(name) : null; return resolved; },
     // THE DOCUMENT-LEVEL MUTATING PRIMITIVE IS OFFERED AND NEVER TAKEN. The measured route is
     // `paragraph.SetStyle(style)` — asserted by the self-contained-body test below — so this remains a
@@ -6310,6 +6322,156 @@ test('set_heading is offered with policy auto and a model call assigns exactly o
   assert.deepEqual(published.data, { paragraph: 1, level: 2, heading: true, headingsBefore: 1, headingsAfter: 2,
     styleRead: true, styleMatches: true, bytes: utf8ByteLength('1:2:Heading 2') },
   'the tool publishes the eight fields it names; the counts are the ones the bridge measured');
+});
+
+// --- The review round: the IDENTITY leg, the folded readback and the already-heading pre-state ---
+//
+// An independent review reproduced a FALSE SUCCESS through the real authored body: two paragraphs holding
+// the SAME text, and a `SetStyle` that landed on the SECOND one. The old membership leg compared TEXTS, so
+// the addressed paragraph's text was "among the post heading paragraphs" and the tool reported `ok` with the
+// slot RELEASED although paragraph 0 had never been restyled. The leg is now an IDENTITY comparison against
+// the object the body addressed (`afterTarget`), which is the body's own handle on the paragraph the caller
+// named; the addressed paragraph's TEXT stays a secondary signal (`textUnchanged`) and can never establish
+// identity. The four tests below pin the leg in BOTH directions, pin that it decides alone when the style
+// readback is unavailable, and pin the fail-safe outcome on the one build it cannot decide through.
+test('set_heading verifies a duplicate-text document by OBJECT identity: the ADDRESSED paragraph becomes the heading', async () => {
+  const request = { paragraph: 0, level: 1, styleName: 'Heading 1' };
+  // Two paragraphs with the SAME text, and the addressed one (index 0) is the one the mutation really
+  // restyles: the identity leg holds, so the assignment is verified through the real body.
+  const r = headingRig({ texts: ['дубль', 'дубль'], namespace: { scope: request } });
+  const pending = r.bridge.setHeading(request);
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole assignment');
+  assert.deepEqual(await pending, { ok: true, styleName: 'Heading 1', headingsBefore: 0,
+    headingsAfter: 1, targetAdded: true, textUnchanged: true, styleRead: true, styleMatches: true });
+  assert.deepEqual(r.doc.doubles.map(double => double.style), ['Heading 1', null],
+    'the ADDRESSED paragraph carries the style: the document is the evidence, not the tool\'s report');
+  assert.equal(r.bridge.getState().busy, false, 'a verified assignment releases the slot');
+});
+
+test('set_heading holds the slot when a duplicate-text document restyles the OTHER paragraph (the false-ok reproduction)', async () => {
+  const request = { paragraph: 0, level: 1, styleName: 'Heading 1' };
+  // THE REVIEWER'S REPRODUCTION, through the real body and a document whose paragraphs expose no
+  // `GetParaPr`: the addressed paragraph's text is identical to the text that joined the heading list, so the
+  // OLD text-based membership leg was satisfied by a paragraph that was never restyled. The identity leg is
+  // not: the object that joined the list is NOT the object the body addressed.
+  const r = headingRig({ texts: ['дубль', 'дубль'], restyle: 'other', noParaPr: true, namespace: { scope: request } });
+  const result = await r.bridge.setHeading(request);
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' },
+    'a duplicate-text document whose OTHER paragraph moved must never be a verified assignment');
+  assert.deepEqual(r.doc.doubles.map(double => double.style), [null, 'Heading 1'],
+    'the document really holds the style on the OTHER paragraph and the addressed one untouched');
+  assert.equal(r.doc.state.setStyles, 1, 'the mutation WAS dispatched exactly once');
+  const state = r.bridge.getState();
+  assert.equal(state.busy, true, 'the slot is HELD for an outcome this tool cannot claim');
+  assert.equal(state.uncertain, true);
+  assert.equal(state.writePending, true, 'and the write lock stays engaged');
+  assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'EDITOR_BUSY' },
+    'no retry of the assignment that may already have landed on the wrong paragraph');
+  assert.equal(r.commands.length, 1, 'and the refused call dispatches nothing at all');
+});
+
+test('set_heading decides by the identity leg ALONE when the style readback is unavailable', async () => {
+  const request = { paragraph: 0, level: 1, styleName: 'Heading 1' };
+  // THE DECIDED CONTRACT for `styleRead === false`: the readback's absence is never a failure by itself and
+  // the TEXT is never the identity leg — the outcome rests on the addressed OBJECT being one of the post
+  // heading paragraphs. When that holds the assignment is `ok`; when it does not the outcome is
+  // `APPLY_UNCERTAIN` with the slot held (the duplicate-text test above drives that direction).
+  for (const [label, options] of [
+    ['a paragraph with no GetParaPr at all', { noParaPr: true }],
+    ['a GetParaPr that THROWS', { paraPrThrows: true }]
+  ]) {
+    const r = headingRig({ texts: ['дубль', 'дубль'], ...options, namespace: { scope: request } });
+    const result = await r.bridge.setHeading(request);
+    assert.equal(result.ok, true, label);
+    assert.deepEqual([result.styleRead, result.styleMatches], [false, false],
+      `${label}: the result states that no style was read, and never invents one`);
+    assert.deepEqual(r.doc.doubles.map(double => double.style), ['Heading 1', null],
+      `${label}: the identity leg is about the addressed object, not about a text`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: a verified assignment releases the slot`);
+  }
+});
+
+test('a heading list that answers DIFFERENT objects cannot carry the identity leg: UNCERTAIN with the slot held', async () => {
+  const request = { paragraph: 0, level: 1, styleName: 'Heading 1' };
+  // THE ONE BUILD THIS LEG CANNOT DECIDE THROUGH, and the fail-safe direction is pinned rather than
+  // assumed: when the heading list answers a NEW wrapper per call, no reference comparison can match, so the
+  // tool refuses to CLAIM the assignment even though the style really landed. It is the native unknown
+  // §15 records, not a route this leg is allowed to guess at.
+  const r = headingRig({ texts: ['дубль', 'дубль'], freshHeadingWrappers: true, namespace: { scope: request } });
+  const result = await r.bridge.setHeading(request);
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(r.doc.doubles[0].style, 'Heading 1', 'the style really landed on the addressed paragraph');
+  assert.equal(r.doc.doubles[1].style, null);
+  const state = r.bridge.getState();
+  assert.equal(state.busy, true, 'and the tool holds the slot instead of publishing a proof it does not have');
+  assert.equal(state.uncertain, true);
+});
+
+test('set_heading folds the readback name the way the module\'s own style-name comparison does', async () => {
+  // D2: the readback was compared with RAW `===` while the module's own `readsStyleName` folds case and
+  // spaces (and the setter's lookup accepts the same variants), so a getter answering `'Heading2'` produced
+  // `styleMatches: false` on a mutation that succeeded — `APPLY_UNCERTAIN` with the write lock held for the
+  // session. The body now folds case and spaces, and nothing else: a DIFFERENT style name is still a
+  // disagreement.
+  for (const spelling of ['Heading 2', 'Heading2', 'heading 2', 'HEADING 2', '  Heading   2  ']) {
+    const request = { paragraph: 1, level: 2, styleName: 'Heading 2' };
+    const r = headingRig({ texts: ['Ноль', 'Цель'], readback: () => spelling, namespace: { scope: request } });
+    const result = await r.bridge.setHeading(request);
+    assert.equal(result.ok, true, spelling);
+    assert.deepEqual([result.styleRead, result.styleMatches], [true, true], `the variant ${spelling} is a MATCH`);
+    assert.equal(r.doc.doubles[1].style, 'Heading 2', spelling);
+    assert.equal(r.bridge.getState().busy, false, `${spelling}: a verified assignment releases the slot`);
+  }
+});
+
+test('set_heading still refutes a readback that names a DIFFERENT style, with the slot held', async () => {
+  const request = { paragraph: 1, level: 2, styleName: 'Heading 2' };
+  const r = headingRig({ texts: ['Ноль', 'Цель'], readback: () => 'Heading 3', namespace: { scope: request } });
+  assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'APPLY_UNCERTAIN' },
+    'folding the spelling must not turn a genuinely different style into a match');
+  assert.equal(r.doc.doubles[1].style, 'Heading 2', 'the mutation really applied');
+  const state = r.bridge.getState();
+  assert.equal(state.busy, true, 'the readable contradiction keeps the slot held');
+  assert.equal(state.uncertain, true);
+});
+
+test('set_heading refuses a paragraph that is ALREADY a heading with ZERO writes and the slot RELEASED', async () => {
+  // D3: a level change on an EXISTING heading moves no count (the document loses one heading and gains one),
+  // so no measured signal could verify it and the old route settled `APPLY_UNCERTAIN` with the slot held —
+  // the next mutation answered `EDITOR_BUSY` and the tool was wedged for the session. The pre-state is now
+  // decided BEFORE the one `SetStyle`: the addressed object is compared against the heading paragraphs the
+  // body already read, and an already-heading target is the closed argument class with NOTHING styled.
+  for (const [label, index] of [['an H1 re-styled to level 1', 0], ['an H2 re-styled to level 1', 1]]) {
+    const request = { paragraph: index, level: 1, styleName: 'Heading 1' };
+    const r = headingRig({ texts: ['Ноль', 'Цель'], headingIndexes: [index], namespace: { scope: request } });
+    assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'TOOL_ERROR' }, label);
+    assert.equal(r.doc.state.setStyles, 0, `${label}: the level change never reaches the one SetStyle`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, false, `${label}: a PRE_INSERT refusal releases the slot`);
+    assert.equal(state.writePending, false, label);
+    assert.equal(r.commands.length, 1, `${label}: the body was dispatched once, to READ the pre-state`);
+    // AND THE TOOL IS NOT WEDGED: the very next assignment on another paragraph still verifies.
+    const other = { paragraph: index === 0 ? 1 : 0, level: 1, styleName: 'Heading 1' };
+    const next = await r.bridge.setHeading(other);
+    assert.equal(next.ok, true, `${label}: the refusal left the tool usable`);
+    assert.equal(r.doc.doubles[other.paragraph].style, 'Heading 1', label);
+    assert.equal(r.bridge.getState().busy, false, label);
+  }
+});
+
+test('an already-heading target is undetectable when the heading list answers different objects: UNCERTAIN, slot held', async () => {
+  // THE RESIDUAL D3 LEAVES, stated rather than denied: the pre-state is decided by the SAME identity
+  // comparison as the post-state, so on a build whose heading list answers new wrappers the pre-check cannot
+  // see that the target is already a heading. The mutation then runs, no count moves, and the outcome is
+  // `APPLY_UNCERTAIN` with the slot held — fail-safe, never a false success.
+  const request = { paragraph: 1, level: 1, styleName: 'Heading 1' };
+  const r = headingRig({ texts: ['Ноль', 'Цель'], headingIndexes: [1], freshHeadingWrappers: true,
+    namespace: { scope: request } });
+  assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(r.doc.state.setStyles, 1, 'the route could not be prevented, so the mutation was dispatched');
+  const state = r.bridge.getState();
+  assert.equal(state.busy, true);
+  assert.equal(state.uncertain, true);
 });
 
 
