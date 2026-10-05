@@ -1849,4 +1849,175 @@ the `.Push(` branch).
    that assumes the previous run's result was persisted measures against the wrong document. Recorded as an
    operational fact about the target so a later native round does not re-learn it.
 
+## 15. Sprint 3, tool 7 — `set_heading`, the FIRST mutation that APPENDS NOTHING
+
+The seventh Word tool, the third mutation, and the first one whose subject is an **existing** paragraph: it
+changes the STYLE of the paragraph at an index the caller names and creates no paragraph, no table and no
+text. Exactly **one** bridge entry point was added (`setHeading`), **one** authored command body
+(`command.heading`), **one** decoder (`decodeHeading`, plus the `exactHeadingDelta` rule), **one** ticket kind
+(`headinginsert`), **one** result wrapper (`setHeadingEntryBytes`) and **one** limit. No existing limit VALUE
+moved, `src/agent/*` is untouched, and only `src/tools/word.js`, `src/plugin/bridge.js`,
+`src/shared/limits.js`, two test files and this document changed.
+
+**The measured primitives** (Astra / R7 2026.1.2.1942, this round, taken as established). `document.GetStyle
+('Heading 1')` **resolves** — the lookup also accepts `'Heading1'`, `'heading 1'` and the localized
+`'Заголовок 1'` — `style.GetName()` answers `'Heading 1'`, `paragraph.SetStyle(style)` is a public function
+and **applies**, and afterwards the paragraph IS a heading: `GetAllHeadingParagraphs()` grew 3 → 4 while
+`GetAllParagraphs()` grew 10 → 11 (measured on a newly created paragraph; this tool applies the SAME route to
+an existing paragraph at a known index). Because this leg **appends nothing**, the two routes the other
+mutations use are authored **nowhere** here: `doc.Push` appends (nothing is appended) and
+`doc.InsertContent` inserts at the BEGINNING and, under a selection, **replaced existing text** (§13.2) — the
+one route measured to destroy the very text this tool promises to leave unchanged.
+
+**THE STYLE READBACK IS A HYPOTHESIS, AND IT WAS TREATED AS ONE.** The public `ApiParaPr` that
+`paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…), so the addressed
+paragraph's **own** style is *likely* readable as `paragraph.GetParaPr().GetStyle()` — but that exact call was
+**not measured**, so the authored body does not depend on it: it attempts the read inside its own `try`,
+behind `typeof` checks on **both** members, and reports what happened in a **separate flag**. A build where
+`GetParaPr` is absent, is not a function, or throws therefore loses the strongest half of the proof and still
+verifies on the measured signals — it never fails and never invents a style it did not read. The tests drive
+**all three** states: the readback works and matches, the readback works and disagrees (a non-success), and
+the readback is absent or throws (`styleRead: false`, and the result says so).
+
+**The outcome contract is one-to-one FOR THE TARGET PARAGRAPH**, and every leg is about that paragraph rather
+than about a global count. `ok` is published only when the post read shows all of:
+1. the addressed paragraph's **TEXT is exactly what it was before** the single `SetStyle` (`textUnchanged`) —
+   read by the body around the one mutation, so a route that replaced text, and a **stale index** whose
+   paragraph now holds something else, are both non-successes;
+2. `targetAdded` — the paragraph count is **unchanged** (a style assignment creates and destroys nothing),
+   the heading count grew by **exactly one**, and the addressed paragraph's own text is among the post
+   heading paragraphs;
+3. the heading count **really grew by exactly one**, re-derived from the two counts rather than trusted from
+   the flag;
+4. **if** the style readback worked (`styleRead`), the target's own style name **equals** the requested
+   `Heading <n>` (`styleMatches`) — the only leg that identifies the addressed paragraph rather than its text.
+**The ambiguity that leg 4's absence leaves is decided and documented rather than denied:** on a build without
+the readback, a document that already contained a SECOND heading carrying the very same text can satisfy
+leg 2's membership half without the target having become one of them. It is a false success **only** in the
+presence of a pre-existing equal heading, cannot be produced by a document that gained no heading (leg 3) and
+cannot be produced by a text-changing route (leg 1) — and the result carries `styleRead`, so a caller is never
+told an identity that was not established. On the measured shape of the target's `ApiParaPr` surface the
+ambiguity does not exist at all.
+
+**The mechanism is ONE self-contained static body** (`command.heading`), the same carriage as the block and
+table legs: the request crosses as the `Asc.scope` parameter channel (`{ paragraph, level, styleName }`),
+never interpolated into source (ADR 0002); a **pre-dispatch baseline** of the two counts AND the addressed
+paragraph's own text gates the whole call; the style is **resolved before** the mutation (an unresolvable
+`Heading <n>` refuses with NOTHING styled); then ONE `phase = 'POST_INSERT'` followed immediately by ONE
+`target.SetStyle(style)`; then the post read. The index is taken from the SAME baseline array its text is read
+from, through a `paragraphAt(list, index)` helper — an authored-code-audit requirement as well as a
+correctness one, because a member read with a NON-CONSTANT key is a computed value in that analysis while a
+CALL's result is not.
+
+**The schema is closed** (`additionalProperties: false`, `required: ['paragraph', 'level']`):
+`paragraph` is the 0-based index, integer, bounded by `setHeadingIndexMax` = **128** (the limit states the
+reasoning: a document this product writes is a chapter, and it is not an alias of `insertBlocksMax`,
+`insertTableRowsMax` or `MAX_CONTEXT_INDEX`); `level` is an integer 1..**9** mapped by the module's ONE
+`headingStyleName` to `Heading <n>` — the same family and the same measured naming `insert_blocks` uses. There
+is deliberately **no `text` argument and no `style`/`styleName` argument**: a caller that could name the style
+string directly would address a name this module never measured, so the name is DERIVED from the level. The
+address bound is ADVERTISE-AND-VERIFY: the body additionally requires the index to be inside the document's
+own `GetAllParagraphs()` BEFORE the one mutation, so an index past the end of THIS document is a closed
+argument refusal with ZERO writes.
+
+**The failure map**, each class closed: wrong editor → `CAPABILITY_UNAVAILABLE` (precondition, which also
+applies the address and level bounds); missing bridge entry point → `CAPABILITY_UNAVAILABLE`; an unusable
+**baseline** or an index outside the DOCUMENT → `CAPABILITY_UNAVAILABLE` with ZERO writes (the body's
+pre-insert half); an **unresolvable `Heading <n>`** → `STYLE_UNAVAILABLE` → `TOOL_ERROR` with ZERO writes,
+resolved before the mutation exactly as `insert_blocks` resolves every style before its first `Push`; a bridge
+refusal → its own closed `refusalCode`; an envelope this handler cannot interpret (a non-integer count, a
+non-boolean flag, a style name that is not the requested one) → `known()`; a returned or thrown
+`APPLY_UNCERTAIN` → `TOOL_UNCERTAIN`; a contradiction the handler can see for itself (a heading count that did
+not grow by exactly one, a `false` proof flag, a readable readback that disagrees) → `TOOL_UNCERTAIN` with the
+slot HELD and NO retry; an over-ceiling result entry → `BYTE_LIMIT`. The refusal **phase is an explicit slot of
+every answer** and `decodeHeading` raises the known class **only** for `[PRE_INSERT, name]`; a phase-less
+one-slot sentinel answered after a real mutation is `APPLY_UNCERTAIN` with the slot held.
+
+**The result entry is measured** through the module's one `toolResultEntryBytes` shape
+(`setHeadingEntryBytes`): `ok({ paragraph, level, heading, headingsBefore, headingsAfter, styleRead,
+styleMatches, bytes })` — eight bounded scalars. A real assignment measures ~180 bytes and the **widest shape
+the handler can publish** (every numeric field at its legal maximum) measures well under 300, i.e. more than
+sixteen thousand bytes inside the 16384-byte ceiling; `BYTE_LIMIT` is retained as the module's one enforced
+bound and is unreachable for eight bounded fields.
+
+**TDD, and the exact RED.** Sixteen new test blocks were written FIRST and run against `b34d479` →
+`node --test tests/unit/tools-word.test.js` → **204 tests, pass 188, fail 16** (`fail 0` on that file before
+the round), every failure rooted in one cause: `set_heading` is missing from the descriptor set and
+`bridge.setHeading` does not exist (`Cannot read properties of undefined (reading 'execute')`,
+`r.bridge.setHeading is not a function`, `the offered catalogue contains set_heading`). Sixteen of those tests
+are the new blocks; the other three failures were the existing enumerations, which grew by the new name rather
+than being weakened. Green on the final tree: **204/204** on that file.
+
+**TWO NEW SHAPES OF THE RECORDED AUDIT TRAP, both found by the BUILDER and not by the source audit.** The
+first build after the handler was written and again after the style-name check was added failed with
+`BUNDLE_AUDIT_FAILED` while `node scripts/static-audit.mjs` passed on `src/` throughout — the general rule §13
+states (audit the BUNDLE) caught both:
+1. `paragraph.GetParaPr()` reached through an object whose local was not a call's result was one shape; the
+   repair is the same rule the command bodies follow (`paragraphAt`/`textAt` helpers).
+2. **A property READ on a local that some OTHER handler has already marked "computed".** The analysis is
+   NAME-based and scope-insensitive over the whole bundle, and `const uncertain = uncertainResult(result)` in
+   a sibling handler marks the NAME `result` computed; a later `result.styleName.toLowerCase()` then made the
+   `replace` call reached through it a `DYNAMIC_PROPERTY` finding. The repair is a helper that takes the
+   envelope as a PARAMETER (`readsStyleName(result, styleName)`): a CALL's result is not tainted, so the read
+   happens inside a function the analysis does not track. This is the fourth recorded shape of the same rule,
+   and it is the first one that is about a **local's NAME** rather than about an array index.
+
+**A TEST-DOUBLE DEFECT FOUND THE HARD WAY, and it is worth recording for the next mutation tool.** The first
+version of the new rig injected its fault cases (`restyle`/`apply`/`grow`/`concurrent`) into the DOUBLED
+DOCUMENT's `SetStyle` — a method the authored body never calls, because the measured route is
+`paragraph.SetStyle(style)` on the ADDRESSED PARAGRAPH. Every fault was therefore **inert dead code**: the
+suite reported clean assignments for cases that were supposed to be failures, and the only thing that exposed
+it was asserting the DOCUMENT's own state (`doubles[i].style`) rather than the tool's answer. The repair moves
+every fault onto the paragraph's own `SetStyle` (counting DISPATCHES, and landing `grow:2`'s second round on a
+second paragraph) and turns the document-level method into a recorded trap that must never be called. The
+lesson generalises: **a test double must inject its faults where the production code really calls, and the
+assertion that proves it is the document's own state, not the tool's report.**
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js` →
+**225/225**, `fail 0` (202 → 225); full suite `node --test` → **836 tests, pass 836, fail 0, skipped 0**
+(820 → 836: the same new blocks, none removed or weakened); `node scripts/static-audit.mjs` →
+`Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted
+files; ZIP STORE SHA-256 cba1ed0a458f3085d0004c135b1ede7a85858232cafeb3832d48ff3ad1200d47`. The SHA **moved**
+from the `b34d479` pin `dc10a529f14f7730e1f53826ed789017ed4857640fae1d4c1d056d117e0f14a1` because a new
+authored body, a new decoder, a new ticket kind and one new limit are in the bundle (the builder runs with
+`minify: false`). The `package` test's authored-command leg classifier grew **6 → 7**
+(`['blocks', 'capability', 'context', 'heading', 'search', 'structure', 'table']`): the heading leg is
+recognised by `paragraph.SetStyle` — a primitive no other leg authors — and its branch sits AFTER the
+`CreateTable` and `.Push(` branches, because the BLOCK body also authors a `SetStyle` on the paragraphs it
+creates; the branch also pins that the heading body reads `GetAllHeadingParagraphs` and `GetAllParagraphs` and
+authors neither `InsertContent` nor `document.Push(`. The registry offers the tool in `EDIT` only
+(`kind: 'mutate'`), with `policy: 'auto'` and `requires: ['document.write']`, and a model call dispatches
+exactly one command; `src/agent/*` untouched.
+
+**Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What the
+host-side suite cannot prove is the SHIPPED carriage of this leg: (1) that `{ paragraph, level, styleName }`
+written into the page's `Asc.scope` reaches the body's `scope` binding; (2) that
+`paragraph.GetParaPr().GetStyle()` really answers a NAME — the **one hypothesis this tool rests on** for its
+strongest leg, which is why the body degrades to the measured signals instead of failing when it does not;
+(3) that `paragraph.SetStyle(styleObject)` on an EXISTING paragraph of an R7-built document really applies the
+style and moves `GetAllHeadingParagraphs()` by exactly one — the append-side measurement is on a newly created
+paragraph, and this tool's whole contract is the in-place case; (4) that the native return validator passes a
+seven-member flat array of primitives unaltered; and (5) that `GetAllParagraphs()` enumerates in the SAME
+order `SetStyle` addresses, so the index the caller names is the paragraph the tool styles. Each unknown lands
+on a closed path: a scope that does not arrive, a missing primitive or a style that does not resolve makes the
+body answer its own phase-marked refusal (`[PRE_INSERT, …]`, nothing styled, slot released); a non-exact
+answer, a malformed one or a throwing mutation is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot held and
+no retry; and an editor that never calls back settles `APPLY_UNCERTAIN` (a dispatched write-class ticket),
+never a verified assignment. A native run on the target is required before this tool's outcome can be called
+measured; it is recorded here as PENDING NATIVE VERIFICATION.
+
+**THE STALE-INDEX RESIDUAL, STATED BECAUSE IT CANNOT BE CLOSED IN BAND.** The address is a POSITION, not an
+owned TARGET: there is no handle whose identity a probe could establish, and a caret/document-id probe could
+not make a position stable anyway, because a concurrent edit ABOVE the addressed index renumbers it without
+changing any id. What the leg closes is the case a probe would have caught: the body reads the addressed
+paragraph's TEXT before the one `SetStyle` and again after it and requires the two to be equal, so an index
+whose paragraph now holds DIFFERENT text is a non-success (`APPLY_UNCERTAIN`, slot HELD, no retry) rather than
+a silent edit of the wrong paragraph. What it cannot catch is a concurrent edit that lands a paragraph with
+EXACTLY the same text at that index. That residual is accepted rather than denied, and the structural remedy
+for a later hardening round is the same one §13.3 records for the phase protocol: split the non-mutating
+preconditions into a dispatch of their own, so the address is re-read against the same snapshot the mutation
+runs on — at the cost of one extra native round trip.
+
+
 

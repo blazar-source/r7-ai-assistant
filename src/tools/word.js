@@ -201,6 +201,37 @@ function insertBlocksEntryBytes(data) {
 function insertTableEntryBytes(data) {
   return toolResultEntryBytes('insert_table', data);
 }
+// `set_heading`'s own entry, measured on the values ABOUT TO BE PUBLISHED through the module's ONE
+// measurement: the addressed index, the requested level, the proof's own flags and the two heading counts
+// the delta was decided on. The measurement is NOT a formality here either, even though the fields are
+// bounded scalars (`LIMITS.setHeadingIndexMax` states the arithmetic): it is the module's single ENFORCED
+// bound, and a field added to this result later must not be able to widen the entry unmeasured.
+function setHeadingEntryBytes(data) {
+  return toolResultEntryBytes('set_heading', data);
+}
+// THE LEVEL → STYLE NAME MAPPING, in ONE place so the request the editor receives and the name the body
+// resolves can never be two different strings. The whole OOXML built-in heading family is `Heading 1` …
+// `Heading 9`, and the lookup was MEASURED on the target to accept the English name on a LOCALIZED
+// document too (`GetStyle('Heading 1')`, `'Heading1'`, `'heading 1'` and the localized `'Заголовок 1'` all
+// resolve the same style), so this is not a guess about the document's language. The bound is enforced in
+// two places ON PURPOSE: the schema advertises it, and this function re-checks the level before it names a
+// style, because a descriptor is also executable when it is held directly.
+function headingStyleName(level) {
+  return Number.isSafeInteger(level) && level >= 1 && level <= LIMITS.insertHeadingMax ? `Heading ${level}` : null;
+}
+// THE TWO STYLE NAMES ARE THE SAME NAME under the spellings the editor's own lookup accepts (measured on the
+// target: `'Heading 1'`, `'Heading1'` and `'heading 1'` all resolve the same style), so the comparison folds
+// the case and drops the spaces. THE CANDIDATE IS READ BY A HELPER rather than dereferenced at the guard, and
+// that is an authored-code-audit requirement rather than a style choice: the findings analysis is NAME-based
+// and scope-insensitive over the whole bundle, so a local called `result` has been marked "computed" by some
+// OTHER handler's `const uncertain = uncertainResult(result)` long before this one runs, and a property READ
+// on a computed name makes every call reached through it a `DYNAMIC_PROPERTY` finding. A CALL's result is not
+// tainted by that analysis — the same rule the command bodies' array indices follow.
+function readsStyleName(value, name) {
+  if (value === null || typeof value !== 'object') return false;
+  const carried = value.styleName;
+  return typeof carried === 'string' && carried.toLowerCase().replace(/ /g, '') === name.toLowerCase().replace(/ /g, '');
+}
 // A count this module publishes is a NON-NEGATIVE SAFE INTEGER and nothing else. The bridge decodes the
 // same rule, and the handler re-applies it because a descriptor is also executable when it is held
 // directly: publishing a fractional, negative, NaN or stringified count as "the document's own number"
@@ -1315,6 +1346,193 @@ export function createWordTools(bridge) {
         // width); it is retained because it is the module's ONE entry measurement, and the failure class for
         // it is closed regardless of reachability.
         const entry = insertTableEntryBytes(published);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(published);
+      }
+    }),
+    defineTool({
+      // Sprint 3 Word tool 7: the HEADING STYLE ASSIGNMENT. It is the THIRD MUTATION of this sprint and the
+      // FIRST one that does NOT append: it changes an EXISTING paragraph IN PLACE, at an index the caller
+      // names, and it creates no paragraph, no table and no text. That difference is the whole shape of
+      // this descriptor, so the mutation ground truth is stated again rather than inherited:
+      //
+      // THE MEASURED PRIMITIVES, established on the target (Astra / R7 2026.1.2.1942, this round) and
+      // treated as given: `document.GetStyle('Heading 1')` RESOLVES (the lookup also accepts `'Heading1'`,
+      // `'heading 1'` and the localized `'Заголовок 1'`), `style.GetName()` answers `'Heading 1'`,
+      // `paragraph.SetStyle(style)` is a public function and APPLIES, and afterwards the paragraph really
+      // IS a heading — `GetAllHeadingParagraphs()` grew 3 → 4 while `GetAllParagraphs()` grew 10 → 11 on a
+      // newly created paragraph. Here the SAME measured route is applied to an EXISTING paragraph at a
+      // known index, which is why no `Push` and no `InsertContent` appears anywhere in this leg:
+      // `doc.Push` appends (nothing is appended here) and `doc.InsertContent` inserts at the BEGINNING and
+      // can REPLACE text under a selection (measured, §13.2) — a route that would destroy the very text
+      // this tool promises to leave unchanged.
+      //
+      // THE STYLE READBACK IS A HYPOTHESIS AND IS TREATED AS ONE. The public `ApiParaPr` that
+      // `paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…), so a
+      // paragraph's OWN style is LIKELY readable as `paragraph.GetParaPr().GetStyle()` — but that exact
+      // call was NOT measured, so the authored body does not DEPEND on it: it reads the style inside its
+      // own `try`, behind a `typeof` check on BOTH members, and reports what happened in a separate flag.
+      // A build where `GetParaPr` is absent, not a function, or throws therefore loses the strongest half
+      // of the proof and still verifies on the measured signals — it never fails, and it never invents a
+      // style it did not read.
+      //
+      // THE OUTCOME CONTRACT IS ONE-TO-ONE FOR THE TARGET PARAGRAPH, and every leg of it is about THAT
+      // paragraph rather than about a global count. `ok` is published ONLY when the post read shows ALL
+      // of:
+      //   1. the addressed paragraph's TEXT is EXACTLY what it was BEFORE the mutation (`textUnchanged`) —
+      //      read by the body around the single `SetStyle`, so a route that replaced text (the measured
+      //      `InsertContent`-under-a-selection behaviour) can never be reported as a success;
+      //   2. the document's heading count grew by EXACTLY one, while the paragraph COUNT is unchanged
+      //      (`targetAdded`) — a style assignment changes no paragraph's existence, so a paragraph count
+      //      that moved means something else happened to the document and the outcome is uncertain;
+      //   3. the requested paragraph's text IS among the post-mutation heading paragraphs (`inHeadings`,
+      //      on EVERY build);
+      //   4. IF the style readback worked (`styleRead`), the target's OWN style name EQUALS the requested
+      //      `Heading <n>` (`styleMatches`) — this is the only leg that is about the addressed paragraph
+      //      by IDENTITY rather than by text, which is why it is worth having and why its absence is
+      //      stated in the result instead of being assumed;
+      //   5. IF the style readback did NOT work, the target's text is the only anchor left, so the leg is
+      //      the strongest available combination: text unchanged + heading count +1 + the unchanged text
+      //      present in the heading list. THE AMBIGUITY THIS LEAVES IS DECIDED AND DOCUMENTED HERE: a
+      //      document that already contained a SECOND heading paragraph carrying the very same text can
+      //      satisfy leg 3 without the target having become one of them. That is accepted rather than
+      //      denied, because it is a FALSE SUCCESS ONLY IN THE PRESENCE OF A PRE-EXISTING EQUAL HEADING,
+      //      it cannot be reached by a document that gained no heading (leg 2 still requires exactly one
+      //      NEW heading) and it cannot be reached by a route that changed the target's text (leg 1). The
+      //      result says which of the two doors was used (`styleRead`), so a caller is never told more than
+      //      was established. On a build where the readback works — the measured shape of the target's
+      //      `ApiParaPr` surface suggests it does — the ambiguity does not exist at all.
+      // NO MUTATION PRIMITIVE'S RETURN VALUE IS READ anywhere in this leg: `Push` answered `true` for a
+      // paragraph and `false` for an image host, and the legacy whole-array primitive answered `true` even
+      // for `[]`, `[null]` and `'nonsense'` (all measured), so no boolean says anything about what the
+      // document now holds. The post read is the evidence, exactly as in `insert_blocks`/`insert_table`.
+      //
+      // THE SCHEMA IS CLOSED, `additionalProperties: false`, `required: ['paragraph', 'level']`:
+      //   * `paragraph` is the 0-BASED index, integer, bounded by `LIMITS.setHeadingIndexMax` (128; the
+      //     limit states the reasoning, and the descriptor's own comment is not a second copy of it). The
+      //     bound is ADVERTISE-AND-VERIFY: the body additionally requires the index to be inside the
+      //     document's OWN `GetAllParagraphs()` array BEFORE the single mutation, so an index past the end
+      //     of this document is a closed argument refusal with ZERO writes.
+      //   * `level` is the heading level, integer 1..`LIMITS.insertHeadingMax` (9), mapped by
+      //     `headingStyleName` to the style name `Heading <n>` — the SAME family and the SAME measured
+      //     naming `insert_blocks` already uses, so a level means one thing in this whole module.
+      // There is deliberately NO `text` argument and no `style`/`styleName` argument: the tool changes the
+      // style of a paragraph the DOCUMENT already holds, and a caller that could name the style string
+      // directly would address a name this module never measured. The style is DERIVED from the level.
+      //
+      // THE FAILURE MAP, each class closed: a wrong editor is `CAPABILITY_UNAVAILABLE` (precondition); an
+      // index or level outside the advertised bounds is the closed argument class with ZERO writes
+      // (precondition — the same place `read_context` applies its own address bound); a missing bridge
+      // entry point is `CAPABILITY_UNAVAILABLE`; a BASELINE that cannot be read and an index outside the
+      // DOCUMENT are `CAPABILITY_UNAVAILABLE` with ZERO writes (the body's pre-insert half, measured
+      // BEFORE the one `SetStyle`, exactly as `insert_blocks` resolves every style before its first
+      // `Push`); an unresolvable `Heading <n>` is the closed argument/style class (`STYLE_UNAVAILABLE` →
+      // `TOOL_ERROR`) with ZERO writes, resolved BEFORE the mutation for the same reason; a bridge refusal
+      // keeps the closed class it reported (`refusalCode`); an envelope this handler cannot interpret is
+      // the module's unknown convention, `known()`; a returned or thrown `APPLY_UNCERTAIN` is
+      // `TOOL_UNCERTAIN`; an outcome that is not the exact proof above is `TOOL_UNCERTAIN` with the slot
+      // HELD and NO retry; and an over-ceiling result entry is `BYTE_LIMIT`.
+      //
+      // THE MECHANISM is ONE authored command body in the bridge (`setHeading` → `command.heading`),
+      // static and self-contained exactly like the search, structure, block and table bodies: it builds
+      // the `Api` facade itself, receives `{ paragraph, level, styleName }` as DATA through the `Asc.scope`
+      // parameter channel (never interpolated into source, ADR 0002), reads the baseline, resolves the
+      // style, reads the target's own text, turns its phase to `POST_INSERT` IMMEDIATELY BEFORE the single
+      // `paragraph.SetStyle(style)`, and then re-reads the whole document state. The phase is an explicit
+      // slot of every answer, exactly as `insert_blocks`/`insert_table` state it: a throw out of the
+      // mutation is never a known refusal with the slot released.
+      name: 'set_heading', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
+      schema: { type: 'object', additionalProperties: false, required: ['paragraph', 'level'],
+        properties: { paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.setHeadingIndexMax },
+          level: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } },
+      precondition: (args, ctx) => {
+        if (ctx?.editor !== 'word') return { code: ERROR_CODES.CAPABILITY_UNAVAILABLE, message: REFUSAL };
+        // The address and the level are re-checked HERE and not only by the schema: a descriptor is also
+        // executable when it is held directly, and an address or a level this mutation cannot interpret
+        // must be a closed refusal with NOTHING dispatched, never a style applied to whatever a coercion
+        // produced. This is the same treatment `read_context` gives its own bounded index.
+        if (!Number.isSafeInteger(args?.paragraph) || args.paragraph < 0 || args.paragraph > LIMITS.setHeadingIndexMax) {
+          return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        }
+        if (headingStyleName(args?.level) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        return null;
+      },
+      execute: async (args, ctx) => {
+        if (missingBridgeMethod(bridge, 'setHeading')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The level maps to ONE style name, computed ONCE and carried to the body, so the name the editor
+        // resolves and the name this handler measured against cannot be two different strings.
+        const styleName = headingStyleName(args?.level);
+        if (!Number.isSafeInteger(args?.paragraph) || args.paragraph < 0 || args.paragraph > LIMITS.setHeadingIndexMax) return known();
+        if (styleName === null) return known();
+        // `bytes` is the size of the dispatched SCOPE — the three values that cross to the editor — and it
+        // is measured on exactly what is forwarded, never on a prefix or on the caller's raw object.
+        const request = { paragraph: args.paragraph, level: args.level, styleName,
+          ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
+        const bytes = utf8ByteLength(`${args.paragraph}:${args.level}:${styleName}`);
+        let result;
+        try { result = await bridge.setHeading(request); }
+        catch (error) {
+          // A write whose outcome is unknown may already have applied: that is the one case which stops
+          // the run. Every other bridge throw is a closed local failure.
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        // The bridge settles its own uncertain outcome by RETURNING that envelope (rather than throwing it)
+        // when the ticket has already been created, so the class is classified here before any
+        // ordinary-refusal path can treat it as a known error.
+        const uncertain = uncertainResult(result);
+        if (uncertain) return uncertain;
+        if (!result || typeof result !== 'object') return known();
+        if (result.ok !== true) return known(refusalCode(result.code, ERROR_CODES.TOOL_ERROR));
+        // THE ENVELOPE CONTRACT, re-checked here because the descriptor is executable on its own: the two
+        // counts are the document's own non-negative safe integers, and the three flags are EXACTLY
+        // booleans — `targetAdded` says the addressed paragraph became the one new heading,
+        // `textUnchanged` that its text is what it was before the mutation, and `styleRead` says whether
+        // the style readback was available at all (`styleMatches` is then meaningful, and is `false` when
+        // it was not read). An answer of any other shape is not one this bridge can have produced — the
+        // real bridge's decoder guarantees this shape and turns its own uninterpretable answer into the
+        // uncertain class — so publishing it would let a forged envelope pass as a verified assignment.
+        const headingsBefore = result.headingsBefore;
+        const headingsAfter = result.headingsAfter;
+        // THE ENVELOPE CONTRACT, re-decided here because the descriptor is executable on its own. The order
+        // of these checks is the CONTRACT and not a style choice: everything a real run of this bridge
+        // cannot produce is the module's unknown class (`known()`, the closed tool-error class), while the
+        // two shapes it CAN produce and yet not stand behind are the runtime's own `TOOL_UNCERTAIN`.
+        if (!measuredCount(headingsBefore) || !measuredCount(headingsAfter)) return known();
+        if (typeof result.targetAdded !== 'boolean' || typeof result.textUnchanged !== 'boolean') return known();
+        if (typeof result.styleRead !== 'boolean') return known();
+        // The envelope NAMES THE STYLE IT WAS PRODUCED FOR, and it must be the one THIS request meant: the
+        // name is DERIVED from the level and carried to the body, so an `ok` answer carrying a different
+        // name — or no name at all — was produced for a request this handler did not make and is never
+        // republished as its proof. `readsStyleName` carries the comparison and its rationale; the name the
+        // handler PUBLISHES is still the `Heading <n>` this request meant, so a differently spelled answer
+        // can never leak into the result.
+        if (!readsStyleName(result, styleName)) return known();
+        // THE OUTCOME IS DECIDED BY THE BRIDGE, which is the only party that read the editor: this handler
+        // republishes the proof and refuses to publish a state that claims to be verified while its own
+        // fields contradict it. Two contradictions are closed as `TOOL_UNCERTAIN` rather than as an unknown
+        // envelope, because they are exactly the shapes a write that may already have applied leaves
+        // behind: a heading count that did not grow by exactly one, and a proof flag that is `false`. The
+        // bridge publishes `ok` ONLY for the exact proof, so an `ok` whose own delta or flags say otherwise
+        // is a mutation whose outcome this tool cannot claim — and the run stops fail-safe instead of
+        // reporting a known failure about a document that may already carry the style.
+        if (headingsAfter - headingsBefore !== 1) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        if (result.targetAdded !== true || result.textUnchanged !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // A READABLE READBACK THAT DISAGREES IS THE SAME CONTRADICTION: `exactHeadingDelta` never lets such
+        // an answer out of the bridge, so an `ok` that carries one is never a verified assignment.
+        const styleMatches = result.styleMatches === true;
+        if (result.styleRead && !styleMatches) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        const published = Object.freeze({ paragraph: args.paragraph, level: args.level, heading: true,
+          headingsBefore, headingsAfter, styleRead: result.styleRead, styleMatches, bytes });
+        // THE ENFORCED BOUND is the ACTUAL serialized tool-result entry, exactly as the reads and the two
+        // other mutations measure it: the runtime bounds `JSON.stringify({tool, ...result})` by
+        // `AGENT_CEILINGS.toolResultBytes` (16384) and replaces an entry above it with the model-visible
+        // literal "the tool result could not be serialized" — the model would receive NO result while the
+        // action log recorded `ok`. The fields are bounded scalars (`LIMITS.setHeadingIndexMax` states the
+        // arithmetic), so this guard cannot fire for any shape this handler can publish; it is retained
+        // because it is the module's ONE entry measurement, and its failure class is closed regardless.
+        const entry = setHeadingEntryBytes(published);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(published);
       }

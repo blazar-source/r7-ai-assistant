@@ -312,6 +312,42 @@ export const LIMITS = Object.freeze({
   insertTableColumnsMax: 16,
   insertTableCellBytes: 1024,
   insertTableBytes: 8192,
+  // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
+  // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
+  // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because
+  // this tool has no payload at all:
+  //   * `setHeadingIndexMax` bounds the paragraph INDEX a caller may name. The index is the tool's ONE
+  //     address, and unlike `insert_blocks`/`insert_table` it is NOT self-identifying: a wrong index is
+  //     not a refusal but a mutation of the WRONG paragraph, which is why the authored body reads the
+  //     target's TEXT before the one `SetStyle`, reads it again after, requires the two to be equal AND
+  //     requires the target paragraph to be among the document's heading paragraphs afterwards. 128 is
+  //     TWICE the bound the other index-addressed descriptor in this module carries for a READ
+  //     (`MAX_CONTEXT_INDEX` = 64, src/tools/word.js) and is the same scale as this module's two other
+  //     per-call caps (`insertBlocksMax`/`insertTableRowsMax` = 64): a document this product WRITES is a
+  //     chapter, an outline plus body paragraphs, not a whole book, and a caller that has to address
+  //     paragraph 129 of one is addressing text this module never authored. It is deliberately NOT an
+  //     alias of any of those three — an index names a position, a block count names a payload, and a
+  //     caret read names a budget. The bound does NOT replace the fail-closed check: the authored body
+  //     requires the index to be INSIDE the document's own `GetAllParagraphs()` array BEFORE the one
+  //     mutation, so an index past the end of THIS document is the closed argument class with ZERO
+  //     writes, never a style applied to `undefined` or to some other paragraph.
+  // NO TEXT BOUND IS ADDED, and that is deliberate rather than an omission: this tool takes NO text from
+  // the model — it changes the STYLE of a paragraph the document already holds — so there is nothing for a
+  // per-call byte bound to bound. The paragraph's text that the body compares is a document read, bounded
+  // by the editor-result ceiling the bridge decodes under, never by a caller-supplied width.
+  // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
+  // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes of `JSON.stringify({tool, ok, data})`, the shape
+  // `stringifyToolResults` measures and `runtime.js:27-36` replaces with the literal "the tool result
+  // could not be serialized" when it is exceeded). The entry is
+  // `{"tool":"set_heading","ok":true,"data":{"paragraph":N,"level":N,"heading":true,"headingsBefore":N,"headingsAfter":N,"styleRead":B,"styleMatches":B,"bytes":N}}`
+  // and EVERY field is a non-negative safe integer or a boolean: the index by the bound above, the level
+  // by the heading family (1..9), the two counts by the document's own array lengths, and `bytes` by the
+  // dispatched scope. Eight bounded scalars cannot fill 16384 bytes: with the index, the level and both
+  // counts at `Number.MAX_SAFE_INTEGER` the entry measures well under 300 bytes — measured in the tool's
+  // own test — so this guard cannot fire for any shape this handler can publish. The measurement is
+  // nevertheless the ENFORCED bound: it is the module's ONE entry measurement, and a field added to this
+  // result later must not be able to widen the entry unmeasured.
+  setHeadingIndexMax: 128,
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,

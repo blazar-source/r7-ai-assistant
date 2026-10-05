@@ -16,8 +16,11 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // new write leg comes to be missing from one of them. `blocksinsert` is the block append: it writes the
 // document through `document.Push`, one call per block, inside its own command body, so it is a write leg
 // in every sense the other two are. `tableinsert` is the table insert: it writes the same way, ONE
-// `document.Push` of a table the body built and filled, inside its own command body.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert']));
+// `document.Push` of a table the body built and filled, inside its own command body. `headinginsert` is
+// the heading style assignment: it writes the same way — ONE `paragraph.SetStyle` on an EXISTING paragraph
+// inside its own command body — and it is the FIRST write leg that appends nothing at all, which is why
+// it must be named here rather than inferred from the two creation legs.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -640,6 +643,209 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return tableRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE HEADING STYLE ASSIGNMENT, and the THIRD leg in this bridge that MUTATES a document through the
+      // `Api` builder. It is the same carriage as the block append and the table insert — a FULL inline
+      // static literal whose ONLY model data arrives as the `scope` binding the vendor wrapper composes
+      // from `Asc.scope` (never composed into source, ADR 0002), and no composed-source transport — and it
+      // is the FIRST one that does NOT append: it changes an EXISTING paragraph IN PLACE. That single
+      // difference is what shapes this body, and it is why two of the three creation legs' ingredients are
+      // deliberately ABSENT here:
+      //   * there is NO `document.Push` and NO `document.InsertContent`. `Push` appends (nothing is
+      //     appended: the caller names a paragraph the document already holds), and the legacy whole-array
+      //     primitive lands at the BEGINNING and REPLACED existing text under a selection (measured on the
+      //     target, §13.2) — it would destroy the very text this leg promises to leave unchanged. So the
+      //     ONE mutating call in this body is `paragraph.SetStyle(style)`, the route MEASURED to apply.
+      //   * the paragraph count is an INVARIANT, not a delta: a style assignment creates and destroys
+      //     nothing, so the body reads `GetAllParagraphs().length` before and after and requires the two to
+      //     be EQUAL. A count that moved means something else happened to the document and the outcome is
+      //     not this tool's to claim.
+      // THE PRE-DISPATCH BASELINE is the gate, exactly as in the other two legs: the document's paragraph
+      // and heading counts, AND the addressed paragraph's own text. No baseline means no delta means no
+      // evidence means no write.
+      // THE ONE ADDRESS THIS LEG HAS, AND WHAT IT CANNOT PROVE. The baseline paragraphs are read ONCE into
+      // a local array and the target is taken from THAT array (through `paragraphAt`, an
+      // authored-code-audit requirement as well as a correctness one: a member read with a NON-CONSTANT
+      // key is a computed value, so a local holding `list[index]` would make every later call on it a
+      // computed-execution finding — a CALL's result is not tainted). The index is therefore checked
+      // against the SAME snapshot the baseline text was read from, which is the strongest form available:
+      // a STALE INDEX — an index that named paragraph P in the caller's document while a concurrent edit
+      // has since inserted or removed a paragraph ABOVE it — is caught whenever the paragraph now at P
+      // carries a DIFFERENT text than the requested one did, because the body compares the addressed
+      // paragraph's text before and after the ONE mutation and the doc-side rule requires it unchanged.
+      // What that rule CANNOT catch is stated rather than denied: a concurrent edit that puts a paragraph
+      // with EXACTLY the same text at P. The residual is accepted and recorded in docs/sprint-3-progress.md
+      // (§15) together with the structural remedy; it is not silently relied on.
+      // THE STYLE IS RESOLVED BEFORE THE MUTATION, exactly as `insert_blocks` resolves every heading style
+      // before its first `Push`: an unresolvable `Heading <n>` answers the closed `STYLE_UNAVAILABLE`
+      // (decoded as `TOOL_ERROR`) with NOTHING styled. And the style name is the one the caller's LEVEL
+      // named, carried as DATA — this body never derives a name from a text or a document language.
+      // THE STYLE READBACK IS A HYPOTHESIS, NOT A DEPENDENCY. The public `ApiParaPr` that
+      // `paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…), so the
+      // target's own style is LIKELY readable as `paragraph.GetParaPr().GetStyle()` — but THAT call was not
+      // measured, so it is attempted inside this body's own `try`, behind `typeof` checks on BOTH members,
+      // and its outcome is reported in a SEPARATE flag. An absent `GetParaPr`, an absent `GetStyle` or a
+      // throw costs the proof its identity leg and nothing else: the body never fails on it and never
+      // invents a style it did not read (`styleRead` is 0 and `styleMatches` is then 0 by construction).
+      // The answer is ONE flat array of primitives (the native return validator keeps those and strips a
+      // plain object): `[POST_INSERT, headingsBefore, headingsAfter, targetAdded, textUnchanged,
+      // styleRead, styleMatches]`, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT
+      // OF EVERY ANSWER, and the decoder turns a phase-less or post-insert refusal into the uncertain class —
+      // the name alone can never release a slot for a mutation that may already be in the document.
+      heading(callback) {
+        return plugin.callCommand(function () {
+          // The phase, and the ONE place the two classes are distinguished: everything answered while it is
+          // `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after the
+          // single `SetStyle` is an UNCERTAIN outcome the bridge must hold a slot for. It turns
+          // `POST_INSERT` IMMEDIATELY BEFORE that one call, not after it, because a native that throws OUT
+          // of the call may already have applied the style.
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the
+          // block body states: a literal built from identifier names would make the receiver of every later
+          // call on it a computed value.
+          function headingRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            // The scope the vendor wrapper injected: `{ paragraph, level, styleName }`, already validated by
+            // the bridge. Anything else — a missing wrapper, a non-numeric address, a missing style name —
+            // is the body's own closed refusal rather than a style applied to `undefined`.
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var index = request !== null && typeof request.paragraph === 'number' ? request.paragraph : null;
+            var styleName = request !== null && typeof request.styleName === 'string' && request.styleName !== '' ? request.styleName : null;
+            if (index === null || index < 0 || index % 1 !== 0 || styleName === null) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            // Every primitive this body authors is a FUNCTION CHECK before any call, exactly like the block
+            // and table bodies: an editor that does not expose one of them answers this body's own refusal
+            // rather than a style applied through a primitive that is not the measured one.
+            if (typeof document.GetStyle !== 'function' || typeof document.GetAllParagraphs !== 'function') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof document.GetAllHeadingParagraphs !== 'function') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check
+            // reaches for NO global at all, so the stringified body depends on nothing but the two bindings
+            // the vendor wrapper creates.
+            function measured(value) {
+              return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+            }
+            // `list[index]` is a member read with a NON-CONSTANT key, which this module's NAME-based alias
+            // analysis treats as a computed value; a CALL's result is not tainted by it, so the target is
+            // taken through this helper and the measured member calls below stay clean.
+            function paragraphAt(list, position) {
+              return position >= 0 && position < list.length ? list[position] : null;
+            }
+            function textAt(item) {
+              if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
+              try { return item.GetText(); } catch (error) { return null; }
+            }
+            // The flattened heading TEXTS, collected FIRST through a loop that only CALLS `GetText` through
+            // a parameter, so a heading list the editor answers with elements (not strings) is read the same
+            // way `insert_blocks`/`read_structure` read theirs.
+            function headingTexts(list) {
+              var flat = [];
+              for (var position = 0; position < list.length; position++) {
+                var text = textAt(list[position]);
+                if (typeof text !== 'string') return null;
+                flat.push(text);
+              }
+              return flat;
+            }
+            function holds(list, value) {
+              for (var position = 0; position < list.length; position++) if (list[position] === value) return true;
+              return false;
+            }
+            // THE PRE-DISPATCH BASELINE: the two counts and the addressed paragraph's own text, all read
+            // BEFORE anything is styled. The index is checked against the SAME snapshot the text is read
+            // from, so a baseline that cannot be read and an index outside THIS document are closed
+            // refusals with ZERO writes.
+            var baselineParagraphs = document.GetAllParagraphs();
+            if (baselineParagraphs === null || baselineParagraphs === undefined || typeof baselineParagraphs.length !== 'number') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var paragraphsBefore = baselineParagraphs.length;
+            if (!measured(paragraphsBefore)) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(index < paragraphsBefore)) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var target = paragraphAt(baselineParagraphs, index);
+            if (target === null || target === undefined || typeof target.SetStyle !== 'function') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var baselineText = textAt(target);
+            if (typeof baselineText !== 'string') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var baselineHeadings = document.GetAllHeadingParagraphs();
+            if (baselineHeadings === null || baselineHeadings === undefined || typeof baselineHeadings.length !== 'number') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var headingsBefore = baselineHeadings.length;
+            if (!measured(headingsBefore)) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            // THE STYLE IS RESOLVED BEFORE THE MUTATION: an unresolvable `Heading <n>` refuses the whole
+            // call with NOTHING styled — never an unstyled paragraph where a heading was asked for.
+            var style = document.GetStyle(styleName);
+            if (style === null || style === undefined) return headingRefusal('STYLE_UNAVAILABLE');
+            // THE MUTATION, and the exact boundary the two refusal classes are split on. The phase turns
+            // `POST_INSERT` IMMEDIATELY BEFORE the one `SetStyle`, because a native that throws out of the
+            // call may already have applied the style; the readback below is the ground truth, never the
+            // primitive's return value (no mutation primitive's boolean is consulted anywhere in this body).
+            phase = 'POST_INSERT';
+            target.SetStyle(style);
+            // THE POST READ: the same counts, the addressed paragraph's text, and the heading list.
+            var afterParagraphs = document.GetAllParagraphs();
+            if (afterParagraphs === null || afterParagraphs === undefined || typeof afterParagraphs.length !== 'number') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var paragraphsAfter = afterParagraphs.length;
+            if (!measured(paragraphsAfter)) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var afterHeadings = document.GetAllHeadingParagraphs();
+            if (afterHeadings === null || afterHeadings === undefined || typeof afterHeadings.length !== 'number') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var headingsAfter = afterHeadings.length;
+            if (!measured(headingsAfter)) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            // THE TARGET IS ADDRESSED BY THE BASELINE THIS BODY ALREADY TOOK, not by a fresh search: the
+            // paragraph's own text is re-read at the SAME index, and the doc-side rule requires it to equal
+            // the text the baseline read at that index. A route that changed the paragraph's text — the
+            // measured `InsertContent`-under-a-selection behaviour — is therefore never a verified
+            // assignment, and neither is a style applied to a DIFFERENT paragraph when the addressed text
+            // moved.
+            var afterTarget = paragraphAt(afterParagraphs, index);
+            var afterText = textAt(afterTarget);
+            if (typeof afterText !== 'string') return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var textUnchanged = afterText === baselineText ? 1 : 0;
+            // `targetAdded` is the ONE leg that is about the ADDRESSED paragraph: the document's paragraph
+            // count is an INVARIANT for a style assignment, and its heading count grew by exactly one — and
+            // the heading that arrived carries the addressed paragraph's own (unchanged) text.
+            var flatHeadings = headingTexts(afterHeadings);
+            if (flatHeadings === null) return headingRefusal('CAPABILITY_UNAVAILABLE');
+            var targetAdded = paragraphsAfter === paragraphsBefore && headingsAfter - headingsBefore === 1 && holds(flatHeadings, afterText) ? 1 : 0;
+            // THE STYLE READBACK, ATTEMPTED AND NOT ASSUMED. Both members are checked as functions, the
+            // whole probe sits in its own `try`, and the two flags say exactly what happened: `styleRead` is
+            // 1 only when a NAME was really read back, and `styleMatches` is 1 only when that name is the
+            // requested one. A build that does not expose the route sets `styleRead` to 0 and does NOT fail:
+            // the proof then rests on the measured signals (`textUnchanged` and `targetAdded`) alone, and the
+            // result says so.
+            var styleRead = 0;
+            var styleMatches = 0;
+            try {
+              if (afterTarget !== null && afterTarget !== undefined && typeof afterTarget.GetParaPr === 'function') {
+                var paraPr = afterTarget.GetParaPr();
+                if (paraPr !== null && paraPr !== undefined && typeof paraPr.GetStyle === 'function') {
+                  var readName = paraPr.GetStyle();
+                  if (typeof readName === 'string') {
+                    styleRead = 1;
+                    styleMatches = readName === styleName ? 1 : 0;
+                  }
+                }
+              }
+            } catch (error) { styleRead = 0; styleMatches = 0; }
+            // The phase slot, the two counts and the four flags are APPENDED rather than spelled as one array
+            // literal, for the authored-code-audit reason the block body states: the local alias analysis is
+            // NAME-based and scope-insensitive over the whole bundle, so a literal built from identifier
+            // names another scope happened to taint would make this array a "computed value" and every call
+            // on it a computed-execution finding.
+            var answer = [];
+            answer.push(phase);
+            answer.push(headingsBefore);
+            answer.push(headingsAfter);
+            answer.push(targetAdded);
+            answer.push(textUnchanged);
+            answer.push(styleRead);
+            answer.push(styleMatches);
+            return answer;
+          } catch (error) { return headingRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -993,6 +1199,102 @@ function exactTableDelta(outcome) {
     if (outcome.present[index] !== true) everyCellPresent = false;
   }
   return outcome.tablesAfter - outcome.tablesBefore === 1 && everyCellPresent;
+}
+// THE HEADING-STYLE answer, decoded with the same strictness as `decodeBlocks`/`decodeTable` and for the
+// same reason: the authored body encodes its proof as ONE flat array of primitives —
+// `[POST_INSERT, headingsBefore, headingsAfter, targetAdded, textUnchanged, styleRead, styleMatches]` —
+// because the native return validator keeps arrays of primitives and STRIPS a plain object.
+// `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every member is
+// read through its own data descriptor, never through a getter. Four rules are this leg's own contract:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes
+//     are split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a
+//     KNOWN refusal whose code the caller republishes (nothing was styled), and `[POST_INSERT, name]` is
+//     the UNCERTAIN class (the document may already carry the style). A phase that is ABSENT — the
+//     one-slot `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real style
+//     assignment — or a pre-insert phase over a measurement, or any other single value, can never be a
+//     known refusal: it is decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the
+//     marker does.
+//   * the two counts are NON-NEGATIVE SAFE INTEGERS — the document's own array lengths — and the FOUR
+//     flags are EXACTLY `0` or `1`: a count this bridge cannot trust is not a count, and an editor that
+//     answers anything else is not one this body can have read.
+//   * THE ANSWER'S LENGTH IS FIXED, because this leg's work does not scale with a caller-supplied
+//     collection: there is exactly ONE addressed paragraph, so a `[phase, …]` answer with anything but the
+//     seven slots below is not one this body can have produced. There is no per-item array to pin, which
+//     is precisely what makes the phase gate the whole of the length rule.
+//   * the answer needs NO byte ceiling beyond the one this decoder carries, and it is carried because it
+//     is cheap and exact: the phase is one of two literals, each count is at most 16 characters as JSON and
+//     each flag one character, so the widest legal answer measures about 48 bytes against
+//     `LIMITS.editorResultBytes` (65536). Unlike the block/table decoders' retired assertions this one is
+//     genuinely reachable by no legal shape either — but it is a CEILING on an answer this bridge accepts
+//     from the native, and a ceiling that is never applied is not a ceiling at all.
+const HEADING_SLOTS = 2;
+const HEADING_FLAGS = 4;
+const HEADING_PHASE_PRE = 'PRE_INSERT';
+const HEADING_PHASE_POST = 'POST_INSERT';
+const HEADING_LENGTH = HEADING_SLOTS + 1 + HEADING_FLAGS;
+function decodeHeading(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > HEADING_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  // THE PHASE GATE. The name the body emits only from its pre-insert half keeps its KNOWN class ONLY when
+  // the answer itself carries the pre-insert phase; a missing phase, a post-insert phase, or a pre-insert
+  // phase that cannot legally carry a measurement is the uncertain class, because the body ran and the
+  // document may already carry the style.
+  if (size === 2) {
+    if (members[0] !== HEADING_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    if (members[1] === 'STYLE_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal — the
+  // exact forgery this gate exists for.
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== HEADING_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== HEADING_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = members.slice(1, HEADING_SLOTS + 1);
+  for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const flags = members.slice(HEADING_SLOTS + 1);
+  for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (flags.length !== HEADING_FLAGS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({ headingsBefore: numbers[0], headingsAfter: numbers[1],
+    targetAdded: flags[0] === 1, textUnchanged: flags[1] === 1, styleRead: flags[2] === 1, styleMatches: flags[3] === 1 });
+}
+// THE EXACT OUTCOME RULE the heading assignment rests on, in ONE place so the decision and its comment
+// cannot drift apart. Four conditions, all required, and EVERY ONE of them is about the ADDRESSED
+// paragraph or about the document's own counts:
+//   1. `textUnchanged` — the paragraph at the requested index carries EXACTLY the text it carried before
+//      the one `SetStyle`. This is what makes a route that replaced text (§13.2's measured behaviour) and
+//      a STALE INDEX whose paragraph now holds something else both non-successes.
+//   2. `targetAdded` — the paragraph count is unchanged (a style assignment creates and destroys nothing),
+//      the heading count grew by EXACTLY one, and the addressed paragraph's own text is among the post
+//      heading paragraphs.
+//   3. the heading count ACTUALLY grew by exactly one, re-derived here from the two counts rather than
+//      trusted from the flag, so a forged `targetAdded` cannot carry a delta the counts contradict.
+//   4. THE STYLE LEG IS CONDITIONAL AND THAT IS STATED, NOT HIDDEN: when the body could read the target's
+//      own style name (`styleRead`), it MUST equal the requested one — that is the only leg that identifies
+//      the addressed paragraph rather than its text. When the readback was unavailable, the proof is the
+//      strongest combination the measured signals admit and `styleRead: false` travels in the result so a
+//      caller is never told an identity that was not established. The ambiguity that leaves — a document
+//      already holding a SECOND heading with the same text — is decided and documented in the descriptor's
+//      comment and in §15 of docs/sprint-3-progress.md; it cannot be reached without a NEW heading
+//      (condition 3) and cannot be reached by a text-changing route (condition 1).
+function exactHeadingDelta(outcome) {
+  if (!outcome.textUnchanged) return false;
+  if (!outcome.targetAdded) return false;
+  if (outcome.headingsAfter - outcome.headingsBefore !== 1) return false;
+  if (outcome.styleRead && !outcome.styleMatches) return false;
+  return true;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
 // three classes, and the separator it contributes is chosen so that it can NEVER complete a needle:
@@ -1570,6 +1872,20 @@ export function createR7Bridge(plugin, {
             if (!exactTableDelta(outcome)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE HEADING STYLE ASSIGNMENT. Its answer is the authored flat array of primitives, decoded with
+          // NO caller-supplied collection to pin against — this leg addresses exactly ONE paragraph, so the
+          // answer's length is fixed by `decodeHeading` and the phase gate is the whole of the length rule.
+          // The outcome rule then decides the ticket HERE, while it still owns the slot: a target whose text
+          // moved, a heading count that did not grow by exactly one, a paragraph count that moved, or a
+          // readable style that is NOT the requested one is the UNCERTAIN class with the slot HELD, never a
+          // known error about a document this call may already have restyled. A decode that THROWS is
+          // classified by the catch below (a `[PRE_INSERT, name]` answer keeps its known code; everything
+          // else is uncertain).
+          else if (kind === 'headinginsert') {
+            const outcome = decodeHeading(value);
+            if (!exactHeadingDelta(outcome)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -1594,7 +1910,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert') && owned.dispatched && !preInsertRefusal(error)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert') && owned.dispatched && !preInsertRefusal(error)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -1767,6 +2083,35 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.table(callback); }
           finally { clearScope(previousData); }
+        } else if (kind === 'headinginsert') {
+          // THE HEADING STYLE ASSIGNMENT: ONE command, and the SAME parameter channel the search,
+          // structure, block and table legs use — the validated `{ paragraph, level, styleName }` triple
+          // written into the page's `Asc.scope`, never composed into source (ADR 0002). It needs the entry
+          // point that OWNS that wrapper (`callCommand`); a build whose command channel is the bare
+          // `executeCommand` transport has no sanctioned parameter channel at all, so it refuses HERE,
+          // before any dispatch, and releases the slot because nothing reached the editor.
+          // It carries NO document-identity probe, and its reason is the SHARPEST of the write legs rather
+          // than a copy of theirs: this leg addresses a POSITION, not an owned TARGET, so there is no handle
+          // whose identity a probe could establish — and a probe over a caret/document id could not make a
+          // POSITION stable anyway, because a concurrent edit ABOVE the addressed index renumbers it without
+          // changing any id. What the leg does instead is measurable and stated: the body reads the
+          // addressed paragraph's TEXT before the one `SetStyle` and again after it, and the doc-side rule
+          // requires it unchanged, so a stale index whose paragraph now holds different text is a non-
+          // success (`APPLY_UNCERTAIN`, slot HELD, no retry) rather than a silent edit of the wrong
+          // paragraph. The residual it cannot catch — a concurrent edit that lands a paragraph with EXACTLY
+          // the same text at that index — is accepted and recorded in §15 of docs/sprint-3-progress.md with
+          // its structural remedy, never silently relied on.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other
+          // leg: a synchronous throw out of the transport must never release a slot whose work may already
+          // be queued, and the body's own pre-insert refusals keep their known class through the callback
+          // (they arrive as a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousHeading;
+          try { previousHeading = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.heading(callback); }
+          finally { clearScope(previousHeading); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -2148,6 +2493,63 @@ export function createR7Bridge(plugin, {
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         const outcome = await start('tableinsert', signal, {}, Object.freeze({ data: Object.freeze(shaped) }));
         return Object.freeze({ ok: true, tablesBefore: outcome.tablesBefore, tablesAfter: outcome.tablesAfter, present: outcome.present });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // THE HEADING STYLE ASSIGNMENT behind `set_heading` — the THIRD MUTATION of Sprint 3 and the FIRST
+    // write leg that appends NOTHING: it changes an EXISTING paragraph in place through ONE
+    // `paragraph.SetStyle(style)` on an index the caller names. The body's own comment carries the
+    // mechanism (a pre-dispatch baseline of the two counts AND the addressed paragraph's text, the style
+    // RESOLVED before the mutation, then ONE `SetStyle`, then the post read and the style readback) and why
+    // no mutation primitive's boolean is the signal; what matters HERE is the shape: ONE command on the ONE
+    // entry point that owns the parameter wrapper, the validated `{ paragraph, level, styleName }` triple
+    // carried as DATA through `Asc.scope`, and ONE strict decoder that turns the authored flat array — an
+    // explicit phase slot, the delta's two heading counts, and four flags (the paragraph count invariant
+    // plus the heading delta plus the unchanged addressed text, and the style readback's availability and
+    // result) — into the envelope below. The OUTCOME rule is then decided inside the ticket, before the
+    // slot is released: a target whose text moved, a heading count that did not grow by exactly one, a
+    // paragraph count that moved, a readable style that is not the requested one, an answer that cannot be
+    // interpreted and the body's own POST-insert uncertainty all settle `APPLY_UNCERTAIN` with the slot
+    // HELD and no retry, while the body's PRE-insert refusals (an unusable baseline, an index outside the
+    // document, an unresolvable `Heading <n>`) settle their closed KNOWN class with the slot released,
+    // because nothing was styled — and they do so ONLY when the answer carries their phase, so a name alone
+    // can never release a slot.
+    // The request is a closed precondition, never an optional refinement: a caller that cannot name an
+    // in-range index, a level in the heading family and the style name that level means gets a refusal
+    // instead of an SDK call that styles an unnamed paragraph. The SHAPE rules are the closed argument
+    // class — the same class the tool publishes for the same family — so a descriptor held directly and the
+    // tool that serves it can never disagree about which refusal a caller receives. THE STYLE NAME IS
+    // CROSS-CHECKED against the level HERE rather than taken on trust: the bridge is a public entry point,
+    // and a triple whose name does not mean its level would let a caller style a paragraph with a name this
+    // module never measured.
+    async setHeading(raw) {
+      const paragraph = raw?.paragraph, level = raw?.level, styleName = raw?.styleName, signal = raw?.signal;
+      if (!Number.isSafeInteger(paragraph) || paragraph < 0 || paragraph > LIMITS.setHeadingIndexMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (!Number.isSafeInteger(level) || level < 1 || level > LIMITS.insertHeadingMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      // THE STYLE NAME IS CROSS-CHECKED against the level HERE rather than taken on trust: the bridge is a
+      // public entry point, and a triple whose name does not mean its level would let a caller style a
+      // paragraph with a name this module never measured. The comparison is made against the NAME DERIVED
+      // FROM THE LEVEL rather than against a spelled-out `'Heading ' + level`, so there is no second place
+      // the mapping could drift to.
+      if (styleName !== `Heading ${level}`) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('headinginsert', signal, {}, Object.freeze({ paragraph, level, styleName }));
+        // `styleName` is ECHOED, not dropped: the tool derives it from the level and carries it to the body,
+        // so the tool can require the answer to name the SAME style it asked for — an `ok` envelope that
+        // names a different one was produced for a request this caller did not make. It is the one field
+        // here that is NOT a measurement of the document, and it is the request's own word.
+        return Object.freeze({ ok: true, styleName, headingsBefore: outcome.headingsBefore, headingsAfter: outcome.headingsAfter,
+          targetAdded: outcome.targetAdded, textUnchanged: outcome.textUnchanged,
+          styleRead: outcome.styleRead, styleMatches: outcome.styleMatches });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

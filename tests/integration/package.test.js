@@ -85,6 +85,18 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // body. It reads the document's own table count around the insert (`GetAllTables`) and the legacy
   // whole-array insert primitive — measured to land at the START and to replace existing text under a
   // selection — is authored nowhere.
+  // SEVEN legs are carried inline, and the last one is the HEADING STYLE ASSIGNMENT: the third body that
+  // MUTATES the document through the `Api` builder, and the FIRST one that APPENDS NOTHING — it changes an
+  // EXISTING paragraph in place. Like the other two it builds the facade itself and receives DATA — the
+  // validated `{ paragraph, level, styleName }` triple — from the `scope` binding the vendor's `callCommand`
+  // wrapper injects (never from source text), and it is classified by its ONE mutating call
+  // (`paragraph.SetStyle`, which no other leg authors) BEFORE every other branch. That order is
+  // load-bearing: this body also READS `GetAllHeadingParagraphs`, so without its own branch it would be
+  // classified as the STRUCTURE leg it shares that read with. It reads the document's own heading count
+  // around the mutation (`GetAllHeadingParagraphs`), verifies the addressed paragraph's own text with a
+  // second read of `GetAllParagraphs`, and authors NEITHER the append primitive nor the legacy whole-array
+  // insert primitive — the one route measured to land at the START and to replace existing text under a
+  // selection, which this leg must never take because its contract is that the text does NOT change.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -109,6 +121,13 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /CreateParagraph/, 'and builds each paragraph through the measured factory');
         assert.match(code, /GetAllParagraphs/, 'and reads the document\u2019s own counts around the append');
         legs.push('blocks');
+      } else if (code.includes('.SetStyle(')) {
+        assert.match(code, /\bscope\b/, 'the heading body takes its address, level and style name from the injected command scope');
+        assert.match(code, /GetAllHeadingParagraphs/, 'and reads the document\u2019s own heading count around the mutation');
+        assert.match(code, /GetAllParagraphs/, 'and re-reads the addressed paragraph\u2019s own text');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        assert.equal(code.includes('document.Push('), false, 'and never the append primitive: this leg changes an existing paragraph in place');
+        legs.push('heading');
       } else if (code.includes('.GetAllHeadingParagraphs(')) {
         assert.match(code, /\bscope\b/, 'the structure body takes its extraction cap from the injected command scope');
         assert.match(code, /GetStatistics/, 'and reads the measured statistics primitive');
@@ -123,8 +142,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 6, 'the adapter dispatches exactly the six authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'search', 'structure', 'table'],
+  assert.equal(commands, 7, 'the adapter dispatches exactly the seven authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'heading', 'search', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

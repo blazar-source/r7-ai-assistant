@@ -54,18 +54,24 @@ function fakeBridge(overrides = {}) {
     readDocumentText: async () => ({ ok: true, text: 'привет', totalChars: 6 }),
     // The bridge's real insert envelope: the native acknowledgement is the only outcome it carries.
     insertParagraph: async (args) => { seen.push(args); return { ok: true, data: { sent: true } }; },
+    // The bridge's real heading envelope: the two counts the delta was decided on and the body's own four
+    // flags, exactly the six fields `setHeading` publishes.
+    setHeading: async (args) => { seen.push(args); return { ok: true, headingsBefore: 3, headingsAfter: 4,
+      targetAdded: true, textUnchanged: true, styleRead: true, styleMatches: true }; },
     canApply: () => true, ...overrides };
 }
 
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+  assert.deepEqual(names, ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'insert_table').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_table').kind, 'mutate');
+  assert.equal(tools.find(tool => tool.name === 'set_heading').policy, 'auto');
+  assert.equal(tools.find(tool => tool.name === 'set_heading').kind, 'mutate');
   assert.equal(tools.find(tool => tool.name === 'replace_selection').policy, 'confirm');
   assert.equal(tools.find(tool => tool.name === 'read_context').policy, 'deny',
     'an unverified public read may be neither offered nor executed');
@@ -96,7 +102,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection'],
+    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -314,7 +320,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection']);
+    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -5681,6 +5687,629 @@ test('insert_table is offered with policy auto and a model call inserts exactly 
   assert.deepEqual(published.data, { rows: 1, columns: 2, tablesBefore: 1, tablesAfter: 2,
     bytes: utf8ByteLength('Заголовок') + utf8ByteLength('Значение') },
   'the tool publishes the five fields it names; the two counts are the ones the bridge measured');
+});
+
+
+// --- Sprint 3, tool 7: `set_heading` — the THIRD MUTATION, and the FIRST one that appends NOTHING ---
+//
+// This leg changes an EXISTING paragraph IN PLACE, so it shares the machinery §13/§13.2/§14 hardened —
+// a pre-dispatch baseline, ONE authored static command body that builds the `Api` facade itself, the
+// model data carried as `Asc.scope` DATA, an explicit PRE_INSERT/POST_INSERT phase slot, a post read and
+// an outcome that is `ok` ONLY on an exact proof — and it differs in exactly the things a STYLE
+// ASSIGNMENT differs in: the ONE mutating call is `paragraph.SetStyle(style)` (no `Push`, no
+// `InsertContent`, which §13.2 measured to land at the START and to REPLACE existing text under a
+// selection), the paragraph count is an INVARIANT rather than a delta, and the proof is about the
+// ADDRESSED paragraph rather than about the append region.
+//
+// THE STYLE READBACK IS A HYPOTHESIS THE TESTS PIN IN BOTH DIRECTIONS. The public `ApiParaPr` that
+// `paragraph.GetParaPr()` returns registers `GetStyle`, so the target's own style is LIKELY readable as
+// `paragraph.GetParaPr().GetStyle()` — but that exact call was NOT measured, so the authored body
+// attempts it behind `typeof` checks inside its own `try` and reports what happened in a SEPARATE flag.
+// The rigs below therefore cover all three states: the readback WORKS and matches (the strongest proof),
+// the readback WORKS and does NOT match (a non-success, however good the counts look), and the readback
+// is ABSENT or THROWS (the proof falls back to the measured signals and the result SAYS so with
+// `styleRead: false` instead of assuming an identity it never read).
+function headingTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'set_heading'); }
+// A bridge double whose `setHeading` records the ONE request and answers a supplied envelope. The
+// envelopes are built from the same fields the REAL bridge publishes, so a handler check that passes here
+// is a check the real decoder's shape satisfies.
+function headingBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, setHeading: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+// The envelope the REAL bridge publishes for a style assignment on paragraph `paragraph`: the two heading
+// counts the delta was decided on and the body's own four flags.
+function headingAssigned(headingsBefore, overrides = {}) {
+  return { ok: true, styleName: 'Heading 1', headingsBefore, headingsAfter: headingsBefore + 1, targetAdded: true,
+    textUnchanged: true, styleRead: true, styleMatches: true, ...overrides };
+}
+function headingDocument({ texts = ['первый абзац', 'второй абзац'], headingIndexes = [], styles = true,
+  apply = true, restyle = null, grow = 1, concurrent = null, noParaPr = false, paraPrThrows = false } = {}) {
+  const state = { styleNames: [], styles: [], pushes: 0, pushed: [], insertContents: 0, setStyles: 0 };
+  let resolved = null;
+  let dispatches = 0;
+  // THE STYLE OBJECT OF A NAME is one object per name, so a paragraph that carries `Heading 2` is
+  // recognised by the same `GetName()` the style readback compares against.
+  function styleFor(name) { return { GetName() { return name; } }; }
+  const doubles = texts.map(text => ({
+    text,
+    style: null,
+    // THE MUTATING PRIMITIVE THE BODY ACTUALLY CALLS, on the paragraph it ADDRESSED — measured on the
+    // target and asserted by this file's own self-contained-body test. The style really lands here, so the
+    // heading list below is DERIVED from the paragraphs that carry one and the double is told NOTHING about
+    // a request. `state.setStyles` counts DISPATCHES, not calls: a run that styles two paragraphs (the
+    // `grow:2` fault) must still show ONE dispatch, which is the property the tests assert.
+    SetStyle(style) {
+      const call = dispatches + 1;
+      dispatches = call;
+      state.setStyles = call;
+      state.styles.push(style);
+      if (concurrent !== null && this.text !== concurrent) this.text = concurrent;
+      if (apply && restyle === null) {
+        this.style = style === null || style === undefined ? null : style.GetName();
+        for (let round = 1; round < grow; round += 1) {
+          const extra = doubles[round % doubles.length];
+          extra.style = style === null || style === undefined ? null : style.GetName();
+        }
+      }
+      if (restyle === 'other' && doubles[1] !== undefined) doubles[1].style = style === null || style === undefined ? null : style.GetName();
+    },
+    GetText() { return this.text; }
+  }));
+  for (const index of headingIndexes) doubles[index].style = `Heading ${index + 1}`;
+  for (const double of doubles) {
+    if (noParaPr) continue;
+    if (paraPrThrows) double.GetParaPr = () => { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); };
+    else double.GetParaPr = function () { const self = this; return { GetStyle() { return self.style; } }; };
+  }
+  // THE HEADING LIST IS DERIVED FROM THE PARAGRAPHS THAT CARRY A HEADING STYLE, exactly as the real editor
+  // reports it: the double is told NOTHING about a request, so every count the body measures is the
+  // document's own.
+  const headingDoubles = () => doubles.filter(double => double.style !== null);
+  return { state, doubles, document: {
+    GetAllParagraphs() { return doubles.slice(); },
+    GetAllHeadingParagraphs() { return headingDoubles().map(double => ({ GetText() { return double.text; } })); },
+    GetStyle(name) { state.styleNames.push(name); resolved = styles ? styleFor(name) : null; return resolved; },
+    // THE DOCUMENT-LEVEL MUTATING PRIMITIVE IS OFFERED AND NEVER TAKEN. The measured route is
+    // `paragraph.SetStyle(style)` — asserted by the self-contained-body test below — so this remains a
+    // trap that records any call rather than the route this leg uses. It is deliberately NOT the fault
+    // injector: every `apply`/`restyle`/`grow`/`concurrent` case is modelled on the ADDRESSED PARAGRAPH's
+    // own `SetStyle` above, which is the method the authored body really reaches.
+    SetStyle() { state.documentSetStyles = (state.documentSetStyles ?? 0) + 1; return true; },
+    Push(item) { state.pushes += 1; state.pushed.push(item); },
+    InsertContent(items) { state.insertContents += 1; for (const item of items) doubles.push(item); }
+  } };
+}
+// The IN-EDITOR rig for this leg, exactly the carriage `blocksRig`/`tablesRig` reproduce: the vendor
+// wrapper reads `Asc.scope` SYNCHRONOUSLY, hands the body that value, and evaluates the body the way the
+// EDITOR does — in a fresh, module-free scope whose only bindings are `Api` and `scope`. `forge` hands the
+// bridge a REPLACEMENT for the answer the body really produced, AFTER that body ran to completion against
+// the document double — a real `SetStyle` included — which is the only way to model a hostile or damaged
+// native answer for a dispatched write without weakening the body itself. A CONCURRENT EDIT (the window a
+// stale index lives in) is modelled by `override` wrapping `GetAllParagraphs` so the array the body reads
+// already carries a paragraph whose text is not the one the caller addressed, on the SAME state object.
+function headingRig(options = {}) {
+  const commands = [];
+  const measured = headingDocument(options);
+  // `override` replaces ONE method on the SAME document double the assertions inspect, so a test that
+  // models an unusable primitive or a concurrent edit still reads the state of the document it drove.
+  const document = options.override === undefined ? measured.document : { ...measured.document, ...options.override };
+  const api = { GetDocument: () => document };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: options.command === false ? undefined : function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      // THE SCOPE IS READ FROM THE NAMESPACE THE BRIDGE WROTE IT INTO — synchronously, exactly as the
+      // vendor wrapper does — and NOT from `options.namespace`, because a rig with no explicit carrier
+      // builds its own empty one and the request never reaches `options`.
+      const scope = carrier.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(options.forge === undefined ? answered : options.forge);
+      return false;
+    } };
+  // The default carrier starts EMPTY, exactly like a page whose `Asc.scope` the bridge has not written
+  // yet: the vendor wrapper reads `Asc.scope` SYNCHRONOUSLY from the namespace the bridge wrote the request
+  // into, so a carrier that already held an object would be reading a value the dispatch did not put there.
+  // A test that wants the body to SEE an uninterpretable scope passes one explicitly.
+  const carrier = options.namespace ?? { scope: {} };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  const bridge = bridgeWith(plugin, bridgeOptions);
+  return { bridge, plugin, commands, namespace: carrier, api, doc: measured };
+}
+
+test('set_heading advertises the closed bounded schema and the two bounds it names', () => {
+  const tool = headingTool(headingBridge(headingAssigned(3)));
+  assert.equal(tool.name, 'set_heading');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ['paragraph', 'level']);
+  // The CLOSED property set: there is no `text` and no `style` argument, because this tool changes the
+  // style of a paragraph the document already holds and a caller-supplied style name would address a name
+  // this module never measured.
+  assert.deepEqual(Object.keys(schema.properties), ['paragraph', 'level']);
+  assert.equal(schema.properties.paragraph.type, 'integer');
+  assert.equal(schema.properties.paragraph.minimum, 0);
+  assert.equal(schema.properties.paragraph.maximum, LIMITS.setHeadingIndexMax);
+  assert.equal(schema.properties.level.type, 'integer');
+  assert.equal(schema.properties.level.minimum, 1);
+  assert.equal(schema.properties.level.maximum, LIMITS.insertHeadingMax);
+  // The bounds are pinned as NUMBERS and as DISTINCT quantities: the index bound is not an alias of the
+  // level bound, of the block/table caps, or of the module's read-time index bound.
+  assert.equal(LIMITS.setHeadingIndexMax, 128);
+  assert.equal(LIMITS.insertHeadingMax, 9);
+  assert.notEqual(LIMITS.setHeadingIndexMax, LIMITS.insertHeadingMax, 'an index is not a level');
+  assert.notEqual(LIMITS.setHeadingIndexMax, LIMITS.insertBlocksMax, 'an index is not a block count');
+  assert.notEqual(LIMITS.setHeadingIndexMax, LIMITS.insertTableRowsMax, 'an index is not a row count');
+  assert.equal(validateArguments(schema, { paragraph: 0, level: 1 }).paragraph, 0);
+});
+
+test('set_heading refuses every illegal argument with nothing dispatched, at the schema or in the handler', async () => {
+  const illegal = [
+    ['no argument object', null], ['missing paragraph', { level: 1 }], ['missing level', { paragraph: 0 }],
+    ['an unknown key', { paragraph: 0, level: 1, style: 'Heading 1' }],
+    ['a text key (this tool takes no text)', { paragraph: 0, level: 1, text: 'а' }],
+    ['a non-integer paragraph', { paragraph: 1.5, level: 1 }],
+    ['a stringified paragraph', { paragraph: '0', level: 1 }],
+    ['a negative paragraph', { paragraph: -1, level: 1 }],
+    ['an index over the advertised cap', { paragraph: LIMITS.setHeadingIndexMax + 1, level: 1 }],
+    ['a non-integer level', { level: 1.5, paragraph: 0 }], ['a stringified level', { paragraph: 0, level: '1' }],
+    ['level 0 (outside the heading family)', { paragraph: 0, level: 0 }],
+    ['a level over the heading family', { paragraph: 0, level: LIMITS.insertHeadingMax + 1 }],
+    ['a negative level', { paragraph: 0, level: -1 }], ['a boolean level', { paragraph: 0, level: true }]
+  ];
+  for (const [label, args] of illegal) {
+    const bridge = headingBridge(headingAssigned(3));
+    const tool = headingTool(bridge);
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', label); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+    assert.deepEqual(bridge.seen, [], `${label}: nothing is dispatched for an illegal argument`);
+  }
+  // THE STYLE RESOLUTION HAPPENS BEFORE THE MUTATION, so an unresolvable `Heading <n>` is the closed
+  // argument class with ZERO writes — and the body's own style resolution is exercised for every level of
+  // the family, so a level that mapped to a name the document does not define can never be an unstyled
+  // paragraph reported as a heading.
+  const r = headingRig({ styles: false, namespace: { scope: { paragraph: 0, level: 1, styleName: 'Heading 1' } } });
+  assert.deepEqual(await r.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Heading 1' }),
+    { ok: false, code: 'TOOL_ERROR' });
+  assert.equal(r.doc.state.setStyles, 0, 'an unresolvable style never reaches the one SetStyle');
+  assert.equal(r.bridge.getState().busy, false, 'and the slot is RELEASED: nothing was styled');
+});
+
+test('set_heading assigns the style through exactly ONE bridge call and publishes the measured proof', async () => {
+  const bridge = headingBridge(headingAssigned(3, { styleName: 'Heading 2' }));
+  const controller = new AbortController();
+  const result = await headingTool(bridge).execute({ paragraph: 2, level: 2 }, { editor: 'word', signal: controller.signal });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { paragraph: 2, level: 2, heading: true, headingsBefore: 3, headingsAfter: 4,
+    styleRead: true, styleMatches: true, bytes: utf8ByteLength('2:2:Heading 2') });
+  assert.deepEqual(Object.keys(result.data),
+    ['paragraph', 'level', 'heading', 'headingsBefore', 'headingsAfter', 'styleRead', 'styleMatches', 'bytes'],
+    'the eight measured fields and nothing else: an envelope cannot smuggle a field into the entry');
+  assert.equal(bridge.seen.length, 1, 'EXACTLY one bridge call: the assignment is dispatched once and never retried');
+  assert.deepEqual(bridge.seen[0], { paragraph: 2, level: 2, styleName: 'Heading 2', signal: controller.signal });
+  assert.equal(bridge.seen[0].signal, controller.signal, 'the caller\'s signal crosses so a Stop cancels before the dispatch');
+  // `bytes` is the DISPATCHED payload's own size — the three values that cross to the editor, under the
+  // same `paragraph:level:styleName` form the handler measured — never the result's own size.
+  assert.equal(utf8ByteLength('2:2:Heading 2'), 13);
+});
+
+test('set_heading publishes ok ONLY for the exact proof, and never retries otherwise', async () => {
+  // THE PROOF'S LEGS, broken ONE AT A TIME. Every envelope below is one a damaged or hostile native could
+  // hand back, and none of them may become an `ok`.
+  const wrong = [
+    ['the heading count did not move', headingAssigned(3, { headingsAfter: 3 })],
+    ['two headings arrived', headingAssigned(3, { headingsAfter: 5 })],
+    ['the document lost headings', headingAssigned(3, { headingsAfter: 2 })],
+    ['the target paragraph did not join the heading list', headingAssigned(3, { targetAdded: false })],
+    ['the target paragraph\'s TEXT changed', headingAssigned(3, { textUnchanged: false })],
+    ['a heading count that SHRANK by one', headingAssigned(3, { headingsAfter: 2 })]
+  ];
+  const run = async (answer, request = { paragraph: 1, level: 1 }) => {
+    const bridge = headingBridge(answer);
+    return { result: await headingTool(bridge).execute(request, { editor: 'word' }), bridge };
+  };
+  const verified = await run(headingAssigned(3));
+  assert.equal(verified.result.ok, true);
+  assert.equal(verified.bridge.seen.length, 1);
+  for (const [label, answer] of wrong) {
+    const { result, bridge } = await run(answer);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.message, 'отказ', label);
+    assert.equal(result.data, undefined, `${label}: an uncertain outcome publishes no proof`);
+    assert.equal(bridge.seen.length, 1, `${label}: NO retry — the assignment was dispatched exactly once`);
+  }
+  // A PROOF WHOSE COUNT ITSELF IS NOT A COUNT is the unknown envelope class, checked before any flag: a
+  // fractional, negative or unsafe count is not one this bridge's decoder can publish, so there is nothing
+  // about a mutation to judge here either.
+  for (const [label, answer] of [
+    ['a count that is not a safe integer', headingAssigned(3, { headingsAfter: Number.MAX_SAFE_INTEGER + 2 })],
+    ['a count below zero', headingAssigned(3, { headingsAfter: -1 })],
+    ['a fractional count', headingAssigned(3, { headingsAfter: 3.5 })]
+  ]) {
+    const { result, bridge } = await run(answer);
+    assert.equal(result.code, 'TOOL_ERROR', label);
+    assert.equal(bridge.seen.length, 1, `${label}: the call was still dispatched exactly once`);
+  }
+  // A READBACK THAT DOES NOT MATCH IS A NON-SUCCESS even when every count looks perfect; a readback that was
+  // NOT AVAILABLE is not: the proof falls back to the measured signals and SAYS so in the result.
+  const blind = await run(headingAssigned(3, { styleRead: false, styleMatches: false }));
+  assert.equal(blind.result.ok, true, 'without a readback the measured signals carry the proof');
+  assert.deepEqual([blind.result.data.styleRead, blind.result.data.styleMatches], [false, false],
+    'and the result states that no identity was established rather than inventing one');
+  // AND THE HANDLER REFUTES A CONTRADICTION IT CAN SEE FOR ITSELF: an `ok` envelope whose readable
+  // readback says the addressed paragraph carries a DIFFERENT style is never published as a verified
+  // assignment, because the tool would be reporting a request it can prove was not applied.
+  const contradicted = await run(headingAssigned(3, { styleMatches: false }), { paragraph: 1, level: 1 });
+  assert.equal(contradicted.result.ok, false);
+  // The BRIDGE never publishes this shape at all — `exactHeadingDelta` turns `styleRead && !styleMatches`
+  // into `APPLY_UNCERTAIN` with the slot held, which the real-bridge test below drives — so this is the
+  // handler's own closed refutation of a forged envelope, not a state the tool can reach.
+  assert.equal(contradicted.result.code, 'TOOL_UNCERTAIN',
+    'the bridge only publishes ok when the readable style MATCHES, so an ok that says it does not is not a verified assignment');
+});
+
+test('set_heading refuses an unusable baseline, an index outside the document and an unresolvable style with ZERO writes', async () => {
+  const withRequest = (rig) => rig.bridge.setHeading({ paragraph: 1, level: 1, styleName: 'Heading 1' });
+  // An index OUTSIDE this document is the closed argument class with nothing styled: the body checks it
+  // against the array it read, not against the schema's advertised cap.
+  const outside = headingRig({ namespace: { scope: { paragraph: 5, level: 1, styleName: 'Heading 1' } } });
+  assert.deepEqual(await outside.bridge.setHeading({ paragraph: 5, level: 1, styleName: 'Heading 1' }),
+    { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(outside.doc.state.setStyles, 0, 'an index outside the document never reaches SetStyle');
+  assert.equal(outside.doc.state.styleNames.length, 0, 'and the style is not even resolved');
+  assert.equal(outside.bridge.getState().busy, false, 'the slot is RELEASED: nothing was styled');
+  // A baseline that cannot be read is the same closed class with ZERO writes — no baseline means no delta
+  // means no evidence means no write.
+  const baseline = headingRig({ override: { GetAllParagraphs: null } });
+  assert.deepEqual(await withRequest(baseline), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(baseline.doc.state.setStyles, 0);
+  assert.equal(baseline.bridge.getState().busy, false);
+  // An INDEX BOUNDARY is re-decided in the bridge as well as by the schema and the descriptor: a caller
+  // that is not this descriptor gets the closed argument class without any SDK work at all.
+  const bounded = headingRig();
+  assert.deepEqual(await bounded.bridge.setHeading({ paragraph: LIMITS.setHeadingIndexMax + 1, level: 1, styleName: 'Heading 1' }),
+    { ok: false, code: 'TOOL_ERROR' });
+  assert.deepEqual(await bounded.bridge.setHeading({ paragraph: 0, level: LIMITS.insertHeadingMax + 1, styleName: 'Heading 10' }),
+    { ok: false, code: 'TOOL_ERROR' });
+  assert.deepEqual(await bounded.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Заголовок 1' }),
+    { ok: false, code: 'TOOL_ERROR' },
+    'the style name is CROSS-CHECKED against the level: a name that does not mean this level is refused');
+  assert.equal(bounded.commands.length, 0, 'and none of those three reached the editor');
+});
+
+test('set_heading maps each level to the measured style name and never invents one', async () => {
+  for (let level = 1; level <= LIMITS.insertHeadingMax; level += 1) {
+    const r = headingRig({ namespace: { scope: { paragraph: 0, level, styleName: `Heading ${level}` } } });
+    await r.bridge.setHeading({ paragraph: 0, level, styleName: `Heading ${level}` });
+    assert.deepEqual(r.doc.state.styleNames, [`Heading ${level}`], `level ${level} resolves the measured name`);
+  }
+});
+
+test('set_heading refuses a non-Word editor and a bridge that cannot serve the assignment, before any dispatch', async () => {
+  // The EDITOR gate is the precondition, exactly as it is for every other descriptor in this module: the
+  // handler is only reached once the registry has accepted the precondition.
+  for (const editor of ['cell', 'slide', undefined, null]) {
+    const tool = headingTool(headingBridge(headingAssigned(3)));
+    const refused = tool.precondition({ paragraph: 0, level: 1 }, { editor });
+    assert.equal(refused.code, 'CAPABILITY_UNAVAILABLE', String(editor));
+    assert.equal(refused.message, 'отказ', String(editor));
+    assert.equal(tool.precondition({ paragraph: 0, level: 1 }, { editor: 'word' }), null);
+  }
+  // The ADDRESS and LEVEL gates are the same precondition, checked before any dispatch.
+  const tool = headingTool(headingBridge(headingAssigned(3)));
+  for (const args of [{ paragraph: -1, level: 1 }, { paragraph: LIMITS.setHeadingIndexMax + 1, level: 1 },
+    { paragraph: 0, level: 0 }, { paragraph: 0, level: LIMITS.insertHeadingMax + 1 }, { level: 1 }]) {
+    assert.equal(tool.precondition(args, { editor: 'word' }).code, 'TOOL_ERROR', JSON.stringify(args));
+  }
+  const missing = headingTool({});
+  const result = await missing.execute({ paragraph: 0, level: 1 }, { editor: 'word' });
+  assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', 'a bridge with no entry point is a capability refusal');
+});
+
+test('set_heading republishes the closed class the bridge reported and maps uncertainty to TOOL_UNCERTAIN', async () => {
+  const refused = headingBridge({ ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(await headingTool(refused).execute({ paragraph: 0, level: 1 }, { editor: 'word' }),
+    { ok: false, code: 'CAPABILITY_UNAVAILABLE', message: 'отказ' });
+  const returned = headingBridge({ ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(await headingTool(returned).execute({ paragraph: 0, level: 1 }, { editor: 'word' }),
+    { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' });
+  const thrown = headingBridge(null, { setHeading: async () => { throw Object.assign(new Error('x'), { code: 'APPLY_UNCERTAIN' }); } });
+  assert.deepEqual(await headingTool(thrown).execute({ paragraph: 0, level: 1 }, { editor: 'word' }),
+    { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' });
+  const broken = headingBridge(null, { setHeading: async () => { throw Object.assign(new Error('СЕКРЕТ'), { code: 'EDITOR_ERROR' }); } });
+  const failed = await headingTool(broken).execute({ paragraph: 0, level: 1 }, { editor: 'word' });
+  assert.equal(failed.code, 'EDITOR_ERROR');
+  assert.equal(JSON.stringify(failed).includes('СЕКРЕТ'), false, 'no raw exception text crosses');
+  const envelope = headingBridge({ ok: true, headingsBefore: 3 });
+  assert.equal((await headingTool(envelope).execute({ paragraph: 0, level: 1 }, { editor: 'word' })).code, 'TOOL_ERROR',
+    'an uninterpretable envelope is the module\'s unknown convention');
+  // A FORGED ENVELOPE WITH THE WRONG FIELD TYPES is that same unknown class, never an uncertain write: a
+  // bridge cannot have produced these shapes, so nothing about a mutation is being judged here.
+  for (const [label, answer] of [
+    ['a non-boolean target flag', headingAssigned(3, { targetAdded: 'true' })],
+    ['a non-boolean style readback flag', headingAssigned(3, { styleRead: 'yes' })],
+    ['a missing text flag', { ok: true, headingsBefore: 3, headingsAfter: 4, targetAdded: true, styleRead: true }],
+    ['a missing style readback flag', { ok: true, headingsBefore: 3, headingsAfter: 4, targetAdded: true, textUnchanged: true }],
+    // THE REQUEST THE BRIDGE ANSWERED IS PART OF THE ENVELOPE. `styleName` is the one word that level
+    // means; an `ok` answer whose own style name is a DIFFERENT one was produced for a request this
+    // handler did not make, so it is never republished as this call's proof.
+    ['a style name that is not the requested one', headingAssigned(3, { styleName: 'Heading 3' })],
+    ['a missing style name', { ok: true, styleName: undefined, headingsBefore: 3, headingsAfter: 4,
+      targetAdded: true, textUnchanged: true, styleRead: true, styleMatches: true }]
+  ]) {
+    assert.equal((await headingTool(headingBridge(answer)).execute({ paragraph: 0, level: 1 }, { editor: 'word' })).code,
+      'TOOL_ERROR', label);
+  }
+});
+
+test('set_heading measures the exact entry it publishes, and its bounded fields cannot reach the ceiling', async () => {
+  const bridge = headingBridge(headingAssigned(7));
+  const result = await headingTool(bridge).execute({ paragraph: 3, level: 3 }, { editor: 'word' });
+  const entry = JSON.stringify({ tool: 'set_heading', ok: true, data: result.data });
+  assert.equal(utf8ByteLength(entry) <= AGENT_CEILINGS.toolResultBytes, true, entry);
+  // The WIDEST shape this handler can publish: every numeric field at its legal maximum. The measurement
+  // is the module's ONE enforced bound, and this test pins that it is unreachable for eight bounded fields.
+  const widestData = { paragraph: LIMITS.setHeadingIndexMax, level: LIMITS.insertHeadingMax, heading: true,
+    headingsBefore: Number.MAX_SAFE_INTEGER, headingsAfter: Number.MAX_SAFE_INTEGER,
+    styleRead: false, styleMatches: false, bytes: Number.MAX_SAFE_INTEGER };
+  const widest = JSON.stringify({ tool: 'set_heading', ok: true, data: widestData });
+  assert.equal(utf8ByteLength(widest) < AGENT_CEILINGS.toolResultBytes, true,
+    `the widest publishable entry is ${utf8ByteLength(widest)} bytes`);
+  // The REAL serializer the runtime applies accepts the entry it publishes, one-to-one.
+  const crossed = toolResultMessages([{ tool: 'set_heading', result: { ok: true, data: widestData } }]);
+  assert.equal(JSON.parse(crossed[0].content).results[0].data.paragraph, LIMITS.setHeadingIndexMax);
+});
+
+test('bridge setHeading dispatches ONE command, carries the request as DATA and verifies the exact proof', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = headingRig({ texts: ['Ноль', 'Цель', 'Два'], headingIndexes: [0], namespace });
+  const pending = r.bridge.setHeading({ paragraph: 1, level: 2, styleName: 'Heading 2' });
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole assignment');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, { paragraph: 1, level: 2, styleName: 'Heading 2' },
+    'the request crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no request outlives its dispatch');
+  assert.deepEqual(r.doc.state.styleNames, ['Heading 2'], 'the style is resolved by the name the level names');
+  assert.equal(r.doc.state.setStyles, 1, 'and the ONE mutation is a single SetStyle');
+  assert.equal(r.doc.state.pushes, 0, 'nothing is appended: this leg changes an EXISTING paragraph in place');
+  assert.equal(r.doc.state.insertContents, 0, 'and the legacy whole-array primitive — which lands at the START — is never called');
+  assert.equal(r.doc.state.documentSetStyles, undefined, 'and the DOCUMENT-level primitive is never called either');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 1, 2, 1, 1, 1, 1],
+    'the body encodes the explicit phase slot, the two heading counts and its four flags');
+  assert.deepEqual(await pending, { ok: true, styleName: 'Heading 2', headingsBefore: 1, headingsAfter: 2,
+    targetAdded: true, textUnchanged: true, styleRead: true, styleMatches: true });
+  // The DOCUMENT really holds the style: the double is state, not a stub. Paragraph 0 is the one the rig
+  // seeded as a heading, so the paragraph the request ADDRESSED (index 1) is the one that changed.
+  assert.equal(r.doc.doubles[1].style, 'Heading 2', 'the addressed paragraph carries the style the style object meant');
+  assert.equal(r.doc.doubles[0].style, 'Heading 1', 'and no other paragraph was touched');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('the heading body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  const r = headingRig({ texts: ['Ноль', 'Цель'], namespace: { scope: { paragraph: 1, level: 3, styleName: 'Heading 3' } } });
+  const pending = r.bridge.setHeading({ paragraph: 1, level: 3, styleName: 'Heading 3' });
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|decodeHeading|exactBlocksDelta|exactTableDelta|exactHeadingDelta|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== 'undefined'/, 'and it builds the public Api facade itself');
+  assert.match(withoutComments(carried.source), /SetStyle\(/, 'the ONE mutating call is SetStyle');
+  assert.equal(withoutComments(carried.source).includes('InsertContent'), false, 'the legacy whole-array primitive is authored nowhere');
+  assert.equal(withoutComments(carried.source).includes('Push('), false, 'and nothing is appended: this leg is not an insert');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not
+  // about how many times the rig ran it. Only `Api` and `scope` are bound here, so a body that closed over
+  // a module binding would raise ReferenceError exactly as it did natively on 2026.3.1.
+  const fresh = headingDocument({ texts: ['Ноль', 'Цель'] });
+  const freshApi = { GetDocument() { return fresh.document; } };
+  const evaluated = new Function('Api', 'scope', 'return (' + carried.source + ')();')(freshApi, carried.scope);
+  assert.deepEqual(evaluated, ['POST_INSERT', 0, 1, 1, 1, 1, 1],
+    'the request arrived as DATA and the counts are the document\'s own');
+  assert.equal(fresh.state.setStyles, 1, 'exactly one mutation, on the target the index named');
+  assert.equal(fresh.doubles[1].style, 'Heading 3');
+  assert.equal(fresh.doubles[0].style, null);
+  assert.deepEqual((await pending).targetAdded, true);
+});
+
+test('a WRONG paragraph restyled, a target whose TEXT changed or a heading count that did not move is UNCERTAIN with the slot HELD', async () => {
+  // THE THREE WAYS THE EXACT PROOF CAN FAIL ON THE MEASURED ROUTE, each driven through the REAL body
+  // against a document double whose `SetStyle` really writes state:
+  //   1. a route that styles the WRONG paragraph (`restyle: 'other'`) — the addressed paragraph's own style
+  //      readback then does not match, and the addressed text is no longer the one that joined the list;
+  for (const [label, options, request] of [
+    ['a route that styled a DIFFERENT paragraph', { restyle: 'other' }, { paragraph: 0, level: 1, styleName: 'Heading 1' }],
+    ['a route that styled NOTHING', { apply: false }, { paragraph: 0, level: 1, styleName: 'Heading 1' }],
+    ['a route that added TWO headings', { grow: 2 }, { paragraph: 0, level: 1, styleName: 'Heading 1' }]
+  ]) {
+    const r = headingRig({ texts: ['Ноль', 'Цель'], namespace: { scope: request }, ...options });
+    const result = await r.bridge.setHeading(request);
+    assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, label);
+    assert.equal(r.doc.state.setStyles, 1, `${label}: the mutation WAS dispatched exactly once`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, `${label}: the slot is HELD for an uncertain assignment`);
+    assert.equal(state.uncertain, true, label);
+    assert.equal(state.writePending, true, `${label}: and the write lock stays engaged, so no second mutation can start`);
+    assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'EDITOR_BUSY' },
+      `${label}: no retry — the held slot refuses the next assignment`);
+    assert.equal(r.commands.length, 1, `${label}: and the refused call dispatches nothing at all`);
+  }
+  //   2. THE STALE INDEX / CONCURRENT EDIT: the paragraph the index addresses carries a text the caller
+  //      never named by the time the one `SetStyle` runs — a concurrent edit above the index renumbered it.
+  //      The style really lands and the heading count really moves by one, and the outcome is STILL
+  //      uncertain, because the paragraph the index addresses is not the paragraph the caller meant.
+  const drifted = headingRig({ texts: ['Ноль', 'Цель'], concurrent: 'ДРУГОЙ-АБЗАЦ',
+    namespace: { scope: { paragraph: 0, level: 1, styleName: 'Heading 1' } } });
+  assert.deepEqual(await drifted.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Heading 1' }),
+    { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(drifted.doc.state.setStyles, 1, 'the mutation really applied — to the STALE paragraph');
+  assert.deepEqual(drifted.doc.doubles.map(double => double.style), ['Heading 1', null],
+    'and the heading count really moved by one: the STALE paragraph is now the document\'s only heading');
+  assert.equal(drifted.bridge.getState().busy, true, 'so the slot is HELD and there is no retry');
+  //   3. THE STYLE READBACK THAT IS ABSENT OR THROWS is NOT a failure: the proof rests on the measured
+  //      signals and the result SAYS that no identity was established.
+  for (const [label, options] of [
+    ['a paragraph with no GetParaPr at all', { noParaPr: true }],
+    ['a GetParaPr that THROWS', { paraPrThrows: true }]
+  ]) {
+    const r = headingRig({ texts: ['Ноль', 'Цель'], ...options,
+      namespace: { scope: { paragraph: 1, level: 1, styleName: 'Heading 1' } } });
+    const result = await r.bridge.setHeading({ paragraph: 1, level: 1, styleName: 'Heading 1' });
+    assert.equal(result.ok, true, label);
+    assert.equal(result.styleRead, false, `${label}: the result states that no style was read`);
+    assert.equal(result.styleMatches, false, label);
+    assert.equal(r.bridge.getState().busy, false, `${label}: a verified assignment releases the slot`);
+  }
+});
+
+test('the refusal PHASE is explicit in the heading protocol: a phase-less sentinel answered after a real mutation is uncertain', async () => {
+  // THE FORGERY THE PHASE GATE EXISTS FOR. The body flips its phase immediately before the one `SetStyle`,
+  // so a forged post-mutation answer must never be read as a KNOWN refusal with the slot released.
+  for (const forged of [['CAPABILITY_UNAVAILABLE'], ['STYLE_UNAVAILABLE'], ['APPLY_UNCERTAIN'], ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ']]) {
+    const r = headingRig({ texts: ['Ноль', 'Цель'], forge: forged,
+      namespace: { scope: { paragraph: 0, level: 1, styleName: 'Heading 1' } } });
+    const result = await r.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Heading 1' });
+    assert.equal(r.doc.state.setStyles, 1, `${JSON.stringify(forged)}: the body really styled before the answer`);
+    assert.equal(result.ok, false, JSON.stringify(forged));
+    assert.equal(result.code, 'APPLY_UNCERTAIN',
+      `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, JSON.stringify(forged));
+    assert.equal(state.uncertain, true, JSON.stringify(forged));
+    assert.equal(state.writePending, true, `${JSON.stringify(forged)}: the write lock stays engaged`);
+    assert.deepEqual(await r.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Heading 1' }),
+      { ok: false, code: 'EDITOR_BUSY' }, `${JSON.stringify(forged)}: no retry of the assignment`);
+    assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
+  }
+  // THE GENUINE PRE-INSERT REFUSALS ARE UNCHANGED: the body answers them BEFORE the one mutation, with the
+  // pre-insert phase, so each keeps its KNOWN class with the slot RELEASED and ZERO `SetStyle`.
+  const style = headingRig({ styles: false, namespace: { scope: { paragraph: 0, level: 1, styleName: 'Heading 1' } } });
+  assert.deepEqual(await style.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Heading 1' }), { ok: false, code: 'TOOL_ERROR' });
+  assert.equal(style.doc.state.setStyles, 0, 'an unresolvable style never reaches the one SetStyle');
+  assert.equal(style.bridge.getState().busy, false, 'the slot is RELEASED: nothing was styled');
+  // A PHASE-MARKED answer that names a pre-insert class from the POST-insert half is still not a known
+  // refusal: only the PRE-insert phase makes those names known.
+  const postNamed = headingRig({ texts: ['Ноль'], forge: ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'],
+    namespace: { scope: { paragraph: 0, level: 1, styleName: 'Heading 1' } } });
+  assert.equal((await postNamed.bridge.setHeading({ paragraph: 0, level: 1, styleName: 'Heading 1' })).code, 'APPLY_UNCERTAIN');
+  assert.equal(postNamed.bridge.getState().busy, true);
+});
+
+test('bridge setHeading refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const request = { paragraph: 0, level: 1, styleName: 'Heading 1' };
+  // No command wrapper at all: the parameter channel does not exist, so the refusal is made BEFORE the
+  // ticket and nothing reaches the editor.
+  const noCommand = headingRig({ command: false, namespace: { scope: request } });
+  assert.deepEqual(await noCommand.bridge.setHeading(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noCommand.commands.length, 0);
+  // A namespace that is not there: same class, no slot held.
+  const noNamespace = headingRig({ omitCarrier: true, namespace: { scope: request } });
+  assert.deepEqual(await noNamespace.bridge.setHeading(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noNamespace.commands.length, 0, 'nothing reached the editor');
+  assert.equal(noNamespace.bridge.getState().busy, false, 'and no slot is held for work that never ran');
+  // A namespace whose `scope` cannot be written: a frozen carrier is refused before the dispatch.
+  const frozen = headingRig({ namespace: Object.freeze({ scope: request }) });
+  assert.deepEqual(await frozen.bridge.setHeading(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(frozen.commands.length, 0);
+  assert.equal(frozen.bridge.getState().busy, false);
+  // A PRE-ABORTED signal dispatches nothing at all.
+  const abortedRig = headingRig({ namespace: { scope: request } });
+  const controller = new AbortController();
+  controller.abort();
+  assert.deepEqual(await abortedRig.bridge.setHeading({ ...request, signal: controller.signal }), { ok: false, code: 'CANCELLED' });
+  assert.equal(abortedRig.commands.length, 0, 'an aborted caller never reaches the editor');
+});
+
+test('bridge setHeading decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const request = { paragraph: 0, level: 1, styleName: 'Heading 1' };
+  const run = (forge) => headingRig({ texts: ['Ноль'], forge,
+    namespace: { scope: request } }).bridge.setHeading(request);
+  // A malformed answer is a dispatched write whose outcome cannot be interpreted: UNCERTAIN, never a known
+  // error and never an `ok`.
+  for (const [label, forge] of [
+    ['a non-array answer', 'POST_INSERT'],
+    ['a plain object answer', { phase: 'POST_INSERT' }],
+    ['an answer with too few slots', ['POST_INSERT', 0, 1]],
+    ['an answer with too many slots', ['POST_INSERT', 0, 1, 1, 1, 1, 1, 1]],
+    ['a count that is not a safe integer', ['POST_INSERT', 0, 1.5, 1, 1, 1, 1]],
+    ['a negative count', ['POST_INSERT', -1, 0, 1, 1, 1, 1]],
+    ['a flag that is not 0 or 1', ['POST_INSERT', 0, 1, true, 1, 1, 1]],
+    ['a flag of 2', ['POST_INSERT', 0, 1, 2, 1, 1, 1]],
+    ['a PRE_INSERT phase over a measurement', ['PRE_INSERT', 0, 1, 1, 1, 1, 1]],
+    ['an unknown phase', ['ПОСЛЕ', 0, 1, 1, 1, 1, 1]]
+  ]) {
+    const result = await run(forge);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    // Every one of those is the BRIDGE's own uncertain class, whose envelope carries no message of its own:
+    // nothing a native wrote reaches the model through this path.
+    assert.equal(result.message, undefined, `${label}: no raw native text crosses`);
+  }
+  // The PRE-insert refusals keep their KNOWN classes, and only they do.
+  assert.deepEqual(await run(['PRE_INSERT', 'CAPABILITY_UNAVAILABLE']), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(await run(['PRE_INSERT', 'STYLE_UNAVAILABLE']), { ok: false, code: 'TOOL_ERROR' });
+  assert.deepEqual(await run(['PRE_INSERT', 'НЕИЗВЕСТНО']), { ok: false, code: 'APPLY_UNCERTAIN' });
+});
+
+test('set_heading is offered with policy auto and a model call assigns exactly one heading', async () => {
+  const r = headingRig({ texts: ['Ноль', 'Цель', 'Два'], headingIndexes: [0] });
+  const registry = createRegistry(createWordTools(r.bridge));
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'set_heading');
+  assert.ok(offered, 'the offered catalogue contains set_heading');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.equal(offered.requires.includes('document.write'), true);
+  assert.equal(offered.schema.properties.paragraph.maximum, LIMITS.setHeadingIndexMax);
+  assert.equal(offered.schema.properties.level.maximum, LIMITS.insertHeadingMax);
+  // A mutation tool is NOT offered in ASK, and it needs the write capability.
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' })
+    .some(entry => entry.name === 'set_heading'), false, 'no write capability, no mutation tool');
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'ASK' })
+    .some(entry => entry.name === 'set_heading'), false, 'ASK exposes no mutation tool');
+  const batch = validateBatch(catalogue, [{ tool: 'set_heading', arguments: { paragraph: 1, level: 2 } }]);
+  assert.equal(batch.length, 1);
+  assert.equal(batch[0].descriptor.name, 'set_heading');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"set_heading","arguments":{"paragraph":1,"level":2}}]}',
+    '{"type":"final","message":"заголовок назначен"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT',
+    settings: {}, uuid: '12121212-1212-4121-8121-121212121212', request: 'сделай второй абзац заголовком',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['set_heading', 'ok']]);
+  assert.equal(r.commands.length, 1, 'one command for the whole run, and no read/write path touched');
+  assert.equal(r.doc.state.setStyles, 1, 'the one call became exactly ONE SetStyle, in place');
+  assert.equal(r.doc.state.pushes, 0, 'and nothing was appended');
+  assert.equal(r.bridge.getState().busy, false);
+  assert.equal(r.bridge.getState().writePending, false);
+  // The model really RECEIVES the proof through the runtime's own per-result serialization.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'set_heading');
+  assert.equal(published.ok, true);
+  assert.deepEqual(published.data, { paragraph: 1, level: 2, heading: true, headingsBefore: 1, headingsAfter: 2,
+    styleRead: true, styleMatches: true, bytes: utf8ByteLength('1:2:Heading 2') },
+  'the tool publishes the eight fields it names; the counts are the ones the bridge measured');
 });
 
 
