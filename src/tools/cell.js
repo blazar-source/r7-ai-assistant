@@ -15,12 +15,15 @@
 //     range (both measured), so the two shapes must be separated with `Array.isArray` — never with a
 //     `.length` test, which a string also satisfies. `GetFormula()` is the sharper trap: on a MULTI-CELL
 //     range it answers the computed VALUES, while on a ONE-CELL range it answers the real formula source.
-//     The Cell READ leg's `formulas` slot is therefore NOT a source of formulas on this build, because it
-//     publishes whatever the block answered once the shape matches — and a block matches. It publishes
-//     `null` rather than an empty matrix when the editor answered nothing matching, because `null` is an
-//     explicit "the editor did not answer" while `[]` would read as a measured "these cells hold no
-//     formulas". What the Cell WRITE leg owns instead is the ADDRESSAL read: one single-cell range per
-//     formula cell, which is the shape measured to answer the source.
+//     BOTH legs therefore read formulas ADDRESSALLY, one single-cell range per cell, because that is the
+//     only measured shape that answers a source. The read leg's `formulas` slot carries the SOURCE of a
+//     cell that holds a formula and `''` for a cell that does not — the same getter answers a cell's own
+//     TEXT when there is no formula, so the `=` prefix is the test — and it is `null` only when the read
+//     published NO sources at all — the three conditions are stated where the body decides them: no getter,
+//     an answered address that cannot be read as the value matrix's own rectangle, or a published cell whose
+//     own single-cell value disagrees with the value published for it. `null` is an explicit "no sources were
+//     published", while an
+//     empty string is a measurement: this cell holds no formula.
 //   * `SetFormula` does NOT exist on a range, and a decimal written as a NUMBER becomes TEXT
 //     (`SetValue(123.5)` → text; `SetValue('123,45')` → a real number). `write_range` is the tool in this
 //     module that WRITES, and it applies that rule in its authored body; the rule is recorded here so the
@@ -153,8 +156,11 @@ function sheetReadData(response) {
   }
   const valueRows = matrix(values);
   if (valueRows === null) return null;
-  // `formulas` is `null` when the editor answered no matching matrix, and a matrix of the same shape
-  // when it did. Anything else is an answer this module cannot interpret.
+  // `formulas` is `null` when this read published NO sources — the body's own three conditions are no getter,
+  // an answered address it cannot read as the value matrix's rectangle, and a published cell whose own value
+  // disagrees with the value published for it — and a matrix of the same
+  // shape when it did: formula SOURCES, or `''` for a cell that holds none. Anything else is an answer
+  // this module cannot interpret.
   const formulaRows = formulas === null ? null : matrix(formulas);
   if (formulas !== null && formulaRows === null) return null;
   return Object.freeze({ sheetName, sheetIndex, sheetCount, requestAddress, readAddress,
@@ -192,8 +198,10 @@ export function createCellTools(bridge) {
       // workbook's sheet COUNT come from `GetName()`/`GetIndex()`/`GetSheets().length`, all measured.
       // `values` is the 2-D matrix `range.GetValue()` answered, one inner array per row, and a cell the
       // editor answered as empty is published as `''` rather than omitted, so the matrix stays rectangular
-      // and a column index means the same thing in every row. `formulas` is `null` unless the editor
-      // answered a matching formula matrix — see the module header for why it is never `[]`.
+      // and a column index means the same thing in every row. `formulas` is the same-shaped matrix of
+      // formula SOURCES, read addressally one single-cell range at a time, with `''` for a cell that holds
+      // no formula; it is `null` only when this read published no sources at all — see the body's three
+      // conditions, of which an unalignable address and a disagreeing cell value are two.
       // THE 400-CELL CAP IS APPLIED BY CLIPPING WHOLE ROWS, and the clipping is REPORTED rather than
       // hidden. The body measures the range's complete shape first, publishes the first rows that fit,
       // and answers with `totalRows`/`totalColumns` (what the range holds), `rowCount`/`columnCount`
@@ -205,7 +213,7 @@ export function createCellTools(bridge) {
       // `read_range`. A range whose SINGLE ROW is wider than the cap still refuses closed: a partial row
       // would make one row a different width from the matrix the caller reads.
       name: 'read_sheet', kind: 'read', editors: ['cell'], policy: 'auto', requires: ['document.read'],
-      description: 'Читает активный лист: имя, номер, число листов и значения использованного диапазона.',
+      description: 'Читает активный лист: имя, номер, число листов, значения и формулы использованного диапазона.',
       // CLOSED and EMPTY: the read takes no model parameter, so the schema advertises none and a caller
       // that guesses an argument is refused by the schema itself.
       schema: { type: 'object', additionalProperties: false, required: [], properties: {} },
@@ -238,10 +246,12 @@ export function createCellTools(bridge) {
       // (`bridge.readRange` differs only in carrying an address), so the primitives and the two
       // measured limits are the ones stated there and are not restated here. What this descriptor adds is
       // the ADDRESS itself, and it is a CLOSED precondition rather than an opaque string: the pattern
-      // admits `A1` and `A1:C10` only, because the address crosses into an authored editor command as
-      // DATA and an unvalidated string would be handed to the editor verbatim. It is read back by the
-      // editor's own `GetAddress()` into the result, so the caller always learns the range the editor
-      // actually answered rather than the one it asked for.
+      // admits an upper-case `A1` or `A1:C10` and nothing else, because the address crosses into an
+      // authored editor command as DATA and an unvalidated string would be handed to the editor verbatim.
+      // The pattern does NOT require the corners to be ORDERED, because the measured editor NORMALISES a
+      // reversed request — `GetRange('B2:A1')` answers the address `'A1:B2'` with an A1-first value matrix —
+      // so the tool reports BOTH ranges instead of pretending they are the same one: `requestAddress` is
+      // what the caller asked for, and `readAddress` is the range the editor actually answered.
       name: 'read_range', kind: 'read', editors: ['cell'], policy: 'auto', requires: ['document.read'],
       description: 'Читает диапазон активного листа (A1 или A1:C10): значения и формулы ячеек.',
       schema: { type: 'object', additionalProperties: false, required: ['address'],

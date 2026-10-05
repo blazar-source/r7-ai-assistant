@@ -231,6 +231,14 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /GetActiveSheet\(\)/, 'and reads the active sheet through the measured primitive');
         assert.match(code, /GetUsedRange\(\)/, 'and discovers the used range through the only measured route');
         assert.match(code, /GetSheets\(\)/, 'and reads the workbook listing for the sheet count');
+        // THE ADDRESSAL PASS IS PINNED BY A COUNT, not by presence: both the old and the fixed body author
+        // `GetFormula()` and `formulasMatch`, so a presence check cannot tell them apart (the old body also
+        // passes it). What the fix adds is the one-single-cell-per-cell walk — TWO `GetRange(` call sites
+        // against the old body's ONE (the addressed block alone), because the pass reuses the range it
+        // fetched for the value check — so the count is what fails against the pre-fix body. The behaviour
+        // itself is pinned through the real bridge by `tests/unit/bridge-sheetread.test.js`.
+        assert.equal((code.match(/GetRange\s*\(/g) ?? []).length, 2,
+          'the addressed block AND the one-single-cell-per-cell addressal pass — not the block getter alone');
         assert.match(code, /CAPABILITY_UNAVAILABLE/, 'and answers its own closed refusal');
         assert.equal(code.includes('GetRangeBySelect'), false,
           'and authors no Word-only probe: the Cell facade exposes no selection-range primitive (measured undefined)');

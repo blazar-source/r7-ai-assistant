@@ -315,15 +315,17 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // `sheet.GetName()`, `sheet.GetIndex()`, `Api.GetSheets()` (an Array whose `length` is the sheet
       // count), `sheet.GetUsedRange()` (the ONLY used-range discovery this build exposes —
       // `GetRowsCount`/`GetColumnsCount`/`GetMaxRow`/`GetMaxColumn` are all `undefined`), and
-      // `range.GetValue()` (a 2-D array of strings, one row per row). `range.GetFormula()` was measured
-      // on a SINGLE cell; its behaviour on a multi-cell range is what the `formulasMatch` slot below
-      // reports, so a build that answers one string instead of a matrix simply yields values alone
-      // rather than a wrong formula.
+      // `range.GetValue()` (a 2-D array of strings, one row per row, for a BLOCK — but a SCALAR STRING for a
+      // ONE-CELL range, which the shape rule below separates). `range.GetFormula()` was measured on
+      // BOTH sizes and answers two DIFFERENT things: a ONE-CELL range answers the formula SOURCE, while a
+      // MULTI-CELL range answers the computed VALUES. The sources are therefore collected ADDRESSALLY, one
+      // single-cell range per published cell, and a cell's slot holds the source only when it begins with
+      // `=` — the same getter answers a cell's own TEXT when the cell holds no formula at all.
       // The answer is ONE flat array of primitives, exactly like the search/structure legs (the native
       // return validator keeps those and strips a plain object):
       //   `[CAPABILITY_UNAVAILABLE]` — the body's own closed refusal; or
       //   `[sheetName, sheetIndex, sheetCount, address, rowCount, columnCount, formulasMatch, v…, f…]`
-      // where the `rowCount × columnCount` value strings are followed by the same number of formula
+      // where the `rowCount × columnCount` value strings are followed by the same number of FORMULA SOURCE
       // strings ONLY when `formulasMatch` is 1. It is a READ: it has no phase, no mutation and no leg
       // that could reach a write class.
       sheet(callback) {
@@ -386,13 +388,31 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (typeof target.GetValue !== 'function') return readRefusal();
             var requestAddress = address;
             var matrix = target.GetValue();
-            if (matrix === null || matrix === undefined || typeof matrix.length !== 'number') return readRefusal();
-            var totalRows = matrix.length;
-            if (!(totalRows >= 1)) return readRefusal();
-            var firstRow = matrix[0];
-            if (firstRow === null || firstRow === undefined || typeof firstRow.length !== 'number') return readRefusal();
-            var columnCount = firstRow.length;
-            if (!(columnCount >= 1)) return readRefusal();
+            if (matrix === null || matrix === undefined) return readRefusal();
+            // THE ANSWER'S OWN TYPE DECIDES ITS SHAPE, and the test is NESTED-AWARE rather than a `.length`
+            // probe. MEASURED on this build: a ONE-CELL range answers a SCALAR STRING while a BLOCK answers
+            // a 2-D array — and a STRING ALSO HAS A NUMERIC `length`, so a `.length` test reads a scalar as
+            // a matrix and publishes a cell's own CHARACTERS as rows. Of the two figures below, the FIRST is
+            // NATIVE (the corrective task's proof read the cell `K1` holding `zz` and the shipped body
+            // answered `totalRows: 2` with the values `['z','z']`) and the SECOND is the HOST RIG's
+            // measurement (a cell holding `1000` answered FOUR rows of one digit): the arithmetic is the
+            // same, but only the first was taken from a live editor. The shape is decided ONCE, here, and the
+            // one-cell case is carried through the rest of this body as 1 x 1.
+            var readbackIsMatrix = Array.isArray(matrix) && (matrix.length === 0 || Array.isArray(matrix[0]));
+            // A shape that is neither a scalar primitive nor a 2-D array is NOT one this build was measured
+            // to answer (a FLAT array, for instance), so it refuses closed here rather than being
+            // stringified into a single cell that would attribute a joined value to one address.
+            if (!readbackIsMatrix && typeof matrix === 'object') return readRefusal();
+            var totalRows = 1;
+            var columnCount = 1;
+            if (readbackIsMatrix) {
+              totalRows = matrix.length;
+              if (!(totalRows >= 1)) return readRefusal();
+              var firstRow = matrix[0];
+              if (firstRow === null || firstRow === undefined || typeof firstRow.length !== 'number') return readRefusal();
+              columnCount = firstRow.length;
+              if (!(columnCount >= 1)) return readRefusal();
+            }
             // THE CAP IS APPLIED BY CLIPPING WHOLE ROWS, never by trimming a row or a cell. The range's
             // complete shape is measured first (its own `GetValue()`), and the first `rowsToRead` rows are
             // published, so the answer is always a RECTANGULAR, honest prefix of the range whose address
@@ -405,62 +425,191 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (!(rowsToRead >= 1)) return readRefusal();
             var rowCount = rowsToRead;
             var values = [];
-            for (var row = 0; row < rowsToRead; row++) {
-              var sheetValueRow = matrix[row];
-              if (sheetValueRow === null || sheetValueRow === undefined || typeof sheetValueRow.length !== 'number') return readRefusal();
-              if (sheetValueRow.length !== columnCount) return readRefusal();
-              for (var column = 0; column < sheetValueRow.length; column++) {
-                var sheetCellRaw = sheetValueRow[column];
-                // A cell is published as a STRING so the wire stays one primitive type: the measured
-                // `GetValue()` answers strings for the fixture's cells, and a number or a missing cell
-                // is normalised here rather than decoded as an unmeasured type later.
-                if (sheetCellRaw === null || sheetCellRaw === undefined) values.push('');
-                else values.push(String(sheetCellRaw));
+            if (readbackIsMatrix) {
+              for (var row = 0; row < rowsToRead; row++) {
+                var sheetValueRow = matrix[row];
+                if (sheetValueRow === null || sheetValueRow === undefined || typeof sheetValueRow.length !== 'number') return readRefusal();
+                if (sheetValueRow.length !== columnCount) return readRefusal();
+                for (var column = 0; column < sheetValueRow.length; column++) {
+                  var sheetCellRaw = sheetValueRow[column];
+                  // A cell is published as a STRING so the wire stays one primitive type: the measured
+                  // `GetValue()` answers strings for the fixture's cells, and a number or a missing cell
+                  // is normalised here rather than decoded as an unmeasured type later.
+                  if (sheetCellRaw === null || sheetCellRaw === undefined) values.push('');
+                  else values.push(String(sheetCellRaw));
+                }
               }
+            } else {
+              // The ONE-CELL answer IS the value, and it is never indexed: indexing a scalar string is
+              // exactly the mistake this branch exists to prevent.
+              values.push(String(matrix));
             }
-            // THE ADDRESS THE CLIPPED ANSWER ACTUALLY COVERS, derived from the requested one by replacing
-            // its END ROW with the last published row. It is derived ONLY when the answer really was
-            // clipped: an unclipped read reports the address it was asked for, so the two fields agree
-            // exactly when nothing was omitted and a caller can never mistake a full read for a prefix.
-            var readAddress = requestAddress;
-            if (rowCount < totalRows) {
-              var colon = requestAddress.indexOf(':');
-              if (colon < 1) return readRefusal();
-              var head = requestAddress.slice(0, colon);
-              var tail = requestAddress.slice(colon + 1);
-              var startDigits = head.replace(/^[A-Z]+/, '');
+            // THE ADDRESS THE EDITOR ITSELF ANSWERED FOR THIS RANGE, and the ONLY spelling the addressal
+            // pass and the clipped report may be derived from. MEASURED on this build (R7-Office Editors
+            // 2026.3.1): a REVERSED request is NORMALISED — `GetRange('B2:A1').GetAddress()` answers
+            // `'A1:B2'` and its value matrix is A1-first — so a pass built from the CALLER's spelling would
+            // walk a rectangle sharing only a corner with the values it is proving, and would publish one
+            // cell's formula source in ANOTHER cell's slot. That is the exact wrong-cell attribution this
+            // module refuses. The editor's own answer describes the same range object the values came from.
+            var answeredAddress = requestAddress;
+            if (typeof target.GetAddress === 'function') {
+              var editorAddress = target.GetAddress();
+              if (typeof editorAddress === 'string' && editorAddress !== '') answeredAddress = editorAddress;
+            }
+            // The ANSWERED address with its END ROW replaced by the last published row, or `''` when this
+            // address cannot be rewritten that way. Declared here because the clipped report below tries the
+            // editor's spelling first and the CALLER's second.
+            function clippedAddress(address, publishedRows) {
+              var colon = address.indexOf(':');
+              if (colon < 1) return '';
+              var clean = address.replace(/\$/g, '');
+              var cleanColon = clean.indexOf(':');
+              var head = clean.slice(0, cleanColon);
+              var tail = clean.slice(cleanColon + 1);
+              var headDigits = head.replace(/^[A-Z]+/, '');
               var tailColumn = tail.replace(/[0-9]+$/, '');
-              var lastRow = Number(startDigits) + rowCount - 1;
-              if (!(lastRow >= 1) || tailColumn === '') return readRefusal();
-              readAddress = head + ':' + tailColumn + String(lastRow);
+              if (headDigits === '' || tailColumn === '') return '';
+              var lastRow = Number(headDigits) + publishedRows - 1;
+              if (!(lastRow >= 1)) return '';
+              // Rebuilt WITHOUT any `$`: the report is a relative range, so a mixed `$A$1:B200` spelling can
+              // never come out of a partially absolute answer.
+              return address.slice(0, colon).replace(/\$/g, '') + ':' + tailColumn + String(lastRow);
             }
-            // The FORMULA matrix is read only when the range exposes the getter, and it is published
-            // only when its shape matches the FULL value matrix EXACTLY. A build that answers one string
-            // for a multi-cell range therefore arrives as `formulasMatch = 0` with no formula strings at
-            // all, never as a formula attributed to the wrong cell. Only the published rows are kept, so
-            // the formula list is the same length as the value list and cell i of one is cell i of the
-            // other.
+            // THE ADDRESS THE ANSWER ACTUALLY COVERS. It is derived ONLY when the answer really was clipped,
+            // so an unclipped read reports the range the editor answered and the two fields then agree
+            // exactly when nothing was omitted and the editor did not re-spell the request. The EDITOR's
+            // spelling is preferred because it is the accurate one, and the CALLER's is the fallback
+            // precisely because the closed address pattern guarantees it can always be rewritten: a clipped
+            // `read_range` therefore keeps the availability it had, and only an answer nobody can rewrite
+            // (an editor spelling with no colon at all, on `read_sheet`) refuses, exactly as before.
+            var readAddress = answeredAddress;
+            if (rowCount < totalRows) {
+              var clippedAnswered = clippedAddress(answeredAddress, rowCount);
+              var clippedRequested = clippedAddress(requestAddress, rowCount);
+              if (clippedAnswered !== '') readAddress = clippedAnswered;
+              else if (clippedRequested !== '') readAddress = clippedRequested;
+              else return readRefusal();
+            }
+            // THE FORMULA SOURCES ARE READ ADDRESSALLY, ONE SINGLE-CELL RANGE PER PUBLISHED CELL, and never
+            // from the BLOCK's own `GetFormula()`. MEASURED on this build (R7-Office Editors 2026.3.1): a
+            // MULTI-CELL `GetFormula()` answers the computed VALUES — the recorded read-leg finding is a
+            // `K1:K2` read (K1 holding the text `A`, K2 the formula `=1+1`) whose BLOCK getter answered
+            // `["A","2"]`, the value `2` exactly where the source `=1+1` belonged — so
+            // asking the block published a second copy of the values as `formulas`. That made a formula cell
+            // report `3` in place of its source `=1+2`, a one-cell read of a one-character text cell report
+            // that character as its own formula, and a ONE-CELL read of a multi-character formula report
+            // `formulas: null`. Only a ONE-CELL `GetFormula()` answers the SOURCE, so the sources are
+            // collected one address at a time, over exactly the rows this answer publishes. MEASURED cost on
+            // the measured sheet: 132 cells in about 4 ms, so the cap of `LIMITS.sheetReadCellsMax` cells
+            // stays a bounded pass rather than a scan of the document.
+            // The slot carries the SOURCE of a cell that holds a formula, and the EMPTY STRING for a cell
+            // that does not. That filter is required because the same measured getter answers a cell's own
+            // TEXT when there is no formula (`GetFormula()` on the text cell 'Москва' answers 'Москва'), so
+            // the '=' prefix is what separates a formula from a value — the same test the write leg's proof
+            // uses. The slot is `null` only when this read published NO sources at all — the pass below states
+            // its own three conditions where it decides them — while a range that answers and holds no formula
+            // reports empty strings, never `null`.
+            function columnName(position) {
+              var name = '';
+              var remaining = position;
+              while (remaining > 0) {
+                var remainder = (remaining - 1) % 26;
+                name = String.fromCharCode(65 + remainder) + name;
+                remaining = Math.floor((remaining - 1) / 26);
+              }
+              return name;
+            }
+            // The rectangle an ANSWERED address names, as `[startColumn, startRow]`, but ONLY when that
+            // rectangle is the rectangle the value matrix measured. `null` means this leg cannot tell which
+            // cell a published value came from, and the caller of this reader must then publish no formula
+            // sources at all. The shape rule is the write leg's own, applied to the read.
+            function answeredRectangle(address, rows, columns) {
+              var head = address;
+              var tail = null;
+              var colon = address.indexOf(':');
+              if (colon > 0) {
+                head = address.slice(0, colon);
+                tail = address.slice(colon + 1);
+              }
+              // The `$` is stripped BEFORE the split, not after: stripping it only from the column or only
+              // from the row makes `A$1` parse while `$A$1` does not, which would silently DROP every
+              // source on a build that answers absolute addresses.
+              var cleanHead = head.replace(/\$/g, '');
+              var headColumn = cleanHead.replace(/[0-9]+$/, '');
+              var headRow = cleanHead.replace(/^[A-Z]+/, '');
+              if (headColumn === '' || headRow === '') return null;
+              var startColumn = 0;
+              for (var headLetter = 0; headLetter < headColumn.length; headLetter++) {
+                startColumn = startColumn * 26 + (headColumn.charCodeAt(headLetter) - 64);
+              }
+              var startRow = Number(headRow);
+              if (!(startColumn >= 1) || !(startRow >= 1)) return null;
+              var endColumn = startColumn;
+              var endRow = startRow;
+              if (tail !== null) {
+                var cleanTail = tail.replace(/\$/g, '');
+                var tailColumn = cleanTail.replace(/[0-9]+$/, '');
+                var tailRow = cleanTail.replace(/^[A-Z]+/, '');
+                if (tailColumn === '' || tailRow === '') return null;
+                endColumn = 0;
+                for (var tailLetter = 0; tailLetter < tailColumn.length; tailLetter++) {
+                  endColumn = endColumn * 26 + (tailColumn.charCodeAt(tailLetter) - 64);
+                }
+                endRow = Number(tailRow);
+                if (!(endColumn >= 1) || !(endRow >= 1)) return null;
+              }
+              if (endColumn - startColumn + 1 !== columns || endRow - startRow + 1 !== rows) return null;
+              var rectangle = [];
+              rectangle.push(startColumn);
+              rectangle.push(startRow);
+              return rectangle;
+            }
             var formulas = [];
             var formulasMatch = 0;
-            if (typeof target.GetFormula === 'function') {
-              var claimed = target.GetFormula();
-              if (claimed !== null && claimed !== undefined && typeof claimed.length === 'number' && claimed.length === totalRows) {
-                var wellShaped = true;
-                for (var frow = 0; frow < totalRows; frow++) {
-                  var sheetFormulaCheckRow = claimed[frow];
-                  if (sheetFormulaCheckRow === null || sheetFormulaCheckRow === undefined || typeof sheetFormulaCheckRow.length !== 'number' || sheetFormulaCheckRow.length !== columnCount) { wellShaped = false; break; }
-                }
-                if (wellShaped) {
-                  for (var srow = 0; srow < rowsToRead; srow++) {
-                    var sheetFormulaRow = claimed[srow];
-                    for (var scol = 0; scol < columnCount; scol++) {
-                      var sheetFormulaRaw = sheetFormulaRow[scol];
-                      formulas.push(sheetFormulaRaw === null || sheetFormulaRaw === undefined ? '' : String(sheetFormulaRaw));
-                    }
-                  }
-                  formulasMatch = 1;
+            // THE RECTANGLE THE ANSWERED ADDRESS NAMES MUST BE THE RECTANGLE THE VALUE MATRIX MEASURED, AND
+            // THE PASS VERIFIES IT CELL BY CELL. When either check fails, this leg cannot tell WHICH cell each
+            // published value came from, so it publishes NO sources at all — the decoder turns that into
+            // `formulas: null` — rather than guessing: the VALUES are still served, because they are what the
+            // editor answered, and no formula source is ever attributed to a cell that does not hold it.
+            // `formulas: null` therefore carries THREE conditions, all stated where they are decided: the
+            // range exposes no getter, the answered address cannot be read as the matrix's own rectangle, or
+            // a published cell's own single-cell value disagrees with the value published for it.
+            var formulaRectangle = answeredRectangle(answeredAddress, totalRows, columnCount);
+            // THE ALIGNMENT IS VERIFIED PER CELL, NOT SAMPLED. The rectangle check above is DIMENSION-only,
+            // so a same-SIZE rectangle at a different ORIGIN would pass it and the sources would be read from
+            // cells the values never came from — a build whose `GetAddress()` and `GetValue()` disagree about
+            // the same object. Sampling one cell (the first) would only make that unlikely, so EVERY published
+            // cell is checked instead: the single-cell `GetValue()` of the cell this address names must hold
+            // the value this position published, cell by cell, while its source is read. The pass costs one
+            // extra native read per published cell and no extra `GetRange` — the same range object answers
+            // both — and a single disagreement WITHHOLDS EVERY SOURCE (`formulasMatch` stays 0, so the decoder
+            // publishes `formulas: null`). It can only WITHHOLD, never relocate. The one case this check cannot
+            // see is a build that disagrees with itself about the ORIGIN while agreeing on EVERY published
+            // value: such an answer is indistinguishable from a correct one through this API, and the pass then
+            // follows the address it was given. Everything else it can do is withhold, which is the direction
+            // this module always fails in.
+            if (typeof target.GetFormula === 'function' && formulaRectangle !== null) {
+              var sourcesHold = true;
+              for (var sourceRow = 0; sourceRow < rowsToRead && sourcesHold; sourceRow++) {
+                for (var sourceColumn = 0; sourceColumn < columnCount && sourcesHold; sourceColumn++) {
+                  var sourceAddress = columnName(formulaRectangle[0] + sourceColumn) + String(formulaRectangle[1] + sourceRow);
+                  var sourceRange = sheet.GetRange(sourceAddress);
+                  // A capability that disappears part-way through the pass refuses the READ CLOSED rather
+                  // than publishing the cells it happened to reach: a short formula list would attribute
+                  // formulas to the wrong cells, which is the approximation this module refuses everywhere.
+                  if (sourceRange === null || sourceRange === undefined || typeof sourceRange.GetFormula !== 'function') return readRefusal();
+                  // A range that cannot place its own values (no `GetValue`) withholds the sources instead of
+                  // costing the caller the values.
+                  if (typeof sourceRange.GetValue !== 'function') { sourcesHold = false; break; }
+                  var placedRaw = sourceRange.GetValue();
+                  var placedText = placedRaw === null || placedRaw === undefined ? '' : String(placedRaw);
+                  if (placedText !== values[sourceRow * columnCount + sourceColumn]) { sourcesHold = false; break; }
+                  var sourceRaw = sourceRange.GetFormula();
+                  var sourceText = sourceRaw === null || sourceRaw === undefined ? '' : String(sourceRaw);
+                  formulas.push(sourceText.length > 0 && sourceText.charAt(0) === '=' ? sourceText : '');
                 }
               }
+              if (sourcesHold) formulasMatch = 1;
             }
             var answer = [];
             answer.push(sheetName);
@@ -2955,13 +3104,11 @@ function decodeSearch(value, limit) {
 //     decoded under.
 const STRUCTURE_SLOTS = 10;
 // The number of LEADING slots the SPREADSHEET-READ answer carries before its cell payload:
-// `sheetName, sheetIndex, sheetCount, address, rowCount, columnCount, formulasMatch`.
-const SHEET_READ_SLOTS = 10;
-// The number of LEADING slots the SPREADSHEET-READ answer carries before its cell payload:
 // `sheetName, sheetIndex, sheetCount, requestAddress, readAddress, totalRows, totalColumns, rowCount,
 // columnCount, formulasMatch`. `requestAddress` is what was ASKED for (the caller's range, or the
 // sheet's own used range), `readAddress` is what the answer actually COVERS, and the two differ exactly
 // when the cap clipped the answer to a prefix of the range.
+const SHEET_READ_SLOTS = 10;
 // The CLOSED address shape a Cell read may name: `A1` or `A1:C10`, upper-case column letters and a
 // 1-based row, nothing else. This exists because the address crosses into an authored editor command
 // as DATA: an unvalidated string would be handed to `sheet.GetRange` verbatim, so the shape is checked
@@ -2982,11 +3129,15 @@ const SHEET_ADDRESS = /^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/
 //     non-negative safe integers with the three counts at least 1 — a count this bridge cannot trust is
 //     not a count, and an address the editor did not answer is not a range.
 //   * `formulasMatch` is EXACTLY 0 or 1, and the payload is EXACTLY `rowCount × columnCount` value
-//     strings, followed by the same number of formula strings ONLY when it is 1. A body that answered
-//     a different number of strings is not one this leg can have produced: publishing a short formula
-//     list would attribute formulas to the wrong cells, and a long one would smuggle a cell no address
-//     owns. `formulas: null` is therefore an EXPLICIT "this build did not answer a formula matrix",
-//     never an empty matrix that would read as "the range has no formulas".
+//     strings, followed by the same number of FORMULA SOURCE strings ONLY when it is 1. A body that
+//     answered a different number of strings is not one this leg can have produced: publishing a short
+//     formula list would attribute formulas to the wrong cells, and a long one would smuggle a cell no
+//     address owns. `formulas: null` is therefore an EXPLICIT "this read published NO formula sources",
+//     which covers any of the THREE conditions the body decides — the range exposed no getter, the address
+//     the editor answered could not be read as the matrix's own rectangle, or a published cell's own
+//     single-cell value disagreed with the value published for it — and it is never an empty matrix
+//     that would read as "the range has no formulas": a range that answers and holds no formula reports
+//     the same number of EMPTY strings, which is a measurement rather than an absence.
 //   * the whole answer must fit `LIMITS.editorResultBytes`, the same ceiling every other decoded leg
 //     applies.
 // The SPREADSHEET-WRITE answer, and its ONE decision rule is the PHASE. The body answers
