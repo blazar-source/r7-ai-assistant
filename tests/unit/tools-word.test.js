@@ -6511,6 +6511,77 @@ test('a paragraph carrying a NON-heading style is not refused: only a HEADING na
   assert.equal(r.bridge.getState().busy, false, 'a verified assignment releases the slot');
 });
 
+test('a GetName() answering a NON-STRING is an UNREAD readback, never a match: UNCERTAIN, slot held', async () => {
+  const request = { paragraph: 1, level: 2, styleName: 'Heading 2' };
+  // THE BOUNDARY OF THE THREE-WAY READBACK, pinned in the direction a lazy implementation gets wrong.
+  // `readOwnStyle` keeps THREE answers apart: a NAME is a measurement, the EMPTY STRING is a measurement of
+  // a paragraph carrying no style (the measured `null` of a Normal paragraph), and `null` is the ABSENCE of
+  // a measurement. A `GetName()` that answers a NON-STRING is not a spelling of the requested style and it is
+  // not the measured `null` of a plain paragraph either — there is nothing to fold and nothing to compare, so
+  // the readback is UNREAD (`styleRead: 0`, `styleMatches: 0`), exactly like a missing chain. A body that
+  // coerced it (`String(answer)`) or compared it loosely would be inventing a measurement out of a value the
+  // getter never answered, and `'Heading 2' == some object` is precisely the false success this pins shut.
+  for (const [label, answer] of [['a NUMBER', () => 42], ['an OBJECT', () => ({ name: 'Heading 2' })],
+    ['`true`', () => true], ['`undefined`', () => undefined]]) {
+    const r = headingRig({ texts: ['Ноль', 'Цель'], readback: answer, namespace: { scope: request } });
+    const result = await r.bridge.setHeading(request);
+    // The body's own answer is read FIRST: it proves the readback was rejected as unread (`styleRead` 0) and
+    // not folded into a match, and only then is the settled class asserted.
+    assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 0, 1, 1, 1, 0, 0],
+      `${label}: an unreadable readback is styleRead 0 / styleMatches 0, never a folded match`);
+    assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' }, label);
+    assert.equal(r.doc.doubles[1].style, 'Heading 2', `${label}: the style really landed on the addressed paragraph`);
+    assert.equal(r.doc.state.setStyles, 1, `${label}: the mutation was dispatched exactly once`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, `${label}: the mutation already ran, so the slot is HELD`);
+    assert.equal(state.uncertain, true, label);
+    assert.equal(state.writePending, true, label);
+    assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'EDITOR_BUSY' },
+      `${label}: no retry of a mutation whose outcome this tool cannot claim`);
+    assert.equal(r.commands.length, 1, `${label}: and the refused call dispatches nothing at all`);
+  }
+});
+
+test('a paragraph index that STOPS EXISTING between the baseline and the mutation is UNCERTAIN, slot held', async () => {
+  const request = { paragraph: 1, level: 2, styleName: 'Heading 2' };
+  // THE STALE-INDEX WINDOW, in its sharpest shape: a concurrent edit removes the addressed paragraph between
+  // the pre-dispatch baseline and the post read, so the post `GetAllParagraphs()` array no longer has the
+  // caller's index. The body re-takes the target at the SAME index from the post array (it never searches by
+  // text), so the element is `null` and the addressed paragraph's own text and style name cannot be read at
+  // all. The mutation has ALREADY been dispatched by the time that read is taken, so the outcome must be
+  // `APPLY_UNCERTAIN` with the slot HELD: a KNOWN class here would tell the caller nothing was written while
+  // the addressed paragraph may well carry the style — the exact fail-open direction this pins shut.
+  // `reads` counts the body's own two list reads, so the assertion below proves the paragraph disappeared
+  // AFTER the baseline (the first read) and only at the post read (the second).
+  let reads = 0;
+  // The SIMULATED CONCURRENT EDIT, and it is a real shrink of the paragraph list: the first read (the
+  // baseline) sees the two paragraphs the document was built with, every read after it sees only the first,
+  // so the addressed index 1 no longer exists by the time the post read is taken.
+  const r = headingRig({ texts: ['Ноль', 'Цель'], namespace: { scope: request }, override: {
+    GetAllParagraphs() {
+      reads += 1;
+      const list = r.doc.doubles.slice();
+      return reads === 1 ? list : list.slice(0, list.length - 1);
+    }
+  } });
+  const result = await r.bridge.setHeading(request);
+  assert.equal(reads, 2, 'the baseline was read once and the post state once');
+  // THE PHASE IS WHAT DECIDES THE CLASS, and the body's own answer carries it: a refusal measured after the
+  // phase turned `POST_INSERT` is the UNCERTAIN class even though its NAME (`CAPABILITY_UNAVAILABLE`) is the
+  // same closed name the pre-insert half answers with, where it would be a known failure.
+  assert.deepEqual(r.commands[0].answered, ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'],
+    'the missing post element is answered from the POST half, so its name cannot release the slot');
+  assert.deepEqual(result, { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(r.doc.state.setStyles, 1, 'the mutation WAS dispatched exactly once, before the paragraph vanished');
+  const state = r.bridge.getState();
+  assert.equal(state.busy, true, 'the slot is HELD for an outcome this tool cannot claim');
+  assert.equal(state.uncertain, true);
+  assert.equal(state.writePending, true, 'and the write lock stays engaged');
+  assert.deepEqual(await r.bridge.setHeading(request), { ok: false, code: 'EDITOR_BUSY' },
+    'no retry of a mutation whose effect the body could not read');
+  assert.equal(r.commands.length, 1, 'and the refused call dispatches nothing at all');
+});
+
 test('an already-heading target whose readback is unusable is not refused by guesswork: UNCERTAIN, slot held', async () => {
   // THE PRE-CHECK IS BEST-EFFORT AND SAYS SO: the pre-state refusal rests on the SAME readback, so on a
   // build that cannot answer it the body cannot see that the target is already a heading. It does NOT guess

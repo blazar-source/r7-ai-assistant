@@ -1632,6 +1632,18 @@ export function createWordTools(bridge) {
     // whatever the offsets now cover. It is the tool the caller names a range with; it is not a claim that
     // per-character formatting was applied, and this comment and the result fields are the record of that.
     //
+    // THE STATED LIMITATION AT THE POINT A CALLER MEETS IT, in three sentences, so a later round does not have
+    // to rediscover any of them:
+    //   * **the proven effect is PARAGRAPH-WIDE alignment although the address is a character range.** The
+    //     offsets bound and re-read the addressed region; they do not select WHICH characters are formatted,
+    //     because the one property this SDK can read back (`ApiParaPr.GetJc`) belongs to the paragraph.
+    //   * **an unknown format key is REFUSED at the schema with ZERO writes** — `format` is closed over the one
+    //     readback-able property, so `bold`/`italic`/`size`/`color`/`family`/`highlight` never reach the body
+    //     and no partial request is ever applied.
+    //   * **a non-exact outcome is `TOOL_UNCERTAIN` with the write slot HELD and NO retry** — an unread or
+    //     disagreeing readback, a moved region, a changed text or a moved paragraph count all stop the run
+    //     rather than reporting a known failure about a document this call may already have reformatted.
+    //
     // THE PROOF, in order of authority. `ok` requires ALL of: the readback WAS read (`rangeRead`) and it is
     // the requested alignment (`alignAfter`), both of which are the PRIMARY leg and come from the same
     // per-object getter the setter wrote; the addressed paragraph's TEXT is what it was before the mutation

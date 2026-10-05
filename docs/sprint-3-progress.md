@@ -1851,6 +1851,20 @@ the `.Push(` branch).
 
 ## 15. Sprint 3, tool 7 — `set_heading`, the FIRST mutation that APPENDS NOTHING
 
+> **HISTORICAL — SUPERSEDED BY §15b, AND THE MECHANISM IT DESCRIBES IS DELETED.** Everything in this section
+> from the sentence `THE STYLE READBACK IS A HYPOTHESIS` (below) down to §15a is the record of the round that
+> shipped the **IDENTITY leg** — `targetAdded`, an object-reference comparison against
+> `GetAllHeadingParagraphs()` — and of the reading in which an unusable style readback "degrades to the identity
+> leg". The Lead then MEASURED that leg impossible on the target (the two paragraph lists hand out DIFFERENT
+> wrapper objects; `GetAllParagraphs()[i] === GetAllHeadingParagraphs()[0]` is FALSE for every i), so it is gone
+> from `src/` entirely: `isAmong` and `targetAdded` occur nowhere in the tree, and there is **no fallback on
+> identity and none on text**. §15b is the CURRENT contract: the addressed paragraph's own style readback
+> (`GetParaPr().GetStyle().GetName()`) is the PRIMARY proof, an unusable readback is `APPLY_UNCERTAIN` with the
+> slot HELD, and the text / paragraph-count / heading-count reads are SECONDARY signals that can only refute.
+> This section is kept for the history — the review findings D1–D4 and the tests that moved are still the record
+> of how the tool got here — but nothing in it states the shipped mechanism any more. Where the two disagree,
+> **§15b wins**.
+
 The seventh Word tool, the third mutation, and the first one whose subject is an **existing** paragraph: it
 changes the STYLE of the paragraph at an index the caller names and creates no paragraph, no table and no
 text. Exactly **one** bridge entry point was added (`setHeading`), **one** authored command body
@@ -1869,18 +1883,20 @@ mutations use are authored **nowhere** here: `doc.Push` appends (nothing is appe
 `doc.InsertContent` inserts at the BEGINNING and, under a selection, **replaced existing text** (§13.2) — the
 one route measured to destroy the very text this tool promises to leave unchanged.
 
-**THE STYLE READBACK IS A HYPOTHESIS, AND IT WAS TREATED AS ONE.** The public `ApiParaPr` that
-`paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…), so the addressed
-paragraph's **own** style is *likely* readable as `paragraph.GetParaPr().GetStyle()` — but that exact call was
-**not measured**, so the authored body does not depend on it: it attempts the read inside its own `try`,
-behind `typeof` checks on **both** members, and reports what happened in a **separate flag**. A build where
-`GetParaPr` is absent, is not a function, or throws therefore loses the readback's CONFIRMATION and is still
-decided by the IDENTITY leg (§15a) — it never fails to produce an outcome, and it never invents a style it did
-not read. The tests drive **all three** states: the readback works and matches, the readback works and
-disagrees (a non-success), and the readback is absent or throws (`styleRead: false`, the identity leg decides,
-and the result says so). Note that §15a REVISED this paragraph's original claim: before the review round the
-absent readback fell back to a TEXT membership leg, which the review drove to a false success on a
-duplicate-text document.
+**THE STYLE READBACK WAS A HYPOTHESIS, AND IT WAS TREATED AS ONE — AND THAT READING IS SUPERSEDED BY §15b.**
+The public `ApiParaPr` that `paragraph.GetParaPr()` returns registers `GetStyle` (among `GetJc`/`GetIndLeft`/…),
+so the addressed paragraph's **own** style is readable as `paragraph.GetParaPr().GetStyle()` — the Lead has
+since MEASURED it, and it is now the PRIMARY proof (§15b). At THIS round it was still a hypothesis, so the body
+attempted the read inside its own `try`, behind `typeof` checks on **both** members, and reported what happened
+in a separate flag. **The sentence that used to stand here — that a build where `GetParaPr` is absent, is not a
+function, or throws "is still decided by the IDENTITY leg (§15a)" — is DELETED, because that leg was measured
+impossible and is gone from `src/`:** `isAmong` and `targetAdded` occur nowhere in the tree. An unusable
+readback is now `APPLY_UNCERTAIN` with the slot HELD (§15b), never `ok`, never a known class and never a
+fallback on identity or on text. The tests still drive all three states — the readback works and matches, the
+readback works and disagrees (a non-success), and the readback is absent or throws (the uncertain path, with
+the result saying so) — but they assert the §15b outcome. Note that §15a REVISED this paragraph's original
+claim: before the review round the absent readback fell back to a TEXT membership leg, which the review drove to
+a false success on a duplicate-text document.
 
 **The outcome contract is one-to-one FOR THE TARGET PARAGRAPH**, and every leg is about that paragraph rather
 than about a global count. `ok` is published only when the post read shows all of:
@@ -2016,29 +2032,30 @@ authors neither `InsertContent` nor `document.Push(`. The registry offers the to
 (`kind: 'mutate'`), with `policy: 'auto'` and `requires: ['document.write']`, and a model call dispatches
 exactly one command; `src/agent/*` untouched.
 
-**Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What the
-host-side suite cannot prove is the SHIPPED carriage of this leg: (1) that `{ paragraph, level, styleName }`
-written into the page's `Asc.scope` reaches the body's `scope` binding; (2) that
-`paragraph.GetParaPr().GetStyle()` really answers a NAME — the **one hypothesis this tool rests on** for its
-confirming leg, which is why the body degrades to the identity leg instead of failing when it does not;
-(3) that `paragraph.SetStyle(styleObject)` on an EXISTING paragraph of an R7-built document really applies the
-style and moves `GetAllHeadingParagraphs()` by exactly one — the append-side measurement is on a newly created
-paragraph, and this tool's whole contract is the in-place case; (4) that the native return validator passes a
-seven-member flat array of primitives unaltered; (5) that `GetAllParagraphs()` enumerates in the SAME
-order `SetStyle` addresses, so the index the caller names is the paragraph the tool styles; and (6) — the
-IDENTITY unknown §15a adds — **that `GetAllHeadingParagraphs()` answers the SAME paragraph objects
-`GetAllParagraphs()` answers**, because the identity leg compares against `afterTarget` by reference. Each
-unknown lands on a closed path: a scope that does not arrive, a missing primitive or a style that does not
-resolve makes the body answer its own phase-marked refusal (`[PRE_INSERT, …]`, nothing styled, slot released);
-a non-exact answer, a malformed one or a throwing mutation is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the
-slot held and no retry; an error or a duplicate-text document whose OTHER paragraph moved is the same
-`TOOL_UNCERTAIN` with the slot held, never an `ok` with the slot released; a heading list that answers fresh
-wrapper objects fails the identity leg on BOTH the pre-state check and the post-state proof, so the call
-settles `TOOL_UNCERTAIN` with the slot held rather than claiming an assignment it cannot see — fail-safe, but
-it is the ONE unknown that decides whether this tool is usable at all, so it is the first thing a native run
-must confirm; and an editor that never calls back settles `APPLY_UNCERTAIN` (a dispatched write-class ticket),
-never a verified assignment. A native run on the target is required before this tool's outcome can be called
-measured; it is recorded here as PENDING NATIVE VERIFICATION.
+**NATIVELY UNVERIFIED AT *THAT* ROUND'S CLOSE — HISTORICAL ONLY, SUPERSEDED BY §15b, AND NO LONGER PENDING.**
+The block below is kept as the record of what was outstanding when the identity-leg round shipped. It is NOT
+the current state of the tool. Its item (6) — the identity unknown — was **MEASURED and answered FALSE** by the
+Lead: `GetAllHeadingParagraphs()` does NOT answer the same objects `GetAllParagraphs()` answers, so the identity
+leg is **deleted** from `src/` and is not this tool's carriage (`isAmong`/`targetAdded` appear nowhere in the
+tree). Item (2) — whether `paragraph.GetParaPr().GetStyle()` really answers a NAME — was **MEASURED TRUE**, and
+that readback is now the PRIMARY proof. There is therefore no fallback on identity and none on text; §15b states
+the current outcome contract, the current unknowns and the current slot discipline.
+
+> **Natively UNVERIFIED at this round's close, and each unknown is fail-safe rather than fail-open.** What the
+> host-side suite cannot prove is the SHIPPED carriage of this leg: (1) that `{ paragraph, level, styleName }`
+> written into the page's `Asc.scope` reaches the body's `scope` binding; (2) that
+> `paragraph.GetParaPr().GetStyle()` really answers a NAME — the **one hypothesis this tool rests on** for its
+> confirming leg; (3) that `paragraph.SetStyle(styleObject)` on an EXISTING paragraph of an R7-built document
+> really applies the style and moves `GetAllHeadingParagraphs()` by exactly one — the append-side measurement is
+> on a newly created paragraph, and this tool's whole contract is the in-place case; (4) that the native return
+> validator passes a seven-member flat array of primitives unaltered; (5) that `GetAllParagraphs()` enumerates in
+> the SAME order `SetStyle` addresses, so the index the caller names is the paragraph the tool styles; and (6) —
+> the IDENTITY unknown §15a added — **that `GetAllHeadingParagraphs()` answers the SAME paragraph objects
+> `GetAllParagraphs()` answers**, because the identity leg compared against `afterTarget` by reference. Each
+> unknown landed on a closed path: a scope that does not arrive, a missing primitive or a style that does not
+> resolve made the body answer its own phase-marked refusal (`[PRE_INSERT, …]`, nothing styled, slot released).
+> **A native run on the target was required before this tool's outcome could be called measured.** It happened:
+> §15b records the two measured facts that replaced this whole reading.
 
 **THE STALE-INDEX RESIDUAL, STATED BECAUSE IT CANNOT BE CLOSED IN BAND.** The address is a POSITION, not an
 owned TARGET: there is no handle whose identity a probe could establish, and a caret/document-id probe could
@@ -2227,6 +2244,28 @@ not read at all), and `set_heading refuses a paragraph that is ALREADY a heading
 `actual: { ok: false, code: 'APPLY_UNCERTAIN' }`/`expected: { ok: false, code: 'TOOL_ERROR' }` (the identity
 pre-check could not see it). Green on the final tree: **213/213** on that file.
 
+**WHY THE RED POPULATION (212) IS ONE BELOW THE GREEN (213), STATED PLAINLY — D-A OF THE CLOSE-OUT REVIEW.**
+The reviewer could not reproduce the RED run read-only (it needs `8405bc8` checked out) and noted correctly that
+`203 pass + 9 fail = 212` reconciles with the green **213** only if ONE case joined the file AFTER the RED run.
+**It did, and the case is `a paragraph carrying a NON-heading style is not refused: only a HEADING name is the
+pre-state`, added WHILE the body was being changed to decide the pre-state from the readback — i.e. after the RED
+run and before `0700639`.** The round's own artifacts establish it: neither that case nor
+`the measured readback of a plain paragraph is null: a READABLE non-match, never an absent read` exists in the
+test file at `8405bc8`, while `0700639` carries both — so both are POST-RED additions, and the only test block
+the round REMOVED (the old `a heading list that answers DIFFERENT objects cannot carry the identity leg…`) is
+what makes the net +1. **The reconciliation is therefore exactly `212 + 1 = 213`, and the added case is the
+`Title` one.** Stated because it was NOT stated before: without that sentence the two numbers are not directly
+comparable, which is what the review flagged.
+
+**AND THE HONEST LIMIT OF THAT RECONSTRUCTION.** The RED record's own denominator cannot be checked further from
+the tree: the file at `8405bc8` carries **207** `test(` blocks and the file at `0700639` carries **208**, while
+the round's GREEN run counted **213** tests on that same file — so the run's meter and a `test(` block count are
+NOT the same quantity (the run counts 5 more than the file's blocks at `0700639`), and the record never says
+which meter produced its 212. What IS checkable is the DELTA the review asked about, and it is consistent: the
+file gains exactly ONE block net across this round (the two post-RED additions above, minus the one removal), so
+the `Title` case is the whole of the `212 → 213` difference. **The one fact the review needed and the record did
+not carry is the sentence above: the `Title` case was added AFTER the RED run.**
+
 **Which legs changed, and which tests moved.** REMOVED: the `isAmong` identity helper and the identity leg
 (`targetAdded`) — replaced by the readback (now PRIMARY, not conditional) and by the paragraph-count flag
 `paragraphsStable`; `exactHeadingDelta` now REQUIRES `styleRead && styleMatches`; the handler's
@@ -2248,7 +2287,9 @@ leg: the body must read `GetParaPr()` and must never compare the two paragraph l
 **Verification (this round, final tree).** Focused set
 `tests/unit/bridge-dispatch-api.test.js tests/unit/tools-word.test.js tests/integration/package.test.js` →
 **234/234**, `fail 0` (233 → 234); full suite `node --test` → **845 tests, pass 845, fail 0, skipped 0**
-(844 → 845: one new measured case, one dead identity-scaffolding case removed, none weakened);
+(844 → 845: **two cases added, one case removed** — the ADDED list above names BOTH new cases, so the honest
+arithmetic is **−1 + 2 = +1**, not "one new measured case, one dead identity-scaffolding case removed"; none
+weakened. **This is D-A of the close-out review: the addition count was wrong, the numbers were not**);
 `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` → exit
 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
 cb566f681c647b4fbf8eae02783acd827c9425d3b35dbc81f1d9ff07f278d0c9`. The SHA **moved** from the `8405bc8` pin
@@ -2270,6 +2311,24 @@ lands on a closed path — a scope that does not arrive, a missing primitive or 
 answers the body's own phase-marked refusal (`[PRE_INSERT, …]`, nothing styled, slot released); an unusable
 readback, a non-exact answer, a malformed one or a throwing mutation is `APPLY_UNCERTAIN` →
 `TOOL_UNCERTAIN` with the slot HELD and no retry — never an `ok` with the slot released.
+
+**THE CLOSE-OUT REVIEW'S TWO UNPINNED FAIL-SAFE PATHS ARE NOW PINNED BY TESTS (D-C).** The review of `0700639`
+found two paths the suite drove only through the pre-state, and both are now driven through the REAL body, in
+the direction the code fails:
+1. **a `GetName()` answering a NON-STRING.** The body's readback is THREE-way (`readOwnStyle`: a NAME, the empty
+   string, or `null` = unread), and only a string is a measurement. A `GetName()` returning a number, an object,
+   `true` or `undefined` is therefore `styleRead: 0` / `styleMatches: 0` — the authored answer is
+   `['POST_INSERT', 0, 1, 1, 1, 0, 0]` — and the call settles `APPLY_UNCERTAIN` (→ `TOOL_UNCERTAIN`) with the
+   slot HELD and no retry, NOT a coerced match and not a readable non-match. The test drives all four shapes and
+   asserts the body's own answer, the document's real state, the held slot and the refused second call.
+2. **a post index that STOPS EXISTING between the baseline and the mutation.** A concurrent edit that removes
+   the addressed paragraph leaves the post `GetAllParagraphs()` array without the caller's index; the body
+   re-takes the target at the same index and cannot read its text or its style name. The answer is the two-slot
+   `['POST_INSERT', 'CAPABILITY_UNAVAILABLE']` — the SAME closed name the pre-insert half uses, distinguished
+   only by the PHASE slot — and the decoder turns a post-phase name into `APPLY_UNCERTAIN` with the slot HELD,
+   never into the known class its name would mean before the mutation. The test asserts the body's answer, the
+   one dispatch, the held slot and the refused second call. Both are cases where "the mutation already ran" is
+   the whole reason the outcome may not be a known failure.
 
 
 
@@ -2313,6 +2372,18 @@ confirms — the paragraph alignment — and **refuses `bold`, `italic`, `underl
 `color`, `highlight` and `family` AT THE SCHEMA as unknown keys, with ZERO writes**. Advertising them while
 proving only a text constancy or a flag would be exactly the unverifiable-property contract this project
 forbids.
+
+**WHY THOSE PROPERTIES ARE ABSENT, RESTATED SO A LATER ROUND DOES NOT TRY TO "ADD" THEM WITHOUT A READBACK.**
+The reason is not that they are unimportant or hard to SET — every one of them has a working setter on
+`ApiRange`/`ApiTextPr` — it is that **no getter exists for any of them on any builder type**: `ApiRange` and
+`ApiTextPr` register setters plus `ToJSON`, and the eight `Get*` names that would be needed occur in the 15 MB
+bundle only on the spell-checker's penalty helpers and on the DOCUMENT MODEL's `CTextPr` (`GetBoldCS`,
+`GetBoldItalic`, `qt.prototype.GetBold`), never on the builder surface a command body can reach. A body that
+called `SetBold` could therefore never prove it applied, and this project forbids publishing an effect it cannot
+read back. **The one way those properties may ever be advertised is the way this tool was built: a builder
+getter or a MEASURED indirect readback must exist FIRST, the readback must be recorded here with its
+`GetClassType()`/prototype evidence, and only then may a schema admit the key.** Until that happens, adding
+`bold` to `format` — or to any other tool — is adding an unverifiable property, and it is refused by design.
 
 **What the `{ paragraph, start, end }` address IS, and what it is NOT.** The alignment setter is a
 **paragraph** property, so the effect is paragraph-wide and the descriptor says so; the address is a
@@ -2394,25 +2465,89 @@ builder runs with `minify: false`). The phase protocol and the slot discipline a
 `[PRE_INSERT, name]` releases this leg's slot**), `src/agent/*` is untouched, no dynamic execution was added
 to `src/`, and there is exactly ONE mutating call per dispatch (`SetJc`).
 
-**Natively UNVERIFIED at this round's close, and fail-safe rather than fail-open.** What the host-side suite
-cannot prove about the SHIPPED carriage: (1) that `{ paragraph, start, end, align }` written into the page's
-`Asc.scope` reaches the body's `scope` binding; (2) that `paragraph.GetParaPr().SetJc(word)` on a real R7
-document changes what `GetJc()` then answers — **both halves of that pair are on the SAME builder type and
-the getter sits directly beside the setter in the vendored source, which is why this route was chosen over
-every character-level one**, but the pair was not exercised on the target; (3) that the two offsets the
-paragraph's own `GetRange(start, end)` accepts are the same offsets `GetText().length` counts, and that the
-region read is STABLE across a paragraph-level alignment change (a build that renumbers the address would
-settle every call `APPLY_UNCERTAIN` with the slot held — fail-safe, but the tool unusable, which is exactly
-the risk `set_heading`'s identity leg carried and this leg must have MEASURED before it can be considered
-done); (4) that `GetAllParagraphs()` enumerates in the SAME order the address indexes; and (5) that the
-native return validator passes the nine-member flat array of primitives unaltered. Each unknown lands on a
-closed path — a scope that does not arrive or a missing primitive answers the body's own phase-marked
-refusal (`[PRE_INSERT, …]`, nothing mutated, slot released); an unreadable readback, a non-exact answer, a
-malformed one or a throwing mutation is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot HELD and no
-retry — never an `ok` with the slot released.
+### 16a. The close-out round on `format_range` — the Lead's native evidence, and the tests that pin the review's two conditions
 
-**STATED LIMITATION OF THIS TOOL, in one sentence, so a future round does not have to rediscover it:**
-`format_range` applies and proves a PARAGRAPH-LEVEL alignment over an address the caller names as a
-character range, because the public builder API exposes no getter for any character-level property — a tool
-that formats CHARACTERS inside a range cannot be built honestly against this SDK surface until either a
-builder getter or a measured indirect readback exists, and it must not be advertised before then.
+**What this round changed: DOCS AND TESTS ONLY, plus one comment block.** No behaviour moved. The changed files
+are `docs/sprint-3-progress.md`, `tests/unit/tools-word.test.js` and ONE comment-only edit in
+`src/tools/word.js`; `src/plugin/bridge.js` and `src/shared/limits.js` were not touched, `src/agent/*` is
+untouched, no dynamic execution was added to `src/`, and the package classifier's leg count is unchanged.
+
+**Verification (this close-out round, final tree).** Focused set
+`tests/unit/tools-word.test.js tests/integration/package.test.js` → **235/235**, `fail 0`
+(233 → 235: the TWO new `set_heading` cases below, and NOTHING removed or weakened); the file alone is
+**230/230** (228 → 230); full suite `node --test` → **862 tests, pass 862, fail 0, skipped 0**
+(**860 → 862**, never shrunk); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0;
+`node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+af69985cf2092fd0e89f56bf117c360e22103d3063c203a01524e63137fc325a`. **The SHA MOVED** from this round's
+`3247ce8be04cdbf8558ffd59bf62187657651e59fba536ca206ec3eeb9bd10f5`, and it moved for the one reason worth
+stating: the builder runs with **`minify: false`**, so a COMMENT-ONLY edit inside an authored command body
+reaches the bundle and moves its bytes. That is the direct confirmation of the rule this document has stated
+for three rounds — a comment is part of the shipped artifact, which is why the descriptor's limitation is
+written where the caller's own call reaches it and not only here.
+
+**The two new tests (D-C of the close-out review), and their exact assertions.** Both drive the REAL command
+body against the document double, and both are named for the direction the code fails:
+1. `a GetName() answering a NON-STRING is an UNREAD readback, never a match: UNCERTAIN, slot held` — for each of
+   a number, an object, `true` and `undefined`, it asserts the authored answer
+   `['POST_INSERT', 0, 1, 1, 1, 0, 0]` (so `styleRead` 0 / `styleMatches` 0 — never a folded or coerced match),
+   the settled envelope `{ ok: false, code: 'APPLY_UNCERTAIN' }`, the document's own
+   `doubles[1].style === 'Heading 2'` (the style really landed) and `state.setStyles === 1`, then
+   `busy === true`, `uncertain === true`, `writePending === true`, a second call answering `EDITOR_BUSY`, and
+   `commands.length === 1` (the refused call dispatches nothing).
+2. `a paragraph index that STOPS EXISTING between the baseline and the mutation is UNCERTAIN, slot held` — the
+   document's own `GetAllParagraphs` is overridden to return the real list on the FIRST (baseline) read and one
+   paragraph fewer on every read after it, so the addressed index is gone by the post read. It asserts
+   `reads === 2` (the baseline and the post state, and nothing else), the authored answer
+   `['POST_INSERT', 'CAPABILITY_UNAVAILABLE']` — the SAME closed name the pre-insert half answers with,
+   distinguished ONLY by the phase slot — the settled `{ ok: false, code: 'APPLY_UNCERTAIN' }`,
+   `state.setStyles === 1`, `busy`/`uncertain`/`writePending` all true, a second call answering `EDITOR_BUSY`,
+   and `commands.length === 1`.
+
+**No behaviour changed, and this is how it was checked.** The ONE `src/` line that moved is a comment: the
+`src/` diff is **12 added lines, 0 removed**, every added line begins with `//`, and the comment-STRIPPED
+`src/tools/word.js` is byte-identical to `HEAD`'s (a comment-stripping pass — line and block comments removed,
+strings preserved — compared the two and printed `true`). The descriptors' keywords, schemas, `precondition`
+and `execute` bodies are therefore untouched, and the `package` classifier's leg count is unchanged.
+
+**THE LEAD'S NATIVE EVIDENCE, RUN ON THE SHIPPED BUILD AFTER THIS ROUND — FOUR OF THE FIVE UNKNOWNS BELOW
+ARE SETTLED.** The independent probe read each paragraph's own `GetJc()` directly (NOT the tool's result, so the
+measurement cannot be the tool's own report quoting itself) and measured a baseline of **`[center, left, left]`
+on 3 paragraphs with 1 heading**. It then called the tool with
+`{"paragraph":1,"start":0,"end":10,"format":{"align":"center"}}`, which answered **`format_range: ok`** while the
+model reported **`ВЫРАВНИВАНИЕ_ПОСЛЕ=center|ПАРАГРАФОВ=3`**, and the post readback gave **`[center, center, left]`**
+with the addressed paragraph's text, the document paragraph count, the heading count and the table count all
+unchanged. That settles four of the five unknowns the round listed — and, with them, the thing this round called
+the object of the whole leg:
+1. **`SetJc` really changes what `GetJc` answers** — the setter/getter pair the route was chosen for works on a
+   real R7 document, which is what made the paragraph alignment the one advertisable property.
+2. **The `GetRange(start, end)` offsets are accepted** — the address `{0, 10}` was resolved by a real paragraph,
+   so the two offsets the caller names are the two the body's `GetRange` accepts.
+3. **The fresh region read is STABLE across a paragraph-level alignment change** — the alignment moved while the
+   addressed region, the text, the paragraph count, the heading count and the table count did not, so the
+   fail-safe-but-unusable risk `set_heading`'s identity leg carried (an address that renumbers under the
+   mutation) is NOT this leg's reality.
+4. **The nine-member flat answer survives the validator** — the call returned `ok` through the real bridge, which
+   it can only do after `decodeRange` read all nine slots of the authored array, so the native return validator
+   did not strip, reorder or coerce it.
+
+**Natively UNVERIFIED at this round's close: what the evidence above does NOT reach — two of the original five.**
+(1) that `{ paragraph, start, end, align }` written into the page's `Asc.scope` reaches the body's `scope`
+binding — the probe proves the REQUEST was served, not which channel carried it; and (2) that
+`GetAllParagraphs()` enumerates in the SAME order the address indexes — the baseline read `[center, left, left]`
+is consistent with the address resolving to the second paragraph, but one document in tab order is not an
+enumeration proof for every document. Each unknown lands on a closed path — a scope that does not arrive or a
+missing primitive
+answers the body's own phase-marked refusal (`[PRE_INSERT, …]`, nothing mutated, slot released); an unreadable
+readback, a non-exact answer, a malformed one or a throwing mutation is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN`
+with the slot HELD and no retry — never an `ok` with the slot released.
+
+**STATED LIMITATION OF THIS TOOL, WHERE A CALLER MEETS IT, so a future round does not have to rediscover it:**
+`format_range` applies and proves a **PARAGRAPH-LEVEL alignment** over an address the caller names as a
+character range — the offsets bound and re-read the addressed region, they do not select which characters are
+formatted, because the public builder API exposes **no getter for any character-level property** (there is none
+on `ApiRange` or `ApiTextPr`; see the SDK inspection above), so a tool that formats CHARACTERS inside a range
+cannot be built honestly against this SDK surface until either a builder getter or a measured indirect readback
+exists, and it must not be advertised before then. The same three rules are stated in the descriptor's own
+comment in `src/tools/word.js`, at the point a caller reads them: **an unknown format key is refused at the
+schema with ZERO writes**, and **a non-exact outcome is `TOOL_UNCERTAIN` with the write slot HELD and NO retry**
+rather than a known failure about a document the call may already have reformatted.
