@@ -768,7 +768,7 @@ This round the focused word suite is **76/76** and the full suite grew **702 →
 `node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` →
 exit 0 (`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
 c1c116f8f47f9d7d08f14f8711332762a0b0814a2601b7390107d8938c5d0cbd`). **That SHA is pinned to the bundle
-built from the tree at commit `3d12d39`** — measured twice, from this worktree, and not from the main
+built from the tree at commit `3d12d39`** (superseded by the later rounds — see §10 for the current pin) — measured twice, from this worktree, and not from the main
 checkout, which sits on the older `bde9080`; the earlier `0e3e1065…` recorded here was stale. The bundled
 files are byte-identical across the tool/tests change, so the value is stable, but a later commit that
 touches an allowlisted plugin file must re-measure it and re-pin it to its own commit.
@@ -810,11 +810,15 @@ dispatcher's own `"pluginMethod_"+methodName` lookup), so the editor resolves ev
 `GetCurrentParagraph` **125**, `GetSelectedText` **101**, `GetCurrentWord` **7**, `GetCurrentSentence`
 **6**.
 
-**No plugin-level paragraph getter is established.** The **125** `GetCurrentParagraph` hits hold exactly
-one literal **`Ct.prototype.GetCurrentParagraph`**, which is the `Api` / `getTargetDocContent()` route
-that manipulates the **document** rather than the caret (and which Phase 0 measured as exposing no
-`GetSelection`); the other **124** are `this.X.GetCurrentParagraph` call sites and other `*.prototype.`
-definitions, and the sample `documentContent.GetCurrentParagraph()` occurs **zero** times and must not be
+**No plugin-level paragraph getter is established.** The **125** `GetCurrentParagraph` hits decompose
+**exactly**, into four **disjoint** categories that sum to 125 (re-measured by matching the file's text,
+not inherited from a prose estimate): **45** are the bare `this.GetCurrentParagraph`, **12** are
+`this.<id>.GetCurrentParagraph`, **12** are `<id>.prototype.GetCurrentParagraph` **definitions** — one of
+them `Ct.prototype.GetCurrentParagraph`, the `Api` / `getTargetDocContent()` route that manipulates the
+**document** rather than the caret (and which Phase 0 measured as exposing no `GetSelection`) — and the
+remaining **56** are `<id>.GetCurrentParagraph` on some other receiver. **101** of the 124 hits other than
+that one `Ct.prototype.` literal are therefore **neither** `this.X.…` **nor** a `*.prototype.`
+definition. The sample `documentContent.GetCurrentParagraph()` occurs **zero** times and must not be
 quoted as evidence. So this tool dispatches no `GetCurrentParagraph` and never reaches for `Api`.
 
 **`GetCurrentSentence` is established, by this repo's own history.** Commit `ed65dd5` dispatched exactly
@@ -874,3 +878,69 @@ from the descriptor. Three existing exhaustive catalogue assertions grew by one 
 `read_paragraph` is **appended last** there: `['read_selection', 'read_document_text', 'read_paragraph']`.
 `src/agent/*` untouched.
 
+
+## 10. Sprint 3, tool 2 — the entry measurement for `read_selection` and `read_context`
+
+**The review found two fail-OPEN bounds the same fix closes.** `read_selection` was LIVE: it bounded only
+the raw selection text by `contextReadBytes.selection` (8192) and never measured its serialized entry, so
+the reviewer's exact reproduction — a selection of **8192 newlines** is 8192 raw bytes and a **16451**-byte
+entry — was refused by `stringifyToolResults` (protocol.js:91) while `runtime.js:27-36` replaced the whole
+result with the literal *"the tool result could not be serialized"*: the model received **no text** and the
+run's action log still recorded `ok`. `read_context` was the same defect **latent**: policy `deny` keeps it
+out of every catalogue, but the handler stays executable when the descriptor is held directly, so a future
+`auto` flip would have made it live.
+
+**What the fix does.** ONE shared `toolResultEntryBytes(tool, data)` is the module's single
+`JSON.stringify({ tool, ok: true, data })` + `utf8ByteLength`, with one-line per-tool wrappers
+(`documentEntryBytes`, `selectionEntryBytes`, `paragraphEntryBytes`, `contextEntryBytes`) naming the data
+object each handler publishes; the two older helpers were refactored onto it with the same shape, byte for
+byte. Both reads now close an entry above `AGENT_CEILINGS.toolResultBytes` (16384) as the closed
+`BYTE_LIMIT` **with `data === undefined`**, so a refusal carries no document text at all; a selection is
+never shortened to fit, because a shortened selection would be presented as **THE** selection. `src/agent/*`
+untouched; no limit value changed.
+
+**The measured boundaries.** `read_selection`: a **8158**-newline selection is served (entry **16383**),
+**8159** is refused (**16385**); a **2719**-unit lone surrogate is served (entry **16381**), **2720**
+doubles to a **16387**-byte entry and is refused. `read_context`: an ASCII `paragraph` at `index: 0` is
+served to **16288** characters — the entry is then exactly **16384**, the maximum successfully served entry
+— and **16289** is refused, which is the dead band described below.
+
+**The confirmed non-RED test.** The commit message says the five new tests were RED first; on the pre-fix
+tree re-run for this round only **four** were — 95 of the 99 focused cases pass, and the failures are exactly
+`read_selection refuses a selection whose SERIALIZED entry alone is over the ceiling`, `no read_selection ok
+result can exceed the runtime result ceiling`, `a read_selection the runtime would refuse reaches the model
+as a closed refusal, never as ok` and `read_context bounds the SERIALIZED entry, not only the raw text …`.
+The fifth, `read_selection publishes an entry the runtime serializer accepts, measured exactly`, is
+**characterization**, not reproduction — so four of the five were RED, not five: a 2000-character
+selection was inside the ceiling before the entry measurement existed, so it passed on the pre-fix tree
+and the commit message's blanket "five" is inexact.
+The commit message cannot be rewritten; this record is the correction, and the test's own comment now says
+so.
+
+**The follow-up correction to the primitive evidence.** The decomposition of the 125 `GetCurrentParagraph`
+hits was restated in `word.js`, in the test comment and above: the four disjoint categories (45 / 12 / 12 /
+56) replace the earlier two-category sentence, which had left 101 of the hits uncategorized. The
+`read_context` claim was narrowed to what the measurement achieves — it closes the fail-OPEN, so an
+over-ceiling context can no longer be published as `ok`. It is **not** by itself what makes an `auto` flip
+safe, and the record says so: the per-scope text ceiling is `contextReadBytes.paragraph` = 16384, the
+**whole** entry ceiling, so the entry measurement eats into the raw bound and leaves a **dead band** — the
+envelope is **92** bytes at a one-digit index, so an ASCII `paragraph` at `index: 0` is served to **16288**
+characters (entry exactly **16384**) and refused at **16289**, while **16384** raw bytes are what the bound
+advertises. And the descriptor's own withdrawal condition still stands: a **native probe** of a public
+document read must confirm it before the policy becomes `auto` again. No limit value changed in this
+commit; a lift of the dead band is a ceiling decision for the Lead, not a comment edit.
+
+**Verification.** Focused word suite **94 → 99** (`99/99`); full suite **723 → 728** with `fail 0`;
+`node scripts/static-audit.mjs` → `Authored-code audit PASS` (exit 0); `node scripts/build-plugin.mjs` →
+exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+c6e7e3a97a1688e8f091eeefbfb0bcfd8185d903849db50950e9a18fcf7c15f2`, re-measured on the tree this round
+commits (twice, same value). The ZIP SHA **did** move from the round's own
+`3da4979e015ba17c7fd46d5c848e9eba04afcc8dc8adfb9b3cf4fd3ab3466602`, and the reason is a property of the
+builder, not of a behaviour change: the bundler keeps the comments of a **descriptor body** verbatim
+(`minify: false`) and this round rewrote the `read_paragraph` decomposition comment in `src/tools/word.js`,
+which is bundled — I confirmed that comment in the built `panel.js` — so the packed archive is no longer
+byte-identical and the SHA **must** be re-pinned. The earlier arithmetic ("the bundled files are
+byte-identical across the tool/tests change") is not general: comments inside a handler's `execute` body
+are removed by the bundler (the `read_context` and `read_selection` ones are absent from `panel.js`, as
+they were before this round), so only descriptor-body edits move the bytes. No behaviour changed: the
+bundle's only difference is comment text, and the build is deterministic across repeated runs.

@@ -90,6 +90,11 @@ function selectionBridge(text, extras = {}) {
 function readSelection(bridge) { return createWordTools(bridge).find(entry => entry.name === 'read_selection'); }
 
 test('read_selection publishes an entry the runtime serializer accepts, measured exactly', async () => {
+  // CHARACTERIZATION, not a reproduction of the fix: this 2000-character `read_selection` result, its
+  // entry and every legal `ok` below are inside the ceiling BEFORE the entry measurement existed, so this
+  // test passed on the pre-fix tree as well. It pins the entry shape the runtime really accepts; the
+  // three tests that follow carry the RED — the over-ceiling selection, the boundary walk, and the
+  // loop-level refusal.
   const text = 'я'.repeat(2000);
   const bridge = selectionBridge(text);
   const result = await readSelection(bridge).execute({}, { editor: 'word' });
@@ -224,9 +229,13 @@ test('read_context refuses an out-of-range or unknown scope as a known error', a
 // `read_context` is policy `deny` today, so the handler is unreachable through every catalogue and this
 // leg cannot fail live. It is fixed anyway: the descriptor is executable when held directly (the
 // registry's `deny` is what withholds it, not the handler), so the moment that policy is flipped to
-// `auto` a raw-text-only bound would publish `ok` for entries the runtime refuses. The measurement below
-// is what makes that future flip safe.
-test('read_context bounds the SERIALIZED entry, not only the raw text, so a future auto flip is safe', async () => {
+// `auto` a raw-text-only bound would publish `ok` for entries the runtime refuses. What the measurement
+// below CLOSES is exactly that fail-OPEN — an entry the runtime refuses can no longer be published as
+// `ok`. It is NOT by itself what makes the flip safe, and this file does not claim that: the per-scope
+// text ceiling is `contextReadBytes.paragraph` (16384), the WHOLE entry ceiling, so the entry
+// measurement eats into the advertised raw bound and leaves a dead band, and the descriptor's own
+// withdrawal condition — a native probe of the primitive — still stands.
+test('read_context bounds the SERIALIZED entry, not only the raw text, so an entry the runtime refuses can never be published as ok', async () => {
   const text = '\n'.repeat(AGENT_CEILINGS.contextReadBytes.paragraph);
   const tool = createWordTools({ readContext: async () => ({ ok: true, text }) }).find(entry => entry.name === 'read_context');
   assert.equal(tool.policy, 'deny', 'withheld today, which is exactly why the latent bound is fixed now');
@@ -2254,12 +2263,14 @@ test('read_document_text refuses closed when not even ONE whole character can be
 // dispatcher's own `"pluginMethod_"+methodName` lookup — so the editor resolves every other method name
 // dynamically and no prefixed literal exists to count.
 // The BARE names are what exist: `GetCurrentParagraph` 125, `GetSelectedText` 101, `GetCurrentWord` 7,
-// `GetCurrentSentence` 6. No plugin-level PARAGRAPH getter is established: the 125 hits hold exactly one
-// `Ct.prototype.GetCurrentParagraph` (the `Api`/`getTargetDocContent()` route this descriptor is
-// forbidden to use), the other 124 being `this.X.GetCurrentParagraph` call sites and other
-// `*.prototype.` definitions, and the sample `documentContent.GetCurrentParagraph()` occurs ZERO times
-// and must not be quoted — which is why no `pluginMethod_GetCurrentParagraph` is dispatched anywhere in
-// this repo.
+// `GetCurrentSentence` 6. No plugin-level PARAGRAPH getter is established: the 125 hits decompose
+// EXACTLY into four DISJOINT categories that sum to 125 — 45 bare `this.GetCurrentParagraph`, 12
+// `this.<id>.GetCurrentParagraph`, 12 `<id>.prototype.GetCurrentParagraph` definitions (one of them
+// `Ct.prototype.`, the `Api`/`getTargetDocContent()` route this descriptor is forbidden to use), and 56
+// `<id>.GetCurrentParagraph` on another receiver — so 101 of the 124 hits other than that one
+// `Ct.prototype.` literal are neither `this.X.…` nor a `*.prototype.` definition; the sample
+// `documentContent.GetCurrentParagraph()` occurs ZERO times and must not be quoted — which is why no
+// `pluginMethod_GetCurrentParagraph` is dispatched anywhere in this repo.
 // `GetCurrentSentence` IS established at the plugin level, by this repo's own history: commit ed65dd5
 // dispatched exactly `plugin.executeMethod('GetCurrentSentence', [], callback)` through the one owned
 // dispatch channel and records it as "the primitive the live build actually answers with the inserted

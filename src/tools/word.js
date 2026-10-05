@@ -431,12 +431,17 @@ export function createWordTools(bridge) {
       // `OnEncryption` members and the dispatcher's own `"pluginMethod_"+methodName` lookup — so the
       // editor resolves every other method name dynamically and no prefixed literal exists to count.
       // The BARE names are what exist: `GetCurrentParagraph` 125, `GetSelectedText` 101,
-      // `GetCurrentWord` 7, `GetCurrentSentence` 6. NO plugin-level PARAGRAPH getter is established:
-      // the 125 hits hold exactly ONE literal `Ct.prototype.GetCurrentParagraph` — the
-      // `Api`/`getTargetDocContent()` route — while the sample `documentContent.GetCurrentParagraph()`
-      // occurs ZERO times and must not be quoted as evidence; the other 124 hits are
-      // `this.X.GetCurrentParagraph` call sites and other `*.prototype.` definitions. All of them are
-      // document-content-level, and that level manipulates the DOCUMENT rather than the caret and was
+      // `GetCurrentWord` 7, `GetCurrentSentence` 6. NO plugin-level PARAGRAPH getter is established.
+      // The 125 hits decompose EXACTLY, into four DISJOINT categories that sum to 125 — re-measured by
+      // matching the file's text, not inherited from a prose estimate: 45 are the bare
+      // `this.GetCurrentParagraph`, 12 are `this.<id>.GetCurrentParagraph`, 12 are
+      // `<id>.prototype.GetCurrentParagraph` DEFINITIONS (one of them `Ct.prototype.`, the
+      // `Api`/`getTargetDocContent()` route), and the remaining 56 are `<id>.GetCurrentParagraph` on
+      // some other receiver. 101 of the 124 hits other than the one `Ct.prototype.` literal are NEITHER
+      // `this.X.…` nor a `*.prototype.` definition, and the sample
+      // `documentContent.GetCurrentParagraph()` occurs ZERO times and must not be quoted as evidence.
+      // Every category is document-content-level, and that level manipulates the DOCUMENT rather than
+      // the caret and was
       // measured by Phase 0 as exposing no `GetSelection` — so this descriptor dispatches no
       // `GetCurrentParagraph` and never reaches for `Api`. `GetCurrentSentence` IS established at the
       // plugin level, by this repo's own history:
@@ -551,11 +556,20 @@ export function createWordTools(bridge) {
         if (bytes > maxBytes) return known(ERROR_CODES.BYTE_LIMIT);
         // The SAME measurement the other reads apply, and it is taken here while the policy is still
         // `deny`. The registry's `deny` withholds this descriptor from every catalogue, but the handler
-        // stays executable when the descriptor is held directly, so the moment this policy is flipped to
-        // `auto` a raw-text-only bound would publish `ok` for an entry the runtime refuses — the model
-        // would receive the literal "the tool result could not be serialized" and the action log would
-        // still record `ok`. THIS measurement is what makes that future `auto` flip safe: the bound the
-        // handler enforces and the bound the runtime enforces are the same bound by construction.
+        // stays executable when the descriptor is held directly, so without this measurement a flip to
+        // `auto` would publish `ok` for an entry the runtime refuses — the model would receive the
+        // literal "the tool result could not be serialized" and the action log would still record `ok`.
+        // THIS measurement is exactly what closes that fail-OPEN: an over-ceiling context can no longer
+        // be published as `ok`. It is NOT by itself what makes a future `auto` flip safe, and this
+        // comment does not claim that:
+        //   * the ceiling here is `AGENT_CEILINGS.contextReadBytes.paragraph` = 16384, the WHOLE entry
+        //     ceiling, so the entry measurement necessarily eats into the raw-text bound this handler
+        //     applies and leaves a DEAD BAND — for an ASCII `paragraph` at `index: 0` the envelope is 92
+        //     bytes, so the largest text that fits is 16288 and a 16288-byte read whose entry is exactly
+        //     16384 is served while 16289 is refused even though 16384 raw bytes are what the bound
+        //     advertises (the band is the envelope's width, one byte more at a two-digit index);
+        //   * the descriptor above still carries its own withdrawal condition: a native probe must
+        //     confirm a public document read before this policy becomes `auto` again.
         const entry = contextEntryBytes(args.scope, args.index, response.text, bytes);
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok({ scope: args.scope, index: args.index, text: response.text, bytes });
