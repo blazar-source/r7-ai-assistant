@@ -198,11 +198,31 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(code, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      // The twelfth leg, whose narrative is stated once at the head of this classifier. Its OWN branch must
-      // come FIRST: the comment body authors neither `CreateImage` nor any other leg's primitive, so without
-      // it the classifier would fall through to the read-only CAPABILITY probe branch (its `type` is neither
-      // `Push`, `SetStyle` nor `CreateTable`), whose body looks nothing like it.
-      if (code.includes('AddComment')) {
+      // THE THIRTEENTH LEG — the first CELL (spreadsheet) body, and its branch comes FIRST for the same
+      // reason the comment branch below states: the Cell body authors none of the Word primitives the
+      // later branches classify on, so without this branch it would fall through to the Word-only
+      // fallback, whose `GetRangeBySelect` probe is measurably absent from a spreadsheet (`Api` there
+      // exposes `GetActiveSheet`/`GetSheets`/`AddSheet` and NO selection-range primitive at all).
+      // What is pinned is this leg's own measured surface: the active-sheet read, the used-range
+      // discovery route, the injected command scope, and the ABSENCE of every mutation primitive — a
+      // read that cannot write, stated as an assertion rather than as a promise.
+      if (code.includes('GetActiveSheet')) {
+        assert.match(code, /\bscope\b/, 'the sheet-read body takes its address and cap from the injected command scope');
+        assert.match(code, /GetActiveSheet\(\)/, 'and reads the active sheet through the measured primitive');
+        assert.match(code, /GetUsedRange\(\)/, 'and discovers the used range through the only measured route');
+        assert.match(code, /GetSheets\(\)/, 'and reads the workbook listing for the sheet count');
+        assert.match(code, /CAPABILITY_UNAVAILABLE/, 'and answers its own closed refusal');
+        assert.equal(code.includes('GetRangeBySelect'), false,
+          'and authors no Word-only probe: the Cell facade exposes no selection-range primitive (measured undefined)');
+        assert.equal(code.includes('SetValue'), false, 'and writes no cell: this leg is a read');
+        assert.equal(code.includes('Push('), false, 'and pushes nothing into the document');
+        legs.push('sheet');
+      } else if (code.includes('AddComment')) {
+        // The twelfth leg, whose narrative is stated once at the head of this classifier. Its OWN branch
+        // must come FIRST among the WORD legs: the comment body authors neither `CreateImage` nor any
+        // other leg's primitive, so without it the classifier would fall through to the read-only
+        // CAPABILITY probe branch (its `type` is neither `Push`, `SetStyle` nor `CreateTable`), whose
+        // body looks nothing like it.
         assert.match(code, /\bscope\b/, 'the comment body takes its text from the injected command scope');
         assert.match(code, /GetAllComments\(\)/, 'and reads the document\u2019s own comment count on both sides of the write');
         assert.match(code, /GetText\(\)/, 'and proves the added comment through its own text readback');
@@ -324,8 +344,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 12, 'the adapter dispatches exactly the twelve authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'structure', 'table'],
+  assert.equal(commands, 13, 'the adapter dispatches exactly the thirteen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

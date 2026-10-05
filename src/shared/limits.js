@@ -312,6 +312,19 @@ export const LIMITS = Object.freeze({
   insertTableColumnsMax: 16,
   insertTableCellBytes: 1024,
   insertTableBytes: 8192,
+  // The bounded SPREADSHEET reads (`read_sheet`, `read_range`) — the first CELL legs in this repo. Every
+  // bound below is measured, not chosen: they are the caps the authored body extracts against and the
+  // same caps the decoder requires, so extraction and decode can never disagree.
+  //   * `sheetReadCellsMax` bounds how many CELLS one read may return. A reported cell carries BOTH its
+  //     value and its formula, so it costs two strings, and the payload is bounded separately by
+  //     `sheetReadBytes`. 400 cells is a daily-work table (a 20 x 20 block, or the 10 x 5 plan-fact and
+  //     P&L shapes this product targets) and is deliberately far below a whole-sheet read: the owner's
+  //     good-enough scope is ordinary daily spreadsheets, not tens of sheets or huge ranges.
+  //   * `sheetReadCellBytes` bounds ONE cell's text in UTF-8 bytes. A written cell is not a paragraph:
+  //     512 bytes is half of `insertTableCellBytes` and still an order of magnitude above any daily
+  //     figure, label or formula this product authors.
+  sheetReadCellsMax: 400,
+  sheetReadCellBytes: 512,
   // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
   // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
   // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because

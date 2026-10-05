@@ -306,6 +306,180 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // whose phase is absent (a bare `['CAPABILITY_UNAVAILABLE']`) or not pre-insert is treated as the
       // post-insert uncertain class, so the name alone can never release a slot for an append that may
       // already be in the document.
+      // ----- CELL: the bounded SPREADSHEET read ---------------------------------------------------
+      // The first Cell leg in this repo, and it authors primitives MEASURED on a live Cell session
+      // (R7-Office Editors 2026.3.1, document `doctype=spreadsheet`): `Api.GetActiveSheet()`,
+      // `sheet.GetName()`, `sheet.GetIndex()`, `Api.GetSheets()` (an Array whose `length` is the sheet
+      // count), `sheet.GetUsedRange()` (the ONLY used-range discovery this build exposes —
+      // `GetRowsCount`/`GetColumnsCount`/`GetMaxRow`/`GetMaxColumn` are all `undefined`), and
+      // `range.GetValue()` (a 2-D array of strings, one row per row). `range.GetFormula()` was measured
+      // on a SINGLE cell; its behaviour on a multi-cell range is what the `formulasMatch` slot below
+      // reports, so a build that answers one string instead of a matrix simply yields values alone
+      // rather than a wrong formula.
+      // The answer is ONE flat array of primitives, exactly like the search/structure legs (the native
+      // return validator keeps those and strips a plain object):
+      //   `[CAPABILITY_UNAVAILABLE]` — the body's own closed refusal; or
+      //   `[sheetName, sheetIndex, sheetCount, address, rowCount, columnCount, formulasMatch, v…, f…]`
+      // where the `rowCount × columnCount` value strings are followed by the same number of formula
+      // strings ONLY when `formulasMatch` is 1. It is a READ: it has no phase, no mutation and no leg
+      // that could reach a write class.
+      sheet(callback) {
+        return plugin.callCommand(function () {
+          // The refusal is a ONE-slot array, and it is built by APPENDING to a literal for the same
+          // authored-code-audit reason the block append states: a literal built from identifier names
+          // would make the receiver of every later call on it a computed value.
+          function readRefusal() {
+            var refusal = [];
+            refusal.push('CAPABILITY_UNAVAILABLE');
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return readRefusal();
+            var address = request.address === undefined ? null : request.address;
+            var maxCells = request.maxCells;
+            if (typeof maxCells !== 'number' || maxCells < 1 || maxCells % 1 !== 0) return readRefusal();
+            if (address !== null && typeof address !== 'string') return readRefusal();
+            if (address !== null && address === '') return readRefusal();
+            // The facade is checked through the SAME literal guard every other authored body carries
+            // (`typeof Api !== 'undefined'`): the packaging test walks every carried body and requires it,
+            // because a body that reaches the editor without proving the facade exists would depend on a
+            // global it never checked.
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return readRefusal();
+            // Every primitive is a FUNCTION CHECK before any call, exactly like the search and structure
+            // bodies: an editor that does not expose one of them answers this body's own refusal rather
+            // than a read of invented values.
+            if (typeof Api.GetActiveSheet !== 'function' || typeof Api.GetSheets !== 'function') return readRefusal();
+            var sheet = Api.GetActiveSheet();
+            if (sheet === null || sheet === undefined) return readRefusal();
+            if (typeof sheet.GetName !== 'function' || typeof sheet.GetRange !== 'function') return readRefusal();
+            var sheetName = sheet.GetName();
+            if (typeof sheetName !== 'string') return readRefusal();
+            var sheets = Api.GetSheets();
+            if (sheets === null || sheets === undefined || typeof sheets.length !== 'number') return readRefusal();
+            var sheetCount = sheets.length;
+            if (!(sheetCount >= 1)) return readRefusal();
+            var sheetIndex = 0;
+            if (typeof sheet.GetIndex === 'function') {
+              var rawIndex = sheet.GetIndex();
+              if (typeof rawIndex === 'number' && rawIndex === rawIndex && rawIndex >= 0 && rawIndex % 1 === 0) sheetIndex = rawIndex;
+            }
+            // THE ADDRESS: the caller's own, or the sheet's own used range when the caller named none.
+            // A named address is never trimmed or reinterpreted — it is handed to the editor unchanged
+            // and the editor's own answer is what the caller receives.
+            var target = null;
+            if (address === null) {
+              if (typeof sheet.GetUsedRange !== 'function') return readRefusal();
+              target = sheet.GetUsedRange();
+              if (target === null || target === undefined) return readRefusal();
+              if (typeof target.GetAddress !== 'function') return readRefusal();
+              address = target.GetAddress();
+              if (typeof address !== 'string' || address === '') return readRefusal();
+            } else {
+              target = sheet.GetRange(address);
+              if (target === null || target === undefined) return readRefusal();
+            }
+            if (typeof target.GetValue !== 'function') return readRefusal();
+            var requestAddress = address;
+            var matrix = target.GetValue();
+            if (matrix === null || matrix === undefined || typeof matrix.length !== 'number') return readRefusal();
+            var totalRows = matrix.length;
+            if (!(totalRows >= 1)) return readRefusal();
+            var firstRow = matrix[0];
+            if (firstRow === null || firstRow === undefined || typeof firstRow.length !== 'number') return readRefusal();
+            var columnCount = firstRow.length;
+            if (!(columnCount >= 1)) return readRefusal();
+            // THE CAP IS APPLIED BY CLIPPING WHOLE ROWS, never by trimming a row or a cell. The range's
+            // complete shape is measured first (its own `GetValue()`), and the first `rowsToRead` rows are
+            // published, so the answer is always a RECTANGULAR, honest prefix of the range whose address
+            // is reported beside it. A range whose SINGLE ROW is wider than the cap cannot be clipped into
+            // it at all and refuses closed: publishing a partial row would make one row's cells a
+            // different width from the matrix the caller reads, which is the approximation this module
+            // refuses everywhere.
+            var rowsToRead = Math.floor(maxCells / columnCount);
+            if (rowsToRead > totalRows) rowsToRead = totalRows;
+            if (!(rowsToRead >= 1)) return readRefusal();
+            var rowCount = rowsToRead;
+            var values = [];
+            for (var row = 0; row < rowsToRead; row++) {
+              var sheetValueRow = matrix[row];
+              if (sheetValueRow === null || sheetValueRow === undefined || typeof sheetValueRow.length !== 'number') return readRefusal();
+              if (sheetValueRow.length !== columnCount) return readRefusal();
+              for (var column = 0; column < sheetValueRow.length; column++) {
+                var sheetCellRaw = sheetValueRow[column];
+                // A cell is published as a STRING so the wire stays one primitive type: the measured
+                // `GetValue()` answers strings for the fixture's cells, and a number or a missing cell
+                // is normalised here rather than decoded as an unmeasured type later.
+                if (sheetCellRaw === null || sheetCellRaw === undefined) values.push('');
+                else values.push(String(sheetCellRaw));
+              }
+            }
+            // THE ADDRESS THE CLIPPED ANSWER ACTUALLY COVERS, derived from the requested one by replacing
+            // its END ROW with the last published row. It is derived ONLY when the answer really was
+            // clipped: an unclipped read reports the address it was asked for, so the two fields agree
+            // exactly when nothing was omitted and a caller can never mistake a full read for a prefix.
+            var readAddress = requestAddress;
+            if (rowCount < totalRows) {
+              var colon = requestAddress.indexOf(':');
+              if (colon < 1) return readRefusal();
+              var head = requestAddress.slice(0, colon);
+              var tail = requestAddress.slice(colon + 1);
+              var startDigits = head.replace(/^[A-Z]+/, '');
+              var tailColumn = tail.replace(/[0-9]+$/, '');
+              var lastRow = Number(startDigits) + rowCount - 1;
+              if (!(lastRow >= 1) || tailColumn === '') return readRefusal();
+              readAddress = head + ':' + tailColumn + String(lastRow);
+            }
+            // The FORMULA matrix is read only when the range exposes the getter, and it is published
+            // only when its shape matches the FULL value matrix EXACTLY. A build that answers one string
+            // for a multi-cell range therefore arrives as `formulasMatch = 0` with no formula strings at
+            // all, never as a formula attributed to the wrong cell. Only the published rows are kept, so
+            // the formula list is the same length as the value list and cell i of one is cell i of the
+            // other.
+            var formulas = [];
+            var formulasMatch = 0;
+            if (typeof target.GetFormula === 'function') {
+              var claimed = target.GetFormula();
+              if (claimed !== null && claimed !== undefined && typeof claimed.length === 'number' && claimed.length === totalRows) {
+                var wellShaped = true;
+                for (var frow = 0; frow < totalRows; frow++) {
+                  var sheetFormulaCheckRow = claimed[frow];
+                  if (sheetFormulaCheckRow === null || sheetFormulaCheckRow === undefined || typeof sheetFormulaCheckRow.length !== 'number' || sheetFormulaCheckRow.length !== columnCount) { wellShaped = false; break; }
+                }
+                if (wellShaped) {
+                  for (var srow = 0; srow < rowsToRead; srow++) {
+                    var sheetFormulaRow = claimed[srow];
+                    for (var scol = 0; scol < columnCount; scol++) {
+                      var sheetFormulaRaw = sheetFormulaRow[scol];
+                      formulas.push(sheetFormulaRaw === null || sheetFormulaRaw === undefined ? '' : String(sheetFormulaRaw));
+                    }
+                  }
+                  formulasMatch = 1;
+                }
+              }
+            }
+            var answer = [];
+            answer.push(sheetName);
+            answer.push(sheetIndex);
+            answer.push(sheetCount);
+            answer.push(requestAddress);
+            answer.push(readAddress);
+            answer.push(totalRows);
+            answer.push(columnCount);
+            answer.push(rowCount);
+            answer.push(columnCount);
+            answer.push(formulasMatch);
+            for (var vi = 0; vi < values.length; vi++) answer.push(values[vi]);
+            if (formulasMatch === 1) {
+              for (var fi = 0; fi < formulas.length; fi++) answer.push(formulas[fi]);
+            }
+            return answer;
+          } catch (error) {
+            return readRefusal();
+          }
+        }, false, false, callback);
+      },
       blocks(callback) {
         return plugin.callCommand(function () {
           // The phase, and the ONE place the two classes are distinguished: everything answered while it
@@ -2553,6 +2727,124 @@ function decodeSearch(value, limit) {
 //     still bounded by `LIMITS.editorResultBytes`, the one window every native read of this bridge is
 //     decoded under.
 const STRUCTURE_SLOTS = 10;
+// The number of LEADING slots the SPREADSHEET-READ answer carries before its cell payload:
+// `sheetName, sheetIndex, sheetCount, address, rowCount, columnCount, formulasMatch`.
+const SHEET_READ_SLOTS = 10;
+// The number of LEADING slots the SPREADSHEET-READ answer carries before its cell payload:
+// `sheetName, sheetIndex, sheetCount, requestAddress, readAddress, totalRows, totalColumns, rowCount,
+// columnCount, formulasMatch`. `requestAddress` is what was ASKED for (the caller's range, or the
+// sheet's own used range), `readAddress` is what the answer actually COVERS, and the two differ exactly
+// when the cap clipped the answer to a prefix of the range.
+// The CLOSED address shape a Cell read may name: `A1` or `A1:C10`, upper-case column letters and a
+// 1-based row, nothing else. This exists because the address crosses into an authored editor command
+// as DATA: an unvalidated string would be handed to `sheet.GetRange` verbatim, so the shape is checked
+// HERE, at the boundary, and a caller that cannot name an address this closed pattern accepts is
+// refused before any dispatch. A sheet-qualified address (`Лист2!A1`) is deliberately NOT accepted:
+// this leg reads the ACTIVE sheet, and a second sheet is reached by activating it.
+const SHEET_ADDRESS = /^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/;
+// The SPREADSHEET-READ answer, decoded with the same strictness as `decodeStructure` and for the same
+// reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES — because the
+// native return validator keeps arrays of primitives and STRIPS a plain object — so the decoder must
+// close every other shape. `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden
+// extras, and every member is read through its own data descriptor, never through a getter. Four rules
+// are this leg's own contract:
+//   * a ONE-slot `['CAPABILITY_UNAVAILABLE']` answer is the body's own closed refusal and crosses as
+//     the capability class. It is a READ, so there is no phase and no uncertain class: a read that
+//     cannot be performed changed nothing.
+//   * `sheetName` and `address` are non-empty strings, and `sheetCount`/`rowCount`/`columnCount` are
+//     non-negative safe integers with the three counts at least 1 — a count this bridge cannot trust is
+//     not a count, and an address the editor did not answer is not a range.
+//   * `formulasMatch` is EXACTLY 0 or 1, and the payload is EXACTLY `rowCount × columnCount` value
+//     strings, followed by the same number of formula strings ONLY when it is 1. A body that answered
+//     a different number of strings is not one this leg can have produced: publishing a short formula
+//     list would attribute formulas to the wrong cells, and a long one would smuggle a cell no address
+//     owns. `formulas: null` is therefore an EXPLICIT "this build did not answer a formula matrix",
+//     never an empty matrix that would read as "the range has no formulas".
+//   * the whole answer must fit `LIMITS.editorResultBytes`, the same ceiling every other decoded leg
+//     applies.
+function decodeSheetRead(value, maxCells) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  if (size < SHEET_READ_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const sheetName = members[0];
+  const sheetIndex = members[1];
+  const sheetCount = members[2];
+  const requestAddress = members[3];
+  const readAddress = members[4];
+  const totalRows = members[5];
+  const totalColumns = members[6];
+  const rowCount = members[7];
+  const columnCount = members[8];
+  const formulasMatch = members[9];
+  if (typeof sheetName !== 'string' || sheetName === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (typeof requestAddress !== 'string' || requestAddress === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (typeof readAddress !== 'string' || readAddress === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  for (const count of [sheetIndex, sheetCount, totalRows, totalColumns, rowCount, columnCount]) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  }
+  if (!(sheetCount >= 1) || !(totalRows >= 1) || !(totalColumns >= 1)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!(rowCount >= 1) || !(columnCount >= 1)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // The published matrix is a PREFIX of the measured range: it can never be taller than the range and
+  // never a different width, because the body clips whole rows only. Both facts are pinned here so a
+  // body that answered an inconsistent pair is refused rather than published with a `truncated` flag
+  // computed from numbers that disagree.
+  if (rowCount > totalRows) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (columnCount !== totalColumns) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (formulasMatch !== 0 && formulasMatch !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const cellCount = rowCount * columnCount;
+  if (!Number.isSafeInteger(cellCount) || cellCount > maxCells) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (size !== SHEET_READ_SLOTS + cellCount * (formulasMatch === 1 ? 2 : 1)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const values = [];
+  const formulas = [];
+  for (let index = 0; index < cellCount; index++) {
+    const sheetCellChars = members[SHEET_READ_SLOTS + index];
+    if (typeof sheetCellChars !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+    values.push(sheetCellChars);
+  }
+  if (formulasMatch === 1) {
+    for (let index = 0; index < cellCount; index++) {
+      const sheetFormulaChars = members[SHEET_READ_SLOTS + cellCount + index];
+      if (typeof sheetFormulaChars !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+      formulas.push(sheetFormulaChars);
+    }
+  }
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  const valueRows = [];
+  const formulaRows = [];
+  for (let index = 0; index < rowCount; index++) {
+    valueRows.push(Object.freeze(values.slice(index * columnCount, (index + 1) * columnCount)));
+    if (formulasMatch === 1) formulaRows.push(Object.freeze(formulas.slice(index * columnCount, (index + 1) * columnCount)));
+  }
+  return Object.freeze({
+    sheetName,
+    sheetIndex,
+    sheetCount,
+    requestAddress,
+    readAddress,
+    totalRows,
+    totalColumns,
+    rowCount,
+    columnCount,
+    // `truncated` is DERIVED here from the two measured pairs, so it can never drift from the numbers it
+    // describes: the range held more cells than the answer carries exactly when its full shape is larger
+    // than the published prefix.
+    truncated: totalRows > rowCount,
+    values: Object.freeze(valueRows),
+    formulas: formulasMatch === 1 ? Object.freeze(formulaRows) : null
+  });
+}
 function decodeStructure(value, maxHeadings) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -3861,6 +4153,26 @@ export function createR7Bridge(plugin, {
     const type = Object.getOwnPropertyDescriptor(info.value, 'editorType');
     return type && Object.hasOwn(type, 'value') && ['word', 'cell', 'slide'].includes(type.value) ? type.value : 'unknown';
   }
+  // The ONE leg both Cell reads share. `read_sheet` and `read_range` differ only in the address they
+  // name, so the dispatch, the editor check and the closed classification are written ONCE here rather
+  // than twice with a chance to drift. It is not a second source of truth for the request shape — each
+  // caller has already validated `maxCells` and closed the address — what it owns is the ORDER every
+  // other read leg uses: idle, editor identity, the parameter channel checked BEFORE the ticket exists
+  // so a refusal carries no slot at all, then ONE dispatch on the one owned callback slot.
+  async function sheetRead(signal, params) {
+    try {
+      ensureIdle();
+      if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const read = await start('sheetread', signal, {}, params);
+      return Object.freeze({ ok: true, sheetName: read.sheetName, sheetIndex: read.sheetIndex,
+        sheetCount: read.sheetCount, requestAddress: read.requestAddress, readAddress: read.readAddress,
+        totalRows: read.totalRows, totalColumns: read.totalColumns, rowCount: read.rowCount,
+        columnCount: read.columnCount, truncated: read.truncated, values: read.values, formulas: read.formulas });
+    } catch (error) {
+      return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+    }
+  }
   function ownedTarget(target) {
     const saved = target && typeof target === 'object' ? targets.get(target) : null;
     return !disposed && currentEditor() === editor && editor === 'word' && saved?.owner === contextOwner ? saved : null;
@@ -4156,6 +4468,12 @@ export function createR7Bridge(plugin, {
           // the `maxHeadings` THIS ticket asked for — the same cap the body extracted against — so the
           // decode and the extraction can never disagree about how many heading texts are owed.
           else if (kind === 'structureread') result = decodeStructure(value, params.maxHeadings);
+          // THE SPREADSHEET READ. Its answer is the authored flat array of primitives, decoded against
+          // the `maxCells` THIS ticket asked for — the same cap the body extracted against — so the
+          // decode and the extraction can never disagree about how many cells are owed. A one-slot
+          // `CAPABILITY_UNAVAILABLE` answer crosses as the capability class; there is no uncertain class
+          // here, because a read that cannot be performed changed nothing.
+          else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
           // THE BLOCK APPEND. Its answer is the authored flat array of primitives, decoded against the
           // BLOCK COUNT this ticket carried — the same number the body built its one region flag per
           // block against — so the decode and the body can never disagree about how many blocks are owed.
@@ -4423,6 +4741,24 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.structure(callback); }
           finally { clearScope(previousScope); }
+        } else if (kind === 'sheetread') {
+          // THE SPREADSHEET READ: ONE command, and the SAME parameter channel the search and structure
+          // legs use — the validated request written into the page's `Asc.scope`, never composed into
+          // source (ADR 0002). It needs the entry point that OWNS that wrapper (`callCommand`); a build
+          // whose command channel is the bare `executeCommand` transport has no sanctioned parameter
+          // channel at all, so it refuses HERE, before any dispatch, and releases the slot because
+          // nothing reached the editor. It carries NO document-identity probe, deliberately and for the
+          // same stated reason as `readDocumentText`: a read returns no OWNED TARGET a later write could
+          // be applied to, so there is no handle whose ownership would have to be proven. The kind is not
+          // in `WRITE_KINDS`, so `pendingMutation` stays false for the whole leg and an unresolved
+          // callback can never present itself to the UI as a pending write.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetRead;
+          try { previousSheetRead = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheet(callback); }
+          finally { clearScope(previousSheetRead); }
         } else if (kind === 'blocksinsert') {
           // THE BLOCK APPEND: ONE command, and the SAME parameter channel the search and structure legs
           // use — the validated block array written into the page's `Asc.scope`, never composed into
@@ -4846,6 +5182,37 @@ export function createR7Bridge(plugin, {
     // carriage for this leg: an editor where the `Asc.scope` write does not arrive answers the body's own
     // refusal sentinel or never calls back, so the ticket settles CAPABILITY_UNAVAILABLE or TIMEOUT —
     // never a structure.
+    // The bounded SPREADSHEET reads behind `read_sheet` and `read_range` — the first Cell legs in this
+    // repo's bridge, and deliberately the SMALLEST new leg pair: both are served by the ONE authored
+    // `sheetread` body, and the only thing that differs between them is whether an address was named.
+    // `read_sheet` names none, so the body asks the sheet for its OWN used range — which is the only
+    // used-range discovery this build exposes (`GetRowsCount`/`GetColumnsCount` are undefined, measured)
+    // — and `read_range` carries a caller address already closed to `SHEET_ADDRESS`. Each is a READ: it
+    // adds no mutation primitive, no leg of it matches a write class, and it carries no document-identity
+    // probe because it returns no OWNED TARGET a later write could be applied to. The request is a closed
+    // precondition, never an optional refinement: a caller that cannot name a bound within the advertised
+    // cap (or, for a range, an address the closed pattern accepts) is refused rather than given an SDK
+    // call decoded under a window it never asked for. Every outcome is classified — an unavailable
+    // channel, a malformed native answer and an oversized answer are closed classes, never a raw
+    // exception — and the caller's `signal` cancels both legs exactly as it does in `readStructure`.
+    async readSheet(raw) {
+      const maxCells = raw?.maxCells, signal = raw?.signal;
+      if (!Number.isSafeInteger(maxCells) || maxCells < 1 || maxCells > LIMITS.sheetReadCellsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      return sheetRead(signal, Object.freeze({ address: null, maxCells }));
+    },
+    // The same leg with a caller-named address, closed to `SHEET_ADDRESS` before anything is dispatched.
+    async readRange(raw) {
+      const address = raw?.address, maxCells = raw?.maxCells, signal = raw?.signal;
+      if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      if (!Number.isSafeInteger(maxCells) || maxCells < 1 || maxCells > LIMITS.sheetReadCellsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      return sheetRead(signal, Object.freeze({ address, maxCells }));
+    },
     async readStructure(raw) {
       const maxHeadings = raw?.maxHeadings, signal = raw?.signal;
       if (!Number.isSafeInteger(maxHeadings) || maxHeadings < 1 || maxHeadings > LIMITS.structureHeadingsMax) {
