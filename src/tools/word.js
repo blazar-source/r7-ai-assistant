@@ -233,6 +233,29 @@ function formatRangeEntryBytes(data) {
 function formatAlign(value) {
   return typeof value === 'string' && LIMITS.formatRangeAlign.includes(value) ? value : null;
 }
+// THE ONE PROPERTY-OR-NONE RULE, in ONE place so the precondition, the handler and the published result can
+// never disagree about what "at least one property" means. `format` is a CLOSED object over five properties —
+// the paragraph-wide `align` and the four measured run switches — and a `format: {}` names NONE of them, so
+// there is nothing to apply and nothing to prove: that request is the closed argument class with ZERO writes.
+// The rule is a REQUEST-side test only; a run switch that is EXPLICITLY `false` does not count, because the
+// bridge (and the editor) treat `false` as "write the false this switch names", which is a write the proof
+// would have to cover.
+function emptyFormat(value) {
+  if (value === null || typeof value !== 'object') return true;
+  if (formatAlign(value.align) !== null) return false;
+  if (formatRunFlag(value.bold) === true || formatRunFlag(value.italic) === true) return false;
+  return !(formatRunFlag(value.underline) === true || formatRunFlag(value.strikeout) === true);
+}
+// THE ALIGNMENT AS THE REQUEST RENDERS IT, and the ONE place the absent alignment becomes a value. An omitted
+// `align` is NOT a default alignment and must never be published as one: it is the NO-ALIGNMENT sentinel the
+// authored body understands (`'none'`), which authors no paragraph-level call at all, so the field a caller
+// reads says "no alignment leg" rather than naming a word the editor would have applied. A present key is
+// resolved by the same closed vocabulary the schema advertises, and anything else stays `null` — the closed
+// argument class, never a coerced default.
+function requestedAlign(value) {
+  if (value === undefined) return 'none';
+  return formatAlign(value);
+}
 // THE FOUR RUN SWITCHES, and the SAME three-state discipline the alignment resolver keeps: a property the
 // caller omitted is the `false` a call that names none means, `true`/`false` are themselves, and anything else
 // (a string, a number, `null`) is `null` — an argument this tool cannot interpret, refused as the closed
@@ -1728,11 +1751,16 @@ export function createWordTools(bridge) {
           paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeIndexMax },
           start: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeOffsetMax },
           end: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeOffsetMax },
-          // THE CLOSED FORMAT OBJECT: the alignment (unchanged, and still REQUIRED — every call is an alignment
-          // call and the run properties are additive) plus the FOUR run properties with a MEASURED HTML marker.
+          // THE CLOSED FORMAT OBJECT: the alignment plus the FOUR run properties with a MEASURED HTML marker.
           // A request that names `size`, `color`, `family` or `highlight` is refused HERE as an unknown key,
-          // which is the whole reason the measurement came before the schema.
-          format: { type: 'object', additionalProperties: false, required: ['align'],
+          // which is the whole reason the measurement came before the schema. NOTHING INSIDE `format` IS
+          // REQUIRED, and that is the contract rather than an omission: the caller must name AT LEAST ONE of
+          // the five properties, which no schema keyword can express, so the rule lives in the precondition
+          // below (and is re-decided at the bridge entry point) instead of being guessed by a `required` list.
+          // A RUN SWITCH the caller sets is applied as it stands — including an explicit `false`, which is the
+          // OFF write the editor's own setter takes — so a property nobody names is never touched, and an
+          // omitted `align` is NEVER an alignment: it leaves the paragraph's own alignment alone.
+          format: { type: 'object', additionalProperties: false,
             properties: { align: { type: 'string', enum: [...LIMITS.formatRangeAlign] },
               bold: { type: 'boolean' }, italic: { type: 'boolean' },
               underline: { type: 'boolean' }, strikeout: { type: 'boolean' } } }
@@ -1753,7 +1781,14 @@ export function createWordTools(bridge) {
         if (!measuredCount(args?.end) || args.end > LIMITS.formatRangeOffsetMax) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
         if (!(args.start < args.end)) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
         if (args?.format === null || typeof args?.format !== 'object') return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
-        if (formatAlign(args.format.align) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        // AT LEAST ONE PROPERTY, decided HERE before anything is dispatched: a `format` that names none of
+        // the five is the closed argument class with ZERO writes — there would be nothing to apply and nothing
+        // to prove, and a run that reached the body would be an edit the caller never asked for.
+        if (emptyFormat(args.format)) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
+        // AN OMITTED ALIGNMENT IS NOT AN INVALID ALIGNMENT: `requestedAlign` answers the `'none'` sentinel for
+        // an absent key and the closed vocabulary for a present one, so only a PRESENT value outside that
+        // vocabulary is the closed argument class.
+        if (requestedAlign(args.format.align) === null) return { code: ERROR_CODES.TOOL_ERROR, message: REFUSAL };
         // THE FOUR RUN SWITCHES are re-checked HERE too, for the reason the alignment is: a descriptor held
         // directly must refuse a switch this mutation cannot interpret with NOTHING dispatched, never coerce
         // `'да'` or `1` into a truthy property the body would then apply.
@@ -1772,15 +1807,20 @@ export function createWordTools(bridge) {
         if (ctx?.editor !== 'word') return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         if (missingBridgeMethod(bridge, 'formatRange')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The alignment is resolved ONCE and carried to the body, so the value the editor applies and the
-        // value this handler compares the answer against cannot be two different strings. The four run
-        // switches are resolved the same way, each to a boolean, so a property the caller omitted is the
+        // value this handler compares the answer against cannot be two different strings. An omitted `align`
+        // resolves to the NO-ALIGNMENT sentinel, which the body authors no paragraph-level call for. The four
+        // run switches are resolved the same way, each to a boolean, so a property the caller omitted is the
         // `false` the body (and the outcome rule) sees rather than an `undefined` the request never named.
-        const align = formatAlign(args?.format?.align);
+        const align = requestedAlign(args?.format?.align);
         if (!measuredCount(args?.paragraph) || args.paragraph > LIMITS.formatRangeIndexMax) return known();
         if (!measuredCount(args?.start) || args.start > LIMITS.formatRangeOffsetMax) return known();
         if (!measuredCount(args?.end) || args.end > LIMITS.formatRangeOffsetMax) return known();
         if (!(args.start < args.end)) return known();
         if (align === null) return known();
+        // THE SAME "AT LEAST ONE PROPERTY" RULE the precondition applies, re-decided here because a descriptor
+        // is executable on its own: a `format` that names nothing is this module's closed tool-error class
+        // with ZERO dispatches, never a call that reaches the bridge with nothing to do.
+        if (emptyFormat(args?.format)) return known();
         const bold = formatRunFlag(args?.format?.bold);
         const italic = formatRunFlag(args?.format?.italic);
         const underline = formatRunFlag(args?.format?.underline);
@@ -1821,16 +1861,26 @@ export function createWordTools(bridge) {
         if (typeof result.underline !== 'boolean' || typeof result.strikeout !== 'boolean') return known();
         if (typeof result.boldVerified !== 'boolean' || typeof result.italicVerified !== 'boolean') return known();
         if (typeof result.underlineVerified !== 'boolean' || typeof result.strikeoutVerified !== 'boolean') return known();
-        // THE THREE ALIGNMENT SLOTS ARE MEASURED VALUES, not free text: the body authors only the four measured
-        // words (its readback keeps an unreadable chain apart as the ABSENCE of a measurement and refuses
-        // before the mutation), so a slot carrying anything else is an envelope this bridge cannot write and
+        // THE THREE ALIGNMENT SLOTS ARE MEASURED VALUES OR THE NO-ALIGNMENT SENTINEL, and never free text: the
+        // body authors only the four measured words (its readback keeps an unreadable chain apart as the
+        // ABSENCE of a measurement and refuses before the mutation) plus the `'none'` it echoes for a request
+        // that named no alignment. A slot carrying anything else is an envelope this bridge cannot write and
         // it is the module's unknown class. This is checked BEFORE the request comparison, because a value the
         // measured getter cannot answer is not a disagreement about a request.
-        if (formatAlign(result.align) === null || formatAlign(result.alignBefore) === null || formatAlign(result.alignAfter) === null) return known();
+        if (result.align !== 'none' && formatAlign(result.align) === null) return known();
+        if (result.alignBefore !== 'none' && formatAlign(result.alignBefore) === null) return known();
+        if (result.alignAfter !== 'none' && formatAlign(result.alignAfter) === null) return known();
         // The envelope NAMES THE ALIGNMENT IT WAS PRODUCED FOR, and it must be the one THIS request meant: the
-        // value is DERIVED from the schema vocabulary and carried to the body, so an `ok` carrying a different
-        // alignment was produced for a request this handler did not make and is never republished as its proof.
+        // value is DERIVED from the schema vocabulary (or the absent-alignment sentinel) and carried to the
+        // body, so an `ok` carrying a different alignment was produced for a request this handler did not make
+        // and is never republished as its proof.
         if (result.align !== align) return known(ERROR_CODES.TOOL_UNCERTAIN);
+        // A REQUEST THAT NAMED NO ALIGNMENT HAS NO READBACK TO PROVE: both slots must come back as the sentinel
+        // the handler sent, because a real measurement of an alignment nobody asked for is a different call's
+        // answer. When one WAS named, the AFTER value is the primary proof and must be the alignment asked for.
+        if (align === 'none') {
+          if (result.alignBefore !== 'none' || result.alignAfter !== 'none') return known(ERROR_CODES.TOOL_UNCERTAIN);
+        } else if (result.alignAfter !== align) return known(ERROR_CODES.TOOL_UNCERTAIN);
         // THE FOUR RUN ECHOES ARE THE SAME REQUEST-IDENTITY CHECK, one per property: an `ok` whose run switches
         // disagree with this call's is an answer produced for a DIFFERENT request, and it is never republished.
         if (result.bold !== bold || result.italic !== italic) return known(ERROR_CODES.TOOL_UNCERTAIN);
@@ -1843,10 +1893,12 @@ export function createWordTools(bridge) {
         if (!underline && result.underlineVerified) return known();
         if (!strikeout && result.strikeoutVerified) return known();
         // A READBACK THAT WAS NOT READ IS NOT A VERIFIED ASSIGNMENT: `rangeRead` is the body's own statement
-        // that the addressed paragraph's `GetParaPr().GetJc()` chain answered a measurement at all, and the
-        // mutation has already run by then, so a false one is the UNCERTAIN class and never a known error.
+        // that a REQUESTED alignment was measured at all, and the mutation has already run by then, so a false
+        // one is the UNCERTAIN class and never a known error. (The body answers 1 for a request that named no
+        // alignment, because there was no chain to read and the sentinel IS the answer.) The AFTER value is
+        // then already covered by the branch above, which requires it to be the requested alignment — or the
+        // sentinel — for the request this ticket actually carried.
         if (!result.rangeRead) return known(ERROR_CODES.TOOL_UNCERTAIN);
-        if (result.alignAfter !== align) return known(ERROR_CODES.TOOL_UNCERTAIN);
         // THE RUN LEG, per property: a property THIS call requested must be PROVEN, and the proof is the
         // measured marker's own flag. Both legs are checked in the same place because the mutation has already
         // run when this handler sees the envelope, so a missing run proof is the UNCERTAIN class with the slot
@@ -1857,8 +1909,16 @@ export function createWordTools(bridge) {
         if (strikeout && !result.strikeoutVerified) return known(ERROR_CODES.TOOL_UNCERTAIN);
         if (result.rangeUnchanged !== true || result.rangeShifted !== false) return known(ERROR_CODES.TOOL_UNCERTAIN);
         if (result.paragraphsStable !== true || result.textUnchanged !== true) return known(ERROR_CODES.TOOL_UNCERTAIN);
-        const published = Object.freeze({ paragraph: args.paragraph, start: args.start, end: args.end, align,
-          alignBefore: result.alignBefore, alignAfter: result.alignAfter, paragraphsStable: result.paragraphsStable,
+        // THE PUBLISHED SHAPE, and the ONLY places the sentinel is translated: a request that named no
+        // alignment publishes `null` for the alignment and for both readbacks, because there is no alignment
+        // leg and there is no meaningful word for its absence in the document — the model must not read a
+        // measured `left` in a field this call never asked the editor about. Every other field is the same
+        // proof-shaped value for both kinds of request.
+        const published = Object.freeze({ paragraph: args.paragraph, start: args.start, end: args.end,
+          align: align === 'none' ? null : align,
+          alignBefore: align === 'none' ? null : result.alignBefore,
+          alignAfter: align === 'none' ? null : result.alignAfter,
+          paragraphsStable: result.paragraphsStable,
           textUnchanged: result.textUnchanged, rangeRead: result.rangeRead, rangeUnchanged: result.rangeUnchanged,
           rangeShifted: result.rangeShifted, bold, italic, underline, strikeout,
           boldVerified: result.boldVerified, italicVerified: result.italicVerified,

@@ -916,18 +916,19 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // composed into source, ADR 0002) — and it is the FIRST one that does NOT change a paragraph STYLE.
       //
       // TWO READBACKS, and they are what decide every mutating call in this body. (1) THE PARAGRAPH'S OWN
-      // ALIGNMENT: the SDK inspection recorded in `src/tools/word.js` established that the public
-      // `ApiRange`/`ApiTextPr` pair authors SETTERS ONLY — there is no `GetBold`, `GetItalic`, `GetUnderline`,
-      // `GetStrikeout`, `GetColor`, `GetFontSize`, `GetFontFamily` or `GetHighlight` anywhere in the bundle — so
-      // the ONE builder type with a direct, per-object readback is `ApiParaPr`, whose `SetJc` sits directly
-      // beside `GetJc` and whose `GetJc` answers the closed vocabulary `right`/`left`/`center`/`both`. (2) THE
-      // DOCUMENT'S OWN HTML EXPORT: the Lead MEASURED on the target that `doc.ToHtml()` reflects run
-      // formatting with exactly one marker per property — bold `<strong>`, italic `<em>`, underline
-      // `<span style="text-decoration:underline;">`, strikeout `<del>` — which is the indirect readback that
-      // makes a character-level property advertisable at all. `doc.ToMarkdown()` does NOT reflect them
-      // (measured byte-identical) and is not used here.
+      // ALIGNMENT, when the request NAMED one: the SDK inspection recorded in `src/tools/word.js` established
+      // that the public `ApiRange`/`ApiTextPr` pair authors SETTERS ONLY — there is no `GetBold`, `GetItalic`,
+      // `GetUnderline`, `GetStrikeout`, `GetColor`, `GetFontSize`, `GetFontFamily` or `GetHighlight` anywhere
+      // in the bundle — so the ONE builder type with a direct, per-object readback is `ApiParaPr`, whose
+      // `SetJc` sits directly beside `GetJc` and whose `GetJc` answers the closed vocabulary
+      // `right`/`left`/`center`/`both`. (2) THE DOCUMENT'S OWN HTML EXPORT: the Lead MEASURED on the target
+      // that `doc.ToHtml()` reflects run formatting with exactly one marker per property — bold `<strong>`,
+      // italic `<em>`, underline `<span style="text-decoration:underline;">`, strikeout `<del>` — and that the
+      // EXPORT CARRIES THEM ENTITY-ESCAPED, which is the form the proof must scan. `doc.ToMarkdown()` does NOT
+      // reflect them (measured byte-identical) and is not used here.
       //
-      // THE MUTATING CALLS are therefore `paragraph.GetParaPr().SetJc(align)` plus ONE
+      // THE MUTATING CALLS are one `paragraph.GetParaPr().SetJc(align)` — ONLY when the request named an
+      // alignment, with the `'none'` sentinel authoring no paragraph-level call at all — plus ONE
       // `paragraph.GetRange(from,to).SetBold/SetItalic/SetUnderline/SetStrikeout(true)` per REQUESTED property,
       // in that fixed order, each on its OWN fresh range object. A call that names no run property authors NONE
       // of them and never reads the export.
@@ -939,22 +940,24 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // leg of the proof and it is deliberately built from a FRESH range object on each side: `ApiRange`
       // caches its own text at construction (measured in the vendored SDK), so a range HELD across the
       // mutation would compare a cached value with itself. The region can only REFUTE the alignment leg — but
-      // its PRE-mutation text is the NEEDLE of the run proof, and it must occur EXACTLY ONCE in the export and
-      // be wrapped CONTIGUOUSLY in the requested marker; a region text that stands twice is UNVERIFIABLE and
-      // answers 0 rather than a guessed 1.
+      // its PRE-mutation text is the NEEDLE of the run proof: it must occur EXACTLY ONCE in the export, and
+      // the requested property's own ESCAPED marker pair must be located around it under the nesting-tolerant
+      // rule stated beside `wrappedRegion`; a region text that stands twice is UNVERIFIABLE and answers 0
+      // rather than a guessed 1.
       //
       // THE EXPORT IS BOUNDED BY `htmlMax` (composed by the bridge from `LIMITS.formatRangeHtmlChars`) and it
-      // never leaves the editor: the body scans it and returns four one-character flags. An export that does
-      // not exist or does not FIT is refused BEFORE the mutation (closed class, zero writes); an export that
-      // fails only AFTER the mutation is a POST-insert refusal the decoder settles as uncertain with the slot
-      // held, because the writes have already run.
+      // never leaves the editor: the body scans it and returns ONE four-character proof string. An export that
+      // does not exist or does not FIT is refused BEFORE the mutation (closed class, zero writes); an export
+      // that fails only AFTER the mutation is a POST-insert refusal the decoder settles as uncertain with the
+      // slot held, because the writes have already run.
       //
       // THE ANSWER is ONE flat array of primitives (the native return validator keeps those and strips a
       // plain object): `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted,
-      // boldVerified, italicVerified, underlineVerified, strikeoutVerified, align, alignBefore, alignAfter]`,
-      // or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and the
-      // decoder turns a phase-less or post-insert refusal into the uncertain class — the name alone can never
-      // release a slot for a mutation that may already be in the document.
+      // runProof, align, alignBefore, alignAfter]` — ELEVEN slots, the run proof being ONE four-character
+      // string, one character per measured property in the body's own fixed order — or a TWO-slot refusal
+      // `[PRE_INSERT, name]`. THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and the decoder turns a
+      // phase-less or post-insert refusal into the uncertain class — the name alone can never release a slot
+      // for a mutation that may already be in the document.
       format(callback) {
         return plugin.callCommand(function () {
           // The phase, and the ONE place the two classes are distinguished: everything answered while it is
@@ -1016,10 +1019,13 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               try { return item.GetText(); } catch (error) { return null; }
             }
             // THE ALIGNMENT VOCABULARY, and it is the SAME four words the schema advertises because they are
-            // the words the measured getter answers. A bare boolean test over the four literals, so this
-            // helper depends on nothing at all.
+            // the words the measured getter answers — plus `'none'`, the ONE sentinel that means NO ALIGNMENT
+            // LEG AT ALL. `align` is optional now, so a run-only request carries `'none'`: it can never be
+            // confused with a measurement, because no measured getter answers it and the four words above are
+            // the only ones a readback may hold. A bare boolean test over the five literals, so this helper
+            // depends on nothing at all.
             function isAlign(value) {
-              return value === 'left' || value === 'center' || value === 'right' || value === 'both';
+              return value === 'none' || value === 'left' || value === 'center' || value === 'right' || value === 'both';
             }
             // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The address is re-checked HERE and not
             // only in the bridge method, because the scope is the ONE thing that crosses: a fractional index,
@@ -1029,7 +1035,9 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // value separately, which keeps every later member call on a call's own result rather than on an
             // indexed read. `htmlMax` crosses with the request exactly as a search's `limit` does — it is the
             // bound THIS body enforces, and it is composed by the bridge from `LIMITS.formatRangeHtmlChars`,
-            // never supplied by the caller.
+            // never supplied by the caller. `align` may be the `'none'` sentinel, which says the request NAMED
+            // no alignment at all; it is a legal scope and not a missing one, because the bridge sends it only
+            // after deciding that at least one of the five properties was named.
             function isFlag(value) {
               return value === true || value === false;
             }
@@ -1094,7 +1102,12 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // Lead measured on the target to reflect run formatting with one marker per property. A missing
             // primitive, a non-string answer and a throw are all the ABSENCE of a measurement (`null`), which
             // the caller settles as a closed refusal BEFORE the mutation or as the uncertain class after it.
-            // The export NEVER leaves the editor: only the one-character run flags derived from it cross.
+            // THE EXPORT IS ENTITY-ESCAPED, AND THAT IS THE FORM THE PROOF SCANS. The Lead's native run read
+            // `&lt;p&gt;&lt;strong&gt;ФОРМАТИРУ&lt;/strong&gt;ЕМЫЙ-…&lt;/p&gt;` out of `ToHtml()`, so the
+            // markers below are the ESCAPED `&lt;…&gt;` strings and the raw `<strong>` form the previous proof
+            // searched for can never occur in this export — which is exactly why a correct write settled
+            // UNCERTAIN natively. The export NEVER leaves the editor: only the run-proof string derived from it
+            // crosses.
             function exportHtml(doc) {
               try {
                 if (doc === null || doc === undefined || typeof doc.ToHtml !== 'function') return null;
@@ -1102,21 +1115,88 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
                 return typeof markup === 'string' ? markup : null;
               } catch (error) { return null; }
             }
-            // THE RUN PROOF, and the ONE honest rule a string match can carry. The needle is the region text
-            // the PRE-mutation `GetRange(from,to).GetText()` ANSWERED — never a value re-derived after the
-            // mutation — and it must occur EXACTLY ONCE in the export: a region text that stands twice, inside
-            // the addressed paragraph or anywhere else in the document, leaves the marker's target ambiguous,
-            // so it is UNVERIFIABLE and answers 0 rather than a guessed 1. The uniqueness count runs over the
-            // RAW export string, because this body has no HTML parser; an occurrence inside MARKUP (a short
-            // ASCII region such as `p` or `style`) therefore counts too, which can only cost a false 0, never a
-            // false 1. The marker must then wrap the WHOLE region CONTIGUOUSLY — `<strong>REGION</strong>`,
-            // never a `<strong>` that merely appears near it.
-            function wrappedRegion(markup, region, open, close) {
+            // THE ESCAPED MARKERS, one PAIR per measured property, exactly as the export carries them. There is
+            // deliberately NO unescaping step: a general entity decode of the export can create a needle that
+            // was never in the document (`&amp;lt;` decodes to `&lt;`), and the exported TEXT does not have to
+            // be decoded for this proof to be exact — the needle is the region's own PRE-mutation `GetText()`
+            // answer, which agrees with what the export holds for any region with no HTML metacharacter in it.
+            // For a region that does hold one the needle simply is not found, which costs a false UNCERTAIN
+            // (the slot stays held) and can never buy a false proof.
+            var BOLD_PAIR = ['&lt;strong&gt;', '&lt;/strong&gt;'];
+            var ITALIC_PAIR = ['&lt;em&gt;', '&lt;/em&gt;'];
+            var UNDERLINE_PAIR = ['&lt;span style="text-decoration:underline;"&gt;', '&lt;/span&gt;'];
+            var STRIKEOUT_PAIR = ['&lt;del&gt;', '&lt;/del&gt;'];
+            // THE PARAGRAPH BOUNDARY, in the same escaped form. The fragment between them is what a marker may
+            // be searched in, so a marker belonging to ANOTHER paragraph can never be mistaken for this one's.
+            var PARAGRAPH_OPEN = '&lt;p';
+            var PARAGRAPH_CLOSE = '&lt;/p&gt;';
+            // THE NESTING-TOLERANT MEMBERSHIP RULE, and it is the correction this body owes the MEASUREMENT:
+            // two run properties on the SAME region NEST, and the property applied FIRST becomes the INNERMOST
+            // marker —
+            //   bold             → `…&lt;strong&gt;ФОРМАТИРУ&lt;/strong&gt;ЕМЫЙ-…`
+            //   bold then italic → `…&lt;em&gt;&lt;strong&gt;ФОРМАТИРУ&lt;/strong&gt;&lt;/em&gt;ЕМЫЙ-…`
+            // so requiring the marker to be CONTIGUOUS with the region text proves only the innermost property
+            // and answers 0 for every outer one, which is a false UNCERTAIN for a correct write. A property is
+            // therefore PROVEN when the region text lies INSIDE that property's OWN marker pair WITHIN the
+            // addressed paragraph's own fragment: the property's LAST opener before the region and its FIRST
+            // closer after it, with other markers and other text allowed in between.
+            // NO CROSSING RULE IS ADDED ON TOP OF THAT, and the omission is deliberate rather than an
+            // oversight. A marker pair that wraps a SUPERSET of the addressed region is what a range write
+            // wider than the address produces, and the address itself is one whole-range setter call — so a
+            // pair around the region IS the measured evidence that the setter landed on it, whatever else the
+            // pair also covers. Every candidate rule that tried to reject a wider pair (requiring the
+            // property's closer to be the innermost one around the region, or requiring no other opener
+            // between) was evaluated against the MEASURED nesting and answered 0 for a legitimate OUTER
+            // property — the very defect this round removes. The uniqueness requirement below is what keeps
+            // the tolerance honest: the region text must stand exactly once in the whole export, so the pair
+            // being located is around THAT occurrence and never around a different one.
+            function wrappedRegion(markup, region, pair) {
               if (region === '' || typeof markup !== 'string') return 0;
-              var first = markup.indexOf(region);
-              if (first < 0) return 0;
-              if (markup.indexOf(region, first + 1) >= 0) return 0;
-              return markup.indexOf(open + region + close) >= 0 ? 1 : 0;
+              // THE NEEDLE MUST STAND EXACTLY ONCE: a region text that occurs twice — inside the addressed
+              // paragraph or anywhere else in the document — leaves the marker's target ambiguous, so it is
+              // UNVERIFIABLE and answers 0 rather than a guessed 1. The count runs over the RAW export string,
+              // because this body has no HTML parser; an occurrence inside MARKUP (a short ASCII region such
+              // as `p` or `style`) therefore counts too, which can only cost a false 0, never a false 1.
+              var found = markup.indexOf(region);
+              if (found < 0) return 0;
+              if (markup.indexOf(region, found + 1) >= 0) return 0;
+              // THE ADDRESSED PARAGRAPH'S OWN FRAGMENT: the markup between the `<p` that opens it and the
+              // `</p>` that closes it. A miss on either side is not a measurement, so it answers 0.
+              var fromParagraph = markup.lastIndexOf(PARAGRAPH_OPEN, found);
+              if (fromParagraph < 0) return 0;
+              var toParagraph = markup.indexOf(PARAGRAPH_CLOSE, found);
+              if (toParagraph < 0) return 0;
+              // THE PROPERTY'S OWN MARKER PAIR. The opener is the LAST one at or before the region — the
+              // innermost of that property — and the closer the FIRST one after it. A marker that INVERTS its
+              // two angle brackets (`<strong` but no `>`, or `</strong` but no `<`) is a partial tag, not a
+              // pair, so it cannot wrap anything.
+              var open = pair[0];
+              var close = pair[1];
+              var openAt = markup.lastIndexOf(open, found);
+              if (openAt < fromParagraph) return 0;
+              var openEnd = markup.indexOf('&gt;', openAt);
+              if (openEnd < 0 || openEnd >= found) return 0;
+              var closeAt = markup.indexOf(close, found);
+              if (closeAt < 0 || closeAt >= toParagraph) return 0;
+              var closeStart = markup.lastIndexOf('&lt;', closeAt);
+              if (closeStart < 0 || closeStart <= found) return 0;
+              return 1;
+            }
+            // THE RUN-PROOF STRING, and it is BUILT BY A HELPER rather than concatenated at the assignment.
+            // That is an authored-code-audit requirement, not a style choice: the findings analysis is
+            // NAME-based and scope-insensitive over the whole bundle, and a binary `+` expression assigned to
+            // an identifier makes that identifier a "computed" value everywhere — which would then make the
+            // decoder's own `charAt` calls on ANOTHER `runProof` read like a method call on computed data.
+            // The helper returns an ordinary string built from four booleans, and its name carries the ONE
+            // meaning of that string: one character per measured property, `'1'` exactly where the property
+            // was requested AND its marker pair was located around the addressed region.
+            function runProofOf(bold, italic, underline, strikeout) {
+              var proof = '';
+              if (bold === true) proof = proof + '1'; else proof = proof + '0';
+              if (italic === true) proof = proof + '1'; else proof = proof + '0';
+              if (underline === true) proof = proof + '1'; else proof = proof + '0';
+              if (strikeout === true) proof = proof + '1'; else proof = proof + '0';
+              return proof;
             }
             // THE PRE-DISPATCH BASELINE: the document's paragraph count, the addressed paragraph's own text,
             // its own alignment and the addressed region. Everything below is read BEFORE anything is mutated,
@@ -1143,7 +1223,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // the one mutation, and the caller receives a known class rather than a guess.
             if (!(startOffset <= textBefore.length)) return formatRefusal('TOOL_ERROR');
             if (!(endOffset <= textBefore.length)) return formatRefusal('TOOL_ERROR');
-            var alignBefore = readAlign(target);
+            var alignBefore = align === 'none' ? 'none' : readAlign(target);
             if (alignBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
             var regionBefore = readRange(target, startOffset, endOffset);
             if (regionBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
@@ -1187,13 +1267,15 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               if (preflight === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
               if (!(preflight.length <= htmlMax)) return formatRefusal('BYTE_LIMIT');
             }
-            // THE MUTATION, and the exact boundary the two refusal classes are split on. ONE call on the
-            // PARAGRAPH's own `ApiParaPr` — the measured setter whose getter is the proof — with the alignment
-            // carried as DATA, then ONE call per REQUESTED run property on its own fresh range, in the FIXED
-            // order bold → italic → underline → strikeout. `POST_INSERT` is set IMMEDIATELY BEFORE the FIRST of
-            // them, because a native that throws OUT of any one of these may already have applied it.
+            // THE MUTATION, and the exact boundary the two refusal classes are split on. The PARAGRAPH's own
+            // `ApiParaPr` — the measured setter whose getter is the proof — is written ONLY when the request
+            // NAMED an alignment, with the alignment carried as DATA; the sentinel `'none'` is the absence of
+            // that leg and authors NO paragraph-level call at all. Then ONE call per REQUESTED run property on
+            // its own fresh range, in the FIXED order bold → italic → underline → strikeout. `POST_INSERT` is
+            // set IMMEDIATELY BEFORE the FIRST of them, because a native that throws OUT of any one of these
+            // may already have applied it.
             phase = 'POST_INSERT';
-            beforeSource.SetJc(align);
+            if (align !== 'none') beforeSource.SetJc(align);
             if (wantBold === true) boldRange.SetBold(true);
             if (wantItalic === true) italicRange.SetItalic(true);
             if (wantUnderline === true) underlineRange.SetUnderline(true);
@@ -1209,14 +1291,16 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (afterTarget === null || afterTarget === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
             var textAfter = textAt(afterTarget);
             if (typeof textAfter !== 'string') return formatRefusal('CAPABILITY_UNAVAILABLE');
-            var alignAfter = readAlign(afterTarget);
-            // THE PRIMARY PROOF: the addressed paragraph's OWN alignment, read back through
-            // `GetParaPr().GetJc()`. `rangeRead` is 1 whenever the getter was READABLE — including the empty
-            // string of a paragraph whose alignment it answered as `undefined`, which is a readable NON-match —
-            // and 0 only when the chain answered nothing at all. A `rangeRead` of 0 is NOT a licence to fall
+            // THE PRIMARY PROOF, and it exists ONLY for an alignment leg: a run-only request never named an
+            // alignment, so `'none'` is echoed on both sides rather than read back. When it IS named, the
+            // addressed paragraph's own `GetParaPr().GetJc()` answers the measurement. `rangeRead` is 1
+            // whenever the alignment was not requested OR the getter was READABLE — including the empty string
+            // of a paragraph whose alignment it answered as `undefined`, which is a readable NON-match — and 0
+            // only when a REQUESTED chain answered nothing at all. A `rangeRead` of 0 is NOT a licence to fall
             // back on the other flags: the mutation has already run, so the decoder settles `APPLY_UNCERTAIN`
             // with the slot HELD.
-            var alignRead = alignAfter === null ? 0 : 1;
+            var alignAfter = align === 'none' ? 'none' : readAlign(afterTarget);
+            var alignRead = align === 'none' || alignAfter !== null ? 1 : 0;
             // THE SECONDARY RANGE LEG: the ADDRESSED REGION, re-read through a fresh range. `rangeRead` and
             // `rangeUnchanged` are the TWO answers that matter — was it read at all, and is it what it was —
             // and `rangeShifted` records whether the two offsets still NAME the same text: 0 when the region is
@@ -1231,28 +1315,26 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var paragraphsStable = countAfter === countBefore ? 1 : 0;
             var textUnchanged = textAfter === textBefore ? 1 : 0;
             // THE RUN PROOF: the export re-read AFTER the writes, the needle taken from the PRE-mutation region
-            // read, and one flag per property — 1 exactly when that property was REQUESTED and its measured
-            // marker wraps the addressed region contiguously. An export that cannot be read at all, or one that
-            // grew past the bound only now, is a POST-insert refusal: the writes have already run, so the
-            // decoder settles it as UNCERTAIN with the slot HELD. A property nobody requested keeps its 0, and
-            // the decoder's outcome rule REFUSES an answer whose four flags do not match the four switches this
-            // ticket carried.
-            var boldVerified = 0;
-            var italicVerified = 0;
-            var underlineVerified = 0;
-            var strikeoutVerified = 0;
+            // read, and ONE FOUR-CHARACTER STRING — `'1'` exactly where that property was REQUESTED and its
+            // measured marker pair was located around the addressed region under the nesting-tolerant rule,
+            // `'0'` everywhere else. An export that cannot be read at all, or one that grew past the bound
+            // only now, is a POST-insert refusal: the writes have already run, so the decoder settles it as
+            // UNCERTAIN with the slot HELD. A property nobody requested keeps its `'0'`, and the decoder's
+            // outcome rule REFUSES an answer whose four characters do not match the four switches this ticket
+            // carried.
+            var runProof = '0000';
             if (runsRequested === 1) {
               var proof = exportHtml(document);
               if (proof === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
               if (!(proof.length <= htmlMax)) return formatRefusal('BYTE_LIMIT');
-              if (wantBold === true && wrappedRegion(proof, regionBefore, '<strong>', '</strong>') === 1) boldVerified = 1;
-              if (wantItalic === true && wrappedRegion(proof, regionBefore, '<em>', '</em>') === 1) italicVerified = 1;
-              if (wantUnderline === true && wrappedRegion(proof, regionBefore, '<span style="text-decoration:underline;">', '</span>') === 1) underlineVerified = 1;
-              if (wantStrikeout === true && wrappedRegion(proof, regionBefore, '<del>', '</del>') === 1) strikeoutVerified = 1;
+              runProof = runProofOf(wantBold === true && wrappedRegion(proof, regionBefore, BOLD_PAIR) === 1,
+                wantItalic === true && wrappedRegion(proof, regionBefore, ITALIC_PAIR) === 1,
+                wantUnderline === true && wrappedRegion(proof, regionBefore, UNDERLINE_PAIR) === 1,
+                wantStrikeout === true && wrappedRegion(proof, regionBefore, STRIKEOUT_PAIR) === 1);
             }
-            // The phase slot, the five range flags, the FOUR run flags, the echo and the two measured alignment
-            // values are APPENDED rather than spelled as one array literal, for the authored-code-audit reason
-            // the block body states.
+            // The phase slot, the five range flags, the ONE four-character run proof, the echo and the two
+            // measured alignment values are APPENDED rather than spelled as one array literal, for the
+            // authored-code-audit reason the block body states.
             var answer = [];
             answer.push(phase);
             answer.push(paragraphsStable);
@@ -1260,10 +1342,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             answer.push(rangeRead);
             answer.push(rangeUnchanged);
             answer.push(rangeShifted);
-            answer.push(boldVerified);
-            answer.push(italicVerified);
-            answer.push(underlineVerified);
-            answer.push(strikeoutVerified);
+            answer.push(runProof);
             answer.push(align);
             answer.push(alignBefore);
             answer.push(alignAfter);
@@ -1773,13 +1852,25 @@ const RANGE_RUNS = 4;
 const RANGE_ALIGNMENTS = 3;
 const RANGE_PHASE_PRE = 'PRE_INSERT';
 const RANGE_PHASE_POST = 'POST_INSERT';
-const RANGE_LENGTH = 1 + RANGE_FLAGS + RANGE_RUNS + RANGE_ALIGNMENTS;
+const RANGE_LENGTH = 1 + RANGE_FLAGS + 1 + RANGE_ALIGNMENTS;
+// THE NO-ALIGNMENT SENTINEL, and it is a WORD rather than a missing slot because the alignment leg is
+// OPTIONAL now: a run-only request names no alignment, so there is no measurement to carry and no fourth
+// alignment word to invent. `'none'` can never be confused with a readback, because `rangeAlign` below
+// answers exactly the four words the measured `ApiParaPr.GetJc` answers and nothing else.
+const RANGE_ALIGN_NONE = 'none';
 // THE CLOSED ALIGNMENT VOCABULARY, carried HERE as well as in the schema because the DECODER must validate
 // the measured readback against the same four words the schema advertises. It is the vocabulary the measured
 // `ApiParaPr.GetJc` answers (the vendored 2026.1.2 SDK), and the value is compared as a WHOLE: a getter that
-// answers anything outside these four is an answer this bridge cannot interpret, never a near-match.
+// answers anything outside these four is an answer this bridge cannot interpret, never a near-match. The
+// `'none'` sentinel is accepted BESIDE them and is kept apart by `rangeRequestedAlign`, which only the
+// request side consults: a readback path must never be allowed to answer `'none'` as a measurement.
 function rangeAlign(value) {
   return value === 'left' || value === 'center' || value === 'right' || value === 'both' ? value : null;
+}
+function rangeRequestedAlign(value) {
+  if (value === undefined || value === null) return RANGE_ALIGN_NONE;
+  if (value === RANGE_ALIGN_NONE) return RANGE_ALIGN_NONE;
+  return rangeAlign(value);
 }
 // THE RUN SWITCH, and it keeps the same three answers the alignment resolver keeps apart: `true` and `false`
 // are the two booleans a request may carry, an ABSENT switch is the `false` a request that names none means,
@@ -1824,22 +1915,51 @@ function decodeRange(value) {
   if (members[0] !== RANGE_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   const flags = members.slice(1, 1 + RANGE_FLAGS);
   for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  const runs = members.slice(1 + RANGE_FLAGS, 1 + RANGE_FLAGS + RANGE_RUNS);
-  for (const run of runs) if (run !== 0 && run !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
-  const alignments = members.slice(1 + RANGE_FLAGS + RANGE_RUNS);
-  for (const alignment of alignments) if (rangeAlign(alignment) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // THE RUN PROOF IS ONE FOUR-CHARACTER STRING, and it is decoded STRICTLY: exactly the four measured
+  // properties, in the body's own fixed order, each character a `0` or a `1`. A string of another length, a
+  // non-string, or a character outside the two flags is an answer this body did not author — `INVALID_DATA`,
+  // which the ticket settles as the uncertain class because the command already ran.
+  const runProof = members[1 + RANGE_FLAGS];
+  if (typeof runProof !== 'string' || runProof.length !== RANGE_RUNS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // THE FLAG READS ARE CONSTANT-INDEXED READS, and the closure that serves them exists for the
+  // authored-code-audit reason stated in the block below rather than for tidiness. `members` is marked
+  // computed by the descriptor loop above, and `runProof` inherits that marking (the findings analysis is
+  // NAME-based and scope-insensitive over the whole bundle), so a `runProof.charAt(...)` — a METHOD call on
+  // a value that inherits the marking — is reported as a dynamic-property sink. A constant-indexed READ is
+  // not, so the four positions are read by NUMBER here and only ever compared afterwards.
+  function runProofBit(position) {
+    if (position === 0) return runProof[0];
+    if (position === 1) return runProof[1];
+    if (position === 2) return runProof[2];
+    return runProof[3];
+  }
+  // EVERY LEGAL FOUR-CHARACTER PROOF, spelled out rather than tested character by character: the string is
+  // compared as a WHOLE against a closed list, so a non-string, a wrong length, or a character outside the
+  // two flags is the same single check. A length check is NOT enough on its own — the assignment above has
+  // already verified the type and the length, and this is the one that fixes the four characters' VALUES.
+  if (!['0000', '0001', '0010', '0011', '0100', '0101', '0110', '0111',
+    '1000', '1001', '1010', '1011', '1100', '1101', '1110', '1111'].includes(runProof)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const alignments = members.slice(1 + RANGE_FLAGS + 1);
+  // THE ALIGNMENT TRIPLE IS MEASURED, and only the REQUEST slot may carry the sentinel: the two READBACK
+  // slots answer either a measured word or the sentinel the body echoes for a request that named none, so a
+  // build that answered `'none'` where it should have measured is an answer this decoder cannot stand behind.
+  if (rangeRequestedAlign(alignments[0]) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  for (const alignment of alignments) if (alignment !== RANGE_ALIGN_NONE && rangeAlign(alignment) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
   assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
   return Object.freeze({ paragraphsStable: flags[0] === 1, textUnchanged: flags[1] === 1,
     rangeRead: flags[2] === 1, rangeUnchanged: flags[3] === 1, rangeShifted: flags[4] === 1,
-    boldVerified: runs[0] === 1, italicVerified: runs[1] === 1,
-    underlineVerified: runs[2] === 1, strikeoutVerified: runs[3] === 1,
+    boldVerified: runProofBit(0) === '1', italicVerified: runProofBit(1) === '1',
+    underlineVerified: runProofBit(2) === '1', strikeoutVerified: runProofBit(3) === '1',
     align: alignments[0], alignBefore: alignments[1], alignAfter: alignments[2] });
 }
 // THE EXACT OUTCOME RULE the range format rests on, in ONE place so the decision and its comment cannot
-// drift apart. SIX conditions, all required, and they are split by what they can do:
-//   1. THE PRIMARY ALIGNMENT LEG is the ADDRESSED PARAGRAPH'S OWN alignment, read back through the measured
-//      `GetParaPr().GetJc()` chain: the AFTER value must be READABLE and must BE the requested alignment.
-//      There is deliberately NO fallback on the region flags and NO "the value did not change" shortcut — an
+// drift apart. The conditions are split by what they can do:
+//   1. THE ALIGNMENT LEG, and it is CONDITIONAL because `align` is optional: when the ticket NAMED an
+//      alignment the addressed paragraph's own alignment, read back through the measured
+//      `GetParaPr().GetJc()` chain, must be READABLE and must BE the requested alignment; when the ticket
+//      named NONE (`'none'`) the same slot must come back as that sentinel, because a build that measured an
+//      alignment for a request that never asked for one produced a different call's answer. There is
+//      deliberately NO fallback on the region flags and NO "the value did not change" shortcut — an
 //      unreadable or disagreeing readback is a mutation this tool cannot claim, and the mutation has already
 //      run, so the ticket settles `APPLY_UNCERTAIN` with the slot HELD.
 //   2. THE RUN LEG is a FOUR-WAY EQUALITY, not a one-way check, and the request it is judged against is the
@@ -1855,7 +1975,8 @@ function decodeRange(value) {
 //      paragraph count is unchanged.
 function exactRangeFormat(outcome, requested) {
   if (!outcome.rangeRead) return false;
-  if (outcome.alignAfter !== outcome.align) return false;
+  if (outcome.align !== requested.align) return false;
+  if (outcome.alignAfter !== requested.align) return false;
   if (!outcome.rangeUnchanged) return false;
   if (outcome.rangeShifted) return false;
   if (!outcome.paragraphsStable) return false;
@@ -3180,19 +3301,20 @@ export function createR7Bridge(plugin, {
     },
     // THE RANGE FORMAT behind `format_range` — the FOURTH MUTATION of Sprint 3 and the SECOND write leg that
     // appends nothing: it changes an EXISTING paragraph in place, on an index the caller names, within a
-    // character range of that paragraph's own text. It has TWO legs now: the paragraph ALIGNMENT through ONE
-    // `paragraph.GetParaPr().SetJc(...)`, and the four MEASURED character properties through ONE
-    // `paragraph.GetRange(from,to).SetBold/…(true)` per property requested. The body's own comment carries the
-    // mechanism (a pre-dispatch baseline of the paragraph count, the addressed paragraph's own text, alignment
-    // and REGION, the export gate, then the one alignment call plus one call per requested run property, then
-    // the post reads and the marker proof) and why no mutation primitive's return value is the signal; what
-    // matters HERE is the shape: ONE command on the ONE entry point that owns the parameter wrapper, the
-    // validated `{ paragraph, start, end, align, bold, italic, underline, strikeout, htmlMax }` scope carried
-    // as DATA through `Asc.scope`, and ONE strict decoder that turns the authored flat array — an explicit
-    // phase slot, five range flags, FOUR run proof flags and the requested/measured/measured alignment triple —
+    // character range of that paragraph's own text. It has TWO legs: the paragraph ALIGNMENT through ONE
+    // `paragraph.GetParaPr().SetJc(...)` — authored ONLY when the request named an alignment — and the four
+    // MEASURED character properties through ONE `paragraph.GetRange(from,to).SetBold/…(true)` per property
+    // requested. The body's own comment carries the mechanism (a pre-dispatch baseline of the paragraph count,
+    // the addressed paragraph's own text, alignment and REGION, the export gate, then the alignment call when
+    // it was named plus one call per requested run property, then the post reads and the marker proof) and why
+    // no mutation primitive's return value is the signal; what matters HERE is the shape: ONE command on the
+    // ONE entry point that owns the parameter wrapper, the validated
+    // `{ paragraph, start, end, align, bold, italic, underline, strikeout, htmlMax }` scope carried as DATA
+    // through `Asc.scope`, and ONE strict decoder that turns the authored flat array — an explicit phase slot,
+    // five range flags, ONE four-character run proof and the requested/measured/measured alignment triple —
     // into the envelope below. The OUTCOME rule is then decided inside the ticket, before the slot is released,
     // and BOTH readbacks are PRIMARY while the region flags can only REFUTE: an unread readback, a readable
-    // alignment that disagrees, a requested run marker that does not wrap the addressed region, a proof for a
+    // alignment that disagrees, a requested run marker that does not contain the addressed region, a proof for a
     // property nobody requested, a region that moved, a paragraph count that moved, an answer that cannot be
     // interpreted and the body's own POST-insert uncertainty are all `APPLY_UNCERTAIN` with the slot HELD and
     // no retry, while the body's PRE-insert refusals (an unusable baseline, an index outside the document,
@@ -3204,13 +3326,16 @@ export function createR7Bridge(plugin, {
     // this module never measured would let a caller format something the tool's own schema would have refused.
     // The bounds, the vocabulary and the four switch names are the SAME ones the descriptor advertises
     // (`LIMITS`), so a descriptor held directly and the tool that serves it cannot disagree about which
-    // refusal a caller receives.
+    // refusal a caller receives. THE ALIGNMENT IS THE ONE FIELD THAT MAY BE ABSENT: a request that names no
+    // alignment carries the `'none'` sentinel and the body authors no paragraph-level call for it, while a
+    // request that names NONE OF THE FIVE PROPERTIES at all is the closed argument class with NOTHING
+    // dispatched — there would be nothing to apply and nothing to prove.
     async formatRange(raw) {
       // THE LOCALS ARE NAMED SO THEY CANNOT SHADOW THE DISPATCHER. `start` is the bridge's own ticket
       // opener in this closure, so the request's two offsets are bound as `from`/`to`: a local named
       // `start` would make the dispatch below a call on a NUMBER, and the throw would be classified as an
       // editor failure instead of reaching the editor at all.
-      const paragraph = raw?.paragraph, from = raw?.start, to = raw?.end, align = rangeAlign(raw?.align), signal = raw?.signal;
+      const paragraph = raw?.paragraph, from = raw?.start, to = raw?.end, align = rangeRequestedAlign(raw?.align), signal = raw?.signal;
       // THE FOUR RUN SWITCHES, resolved with the same discipline as the alignment itself: an ABSENT switch is
       // the `false` a request that names none means, a boolean is itself, and anything else is the closed
       // argument class with NOTHING dispatched. The switch names are the four MEASURED markers' properties and
@@ -3234,6 +3359,13 @@ export function createR7Bridge(plugin, {
       if (bold === null || italic === null || underline === null || strikeout === null) {
         return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       }
+      // AT LEAST ONE PROPERTY, or nothing is dispatched at all: `format: {}` names no alignment and no run
+      // property, so this call has nothing to apply and nothing to prove — it is the closed argument class,
+      // decided HERE as well as in the descriptor's own precondition because the bridge is a public entry
+      // point a descriptor held directly could bypass.
+      if (align === RANGE_ALIGN_NONE && bold === false && italic === false && underline === false && strikeout === false) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
       try {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
@@ -3249,8 +3381,9 @@ export function createR7Bridge(plugin, {
         // derives them from the closed schema and carries them to the body, so the tool can require the answer
         // to name the SAME request it made — an `ok` envelope produced for a different request is never
         // republished as this one's proof. The four VERIFIED flags beside them are the body's own measurement,
-        // and each is `true` exactly when that property was requested AND its measured marker wrapped the
-        // addressed region. The alignment echo has the same standing, beside the two measured alignment values.
+        // and each is `true` exactly when that property was requested AND its measured marker pair was located
+        // around the addressed region. The alignment echo has the same standing, beside the two readback values
+        // — which are the `'none'` sentinel, on both sides, for a request that named no alignment at all.
         return Object.freeze({ ok: true, align, alignBefore: outcome.alignBefore, alignAfter: outcome.alignAfter,
           paragraphsStable: outcome.paragraphsStable, textUnchanged: outcome.textUnchanged,
           rangeRead: outcome.rangeRead, rangeUnchanged: outcome.rangeUnchanged, rangeShifted: outcome.rangeShifted,

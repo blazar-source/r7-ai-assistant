@@ -2682,3 +2682,136 @@ unknown lands on a closed path: a missing or throwing export is `CAPABILITY_UNAV
 export above `LIMITS.formatRangeHtmlChars` is `BYTE_LIMIT` with ZERO writes, and an unproven or non-exact
 outcome is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot HELD and no retry — never an `ok` with the slot
 released.
+
+## 16a. The MEASURED round on `format_range` — the export is ENTITY-ESCAPED, the markers NEST, and `align` is OPTIONAL
+
+**The native run the Lead made, and the two facts it settled.** The shipped tool was called with
+`{"paragraph":1,"start":0,"end":8,"format":{"align":"center","bold":true}}` and answered
+**`format_range: uncertain (TOOL_UNCERTAIN)`** — while the independent document readback showed the call had
+ACTUALLY SUCCEEDED: the paragraph's alignment became `center` and the export carried the bold marker wrapping
+exactly the addressed region. **The tool published a FALSE UNCERTAIN for a correct write**: fail-safe, and the
+capability unusable. Two measured causes, both recorded here with the strings the target produced.
+
+* **`doc.ToHtml()` returns the tags ENTITY-ESCAPED.** The export literally holds `&lt;p&gt;`,
+  `&lt;strong&gt;`, `&lt;/strong&gt;`. The measured export around the addressed paragraph after that successful
+  call was
+  `&lt;p&gt;&lt;strong&gt;ФОРМАТИРУ&lt;/strong&gt;ЕМЫЙ-ТЕКСТ-ДЛЯ-ПРОВЕРКИ: …&lt;/p&gt;`.
+  The previous proof searched for the raw `<strong>REGION</strong>` form, **which can never occur in this
+  export**, so a correct write could not prove itself. The previous round's test double rendered an UNESCAPED
+  export, which is why the unit tests passed while the native run failed — a double that does not model the
+  MEASURED export shape is the exact mistake this project keeps punishing, so the double now renders the
+  escaped form through a small explicit entity map (`&amp;`, `&lt;`, `&gt;`, `&quot;`) and the assertions
+  compare the escaped strings.
+* **Two run properties on the SAME region NEST, and the run applied FIRST is the INNERMOST marker.** Measured,
+  applying bold then italic then underline to one region:
+  * after bold: `…&lt;strong&gt;ФОРМАТИРУ&lt;/strong&gt;ЕМЫЙ-…`
+  * after bold+italic: `…&lt;em&gt;&lt;strong&gt;ФОРМАТИРУ&lt;/strong&gt;&lt;/em&gt;ЕМЫЙ-…`
+  * after bold+italic+underline: the underline is a `&lt;span style="text-decoration:underline;"&gt;` and the
+    nesting puts the OUTER markers AWAY from the region text.
+  The previous proof required the marker to be CONTIGUOUS with the region text, so it proved only the
+  INNERMOST property and answered 0 for every outer one — a second false UNCERTAIN for a correct write.
+
+**THE TWO CORRECTIONS, and what each one deliberately does NOT do.**
+
+1. **The proof scans the MEASURED ESCAPED FORM.** `wrappedRegion` compares against the escaped marker pairs
+   (`&lt;strong&gt;`/`&lt;/strong&gt;`, `&lt;em&gt;`/`&lt;/em&gt;`,
+   `&lt;span style="text-decoration:underline;"&gt;`/`&lt;/span&gt;`, `&lt;del&gt;`/`&lt;/del&gt;`) and the
+   escaped paragraph boundary (`&lt;p` … `&lt;/p&gt;`). **No unescaping step is added, and that is a decision
+   rather than an omission**: a general entity decode of the export can CREATE a needle that was never in the
+   document (`&amp;lt;` decodes to `&lt;`), while the exported TEXT does not have to be decoded for the proof
+   to be exact — the needle is the region's own PRE-mutation `GetText()` answer, which agrees with what the
+   export holds for any region with no HTML metacharacter in it. A region that does hold one simply is not
+   found, which costs a false UNCERTAIN with the slot held and can never buy a false `ok`. The channel is
+   unchanged: `ToHtml()` is the measured one and `GetFileHTML` was NOT substituted for it.
+2. **A property is proven when the region text lies INSIDE that property's own marker pair within the
+   addressed paragraph's fragment** — the property's LAST opener before the region and its FIRST closer after
+   it, with other markers and other text allowed in between — rather than when the marker is adjacent to the
+   region. The uniqueness requirement is what keeps the tolerance honest: the region text must stand EXACTLY
+   ONCE in the whole export, so the pair being located is around THAT occurrence and never around a different
+   one; a marker whose own closer falls before the region, or a partial tag (`&lt;strong` with no `&gt;`), is
+   not a pair and proves nothing.
+
+**NO CROSSING RULE WAS ADDED ON TOP OF THE TOLERANCE, and the reason is recorded so a later round does not
+"tighten" it back into the defect.** Four candidate closure rules were implemented and evaluated against the
+MEASURED nesting: requiring the judged property's closer to be the innermost one around the region, requiring
+no other opener between the judged opener and the region, rejecting a pair nested inside the judged one, and
+rejecting a pair that contains it. **Every one of them answered 0 for a legitimate OUTER property** — italic
+and underline in the measured three-property nesting — which is precisely the false UNCERTAIN this round
+removes. A marker pair that covers a SUPERSET of the addressed region is what one whole-range setter call
+produces, so a pair around the region IS the measured evidence that the setter landed on it; the honest
+limits stay where they were, on an ambiguous NEEDLE (a region text standing twice) and on a pair that does not
+contain the region at all. Both shapes are pinned by tests: the tail-only fault (`Ц&lt;strong&gt;ель&lt;/strong&gt;`)
+is UNCERTAIN with the slot held, and the wider pair (`&lt;strong&gt;ель&lt;/strong&gt;` for the addressed `ел`)
+verifies because the region really carries the property.
+
+**`align` IS OPTIONAL NOW, and "at least one property" is the contract.** The previous schema made
+`format.align` REQUIRED, so a caller who only wanted bold also had to name an alignment — and that alignment
+was then APPLIED, an unintended change. The contract is now: **`format` must name AT LEAST ONE of `align`,
+`bold`, `italic`, `underline`, `strikeout`; the tool applies and proves exactly the properties named and
+nothing else.** The mechanics, each one pinned by a test:
+
+* **The schema carries no `required` list inside `format`.** No JSON Schema keyword states "at least one", so
+  the rule is decided where it can be: the descriptor's own precondition AND the handler re-check it, and the
+  BRIDGE re-checks it too (a descriptor held directly is a public entry point), all three with the closed
+  argument class and **ZERO writes**.
+* **`format: {}` is a closed argument refusal with ZERO writes** (`TOOL_ERROR`), at the schema-level handler,
+  in `formatRange`, and in the bridge method — nothing is dispatched.
+* **An omitted `align` is NOT a default alignment.** It crosses as the **`'none'` sentinel**, a word OUTSIDE
+  the four measured ones, so it can never be confused with a readback: the body authors NO
+  `paragraph.GetParaPr().SetJc(...)` for it and never reads the alignment back, while `rangeRead` answers 1
+  (there was no chain to read, and the sentinel IS the answer). The published result says
+  `align: null`, `alignBefore: null`, `alignAfter: null` for such a call, so the model cannot read a measured
+  alignment the tool never asked the editor about; when alignment IS named, its leg is unchanged (the
+  requested value must be readable and equal `alignAfter`) and both legs are proven when both are named.
+* **The run proof crosses as ONE FOUR-CHARACTER STRING** (`'1000'` for bold alone), one character per measured
+  property in the body's fixed order, instead of four separate flags. The decoder compares the WHOLE string
+  against a closed list of the sixteen legal values; the four flags are then read by NUMBER (constant-indexed
+  reads) through a local helper. That shape is an authored-code-audit consequence recorded in the code: the
+  findings analysis is NAME-based and scope-insensitive over the whole bundle, `members` is marked computed by
+  the descriptor loop, and `runProof` inherits that marking — so a `runProof.charAt(...)` read is reported as
+  a method call on computed data, while a constant-indexed read through a helper is not.
+
+**TDD: the exact RED, then GREEN.** The tests were written FIRST and run against `eb4cfdc`: the focused file
+`tests/unit/tools-word.test.js` → **244 tests, pass 231, fail 13**. The escaping and nesting tests failed
+exactly as the native run did and for the same reason:
+* `format_range proves EACH measured run property through its own HTML marker` → `bold: the call is served`
+  `false !== true` (the body searched the RAW `<strong>` form in an ESCAPED export);
+* `format_range proves TWO properties on the SAME region in the measured nested order, outer one included` →
+  `the nested pair is served` `false !== true`;
+* `format_range proves THREE properties on the same region, including the underlined outer span` → the same
+  shape, so the OUTER property was the unproven one;
+* `format_range advertises the closed bounded schema…` → `actual: [ 'align' ], expected: undefined` (the
+  required list inside `format`);
+* `bridge formatRange dispatches ONE command…` and `the format body is self-contained…` →
+  `actual: [ 'POST_INSERT', 1, 1, 1, 1, 0, 0, 0, 0, 0, 'center', 'left', 'center' ]` vs
+  `[ …, '0000', … ]` (the one-string proof shape);
+* `a run-only scope applies NO alignment at all…` → `actual: false, expected: true` (there was no sentinel and
+  no run-only path at all).
+GREEN: the file alone **244/244**, and the full suite below. The double now renders the ESCAPED export through
+the measured entity map, the nesting tests assert the measured markup
+(`&lt;em&gt;&lt;strong&gt;Це&lt;/strong&gt;&lt;/em&gt;` and the underlined
+`&lt;span …&gt;&lt;em&gt;&lt;strong&gt;…`), and the suite covers one property alone, two properties nested
+(the outer one included), three properties, an align-only call, a bold-only call that names no `align`,
+`format: {}` refused with zero writes, and the uncertain paths (duplicate needle, missing marker, throwing
+export, over-limit export).
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/tools-word.test.js tests/integration/package.test.js` → **244/244**, `fail 0`; full suite
+`node --test` → **876 tests, pass 876, fail 0, cancelled 0, skipped 0** (**871 → 876**, never shrunk);
+`node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` →
+exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+517c50bbabba38d3ba2842db62d8355d7368bb1d4fb2e95ffc51413bd0131729`. The SHA moved from `eb4cfdc`'s
+`0966545ecc446dd7d5d02a301db877608c1a10c30790601d18c38456dc9c04a5` because the builder runs with
+**`minify: false`** and this round changed both the authored body and the decoder. Every other discipline is
+UNCHANGED: the closed schema, the bounds, the pre-state checks, ONE mutation phase, the explicit
+`PRE_INSERT`/`POST_INSERT` phase slot (**only `[PRE_INSERT, name]` releases this leg's slot**), the closed
+failure classes, no retry, the bounded result and the leg classifier; `src/agent/*` is untouched and no
+dynamic execution was added to `src/`.
+
+**STILL NATIVELY UNVERIFIED AFTER THIS ROUND.** The Lead's measurement settled the escaping and the nesting
+SHAPE; what a fresh native run still has to confirm is (1) that the escaped-form scan now publishes `ok` for
+the same call that produced the false UNCERTAIN, (2) that underlining exports the `span` exactly as spelled in
+`UNDERLINE_PAIR` (the measured string is reproduced verbatim, including its quotes), and (3) that an
+`align`-omitting call leaves the paragraph's alignment untouched on a real document. Each unknown lands on a
+closed path — no proof means `TOOL_UNCERTAIN` with the slot held, and no run property means no export read at
+all.
