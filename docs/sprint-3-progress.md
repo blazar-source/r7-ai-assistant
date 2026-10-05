@@ -3559,3 +3559,50 @@ against a build carrying the pass-through. The unmeasured quantity is the model'
 in particular whether `insert_blocks` replaces `insert_paragraph` for chapters, and whether dropping
 `replace_selection` from the list removes the run-ending `PREVIEW_READY` without also losing the Preview/Apply
 feature the panel still has to offer for a genuine selection edit.
+
+### 22a. The pass-through LANDED — the registry's guidance and its confirm-free offer now reach the model text
+
+The two lines §22 declared REQUIRED are the whole change; `src/agent/runtime.js` is the only `src/` file touched.
+
+```js
+// runtime.js:113 — the SAME catalogue still validates and still carries the confirm descriptor
+const catalogue = registry.catalogue({ editor, capabilities, mode });
+let offered = catalogue;                                                    // NEW: model-facing view
+try {
+  if (typeof registry.modelCatalogue === 'function') offered = registry.modelCatalogue(catalogue);
+} catch { offered = catalogue; }
+// runtime.js:131 — the model text is built from `offered`, the loop still validates with `catalogue`
+context.append({ role: 'system', content: systemRules(offered, mode) });
+// runtime.js:236 — the authored guidance is rendered, not merely stored
+const lines = catalogue.map(tool => `${tool.name} (${tool.kind}, ${tool.policy}): ${tool.description}`);
+```
+
+The `try`/`catch` is the runtime's own setup style: a registry that cannot answer `modelCatalogue` falls back to the
+full list rather than failing the run as `INTERNAL_ERROR`. `offered` is the frozen array `modelCatalogue` returns, so
+the listing is a VIEW — it can only REMOVE entries, preserves order, and adds nothing. **Nothing in the loop moves:**
+`validateBatch(catalogue, …)` (`runtime.js:161`) and the confirm branch that returns `PREVIEW_READY`
+(`runtime.js:183`) still read the unchanged full catalogue, which is exactly why the panel's Preview/Apply path is
+untouched. Measured `git diff HEAD -- src/agent`: 15 insertions, 2 deletions, one file, and the deletions are the
+two lines the pass-through replaces.
+
+**RED, then GREEN.** With only the runtime change stashed (the new tests in place), `node --test
+tests/unit/agent-runtime.test.js` → **tests 35, pass 34, fail 1**: `the model-facing system text carries each
+descriptor description and omits every confirm tool` fails on the first half — the old listing really does carry no
+guidance. The preview test passes in that state by construction, because it pins exactly what the change must NOT
+touch. Restored → 35/35.
+
+**What pins it.** `tests/unit/agent-runtime.test.js`, 2 new cases. (1) The listing must contain the authored sentence
+of an offered entry in full form, for a read AND for a mutation (`read_selection (read, auto): Читает выделенный
+текст.`), and must contain neither `replace_selection` nor its sentence — both halves of the owner's request in one
+read of the transport's own system message. (2) The withheld descriptor still resolves: the run reaches
+`PREVIEW_READY` with `preview.descriptor.name === 'replace_selection'`, `policy === 'confirm'`, its authored
+description intact, zero tool calls and no actions. The three shared-fixture descriptors gained distinct sentences so
+each assertion can name the sentence it expects.
+
+**Verification (this round, final tree).** Focused set `node --test tests/unit/agent-runtime.test.js
+tests/unit/tools-registry.test.js tests/unit/controller.test.js` → **106 tests, pass 106, fail 0** (54 controller
+tests unchanged); `node --test` → **960 tests, pass 960, fail 0, cancelled 0, skipped 0, todo 0** (**958 → 960**,
+never shrunk); `node scripts/static-audit.mjs` → **`Authored-code audit PASS`**, exit 0; `node scripts/build-plugin.mjs`
+→ exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+83a7620498ed3093cc1d46a76308ef2c5ea9031cef7619a9c2e54eb2afa3d08f`** (the bundle now carries the composed system
+rules, hence a new SHA).

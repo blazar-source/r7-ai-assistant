@@ -11,10 +11,13 @@ const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
   schema: { type: 'object', additionalProperties: false, required: [], properties: {} } };
 const calls = [];
 const registry = createRegistry([
-  { ...base, name: 'read_selection', precondition: () => null, execute: () => ({ ok: true, data: { bytes: 4 } }) },
-  { ...base, name: 'insert_paragraph', kind: 'mutate', precondition: () => null,
+  { ...base, name: 'read_selection', description: 'Читает выделенный текст.',
+    precondition: () => null, execute: () => ({ ok: true, data: { bytes: 4 } }) },
+  { ...base, name: 'insert_paragraph', kind: 'mutate', description: 'Вставляет абзац в текущую позицию.',
+    precondition: () => null,
     execute: (args) => { calls.push(args); return { ok: true, data: { inserted: true } }; } },
-  { ...base, name: 'replace_selection', kind: 'mutate', policy: 'confirm', precondition: () => null, execute: () => ({ ok: true, data: {} }) }
+  { ...base, name: 'replace_selection', kind: 'mutate', policy: 'confirm', description: 'Заменяет выделение.',
+    precondition: () => null, execute: () => ({ ok: true, data: {} }) }
 ]);
 const editor = { editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' };
 const baseArgs = { registry, ...editor, settings: {}, uuid: '11111111-1111-4111-8111-111111111111', request: 'сделай' };
@@ -85,6 +88,48 @@ test('a confirm tool yields a preview and never executes in the loop', async () 
   ]) });
   assert.equal(result.status, 'PREVIEW_READY');
   assert.equal(result.toolCalls, 0);
+});
+
+// --- The registry's model-facing VIEW reaches the model text, and ONLY that text ---------------------
+// Both halves are one region of the runtime, so they are pinned together: what the listing is FOR hints
+// at (the authored description) and which entry it deliberately does not name (a confirm tool).
+
+test('the model-facing system text carries each descriptor description and omits every confirm tool', async () => {
+  let system = null;
+  const result = await runAgent({ ...baseArgs, transport: async (messages) => {
+    // The transport is handed the context window, so the system message IS what the model receives.
+    system ??= messages.find(message => message.role === 'system').content;
+    return { content: '{"type":"final","message":"ок"}' };
+  } });
+  assert.equal(result.status, 'FINAL');
+  // Half one: the authored guidance is READ, not merely stored on the descriptor.
+  assert.ok(system.includes('read_selection (read, auto): Читает выделенный текст.'),
+    'the listing must carry the descriptor that was actually offered');
+  assert.ok(system.includes('insert_paragraph (mutate, auto): Вставляет абзац в текущую позицию.'),
+    'the guidance must reach the model for every offered entry, not just the read tools');
+  assert.ok(system.includes('Инструменты:'), 'the listing itself is unchanged in shape');
+  // Half two: the confirm tool is never NAMED, so it cannot be proposed out of the checklist — while its
+  // own descriptor is untouched (the preview path below proves that half).
+  assert.equal(system.includes('replace_selection'), false,
+    'a confirm tool named in the listing can only end the run as PREVIEW_READY');
+  assert.equal(system.includes('Заменяет выделение.'), false,
+    'neither the name nor the guidance of a withheld tool may leak into the listing');
+});
+
+test('the withheld confirm descriptor still resolves, so the preview path is untouched', async () => {
+  const result = await runAgent({ ...baseArgs, transport: respond([
+    '{"type":"tool_calls","calls":[{"tool":"replace_selection","arguments":{}}]}'
+  ]) });
+  // Withholding the name is a property of the TEXT the model reads. It is not a change to what the run
+  // accepts: the batch still resolves against the full catalogue, so an explicit proposal still reaches
+  // the confirm branch, which publishes the validated descriptor as the panel's preview candidate.
+  assert.equal(result.status, 'PREVIEW_READY');
+  assert.equal(result.toolCalls, 0);
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.preview.descriptor.name, 'replace_selection');
+  assert.equal(result.preview.descriptor.policy, 'confirm');
+  assert.equal(result.preview.descriptor.description, 'Заменяет выделение.');
+  assert.deepEqual(result.preview.arguments, {});
 });
 
 test('malformed JSON gets exactly one repair request, then a second failure ends the run', async () => {
