@@ -19,8 +19,11 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // `document.Push` of a table the body built and filled, inside its own command body. `headinginsert` is
 // the heading style assignment: it writes the same way — ONE `paragraph.SetStyle` on an EXISTING paragraph
 // inside its own command body — and it is the FIRST write leg that appends nothing at all, which is why
-// it must be named here rather than inferred from the two creation legs.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert']));
+// it must be named here rather than inferred from the two creation legs. `rangeformat` is the range format:
+// it writes the same way in place — ONE `paragraph.GetParaPr().SetJc(...)` on an EXISTING paragraph inside
+// its own command body — and it is the SECOND leg that appends nothing, which is why it is named here
+// explicitly for the same reason the heading assignment is.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -905,6 +908,231 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) { return headingRefusal('CAPABILITY_UNAVAILABLE'); }
         }, false, false, callback);
+      },
+      // THE RANGE FORMAT, and the FOURTH leg in this bridge that MUTATES a document through the `Api`
+      // builder. It is the same carriage as the heading assignment — a FULL inline static literal whose only
+      // model data arrives as the `scope` binding the vendor wrapper composes from `Asc.scope` (never
+      // composed into source, ADR 0002) — and it is the FIRST one that does NOT change a paragraph STYLE.
+      //
+      // WHY THE PROOF IS THE PARAGRAPH'S ALIGNMENT AND NOTHING ELSE. The SDK inspection recorded in
+      // `src/tools/word.js` (line numbers and quoted prototypes there) established that the public
+      // `ApiRange`/`ApiTextPr` pair authors SETTERS ONLY: there is no `GetBold`, `GetItalic`, `GetUnderline`,
+      // `GetStrikeout`, `GetColor`, `GetFontSize`, `GetFontFamily` or `GetHighlight` anywhere in the bundle,
+      // so a body could apply those and never READ them back. The ONE builder type that does read back is
+      // `ApiParaPr`, whose `SetJc` sits directly beside `GetJc`, and whose `GetJc` answers the closed
+      // four-word vocabulary `right`/`left`/`center`/`both`. So the ONE mutating call in this body is
+      // `paragraph.GetParaPr().SetJc(align)` and the proof is that same getter — an exact, per-object readback
+      // of the very property the mutation sets, on the very paragraph the addressed range belongs to.
+      //
+      // WHAT THE { paragraph, start, end } ADDRESS IS FOR, and the ONE range signal this leg has. It is a
+      // BOUNDARY: the body requires the paragraph to exist, requires both offsets to lie inside that
+      // paragraph's OWN `GetText().length` BEFORE the mutation, and reads the ADDRESSED REGION through the
+      // paragraph's own `GetRange(start, end)` before and after the mutation. That region read is the range
+      // leg of the proof and it is deliberately built from a FRESH range object on each side: `ApiRange`
+      // caches its own text at construction (measured in the vendored SDK), so a range HELD across the
+      // mutation would compare a cached value with itself. The region can only REFUTE, never establish — the
+      // alignment readback is the part that establishes anything — and that is why the descriptor says the
+      // effect is paragraph-wide rather than claiming per-character formatting.
+      //
+      // THE ANSWER is ONE flat array of primitives (the native return validator keeps those and strips a
+      // plain object): `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged,
+      // rangeShifted, align, alignBefore, alignAfter]`, or a TWO-slot refusal `[PRE_INSERT, name]`. THE PHASE
+      // IS AN EXPLICIT SLOT OF EVERY ANSWER, and the decoder turns a phase-less or post-insert refusal into
+      // the uncertain class — the name alone can never release a slot for a mutation that may already be in
+      // the document.
+      format(callback) {
+        return plugin.callCommand(function () {
+          // The phase, and the ONE place the two classes are distinguished: everything answered while it is
+          // `PRE_INSERT` is a KNOWN refusal (nothing reached the document), everything answered after the
+          // single `SetJc` is an UNCERTAIN outcome the bridge must hold a slot for. It turns `POST_INSERT`
+          // IMMEDIATELY BEFORE that one call, not after it, because a native that throws OUT of the call may
+          // already have applied the alignment.
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
+          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
+          // bodies state: the alias analysis is NAME-based and scope-insensitive over the whole bundle, so an
+          // array literal built from identifier names could make the receiver of every later call on it a
+          // computed value.
+          function formatRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            // The scope the vendor wrapper injected: `{ paragraph, start, end, align }`, already validated by
+            // the bridge. Anything else — a missing wrapper, a non-numeric address, an alignment the runtime
+            // cannot serve — is the body's own closed refusal rather than a paragraph formatted on the
+            // strength of `undefined`.
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            var measured = measureRequest(request);
+            if (measured === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var index = measured[0];
+            var startOffset = measured[1];
+            var endOffset = measured[2];
+            var align = measured[3];
+            var available = typeof Api !== 'undefined' && Api !== null;
+            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
+            if (document === null || document === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // Every primitive this body authors is a FUNCTION CHECK before any call, exactly like the three
+            // mutation bodies before it: an editor that does not expose one of them answers this body's own
+            // refusal rather than a paragraph aligned through a primitive that is not the measured one.
+            if (typeof document.GetAllParagraphs !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check reaches
+            // for NO global at all, so the stringified body depends on nothing but the two bindings the vendor
+            // wrapper creates.
+            function isCount(value) {
+              return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
+            }
+            // `list[index]` is a member read with a NON-CONSTANT key, which this module's NAME-based alias
+            // analysis treats as a computed value; a CALL's result is not tainted by it, so the target is
+            // taken through this helper and the measured member calls below stay clean.
+            function paragraphAt(list, position) {
+              return position >= 0 && position < list.length ? list[position] : null;
+            }
+            function textAt(item) {
+              if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
+              try { return item.GetText(); } catch (error) { return null; }
+            }
+            // THE ALIGNMENT VOCABULARY, and it is the SAME four words the schema advertises because they are
+            // the words the measured getter answers. A bare boolean test over the four literals, so this
+            // helper depends on nothing at all.
+            function isAlign(value) {
+              return value === 'left' || value === 'center' || value === 'right' || value === 'both';
+            }
+            // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The address is re-checked HERE and not
+            // only in the bridge method, because the scope is the ONE thing that crosses: a fractional index,
+            // an offset past the advertised bound or an alignment outside the measured vocabulary is this
+            // body's own closed argument refusal, never a format applied to a coerced address. The return is
+            // an ARRAY so the caller binds each measured value separately, which keeps every later member call
+            // on a call's own result rather than on an indexed read.
+            function measureRequest(value) {
+              if (value === null || value === undefined || typeof value !== 'object') return null;
+              var position = value.paragraph;
+              var from = value.start;
+              var to = value.end;
+              var wanted = value.align;
+              if (!isCount(position) || !isCount(from) || !isCount(to)) return null;
+              if (!(from < to)) return null;
+              if (!isAlign(wanted)) return null;
+              return [position, from, to, wanted];
+            }
+            // THE ALIGNMENT OF THE ADDRESSED PARAGRAPH, READ THROUGH THE MEASURED CHAIN
+            // `paragraph.GetParaPr().GetJc()`. THE THREE ANSWERS ARE KEPT DISTINCT because they mean three
+            // different things, and the whole body's contract turns on the difference:
+            //   * one of the four measured WORDS is a measurement of a paragraph whose alignment the getter
+            //     could answer;
+            //   * the EMPTY STRING is a measurement too — of a paragraph whose alignment was read as
+            //     `undefined`, which the getter is allowed to answer for a paragraph that carries none;
+            //   * `null` is the ABSENCE of a measurement: a member missing, not a function, or a throw.
+            // Every member is a function check before its call and the whole probe is inside its own `try`, so
+            // a build without the chain answers `null` here instead of failing the body.
+            function readAlign(item) {
+              try {
+                if (item === null || item === undefined || typeof item.GetParaPr !== 'function') return null;
+                var paraPr = item.GetParaPr();
+                if (paraPr === null || paraPr === undefined || typeof paraPr.GetJc !== 'function') return null;
+                var carried = paraPr.GetJc();
+                return typeof carried === 'string' && isAlign(carried) ? carried : '';
+              } catch (error) { return null; }
+            }
+            // THE ADDRESSED REGION, READ THROUGH THE PARAGRAPH'S OWN `GetRange`. A FRESH range object is
+            // built on every call (the editor's own constructor caches the text it is built with), so the
+            // BEFORE and AFTER reads can never be the same cached value. `null` is the absence of a
+            // measurement — a missing primitive, a refusal, or a throw — and is kept apart from the empty
+            // string, which is a region that really holds no characters.
+            function readRange(item, from, to) {
+              try {
+                if (item === null || item === undefined || typeof item.GetRange !== 'function') return null;
+                var range = item.GetRange(from, to);
+                if (range === null || range === undefined || typeof range.GetText !== 'function') return null;
+                var covered = range.GetText();
+                return typeof covered === 'string' ? covered : null;
+              } catch (error) { return null; }
+            }
+            // THE PRE-DISPATCH BASELINE: the document's paragraph count, the addressed paragraph's own text,
+            // its own alignment and the addressed region. Everything below is read BEFORE anything is mutated,
+            // and the index is checked against the SAME snapshot the text is read from, so a baseline that
+            // cannot be read, an index outside THIS document and offsets outside THIS paragraph are all closed
+            // refusals with ZERO writes.
+            var before = document.GetAllParagraphs();
+            if (before === null || before === undefined || typeof before.length !== 'number') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var countBefore = before.length;
+            if (!isCount(countBefore)) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // AN INDEX OUTSIDE THE DOCUMENT is the closed ARGUMENT class, not the capability class: the
+            // caller named a position that does not exist.
+            if (!(index < countBefore)) return formatRefusal('TOOL_ERROR');
+            var target = paragraphAt(before, index);
+            if (target === null || target === undefined || typeof target.GetParaPr !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var beforeSource = target.GetParaPr();
+            if (beforeSource === null || beforeSource === undefined || typeof beforeSource.SetJc !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var textBefore = textAt(target);
+            if (typeof textBefore !== 'string') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // OFFSETS ARE CHECKED AGAINST THE PARAGRAPH'S OWN LENGTH, never against the schema bound alone:
+            // a start at or past the end of the text, or an end past it, is the same closed ARGUMENT class
+            // with ZERO writes. The two comparisons are written out because this module's name-based analysis
+            // treats a helper's boolean as an ordinary value — either way the decision is made HERE, before
+            // the one mutation, and the caller receives a known class rather than a guess.
+            if (!(startOffset <= textBefore.length)) return formatRefusal('TOOL_ERROR');
+            if (!(endOffset <= textBefore.length)) return formatRefusal('TOOL_ERROR');
+            var alignBefore = readAlign(target);
+            if (alignBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var regionBefore = readRange(target, startOffset, endOffset);
+            if (regionBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // THE MUTATION, and the exact boundary the two refusal classes are split on. ONE call on the
+            // PARAGRAPH's own `ApiParaPr` — the measured setter whose getter is the proof — with the alignment
+            // carried as DATA. `POST_INSERT` is set IMMEDIATELY BEFORE it, because a native that throws OUT of
+            // the call may already have applied it.
+            phase = 'POST_INSERT';
+            beforeSource.SetJc(align);
+            // THE POST READ, and NOTHING is taken from the pre-mutation snapshot. A FRESH `GetAllParagraphs()`
+            // answers a fresh paragraph object, so the readback cannot be a stale wrapper, and the region is
+            // re-read through a fresh range for the same reason.
+            var after = document.GetAllParagraphs();
+            if (after === null || after === undefined || typeof after.length !== 'number') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var countAfter = after.length;
+            if (!isCount(countAfter)) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var afterTarget = paragraphAt(after, index);
+            if (afterTarget === null || afterTarget === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var textAfter = textAt(afterTarget);
+            if (typeof textAfter !== 'string') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var alignAfter = readAlign(afterTarget);
+            // THE PRIMARY PROOF: the addressed paragraph's OWN alignment, read back through
+            // `GetParaPr().GetJc()`. `rangeRead` is 1 whenever the getter was READABLE — including the empty
+            // string of a paragraph whose alignment it answered as `undefined`, which is a readable NON-match —
+            // and 0 only when the chain answered nothing at all. A `rangeRead` of 0 is NOT a licence to fall
+            // back on the other flags: the mutation has already run, so the decoder settles `APPLY_UNCERTAIN`
+            // with the slot HELD.
+            var alignRead = alignAfter === null ? 0 : 1;
+            // THE SECONDARY RANGE LEG: the ADDRESSED REGION, re-read through a fresh range. `rangeRead` and
+            // `rangeUnchanged` are the TWO answers that matter — was it read at all, and is it what it was —
+            // and `rangeShifted` records whether the two offsets still NAME the same text: 0 when the region is
+            // unchanged, when the paragraph became too short for the address (a real concurrent edit), or when
+            // the two lengths disagree with the text's own change; 1 only when the region genuinely moved
+            // FORWARD under the mutation.
+            var regionAfterRead = readRange(afterTarget, startOffset, endOffset);
+            var rangeRead = regionAfterRead === null ? 0 : 1;
+            var rangeUnchanged = rangeRead === 1 && regionAfterRead === regionBefore ? 1 : 0;
+            var rangeShifted = regionAfterRead === null ? 0 : regionAfterRead.length === regionBefore.length ? 0
+              : regionAfterRead.length > regionBefore.length && textAfter.length === textBefore.length ? 1 : 0;
+            var paragraphsStable = countAfter === countBefore ? 1 : 0;
+            var textUnchanged = textAfter === textBefore ? 1 : 0;
+            // The phase slot, the four flags, the echo and the two measured alignment values are APPENDED
+            // rather than spelled as one array literal, for the authored-code-audit reason the block body
+            // states.
+            var answer = [];
+            answer.push(phase);
+            answer.push(paragraphsStable);
+            answer.push(textUnchanged);
+            answer.push(rangeRead);
+            answer.push(rangeUnchanged);
+            answer.push(rangeShifted);
+            answer.push(align);
+            answer.push(alignBefore);
+            answer.push(alignAfter);
+            return answer;
+          } catch (error) { return formatRefusal('CAPABILITY_UNAVAILABLE'); }
+        }, false, false, callback);
       } });
   }
   if (hasTransport) {
@@ -1364,6 +1592,106 @@ function exactHeadingDelta(outcome) {
   if (!outcome.paragraphsStable) return false;
   if (!outcome.textUnchanged) return false;
   if (outcome.headingsAfter - outcome.headingsBefore !== 1) return false;
+  return true;
+}
+// THE RANGE-FORMAT ANSWER, decoded with the same strictness as `decodeHeading` and for the same reason: the
+// authored body encodes its measurements as ONE flat array of PRIMITIVES —
+// `[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted, align,
+// alignBefore, alignAfter]` — because the native return validator keeps arrays of primitives and STRIPS a
+// plain object. `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden extras, and every
+// member is read through its own data descriptor, never through a getter. Four rules are this leg's own
+// contract:
+//   * THE PHASE IS AN EXPLICIT SLOT OF EVERY ANSWER, and this is the ONLY place the two refusal classes are
+//     split. A TWO-slot answer is the body's own refusal `[phase, name]`: `[PRE_INSERT, name]` is a KNOWN
+//     refusal whose code the caller republishes (nothing was mutated), and `[POST_INSERT, name]` is the
+//     UNCERTAIN class (the document may already carry the alignment). A phase that is ABSENT — the one-slot
+//     `['CAPABILITY_UNAVAILABLE']` a forged or damaged native can answer AFTER a real mutation — or a
+//     pre-insert phase over a measurement, or any other single value, can never be a known refusal: it is
+//     decoded as `APPLY_UNCERTAIN`. The NAME does not carry the phase; only the marker does.
+//   * the answer's LENGTH IS FIXED, because this leg's work does not scale with a caller-supplied
+//     collection: there is exactly ONE addressed paragraph and ONE region, so an answer with anything but
+//     the nine slots below is not one this body can have produced. There is no per-item array to pin, which
+//     is precisely what makes the phase gate the whole of the length rule.
+//   * the FLAGS are EXACTLY `0` or `1` (a count this bridge cannot trust is not a count, and an editor that
+//     answers anything else is not one this body can have read), and the TWO ALIGNMENT slots are the
+//     MEASURED four-word vocabulary the `ApiParaPr.GetJc` readback answers. The requested alignment is
+//     ECHOED in its own slot so the tool can require the answer to name the request it made; the two
+//     measured values are the readback itself.
+//   * the answer needs NO byte ceiling beyond the one this decoder carries, and it is carried because it is
+//     cheap and exact: the phase is one of two literals, the five flags one character each, the three
+//     alignments at most six characters as JSON, so the widest legal answer measures about 64 bytes against
+//     `LIMITS.editorResultBytes` (65536) — and, unlike the block/table decoders' retired assertions, this one
+//     is genuinely reachable by no legal shape either. It is a CEILING on an answer this bridge accepts from
+//     the native, and a ceiling that is never applied is not a ceiling at all.
+const RANGE_FLAGS = 5;
+const RANGE_ALIGNMENTS = 3;
+const RANGE_PHASE_PRE = 'PRE_INSERT';
+const RANGE_PHASE_POST = 'POST_INSERT';
+const RANGE_LENGTH = 1 + RANGE_FLAGS + RANGE_ALIGNMENTS;
+// THE CLOSED ALIGNMENT VOCABULARY, carried HERE as well as in the schema because the DECODER must validate
+// the measured readback against the same four words the schema advertises. It is the vocabulary the measured
+// `ApiParaPr.GetJc` answers (the vendored 2026.1.2 SDK), and the value is compared as a WHOLE: a getter that
+// answers anything outside these four is an answer this bridge cannot interpret, never a near-match.
+function rangeAlign(value) {
+  return value === 'left' || value === 'center' || value === 'right' || value === 'both' ? value : null;
+}
+function decodeRange(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1 || size > RANGE_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  // THE PHASE GATE, exactly as the heading decoder applies it: the name the body emits only from its
+  // pre-insert half keeps its KNOWN class ONLY when the answer itself carries the pre-insert phase.
+  if (size === 2) {
+    if (members[0] !== RANGE_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+    // The two closed argument refusals the body can make BEFORE the one mutation: an index outside the
+    // document, offsets outside the addressed paragraph, and an address or alignment the body cannot serve.
+    // They carry the pre-insert phase, so they keep their known class and RELEASE the slot.
+    if (members[1] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal.
+  if (size === 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== RANGE_LENGTH) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (members[0] !== RANGE_PHASE_POST) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const flags = members.slice(1, 1 + RANGE_FLAGS);
+  for (const flag of flags) if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const alignments = members.slice(1 + RANGE_FLAGS);
+  for (const alignment of alignments) if (rangeAlign(alignment) === null) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  return Object.freeze({ paragraphsStable: flags[0] === 1, textUnchanged: flags[1] === 1,
+    rangeRead: flags[2] === 1, rangeUnchanged: flags[3] === 1, rangeShifted: flags[4] === 1,
+    align: alignments[0], alignBefore: alignments[1], alignAfter: alignments[2] });
+}
+// THE EXACT OUTCOME RULE the range format rests on, in ONE place so the decision and its comment cannot
+// drift apart. FIVE conditions, all required, and they are split by what they can do:
+//   1. THE PRIMARY LEG is the ADDRESSED PARAGRAPH'S OWN alignment, read back through the measured
+//      `GetParaPr().GetJc()` chain: the AFTER value must be READABLE and must BE the requested alignment.
+//      There is deliberately NO fallback on the region flags and NO "the value did not change" shortcut — an
+//      unreadable or disagreeing readback is a mutation this tool cannot claim, and the mutation has already
+//      run, so the ticket settles `APPLY_UNCERTAIN` with the slot HELD.
+//   2. THE SECONDARY SIGNALS can only REFUTE: the addressed REGION was read and is what it was
+//      (`rangeRead`/`rangeUnchanged`), it did not MOVE under the mutation (`rangeShifted` is false — a
+//      concurrent edit that shifts the text under the address is a non-success, not a silent format of
+//      whatever the offsets now cover), the addressed paragraph's TEXT is unchanged, and the document's
+//      paragraph count is unchanged.
+function exactRangeFormat(outcome) {
+  if (!outcome.rangeRead) return false;
+  if (outcome.alignAfter !== outcome.align) return false;
+  if (!outcome.rangeUnchanged) return false;
+  if (outcome.rangeShifted) return false;
+  if (!outcome.paragraphsStable) return false;
+  if (!outcome.textUnchanged) return false;
   return true;
 }
 // THE THREE-WAY SEPARATOR RULE. Every element boundary of the parsed export belongs to exactly one of
@@ -1956,6 +2284,19 @@ export function createR7Bridge(plugin, {
             if (!exactHeadingDelta(outcome)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE RANGE FORMAT. Its answer is the authored flat array of primitives, decoded with NO
+          // caller-supplied collection to pin against — this leg addresses exactly ONE paragraph and ONE
+          // region, so the answer's length is fixed by `decodeRange` and the phase gate is the whole of the
+          // length rule. The outcome rule then decides the ticket HERE, while it still owns the slot: an
+          // unreadable or disagreeing alignment readback, a region that moved, a paragraph whose text changed
+          // or a paragraph count that moved is the UNCERTAIN class with the slot HELD, never a known error
+          // about a document this call may already have reformatted. A decode that THROWS is classified by the
+          // catch below (a `[PRE_INSERT, name]` answer keeps its known code; everything else is uncertain).
+          else if (kind === 'rangeformat') {
+            const outcome = decodeRange(value);
+            if (!exactRangeFormat(outcome)) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE WHOLE-DOCUMENT READ. The value is the document's own `GetFileHTML` export, decoded by
           // the SAME two helpers the insert confirmation already uses: `decodeDocumentText` bounds the
           // EXPORT by its own ceiling and `documentText` parses it into the document's text. No third
@@ -1980,7 +2321,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert') && owned.dispatched && !preInsertRefusal(error)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat') && owned.dispatched && !preInsertRefusal(error)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -2190,6 +2531,33 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.heading(callback); }
           finally { clearScope(previousHeading); }
+        } else if (kind === 'rangeformat') {
+          // THE RANGE FORMAT: ONE command, and the SAME parameter channel the other read and write legs use —
+          // the validated `{ paragraph, start, end, align }` quadruple written into the page's `Asc.scope`,
+          // never composed into source (ADR 0002). It needs the entry point that OWNS that wrapper
+          // (`callCommand`); a build whose command channel is the bare `executeCommand` transport has no
+          // sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases the
+          // slot because nothing reached the editor.
+          // It carries NO document-identity probe, for the heading assignment's reason: this leg addresses a
+          // POSITION and an OFFSET pair, not an owned TARGET, so there is no handle whose identity a probe
+          // could establish. What it does instead is the subject of the body's own comment: the addressed
+          // paragraph's OWN ALIGNMENT is read through the measured `GetParaPr().GetJc()` chain before the one
+          // `SetJc` and again after it, the ADDRESSED REGION is read through a FRESH range on each side, and
+          // the paragraph count and the paragraph's text are required unchanged. THE READBACK IS THE PROOF and
+          // the range flags can only REFUTE, because the public `ApiTextPr`/`ApiRange` surface exposes NO
+          // getter for any character-level property (measured in the vendored SDK), which is also why the
+          // descriptor's schema advertises alignment and nothing else.
+          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a
+          // synchronous throw out of the transport must never release a slot whose work may already be queued,
+          // and the body's own pre-insert refusals keep their known class through the callback (they arrive as
+          // a `[PRE_INSERT, name]` answer, not as a throw).
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousRange;
+          try { previousRange = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.format(callback); }
+          finally { clearScope(previousRange); }
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -2631,6 +2999,67 @@ export function createR7Bridge(plugin, {
         return Object.freeze({ ok: true, styleName, headingsBefore: outcome.headingsBefore, headingsAfter: outcome.headingsAfter,
           paragraphsStable: outcome.paragraphsStable, textUnchanged: outcome.textUnchanged,
           styleRead: outcome.styleRead, styleMatches: outcome.styleMatches });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // THE RANGE FORMAT behind `format_range` — the FOURTH MUTATION of Sprint 3 and the SECOND write leg that
+    // appends nothing: it changes an EXISTING paragraph's ALIGNMENT in place through ONE
+    // `paragraph.GetParaPr().SetJc(...)` on an index the caller names, within a character range of that
+    // paragraph's own text. The body's own comment carries the mechanism (a pre-dispatch baseline of the
+    // paragraph count, the addressed paragraph's own text and alignment and the addressed REGION, then ONE
+    // `SetJc`, then the post read and the region re-read) and why no mutation primitive's return value is the
+    // signal; what matters HERE is the shape: ONE command on the ONE entry point that owns the parameter
+    // wrapper, the validated `{ paragraph, start, end, align }` quadruple carried as DATA through `Asc.scope`,
+    // and ONE strict decoder that turns the authored flat array — an explicit phase slot, five flags (the
+    // paragraph-count invariant, the unchanged text, the region read, the unchanged region and whether it
+    // moved) and the requested/measured/measured alignment triple — into the envelope below. The OUTCOME rule
+    // is then decided inside the ticket, before the slot is released, and the ALIGNMENT READBACK is the
+    // PRIMARY leg while the region flags can only REFUTE: an unread readback, a readable readback that
+    // disagrees, a region that moved, a paragraph count that moved, an answer that cannot be interpreted and
+    // the body's own POST-insert uncertainty are all `APPLY_UNCERTAIN` with the slot HELD and no retry, while
+    // the body's PRE-insert refusals (an unusable baseline, an index outside the document, offsets outside the
+    // paragraph, an unreadable pre-state alignment) settle their closed KNOWN class with the slot released,
+    // because nothing was mutated — and they do so ONLY when the answer carries their phase.
+    // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather
+    // than taken on trust: the bridge is a public entry point, and an address or an alignment this module
+    // never measured would let a caller format a paragraph the tool's own schema would have refused. The
+    // bounds and the vocabulary are the SAME ones the descriptor advertises (`LIMITS`), so a descriptor held
+    // directly and the tool that serves it cannot disagree about which refusal a caller receives.
+    async formatRange(raw) {
+      // THE LOCALS ARE NAMED SO THEY CANNOT SHADOW THE DISPATCHER. `start` is the bridge's own ticket
+      // opener in this closure, so the request's two offsets are bound as `from`/`to`: a local named
+      // `start` would make the dispatch below a call on a NUMBER, and the throw would be classified as an
+      // editor failure instead of reaching the editor at all.
+      const paragraph = raw?.paragraph, from = raw?.start, to = raw?.end, align = rangeAlign(raw?.align), signal = raw?.signal;
+      if (!Number.isSafeInteger(paragraph) || paragraph < 0 || paragraph > LIMITS.formatRangeIndexMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (!Number.isSafeInteger(from) || from < 0 || from > LIMITS.formatRangeOffsetMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (!Number.isSafeInteger(to) || to < 0 || to > LIMITS.formatRangeOffsetMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      // A REVERSED OR EMPTY RANGE IS NOT AN ADDRESS: `start === end` covers no character and `start > end` is
+      // a range the editor's own constructor would silently swap, so both are the closed argument class with
+      // NOTHING dispatched rather than a request this body would have to reinterpret.
+      if (!(from < to)) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (align === null) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      try {
+        ensureIdle();
+        if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('rangeformat', signal, {}, Object.freeze({ paragraph, start: from, end: to, align }));
+        // `align` is ECHOED, not dropped, exactly as `styleName` is: the tool derives it from the schema
+        // vocabulary and carries it to the body, so the tool can require the answer to name the SAME alignment
+        // it asked for — an `ok` envelope that names a different one was produced for a request this caller
+        // did not make. It is the one field here that is NOT a measurement of the document, and it is the
+        // request's own word.
+        return Object.freeze({ ok: true, align, alignBefore: outcome.alignBefore, alignAfter: outcome.alignAfter,
+          paragraphsStable: outcome.paragraphsStable, textUnchanged: outcome.textUnchanged,
+          rangeRead: outcome.rangeRead, rangeUnchanged: outcome.rangeUnchanged, rangeShifted: outcome.rangeShifted });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

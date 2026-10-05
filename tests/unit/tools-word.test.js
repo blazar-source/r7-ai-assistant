@@ -64,7 +64,7 @@ function fakeBridge(overrides = {}) {
 test('the representative descriptor set is well formed and policy-correct', () => {
   const tools = createWordTools(fakeBridge());
   const names = tools.map(tool => tool.name).sort();
-  assert.deepEqual(names, ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+  assert.deepEqual(names, ['find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_context', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
   assert.equal(tools.find(tool => tool.name === 'insert_paragraph').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').policy, 'auto');
   assert.equal(tools.find(tool => tool.name === 'insert_blocks').kind, 'mutate');
@@ -102,7 +102,7 @@ test('read_context is withheld from every catalogue until a public document read
   assert.equal(registry.tools.some(tool => tool.name === 'read_context'), false,
     'the published descriptor list must not hand out a withheld tool');
   assert.deepEqual(registry.tools.map(tool => tool.name).sort(),
-    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading'],
+    ['find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading'],
     'every non-denied Word descriptor is still published');
 });
 
@@ -320,7 +320,7 @@ test('registry accepts the word tools and filters them by mode', () => {
   // Ruling A: read_context is policy 'deny' until a public document read is confirmed, so EDIT offers
   // every confirmed tool and ASK exposes neither a mutation nor the unverified read.
   assert.deepEqual(edit.map(tool => tool.name).sort(),
-    ['find_text', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
+    ['find_text', 'format_range', 'insert_blocks', 'insert_paragraph', 'insert_table', 'read_document_text', 'read_paragraph', 'read_selection', 'read_structure', 'replace_selection', 'set_heading']);
   assert.deepEqual(ask.map(tool => tool.name), ['read_selection', 'read_document_text', 'read_paragraph', 'find_text', 'read_structure']);
 });
 
@@ -6526,3 +6526,714 @@ test('an already-heading target whose readback is unusable is not refused by gue
 });
 
 
+// --- Sprint 3, tool 8: `format_range` — the FOURTH MUTATION, and the ONE the SDK cannot read back ---
+//
+// THE SDK INSPECTION THAT DECIDES THIS LEG, quoted with its file:line so the contract can be re-derived
+// without re-reading a 15 MB bundle. The vendored 2026.1.2 editor SDK (dev-only,
+// `.local/stage-b-runtime/vendor-word-sdk-all.js`) carries the Word BUILDER API on line 87. `ApiRange`
+// (the `x` prototype) authors SETTERS ONLY — `SetBold`, `SetCaps`, `SetColor`, `SetDoubleStrikeout`,
+// `SetHighlight`, `SetShd`, `SetItalic`, `SetStrikeout`, `SetSmallCaps`, `SetSpacing`, `SetUnderline`,
+// `SetVertAlign`, `SetPosition`, `SetFontSize`, `SetFontFamily`, `SetStyle`, `SetTextPr` — plus `GetText`,
+// `Select`, `GetRange`, `GetElement`, `GetElementsCount`, `ToJSON`. The matching `ApiTextPr` (the `k`
+// prototype, whose `GetClassType` returns `"textPr"`) is the SAME shape: `SetBold`/`SetItalic`/
+// `SetStrikeout`/`SetUnderline`/`SetFontFamily`/`SetFontSize`/`SetColor`/`SetVertAlign`/`SetHighlight`/
+// `SetSpacing`/`SetDoubleStrikeout`/`SetCaps`/`SetSmallCaps`/`SetPosition`/`SetLanguage`/`SetShd`/`SetFill`/
+// `SetTextFill`/`SetOutLine`/`ToJSON` and NO `GetBold`/`GetItalic`/`GetUnderline`/`GetStrikeout`/`GetColor`/
+// `GetFontSize`/`GetFontFamily`/`GetHighlight` ANYWHERE in the bundle (`GetBold` occurs 8 times: four
+// penalty helpers on the spell-checker, `GetBoldCS`/`GetBoldItalic` on the DOCUMENT MODEL's text properties,
+// and the model's own `qt.prototype.GetBold` in the model bundle — never on a builder type). `ApiRange` also
+// caches its own text at CONSTRUCTION (`x.prototype.constructor` assigns `this.Text = this.GetText()`) and
+// carries its own EMPTY text-properties object (`this.TextPr = new CTextPr`), so `range.GetTextPr()` answers
+// the range's own scratch object, not the document's formatting, and a range HELD across a mutation would
+// compare a cached value with itself.
+//
+// THE ONE BUILDER TYPE THAT *DOES* READ BACK IS `ApiParaPr` (the `T` prototype): `GetJc`, `GetStyle`,
+// `GetIndLeft`, `GetIndRight`, `GetIndFirstLine`, `GetSpacingBefore`, `GetSpacingAfter`,
+// `GetSpacingLineValue`, `GetSpacingLineRule`, `GetShd`, `ToJSON`. `T.prototype.SetJc` sits directly beside
+// `T.prototype.GetJc`, and `GetJc` maps the model's alignment onto the CLOSED string vocabulary this tool
+// publishes: right / left / center / both (`align_Justify` → `"both"`).
+//
+// SO THE PROOF IS THE ADDRESSED PARAGRAPH'S OWN ALIGNMENT, READ BACK THROUGH
+// `paragraph.GetParaPr().GetJc()` — an EXACT, per-object readback of the very property the mutation sets, on
+// the very paragraph the range belongs to. NO CHARACTER-LEVEL PROPERTY IS ADVERTISED: the schema is closed
+// over the ONE property whose effect a measured signal can confirm, and the rest are refused AT THE SCHEMA
+// (as unknown keys) with zero writes. Advertising them while proving a text constancy would be exactly the
+// unverifiable property this round forbids.
+//
+// WHAT THE { paragraph, start, end } ADDRESS IS FOR, and what it is NOT. It is the leg's one address: the
+// body resolves it against the paragraph's own `GetRange`, requires the paragraph to EXIST and the offsets
+// to lie inside the document's own paragraph text BEFORE the mutation, and reads the SAME range again after
+// the mutation to require the addressed REGION unchanged. It is NOT a per-character formatting instruction:
+// the alignment setter is a PARAGRAPH property, so the effect is paragraph-wide and this tool says so.
+// The address is a BOUNDARY, not a scope.
+function formatRangeTool(bridge) { return createWordTools(bridge).find(entry => entry.name === 'format_range'); }
+// A bridge double whose `formatRange` records the ONE request and answers a supplied envelope. The envelopes
+// are built from the same fields the REAL bridge publishes, so a handler check that passes here is a check
+// the real decoder's shape satisfies.
+function formatBridge(answer, extras = {}) {
+  const seen = [];
+  return { seen, formatRange: async (args) => { seen.push(args); return typeof answer === 'function' ? answer(args) : answer; }, ...extras };
+}
+// The envelope the REAL bridge publishes for a verified range format: the requested alignment ECHOED (so the
+// tool can require the answer to name the request it made) and the measured before/after readback.
+function formatted(overrides = {}) {
+  return { ok: true, align: 'center', alignBefore: 'left', alignAfter: 'center', paragraphsStable: true,
+    textUnchanged: true, rangeRead: true, rangeUnchanged: true, rangeShifted: false, ...overrides };
+}
+// THE DOCUMENT DOUBLE, and every fault this leg must survive is a REAL state change on it. The two
+// ingredients the SDK inspection above makes load-bearing are reproduced exactly:
+//   * `GetRange(start, end)` answers a FRESH range object (which is what the editor does), so a range is
+//     never re-read through a stale cache: the constructor caches its text at construction, and a body that
+//     held ONE range across the mutation would compare a value with itself;
+//   * `GetParaPr().GetJc()` answers the paragraph's OWN alignment in the measured vocabulary, and the ONE
+//     mutating call is `paragraph.GetParaPr().SetJc(value)` — the setters are the only side the SDK offers,
+//     which is why the readback is the paragraph's and not the range's.
+function formatDocument({ texts = ['первый абзац', 'второй абзац'], aligns = null, apply = true, span = null,
+  shift = null, mutateParagraph = null, jcReturns = null, noGetRange = false, jcThrows = false,
+  concurrent = null, paragraphsThrows = false } = {}) {
+  const state = { mutations: 0, mutated: [], spans: [], reads: 0 };
+  const doubles = texts.map((text, index) => ({
+    text,
+    align: aligns === null || aligns[index] === undefined ? 'left' : aligns[index],
+    // THE ONE MUTATING PRIMITIVE, on the paragraph the body ADDRESSED through the range. A run that mutates
+    // TWO paragraphs (the `mutateParagraph` fault) must still show ONE dispatch: the tests assert
+    // `state.mutations` is exactly one, which is the property that matters for the write slot.
+    GetParaPr() {
+      const self = this;
+      if (jcThrows) return { GetJc() { throw new Error('СЕКРЕТ-ДОКУМЕНТА'); }, SetJc() {} };
+      return {
+        // `jcReturns` models a build whose GETTER answers something the measured vocabulary does not hold; the
+        // body treats an answer outside the four words as the ABSENCE of a measurement and refuses before the
+        // one mutation, which is the same closed class a missing `GetJc` produces.
+        GetJc() {
+          if (jcReturns !== null && jcReturns !== undefined) return jcReturns;
+          return self.align;
+        },
+        SetJc(value) {
+          state.mutations += 1;
+          state.mutated.push(index);
+          if (concurrent !== null && self.text !== concurrent) self.text = concurrent;
+          // A ROUTE THAT WROTE THE WRONG PARAGRAPH: the addressed paragraph's own alignment is deliberately
+          // LEFT ALONE (the mutation was dispatched somewhere else), which is exactly the fault the
+          // per-object readback exists to catch. The double is not told what the request was, so the
+          // readback — not the mock — decides the outcome.
+          if (mutateParagraph !== null) {
+            const other = doubles[mutateParagraph];
+            if (other !== undefined) other.align = value;
+            return;
+          }
+          if (apply) self.align = value;
+        }
+      };
+    },
+    GetText() { return this.text; }
+  }));
+  function rangeOf(index, start, finish) {
+    const double = doubles[index];
+    if (noGetRange) return null;
+    // THE ADDRESSED REGION MOVES BETWEEN THE TWO READS: the SECOND read of this region answers a different
+    // span, which is what a concurrent edit under the address does. The setter is not involved — the body
+    // reads the SAME offsets twice — so this is the range leg alone, in the direction that refutes.
+    state.reads += 1;
+    const moved = shift !== null && state.reads > 1;
+    const from = moved ? shift[0] : (span === null ? start : span[0]);
+    const to = moved ? shift[1] : (span === null ? finish : span[1]);
+    return {
+      GetText() { state.spans.push([index, from, to]); return double.text.slice(from, to); },
+      GetClassType() { return 'range'; },
+      // THE RANGE'S OWN SETTERS ARE MODELLED AND DELIBERATELY INERT: they are the route an UNVERIFIABLE
+      // property would have to take, and the schema closes them out before they can be addressed. Nothing
+      // in this leg calls them.
+      SetBold() { return this; }, SetItalic() { return this; }, SetFontSize() { return this; }
+    };
+  }
+  function documentParagraphs() {
+    if (paragraphsThrows) throw new Error('СЕКРЕТ-ДОКУМЕНТА');
+    return doubles.map((double, index) => ({
+      GetText() { return double.text; },
+      GetRange(start, finish) { return rangeOf(index, start, finish); },
+      GetParaPr() { return double.GetParaPr(); }
+    }));
+  }
+  return { state, doubles, document: {
+    GetAllParagraphs() { return documentParagraphs(); },
+    // The override wrapper in `formatRig` needs the REAL generator so a rescoping override still hands back
+    // the double's OWN paragraph objects (and therefore still really mutates).
+    documentParagraphs,
+    GetAllHeadingParagraphs() { return []; },
+    GetStyle() { return { GetName() { return 'Normal'; } }; },
+    Push() { state.pushes = (state.pushes ?? 0) + 1; },
+    InsertContent() { state.insertContents = (state.insertContents ?? 0) + 1; }
+  } };
+}
+// The IN-EDITOR rig, exactly the carriage `headingRig` reproduces: the vendor wrapper reads `Asc.scope`
+// SYNCHRONOUSLY and evaluates the body in a fresh, module-free scope whose only bindings are `Api` and
+// `scope`. `forge` replaces the answer the body really produced AFTER that body ran to completion — the one
+// real `SetJc` included — which is the only way to model a hostile native answer for a dispatched write
+// without weakening the body.
+function formatRig(options = {}) {
+  const commands = [];
+  const measured = formatDocument(options);
+  // `override` replaces ONE method on the SAME document double the assertions inspect, so a test that models
+  // an unusable primitive still reads the state of the document it drove. An override of `GetAllParagraphs`
+  // is WRAPPED, not substituted: it receives the double's OWN paragraph objects (so the ONE mutating call
+  // still really writes) and may narrow or rescope what it returns.
+  const document = options.override === undefined ? measured.document : (() => {
+    const overridden = { ...measured.document, ...options.override };
+    if (typeof options.override.GetAllParagraphs === 'function') {
+      const inner = options.override.GetAllParagraphs;
+      overridden.GetAllParagraphs = function (...rest) { return inner.apply(measured.document, rest); };
+    }
+    return overridden;
+  })();
+  const api = { GetDocument: () => document };
+  const plugin = { info: { editorType: 'word' },
+    callCommand: options.command === false ? undefined : function (body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = carrier.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', body, source, close, recalculate, scope, answered });
+      callback(options.forge === undefined ? answered : options.forge);
+      return false;
+    } };
+  const carrier = options.namespace ?? { scope: {} };
+  const bridgeOptions = { editorType: 'word', clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } };
+  if (options.omitCarrier !== true) bridgeOptions.ascNamespace = carrier;
+  const bridge = bridgeWith(plugin, bridgeOptions);
+  return { bridge, plugin, commands, namespace: carrier, api, doc: measured };
+}
+const RANGE_REQUEST = Object.freeze({ paragraph: 1, start: 1, end: 4, format: { align: 'center' } });
+// The TOOL request: the caller's closed shape, with the alignment inside `format`.
+const rangeRequest = (overrides = {}) => ({ ...RANGE_REQUEST, ...overrides });
+// The same address in the shape the BRIDGE dispatches and the body receives as its scope: FLAT, with the
+// already-resolved alignment. The schema's `format` object is the caller's shape only — the bridge's entry
+// point takes the resolved alignment — so the two shapes are kept apart rather than blurred.
+const rangeScope = (overrides = {}) => ({
+  paragraph: overrides.paragraph ?? RANGE_REQUEST.paragraph,
+  start: overrides.start ?? RANGE_REQUEST.start,
+  end: overrides.end ?? RANGE_REQUEST.end,
+  align: overrides.format === undefined ? (overrides.align ?? RANGE_REQUEST.format.align) : overrides.format.align
+});
+
+test('format_range advertises the closed bounded schema and the ONE property it can verify', () => {
+  const tool = formatRangeTool(formatBridge(formatted()));
+  assert.equal(tool.name, 'format_range');
+  assert.equal(tool.kind, 'mutate');
+  assert.deepEqual([...tool.editors], ['word']);
+  assert.equal(tool.policy, 'auto');
+  assert.deepEqual([...tool.requires], ['document.write']);
+  const schema = tool.schema;
+  assert.equal(schema.type, 'object');
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, ['paragraph', 'start', 'end', 'format']);
+  // THE CLOSED PROPERTY SET, closed at BOTH levels: the top level names the address and the one `format`
+  // object, and `format` names the ONE property the SDK inspection found a measured readback for. There is
+  // no `bold`, no `italic`, no `size`, no `color`, no `family` and no `highlight`: the builder API exposes
+  // SETTERS ONLY for those, so a tool that advertised them could only ever prove a text constancy, which is
+  // not the property it was asked to apply.
+  assert.deepEqual(Object.keys(schema.properties), ['paragraph', 'start', 'end', 'format']);
+  assert.equal(schema.properties.paragraph.type, 'integer');
+  assert.equal(schema.properties.paragraph.minimum, 0);
+  assert.equal(schema.properties.paragraph.maximum, LIMITS.formatRangeIndexMax);
+  assert.equal(schema.properties.start.type, 'integer');
+  assert.equal(schema.properties.start.minimum, 0);
+  assert.equal(schema.properties.start.maximum, LIMITS.formatRangeOffsetMax);
+  assert.equal(schema.properties.end.type, 'integer');
+  assert.equal(schema.properties.end.minimum, 0);
+  assert.equal(schema.properties.end.maximum, LIMITS.formatRangeOffsetMax);
+  assert.equal(schema.properties.format.type, 'object');
+  assert.equal(schema.properties.format.additionalProperties, false);
+  assert.deepEqual(schema.properties.format.required, ['align']);
+  assert.deepEqual(Object.keys(schema.properties.format.properties), ['align']);
+  assert.deepEqual(schema.properties.format.properties.align.enum, ['left', 'center', 'right', 'both']);
+  // THE MEASURED VOCABULARY, in the order the getter answers it, and `both` is the JUSTIFY value the editor
+  // itself uses (quoted from `T.prototype.GetJc` of the vendored SDK).
+  assert.deepEqual([...LIMITS.formatRangeAlign], ['left', 'center', 'right', 'both']);
+  // THE BOUNDS ARE PINNED AS NUMBERS AND AS DISTINCT QUANTITIES: an offset bound is not an index bound, and
+  // neither is an alias of the heading index bound, which bounds the SAME KIND of quantity for another tool.
+  assert.equal(LIMITS.formatRangeIndexMax, 128);
+  assert.equal(LIMITS.formatRangeOffsetMax, 8192);
+  assert.notEqual(LIMITS.formatRangeIndexMax, LIMITS.insertTableRowsMax, 'an index for this leg is not a table cap');
+  assert.notEqual(LIMITS.formatRangeOffsetMax, LIMITS.formatRangeIndexMax, 'an offset is not an index');
+  assert.notEqual(LIMITS.formatRangeOffsetMax, LIMITS.insertBlockBytes, 'an offset bound is not a text-byte bound');
+  assert.deepEqual(validateArguments(schema, { paragraph: 0, start: 0, end: 1, format: { align: 'left' } }),
+    { paragraph: 0, start: 0, end: 1, format: { align: 'left' } });
+});
+
+test('format_range refuses every illegal argument with nothing dispatched, at the schema or in the handler', async () => {
+  const legal = { paragraph: 0, start: 0, end: 1, format: { align: 'left' } };
+  const illegal = [
+    ['no argument object', null], ['missing paragraph', { start: 0, end: 1, format: { align: 'left' } }],
+    ['missing start', { paragraph: 0, end: 1, format: { align: 'left' } }],
+    ['missing end', { paragraph: 0, start: 0, format: { align: 'left' } }],
+    ['missing format', { paragraph: 0, start: 0, end: 1 }],
+    ['an unknown top-level key', { ...legal, text: 'а' }],
+    // THE CHARACTER-FORMATTING KEYS ARE REFUSED HERE, and that is the whole point of the SDK inspection: the
+    // builder API cannot read ANY of them back, so this tool must not advertise them.
+    ['an unknown format property (bold)', { ...legal, format: { align: 'left', bold: true } }],
+    ['an unknown format property (italic)', { ...legal, format: { align: 'left', italic: true } }],
+    ['an unknown format property (size)', { ...legal, format: { align: 'left', size: 14 } }],
+    ['an unknown format property (color)', { ...legal, format: { align: 'left', color: '#FF0000' } }],
+    ['an empty format object', { ...legal, format: {} }],
+    ['start equal to end', { paragraph: 0, start: 3, end: 3, format: { align: 'left' } }],
+    ['start greater than end', { paragraph: 0, start: 5, end: 2, format: { align: 'left' } }],
+    ['a negative start', { paragraph: 0, start: -1, end: 2, format: { align: 'left' } }],
+    ['a negative end', { paragraph: 0, start: 0, end: -2, format: { align: 'left' } }],
+    ['a negative paragraph', { paragraph: -1, start: 0, end: 1, format: { align: 'left' } }],
+    ['an index over the advertised cap', { paragraph: LIMITS.formatRangeIndexMax + 1, start: 0, end: 1, format: { align: 'left' } }],
+    ['an over-bound start', { paragraph: 0, start: LIMITS.formatRangeOffsetMax + 1, end: LIMITS.formatRangeOffsetMax + 2, format: { align: 'left' } }],
+    ['an over-bound end', { paragraph: 0, start: 0, end: LIMITS.formatRangeOffsetMax + 1, format: { align: 'left' } }],
+    ['a non-integer start', { paragraph: 0, start: 1.5, end: 3, format: { align: 'left' } }],
+    ['a stringified end', { paragraph: 0, start: 0, end: '2', format: { align: 'left' } }],
+    ['an alignment outside the measured vocabulary', { ...legal, format: { align: 'justify' } }],
+    ['an alignment that is not a string', { ...legal, format: { align: 1 } }],
+    ['an empty alignment', { ...legal, format: { align: '' } }]
+  ];
+  for (const [label, args] of illegal) {
+    const bridge = formatBridge(formatted());
+    const tool = formatRangeTool(bridge);
+    let schemaRefused = false;
+    try { validateArguments(tool.schema, args); }
+    catch (error) { schemaRefused = true; assert.equal(error.code, 'TOOL_ERROR', label); }
+    if (!schemaRefused) {
+      const result = await tool.execute(args, { editor: 'word' });
+      assert.equal(result.ok, false, label);
+      assert.equal(result.code, 'TOOL_ERROR', label);
+      assert.equal(result.data, undefined, label);
+    }
+    assert.deepEqual(bridge.seen, [], `${label}: nothing is dispatched for an illegal argument`);
+  }
+});
+
+test('format_range refuses an editor that is not Word and a bridge that cannot serve it', async () => {
+  const bridge = formatBridge(formatted());
+  const tool = formatRangeTool(bridge);
+  for (const editor of ['cell', 'slide', 'unknown', undefined]) {
+    const result = await tool.execute({ paragraph: 0, start: 0, end: 1, format: { align: 'left' } }, { editor });
+    assert.equal(result.ok, false, String(editor));
+    assert.equal(result.code, 'CAPABILITY_UNAVAILABLE', String(editor));
+  }
+  assert.deepEqual(bridge.seen, [], 'a wrong editor refuses before any dispatch');
+  // A bridge that is not the real one at all, and one that simply does not expose the entry point.
+  const absent = await formatRangeTool({ seen: [] }).execute({ paragraph: 0, start: 0, end: 1, format: { align: 'left' } }, { editor: 'word' });
+  assert.deepEqual(absent, { ok: false, code: 'CAPABILITY_UNAVAILABLE', message: 'отказ' });
+});
+
+test('format_range dispatches exactly ONE bridge call and publishes only the fields it proved', async () => {
+  const bridge = formatBridge(formatted({ alignAfter: 'right', align: 'right' }));
+  const controller = new AbortController();
+  const result = await formatRangeTool(bridge).execute(rangeRequest({ paragraph: 2, start: 3, end: 6, format: { align: 'right' } }),
+    { editor: 'word', signal: controller.signal });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, { paragraph: 2, start: 3, end: 6, align: 'right', alignBefore: 'left', alignAfter: 'right',
+    paragraphsStable: true, textUnchanged: true, rangeRead: true, rangeUnchanged: true, rangeShifted: false,
+    bytes: utf8ByteLength('2:3:6:right') });
+  assert.deepEqual(Object.keys(result.data),
+    ['paragraph', 'start', 'end', 'align', 'alignBefore', 'alignAfter', 'paragraphsStable', 'textUnchanged',
+      'rangeRead', 'rangeUnchanged', 'rangeShifted', 'bytes'],
+    'the measured fields and nothing else: an envelope cannot smuggle a field into the entry');
+  assert.equal(bridge.seen.length, 1, 'EXACTLY one bridge call: the format is dispatched once and never retried');
+  assert.deepEqual(bridge.seen[0], { paragraph: 2, start: 3, end: 6, align: 'right', signal: controller.signal });
+  assert.equal(bridge.seen[0].signal, controller.signal, 'the caller signal crosses so a Stop cancels before the dispatch');
+});
+
+test('format_range publishes ok ONLY for the exact proof, and never retries otherwise', async () => {
+  // THE PROOF'S LEGS, broken ONE AT A TIME. Every envelope below is one a damaged or hostile native could
+  // hand back, and none of them may become an `ok`: the readback is the PRIMARY leg, and the secondary
+  // signals can only REFUTE it.
+  const wrong = [
+    ['the readback was never read', { rangeRead: false }],
+    ['the addressed REGION moved', { rangeUnchanged: false }],
+    ['the room the region occupies moved under it', { rangeShifted: true }],
+    ['the addressed paragraph text changed', { textUnchanged: false }],
+    ['the document paragraph count moved', { paragraphsStable: false }]
+  ];
+  const request = rangeRequest({ paragraph: 1, start: 1, end: 4 });
+  const run = async (answer) => {
+    const bridge = formatBridge(answer);
+    return { result: await formatRangeTool(bridge).execute(request, { editor: 'word' }), bridge };
+  };
+  const verified = await run(formatted());
+  assert.equal(verified.result.ok, true);
+  assert.equal(verified.bridge.seen.length, 1);
+  for (const [label, overrides] of wrong) {
+    const { result, bridge } = await run(formatted(overrides));
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.message, 'отказ', label);
+    assert.equal(result.data, undefined, `${label}: an uncertain outcome publishes no proof`);
+    assert.equal(bridge.seen.length, 1, `${label}: NO retry — the format was dispatched exactly once`);
+  }
+  // THE READBACK THAT DOES NOT MATCH THE REQUEST IS THE SAME CONTRADICTION, whichever way it differs: an `ok`
+  // naming another alignment, an `ok` whose AFTER value is not one the getter can answer at all, and an echo
+  // that names a request this handler never made.
+  for (const [label, overrides] of [
+    ['the readback names a DIFFERENT alignment', { alignAfter: 'right' }],
+    ['the echo names a DIFFERENT alignment than requested', { align: 'left' }]
+  ]) {
+    const { result, bridge } = await run(formatted(overrides));
+    assert.equal(result.code, 'TOOL_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+    assert.equal(bridge.seen.length, 1, `${label}: still exactly one dispatch`);
+  }
+  // A `before` READBACK THAT DIFFERS IS NOT ITSELF A CONTRADICTION, and it is worth pinning: the pre-state is
+  // a MEASUREMENT of what the paragraph carried, not a restatement of the request, so a paragraph that was
+  // already right-aligned verifies on the AFTER readback like any other. Only the AFTER value and the region
+  // flags can refute.
+  const preAligned = await run(formatted({ alignBefore: 'right' }));
+  assert.equal(preAligned.result.ok, true, 'a paragraph that was already another alignment still verifies');
+  // AN ENVELOPE THIS BRIDGE CANNOT HAVE PRODUCED is the module's unknown class instead: a flag that is not a
+  // boolean, a missing field, and an alignment slot that is not one of the four measured words. It is checked
+  // BEFORE the flags, because there is nothing about a mutation to judge in a shape the decoder can never
+  // publish — the body keeps an UNREADABLE readback apart by refusing before the mutation, so an unread
+  // readback reaches this handler only as `rangeRead: false`, which is the UNCERTAIN class below.
+  for (const [label, overrides] of [
+    ['a flag that is not a boolean', { textUnchanged: 'да' }],
+    ['a missing flag', { paragraphsStable: undefined }],
+    ['an alignment slot outside the measured vocabulary', { alignAfter: 'justify' }],
+    ['an alignment slot that is not a string at all', { alignAfter: 7 }]
+  ]) {
+    const { result, bridge } = await run(formatted(overrides));
+    assert.equal(result.code, 'TOOL_ERROR', label);
+    assert.equal(bridge.seen.length, 1, `${label}: the call was still dispatched exactly once`);
+  }
+});
+
+test('format_range maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run', async () => {
+  const legal = { paragraph: 0, start: 0, end: 1, format: { align: 'left' } };
+  const returned = formatBridge({ ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(await formatRangeTool(returned).execute(legal, { editor: 'word' }),
+    { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' });
+  const thrown = formatBridge(null, { formatRange: async () => { throw Object.assign(new Error('x'), { code: 'APPLY_UNCERTAIN' }); } });
+  assert.deepEqual(await formatRangeTool(thrown).execute(legal, { editor: 'word' }),
+    { ok: false, code: 'TOOL_UNCERTAIN', message: 'отказ' });
+  // A CLOSED CLASS THE BRIDGE REPORTED IS REPUBLISHED, and anything else keeps the module's own fallback: a
+  // raw failure whose code is not in the vocabulary is never echoed to the model.
+  const refused = formatBridge({ ok: false, code: 'BYTE_LIMIT' });
+  assert.equal((await formatRangeTool(refused).execute(legal, { editor: 'word' })).code, 'BYTE_LIMIT');
+  const broken = formatBridge(null, { formatRange: async () => { throw Object.assign(new Error('СЕКРЕТ'), { code: 'НЕИЗВЕСТНО' }); } });
+  assert.deepEqual(await formatRangeTool(broken).execute(legal, { editor: 'word' }),
+    { ok: false, code: 'TOOL_ERROR', message: 'отказ' });
+  for (const answer of [null, 'строка', 7]) {
+    const odd = formatBridge(answer);
+    assert.deepEqual(await formatRangeTool(odd).execute(legal, { editor: 'word' }),
+      { ok: false, code: 'TOOL_ERROR', message: 'отказ' }, String(answer));
+  }
+});
+
+test('format_range measures the exact entry it publishes, and its bounded fields cannot reach the ceiling', async () => {
+  const bridge = formatBridge(formatted());
+  const result = await formatRangeTool(bridge).execute({ paragraph: 1, start: 1, end: 4, format: { align: 'center' } }, { editor: 'word' });
+  assert.equal(result.ok, true);
+  const entry = JSON.stringify({ tool: 'format_range', ok: true, data: result.data });
+  assert.ok(utf8ByteLength(entry) < AGENT_CEILINGS.toolResultBytes, 'the published entry fits the runtime ceiling');
+  // THE WIDEST LEGAL ENTRY, measured rather than assumed: every field at its own bound.
+  const widestData = { paragraph: LIMITS.formatRangeIndexMax, start: LIMITS.formatRangeOffsetMax - 1,
+    end: LIMITS.formatRangeOffsetMax, align: 'center', alignBefore: 'left', alignAfter: 'center',
+    paragraphsStable: true, textUnchanged: true, rangeRead: true, rangeUnchanged: true, rangeShifted: false,
+    bytes: LIMITS.formatRangeOffsetMax };
+  const widest = JSON.stringify({ tool: 'format_range', ok: true, data: widestData });
+  assert.ok(utf8ByteLength(widest) < AGENT_CEILINGS.toolResultBytes,
+    'eleven bounded scalars cannot fill a 16384-byte entry');
+  const crossed = toolResultMessages([{ tool: 'format_range', result: { ok: true, data: widestData } }]);
+  assert.equal(JSON.parse(crossed[0].content).results[0].data.paragraph, LIMITS.formatRangeIndexMax);
+});
+
+test('bridge formatRange dispatches ONE command, carries the address as DATA and verifies the exact proof', async () => {
+  const namespace = { scope: 'предыдущая-область' };
+  const r = formatRig({ texts: ['Ноль', 'Цель', 'Два'], namespace });
+  const pending = r.bridge.formatRange(rangeScope({ start: 1, end: 3, align: 'center' }));
+  assert.equal(r.commands.length, 1, 'exactly ONE command is dispatched for the whole operation');
+  const carried = r.commands[0];
+  assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
+  assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
+  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
+  assert.equal(carried.recalculate, false);
+  assert.deepEqual(carried.scope, { paragraph: 1, start: 1, end: 3, align: 'center' },
+    'the address crosses as the command SCOPE, never interpolated into source');
+  assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no request outlives its dispatch');
+  assert.deepEqual(carried.answered, ['POST_INSERT', 1, 1, 1, 1, 0, 'center', 'left', 'center'],
+    'the body encodes the explicit phase slot, four flags, the echo and the measured before/after readback');
+  assert.deepEqual(await pending, { ok: true, align: 'center', alignBefore: 'left', alignAfter: 'center',
+    paragraphsStable: true, textUnchanged: true, rangeRead: true, rangeUnchanged: true, rangeShifted: false });
+  assert.deepEqual(r.doc.doubles.map(double => double.align), ['left', 'center', 'left'],
+    'the ADDRESSED paragraph is the one that changed, and no other paragraph was touched');
+  assert.equal(r.doc.state.mutations, 1, 'the ONE mutation is a single SetJc');
+  assert.equal(r.doc.state.pushes, undefined, 'nothing is appended: this leg changes an EXISTING paragraph in place');
+  assert.equal(r.doc.state.insertContents, undefined, 'and the legacy whole-array primitive — which lands at the START — is never called');
+  assert.equal(r.doc.state.spans.length >= 2, true, 'the addressed range is really read, before and after the mutation');
+  assert.equal(r.bridge.getState().busy, false, 'the slot is released by the native callback');
+  assert.equal(r.bridge.getState().writePending, false);
+  assert.equal(r.bridge.getState().uncertain, false);
+});
+
+test('the format body is self-contained: it answers the measured shapes in a fresh, module-free scope', async () => {
+  const r = formatRig({ texts: ['Ноль', 'Цель'], namespace: { scope: { paragraph: 1, start: 0, end: 2, align: 'both' } } });
+  const pending = r.bridge.formatRange(rangeScope({ paragraph: 1, start: 0, end: 2, align: 'both' }));
+  const carried = r.commands[0];
+  assert.equal(/\b(?:capabilityBody|contextBody|commandTransport|createCommandDispatch|decodeBlocks|decodeSearch|decodeStructure|decodeTable|decodeHeading|decodeRange|exactBlocksDelta|exactTableDelta|exactHeadingDelta|exactRangeFormat|preInsertRefusal|pluginOwners|createR7Bridge)\b/.test(carried.source),
+    false, 'the stringified body names no module binding of bridge.js');
+  assert.match(carried.source, /typeof Api !== 'undefined'/, 'and it builds the public Api facade itself');
+  // THE ONE MUTATING CALL IS THE PARAGRAPH'S OWN ALIGNMENT SETTER, reached through the paragraph the ADDRESSED
+  // RANGE belongs to — never through a range-level setter, and never through an append.
+  assert.match(withoutComments(carried.source), /SetJc\(/, 'the ONE mutating call is SetJc');
+  assert.match(withoutComments(carried.source), /GetJc\(\)/, 'and the proof reads the alignment back through the measured getter');
+  assert.match(withoutComments(carried.source), /GetRange\(/, 'the address is resolved through the paragraph\'s own GetRange');
+  assert.match(withoutComments(carried.source), /GetAllParagraphs\(/, 'and the document\'s own paragraph list is the snapshot the index is checked against');
+  assert.equal(withoutComments(carried.source).includes('InsertContent'), false, 'the legacy whole-array primitive is authored nowhere');
+  assert.equal(withoutComments(carried.source).includes('Push('), false, 'and nothing is appended: this leg is not an insert');
+  // The EDITOR'S own evaluation, on a FRESH document so the assertion is about the body's answer and not about
+  // how many times the rig ran it. Only `Api` and `scope` are bound here, so a body that closed over a module
+  // binding would raise ReferenceError exactly as it did natively on 2026.3.1.
+  const fresh = formatDocument({ texts: ['Ноль', 'Цель'] });
+  const freshApi = { GetDocument() { return fresh.document; } };
+  const evaluated = new Function('Api', 'scope', 'return (' + carried.source + ')();')(freshApi, carried.scope);
+  assert.deepEqual(evaluated, ['POST_INSERT', 1, 1, 1, 1, 0, 'both', 'left', 'both'],
+    'the request arrived as DATA and the readback is the document\'s own');
+  assert.equal(fresh.state.mutations, 1, 'exactly one mutation, on the paragraph the address named');
+  assert.equal(fresh.doubles[1].align, 'both');
+  assert.equal(fresh.doubles[0].align, 'left');
+  assert.equal((await pending).alignAfter, 'both');
+});
+
+test('the address is a BOUNDARY: an out-of-range paragraph or a range past the paragraph end writes nothing', async () => {
+  // A paragraph index OUTSIDE the document is the body's own closed argument class, decided from the
+  // document's OWN array BEFORE anything is mutated — the fail-closed half of the index bound.
+  for (const index of [2, LIMITS.formatRangeIndexMax]) {
+    const request = rangeScope({ paragraph: index });
+    const r = formatRig({ texts: ['Ноль', 'Цель'], namespace: { scope: request } });
+    assert.deepEqual(await r.bridge.formatRange(request), { ok: false, code: 'TOOL_ERROR' }, `paragraph ${index}`);
+    assert.equal(r.doc.state.mutations, 0, `paragraph ${index}: ZERO writes`);
+    assert.equal(r.bridge.getState().busy, false, `paragraph ${index}: and the slot is RELEASED — nothing was mutated`);
+    assert.equal(r.commands.length, 1, `paragraph ${index}: the body decided it, not the bridge`);
+  }
+  // THE OFFSETS ARE CHECKED AGAINST THE PARAGRAPH'S OWN LENGTH, not against the schema bound alone: a range
+  // whose END lies past the text the paragraph really holds is the same closed argument class with ZERO
+  // writes. Both offsets are finite and inside the advertised bound, so only the document can refuse.
+  for (const [label, request] of [
+    ['an end past the paragraph text', rangeScope({ start: 0, end: 6 })],
+    ['a start past the paragraph text', rangeScope({ start: 5, end: 6 })],
+    ['both offsets past the paragraph text', rangeScope({ start: 9, end: 10 })]
+  ]) {
+    const r = formatRig({ texts: ['Ноль', 'Цель'], namespace: { scope: request } });
+    assert.deepEqual(await r.bridge.formatRange(request), { ok: false, code: 'TOOL_ERROR' }, label);
+    assert.equal(r.doc.state.mutations, 0, `${label}: ZERO writes`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: and the slot is RELEASED`);
+  }
+  // AND AN UNUSABLE PRE-DISPATCH BASELINE — a paragraph list that throws, or a paragraph without a range
+  // primitive — is the closed CAPABILITY class with ZERO writes, never a range applied to `undefined`.
+  for (const [label, options] of [
+    ['a paragraph list that throws', { paragraphsThrows: true }],
+    ['a paragraph with no GetRange', { noGetRange: true }]
+  ]) {
+    const request = rangeScope();
+    const r = formatRig({ texts: ['Ноль', 'Цель'], ...options, namespace: { scope: request } });
+    assert.deepEqual(await r.bridge.formatRange(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, label);
+    assert.equal(r.doc.state.mutations, 0, `${label}: ZERO writes`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: nothing reached the document, so nothing is held`);
+  }
+});
+
+test('a format that lands on the WRONG paragraph or leaves the readback unreadable is UNCERTAIN with the slot HELD', async () => {
+  // THE WAYS THE EXACT PROOF CAN FAIL ON THE MEASURED ROUTE, each driven through the REAL body against a
+  // document double whose alignment setter really writes state.
+  //   1. A ROUTE THAT MUTATED A DIFFERENT PARAGRAPH. This is the fault the per-object readback exists for:
+  //      the addressed paragraph's own alignment never moved, so the AFTER readback is not the request.
+  const other = formatRig({ texts: ['Ноль', 'Цель'], mutateParagraph: 0, namespace: { scope: rangeScope() } });
+  assert.deepEqual(await other.bridge.formatRange(rangeScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(other.doc.state.mutations, 1, 'the mutation WAS dispatched exactly once');
+  assert.equal(other.bridge.getState().busy, true, 'the slot is HELD for an uncertain outcome');
+  assert.equal(other.bridge.getState().uncertain, true);
+  assert.equal(other.bridge.getState().writePending, true, 'the write lock stays engaged, so no second mutation can start');
+  assert.deepEqual(await other.bridge.formatRange(rangeScope()), { ok: false, code: 'EDITOR_BUSY' }, 'no retry');
+  //   2. A ROUTE THAT APPLIED NOTHING: the same readback, the other direction.
+  const nothing = formatRig({ texts: ['Ноль', 'Цель'], apply: false, namespace: { scope: rangeScope() } });
+  assert.deepEqual(await nothing.bridge.formatRange(rangeScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(nothing.bridge.getState().busy, true);
+  //   3. AN UNREADABLE PRE-STATE IS REFUSED BEFORE THE MUTATION, because the readback chain the outcome
+  //      rests on is the ONLY evidence this leg has: with no readable `GetJc` the body cannot even tell
+  //      whether the paragraph carries an alignment, so it answers the closed CAPABILITY class with ZERO
+  //      writes and RELEASES the slot rather than mutating a paragraph it could never prove anything about.
+  //      Every member of the chain is a function check before its call and the whole probe sits in its own
+  //      `try`, so a missing primitive, a missing method and a throwing getter are the same closed answer.
+  for (const [label, options] of [
+    // The two READBACK-side shapes are modelled on the DOUBLE'S OWN paragraph objects — the wrapper hands the
+    // override the real array, so the addressed paragraph is the one the body would have mutated — by
+    // stripping the one method the readback chain needs. That is what a build without the chain answers.
+    ['a paragraph with no GetJc at all', { override: { GetAllParagraphs() {
+      const list = this.documentParagraphs();
+      list[1].GetParaPr = () => ({});
+      return list;
+    } } }],
+    ['a GetJc that THROWS', { jcThrows: true }],
+    ['a paragraph with no GetParaPr at all', { override: { GetAllParagraphs() {
+      const list = this.documentParagraphs();
+      delete list[1].GetParaPr;
+      return list;
+    } } }]
+  ]) {
+    const r = formatRig({ texts: ['Ноль', 'Цель'], ...options, namespace: { scope: rangeScope() } });
+    assert.deepEqual(await r.bridge.formatRange(rangeScope()), { ok: false, code: 'CAPABILITY_UNAVAILABLE' }, label);
+    assert.equal(r.doc.state.mutations, 0, `${label}: ZERO writes — nothing was mutated on an unprovable address`);
+    assert.equal(r.bridge.getState().busy, false, `${label}: the slot is RELEASED`);
+    assert.equal(r.bridge.getState().uncertain, false, label);
+  }
+  //   3b. A SUCCESSFUL FORMAT RELEASES THE SLOT, so this is an ordinary sequential write rather than a
+  //       wedged one: the same rig serves a second, different alignment immediately.
+  const again = formatRig({ texts: ['Ноль', 'Цель'], namespace: { scope: rangeScope() } });
+  assert.equal((await again.bridge.formatRange(rangeScope())).ok, true);
+  assert.equal(again.bridge.getState().busy, false, 'a verified format releases the slot');
+  assert.equal(again.bridge.getState().writePending, false);
+  //   4. A STALE ADDRESS: the paragraph the index names no longer carries the text the caller addressed, so the
+  //      body's own text invariant fails even though the alignment really landed.
+  const drifted = formatRig({ texts: ['Ноль', 'Цель'], concurrent: 'ДРУГОЙ-АБЗАЦ', namespace: { scope: rangeScope() } });
+  assert.deepEqual(await drifted.bridge.formatRange(rangeScope()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(drifted.doc.state.mutations, 1, 'the mutation really applied — to the STALE paragraph');
+  assert.equal(drifted.doc.doubles[1].text, 'ДРУГОЙ-АБЗАЦ', 'and the paragraph really carries different text now');
+  assert.equal(drifted.bridge.getState().busy, true, 'so the slot is HELD and there is no retry');
+  //   5. A REGION THAT MOVED UNDER THE MUTATION: the offsets the caller named no longer cover the characters
+  //      they covered before it. It is the SECONDARY range leg, and it REFUTES the outcome.
+  const movedRequest = rangeScope({ paragraph: 0, start: 0, end: 2 });
+  const moved = formatRig({ texts: ['Ноль', 'Цель'], shift: [2, 4], namespace: { scope: movedRequest } });
+  assert.deepEqual(await moved.bridge.formatRange(movedRequest), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(moved.bridge.getState().busy, true);
+});
+
+test('the refusal PHASE is explicit in the format protocol: a phase-less sentinel answered after a real mutation is uncertain', async () => {
+  // THE FORGERY THE PHASE GATE EXISTS FOR. The body flips its phase immediately before the one alignment call,
+  // so a forged post-mutation answer must never be read as a KNOWN refusal with the slot released.
+  for (const forged of [['CAPABILITY_UNAVAILABLE'], ['TOOL_ERROR'], ['APPLY_UNCERTAIN'], ['НЕИЗВЕСТНЫЙ-СЕНТИНЕЛ']]) {
+    const r = formatRig({ texts: ['Ноль', 'Цель'], forge: forged, namespace: { scope: rangeScope() } });
+    const result = await r.bridge.formatRange(rangeScope());
+    assert.equal(r.doc.state.mutations, 1, `${JSON.stringify(forged)}: the body really mutated before the answer`);
+    assert.equal(result.ok, false, JSON.stringify(forged));
+    assert.equal(result.code, 'APPLY_UNCERTAIN', `${JSON.stringify(forged)}: a phase that cannot be confirmed as PRE-insert is POST-insert`);
+    const state = r.bridge.getState();
+    assert.equal(state.busy, true, JSON.stringify(forged));
+    assert.equal(state.uncertain, true, JSON.stringify(forged));
+    assert.equal(state.writePending, true, `${JSON.stringify(forged)}: the write lock stays engaged`);
+    assert.deepEqual(await r.bridge.formatRange(rangeScope()), { ok: false, code: 'EDITOR_BUSY' },
+      `${JSON.stringify(forged)}: no retry of the format`);
+    assert.equal(r.commands.length, 1, `${JSON.stringify(forged)}: and the refused call dispatched nothing`);
+  }
+  // THE GENUINE PRE-INSERT REFUSALS ARE UNCHANGED: the body answers them BEFORE the one mutation, with the
+  // pre-insert phase, so each keeps its KNOWN class with the slot RELEASED and ZERO mutations.
+  const outsideRequest = rangeScope({ paragraph: 5 });
+  const outside = formatRig({ texts: ['Ноль'], namespace: { scope: outsideRequest } });
+  assert.deepEqual(await outside.bridge.formatRange(outsideRequest), { ok: false, code: 'TOOL_ERROR' });
+  assert.equal(outside.doc.state.mutations, 0, 'an out-of-range paragraph never reaches the one alignment call');
+  assert.equal(outside.bridge.getState().busy, false, 'the slot is RELEASED: nothing was mutated');
+  // A PHASE-MARKED answer that names a pre-insert class from the POST-insert half is still not a known
+  // refusal: only the PRE-insert phase makes those names known.
+  const oneChar = rangeScope({ paragraph: 0, start: 0, end: 1 });
+  const postNamed = formatRig({ texts: ['Ноль'], forge: ['POST_INSERT', 'CAPABILITY_UNAVAILABLE'], namespace: { scope: oneChar } });
+  assert.equal((await postNamed.bridge.formatRange(oneChar)).code, 'APPLY_UNCERTAIN');
+  assert.equal(postNamed.bridge.getState().busy, true);
+});
+
+test('bridge formatRange refuses a build, a namespace or a request it cannot use, with the closed class', async () => {
+  const request = rangeScope();
+  // No command wrapper at all: the parameter channel does not exist, so the refusal is made BEFORE the ticket
+  // and nothing reaches the editor.
+  const noCommand = formatRig({ command: false, namespace: { scope: request } });
+  assert.deepEqual(await noCommand.bridge.formatRange(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noCommand.commands.length, 0);
+  // A namespace that is not there: same class, no slot held.
+  const noNamespace = formatRig({ omitCarrier: true, namespace: { scope: request } });
+  assert.deepEqual(await noNamespace.bridge.formatRange(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(noNamespace.commands.length, 0, 'nothing reached the editor');
+  assert.equal(noNamespace.bridge.getState().busy, false, 'and no slot is held for work that never ran');
+  // A namespace whose `scope` cannot be written: a frozen carrier is refused before the dispatch.
+  const frozen = formatRig({ namespace: Object.freeze({ scope: request }) });
+  assert.deepEqual(await frozen.bridge.formatRange(request), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.equal(frozen.commands.length, 0);
+  assert.equal(frozen.bridge.getState().busy, false);
+  // THE REQUEST IS CROSS-CHECKED AT THE ENTRY POINT, not taken on trust: a descriptor held directly and an
+  // uninterpretable scope both settle the closed argument class with NO dispatch.
+  const bounded = formatRig({ namespace: { scope: request } });
+  for (const [label, raw] of [
+    ['an index over the cap', rangeScope({ paragraph: LIMITS.formatRangeIndexMax + 1 })],
+    ['a negative start', rangeScope({ start: -1 })],
+    ['an over-bound end', rangeScope({ end: LIMITS.formatRangeOffsetMax + 1 })],
+    ['start equal to end', rangeScope({ start: 3, end: 3 })],
+    ['start after end', rangeScope({ start: 5, end: 2 })],
+    ['an alignment outside the vocabulary', rangeScope({ align: 'justify' })],
+    ['a non-string alignment', rangeScope({ align: 7 })]
+  ]) {
+    assert.deepEqual(await bounded.bridge.formatRange(raw), { ok: false, code: 'TOOL_ERROR' }, label);
+  }
+  assert.equal(bounded.commands.length, 0, 'none of the refused requests reached the editor');
+  // A PRE-ABORTED signal dispatches nothing at all.
+  const abortedRig = formatRig({ namespace: { scope: request } });
+  const controller = new AbortController();
+  controller.abort();
+  assert.deepEqual(await abortedRig.bridge.formatRange({ ...request, signal: controller.signal }), { ok: false, code: 'CANCELLED' });
+  assert.equal(abortedRig.commands.length, 0, 'an aborted caller never reaches the editor');
+});
+
+test('bridge formatRange decodes ONLY the authored shapes and never publishes a malformed native answer', async () => {
+  const request = rangeScope({ paragraph: 0, start: 0, end: 1 });
+  const run = (forge) => formatRig({ texts: ['Ноль', 'Цель'], forge, namespace: { scope: request } }).bridge.formatRange(request);
+  // A malformed answer is a dispatched write whose outcome cannot be interpreted: UNCERTAIN, never a known
+  // error and never an `ok`.
+  for (const [label, forge] of [
+    ['a non-array answer', 'POST_INSERT'],
+    ['a plain object answer', { phase: 'POST_INSERT' }],
+    ['an answer with too few slots', ['POST_INSERT', 1, 1]],
+    ['an answer with an extra slot', ['POST_INSERT', 1, 1, 1, 1, 0, 'left', 'left', 'left', 'лишний']],
+    ['a flag that is not 0 or 1', ['POST_INSERT', 1, 1, 2, 1, 0, 'left', 'left', 'left']],
+    ['a non-string alignment', ['POST_INSERT', 1, 1, 1, 1, 0, 'left', 5, 'left']],
+    ['a PRE_INSERT answer over a measurement', ['PRE_INSERT', 1, 1, 1, 1, 0, 'left', 'left', 'left']]
+  ]) {
+    const result = await run(forge);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', label);
+    assert.equal(result.data, undefined, label);
+  }
+  // A genuine PRE-INSERT refusal is the ONE shape that keeps a known class, and it carries its phase.
+  assert.equal((await run(['PRE_INSERT', 'CAPABILITY_UNAVAILABLE'])).code, 'CAPABILITY_UNAVAILABLE');
+  assert.equal((await run(['PRE_INSERT', 'TOOL_ERROR'])).code, 'TOOL_ERROR');
+  // A one-slot answer carries NO phase at all, so it can never be confirmed as a pre-insert refusal — the
+  // exact forgery the gate exists for.
+  assert.equal((await run(['CAPABILITY_UNAVAILABLE'])).code, 'APPLY_UNCERTAIN');
+});
+
+test('format_range is offered with policy auto and a model call formats exactly one range', async () => {
+  const r = formatRig({ texts: ['Ноль', 'Цель'], aligns: ['left', 'left'],
+    namespace: { scope: rangeScope({ paragraph: 1, start: 0, end: 2, align: 'both' }) } });
+  const registry = createRegistry(createWordTools(r.bridge));
+  const full = ['document.read', 'document.write'];
+  const catalogue = registry.catalogue({ editor: 'word', capabilities: full, mode: 'EDIT' });
+  const offered = catalogue.find(entry => entry.name === 'format_range');
+  assert.ok(offered, 'the offered catalogue contains format_range');
+  assert.equal(offered.policy, 'auto');
+  assert.equal(offered.kind, 'mutate');
+  assert.deepEqual([...offered.requires], ['document.write']);
+  assert.equal(offered.schema.properties.format.properties.align.enum.join(','), LIMITS.formatRangeAlign.join(','));
+  // It is WITHHELD exactly like the other mutations when the catalogue has no write capability, and ASK mode
+  // never exposes it.
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'EDIT' })
+    .some(entry => entry.name === 'format_range'), false, 'no write capability, no mutation tool');
+  assert.equal(registry.catalogue({ editor: 'word', capabilities: full, mode: 'ASK' })
+    .some(entry => entry.name === 'format_range'), false, 'ASK exposes no mutation tool');
+  const batch = validateBatch(catalogue, [{ tool: 'format_range', arguments: { paragraph: 1, start: 0, end: 2, format: { align: 'both' } } }]);
+  assert.equal(batch[0].descriptor.name, 'format_range');
+  const responses = ['{"type":"tool_calls","calls":[{"tool":"format_range","arguments":{"paragraph":1,"start":0,"end":2,"format":{"align":"both"}}}]}',
+    '{"type":"final","message":"выровнено"}'];
+  const crossed = [];
+  let step = 0;
+  const run = await runAgent({ registry, editor: 'word', capabilities: full, mode: 'EDIT',
+    settings: {}, uuid: '14141414-1414-4414-8414-141414141414', request: 'выровняй второй абзац',
+    transport: async (messages) => { crossed.push(messages.map(message => message.content)); return { content: responses[step++] ?? responses[responses.length - 1] }; } });
+  assert.equal(run.status, 'FINAL');
+  assert.deepEqual(run.actions.map(action => [action.tool, action.outcome]), [['format_range', 'ok']]);
+  // The model really RECEIVES the proof through the runtime's own per-result serialization, which is the
+  // only place the published data crosses — `run.actions` carries the tool, the outcome and a byte count.
+  const toolResults = crossed.flat().filter(content => content.includes('"type":"tool_results"'));
+  assert.equal(toolResults.length, 1, 'one tool-result message crossed to the model');
+  const published = JSON.parse(toolResults[0]).results[0];
+  assert.equal(published.tool, 'format_range');
+  assert.equal(published.data.align, 'both');
+  assert.equal(r.commands.length, 1, 'the whole call dispatched exactly ONE command');
+  assert.equal(r.doc.doubles[1].align, 'both', 'and the addressed paragraph really carries the alignment');
+});

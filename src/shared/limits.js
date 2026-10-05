@@ -348,6 +348,41 @@ export const LIMITS = Object.freeze({
   // nevertheless the ENFORCED bound: it is the module's ONE entry measurement, and a field added to this
   // result later must not be able to widen the entry unmeasured.
   setHeadingIndexMax: 128,
+  // The bounded RANGE FORMAT (`format_range`) — the EIGHTH Sprint 3 Word tool, the FOURTH MUTATION, and the
+  // SECOND one that changes an EXISTING paragraph in place. It adds THREE static per-call bounds, and the
+  // first two are an ADDRESS rather than a payload:
+  //   * `formatRangeIndexMax` bounds the PARAGRAPH INDEX a caller may name. It is a SEPARATE constant from
+  //     `setHeadingIndexMax` although the two bound the same kind of quantity, because they are separate
+  //     decisions: this tool addresses a paragraph AND an offset inside it, so a future widening of one
+  //     address must not silently widen two tools. 128 is the same scale as the heading index — a document
+  //     this product WRITES is a chapter, not a whole book.
+  //   * `formatRangeOffsetMax` bounds EACH character offset of the addressed range. It is deliberately NOT
+  //     an alias of `insertBlockBytes` (2048) or of `readParagraphBytes` (16000), which bound TEXT, not a
+  //     POSITION: a position is an index into the paragraph, and the same 8192 is the argument ceiling the
+  //     runtime applies to a whole call (`AGENT_CEILINGS.argumentsBytes`), so no address this schema admits
+  //     can even fill the arguments it travels in. The bound does not stand alone: the authored body checks
+  //     BOTH offsets against the addressed paragraph's OWN `GetText().length` BEFORE the mutation, so a
+  //     range past the end of THIS paragraph is the closed argument class with ZERO writes.
+  //   * `formatRangeAlign` is the CLOSED alignment vocabulary, and it is a LIST rather than a bound because
+  //     that is what the editor's own getter answers. It is MEASURED, not invented: `ApiParaPr.GetJc` (the
+  //     vendored 2026.1.2 SDK, `T.prototype.GetJc`) maps the model's alignment onto exactly these four
+  //     strings, and `both` — not `justify` — is the value the editor itself uses for justified text. The
+  //     tool publishes this list and the body compares its readback against the SAME four strings, so the
+  //     advertised vocabulary and the measured one cannot drift apart.
+  // NO TEXT BOUND IS ADDED, for `set_heading`'s reason exactly: this tool takes NO text from the model, so
+  // there is nothing for a per-call text byte bound to bound. The paragraph's text that the body resolves
+  // the offsets against is a document read, bounded by the editor-result ceiling the bridge decodes under.
+  // THE ENTRY ARITHMETIC, measured on the SERIALIZED entry the runtime bounds
+  // (`AGENT_CEILINGS.toolResultBytes` = 16384 bytes), and it is the WIDEST of the two mutating-in-place
+  // legs: the entry is
+  // `{"tool":"format_range","ok":true,"data":{"paragraph":N,"start":N,"end":N,"align":"both","alignBefore":"center","alignAfter":"center","paragraphsStable":B,"textUnchanged":B,"rangeRead":B,"rangeUnchanged":B,"rangeShifted":B,"bytes":N}}`
+  // — four bounded numbers, two alignment strings from a closed four-word vocabulary, five booleans and one
+  // more bounded number. Eleven bounded scalars cannot fill 16384 bytes (measured in the tool's own test at
+  // well under 300), so this guard cannot fire for any shape the handler can publish; the measurement is
+  // nevertheless the ENFORCED bound, exactly as it is for the other three mutations.
+  formatRangeIndexMax: 128,
+  formatRangeOffsetMax: 8192,
+  formatRangeAlign: Object.freeze(['left', 'center', 'right', 'both']),
   requestBytes: 98304,
   httpEnvelopeBytes: 131072,
   sentHistoryMessages: 32,

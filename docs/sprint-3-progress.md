@@ -2274,3 +2274,145 @@ readback, a non-exact answer, a malformed one or a throwing mutation is `APPLY_U
 
 
 
+
+## 16. Tool 8 — `format_range`, and the SDK inspection that decided what it may advertise
+
+**The bounded read-only inspection, BEFORE any design** (vendored 2026.1.2 editor SDK, dev-only
+`.local/stage-b-runtime/vendor-word-sdk-all.js`; the Word builder API is on **line 87** of that bundle).
+The question was the one `set_heading` taught this project to ask first: **can the body READ BACK what it
+applied?**
+
+* **`ApiRange` (the `x` prototype) authors SETTERS ONLY.** Its full member list is `Select`, `ExpandTo`,
+  `IntersectWith`, `SetBold`, `SetCaps`, `SetColor`, `SetDoubleStrikeout`, `SetHighlight`, `SetShd`,
+  `SetItalic`, `SetStrikeout`, `SetSmallCaps`, `SetSpacing`, `SetUnderline`, `SetVertAlign`, `SetPosition`,
+  `SetFontSize`, `SetFontFamily`, `SetStyle`, `SetTextPr`, `Delete`, `GetRange`, `GetText`,
+  `GetAllParagraphs`, `GetParagraph`, `GetElement`, `GetElementsCount`, `ToJSON`. **No `GetBold`, no
+  `GetItalic`, no `GetUnderline`, no `GetStrikeout`, no `GetColor`, no `GetFontSize`, no `GetFontFamily`,
+  no `GetHighlight`.** (`GetBold` occurs **8** times in the whole 15 MB bundle: four penalty helpers on the
+  spell-checker, `GetBoldCS`/`GetBoldItalic` on the DOCUMENT MODEL's `CTextPr`, and the model's own
+  `qt.prototype.GetBold` in the model bundle — **never on a builder type**.)
+* **`ApiTextPr` (the `k` prototype, whose `GetClassType()` returns `"textPr"`) is the same shape.** Members:
+  `GetClassType`, `SetStyle`, `SetBold`, `SetItalic`, `SetStrikeout`, `SetUnderline`, `SetFontFamily`,
+  `SetFontSize`, `SetColor`, `SetVertAlign`, `SetHighlight`, `SetSpacing`, `SetDoubleStrikeout`, `SetCaps`,
+  `SetSmallCaps`, `SetPosition`, `SetLanguage`, `SetShd`, `SetFill`, `SetTextFill`, `SetOutLine`, `ToJSON`
+  — setters plus `ToJSON` and nothing to read a property back with.
+* **`ApiRange` also caches what it was built with.** `x.prototype.constructor` assigns
+  `this.Text = this.GetText()` and `this.TextPr = new CTextPr`, so `range.GetTextPr()` answers the range's own
+  **scratch** object rather than the document's formatting, and a range HELD across a mutation would compare a
+  cached value with itself. Both facts are reproduced in the test double (a FRESH range object per read).
+* **THE ONE BUILDER TYPE THAT DOES READ BACK IS `ApiParaPr` (the `T` prototype).** It registers `GetJc`,
+  `GetStyle`, `GetIndLeft`, `GetIndRight`, `GetIndFirstLine`, `GetSpacingBefore`, `GetSpacingAfter`,
+  `GetSpacingLineValue`, `GetSpacingLineRule`, `GetShd` — and `T.prototype.SetJc` sits directly beside
+  `T.prototype.GetJc`. `GetJc` maps the model's alignment onto the closed string vocabulary
+  **`right`/`left`/`center`/`both`** (`align_Justify` → `"both"`), which is the vocabulary this tool
+  publishes and compares against.
+
+**The consequence, stated plainly: NO character-level property can be advertised, because none can be read
+back.** `format_range` therefore closes the `format` object over the ONE property a measured signal
+confirms — the paragraph alignment — and **refuses `bold`, `italic`, `underline`, `strikeout`, `size`,
+`color`, `highlight` and `family` AT THE SCHEMA as unknown keys, with ZERO writes**. Advertising them while
+proving only a text constancy or a flag would be exactly the unverifiable-property contract this project
+forbids.
+
+**What the `{ paragraph, start, end }` address IS, and what it is NOT.** The alignment setter is a
+**paragraph** property, so the effect is paragraph-wide and the descriptor says so; the address is a
+**BOUNDARY**, not a scope. It decides where the tool may act: the body resolves it through the paragraph's
+own `GetRange`, requires the paragraph to EXIST and BOTH offsets to lie inside that paragraph's own
+`GetText().length` **before** the one mutation, and re-reads the SAME region through a **fresh** range after
+it. `{ paragraph, start, end }` is the address the caller names a range with; it is not a claim that
+per-character formatting was applied, and the result fields carry no such claim.
+
+**THE PROOF, in order of authority.** `ok` requires all of: **PRIMARY** — the addressed paragraph's own
+alignment, read back through `paragraph.GetParaPr().GetJc()` AFTER the one
+`paragraph.GetParaPr().SetJc(align)`, is one of the four measured words and IS the requested one
+(`rangeRead` + `alignAfter`); and **SECONDARY signals that can only REFUTE** — the addressed REGION was
+read and is what it was (`rangeRead`/`rangeUnchanged`), it did not MOVE under the mutation
+(`rangeShifted` false), the addressed paragraph's TEXT is unchanged (`textUnchanged`), and the document's
+paragraph count is unchanged (`paragraphsStable`). **An unreadable readback before the mutation is the
+closed `CAPABILITY_UNAVAILABLE` with ZERO writes and the slot RELEASED** — the same class an unusable
+baseline gets, because with no readable `GetJc` the body cannot tell whether the paragraph carries an
+alignment at all and the mutation has not run; the body distinguishes the THREE getter answers (`null` =
+the chain answered nothing, `''` = a readable non-alignment, a measured word = read) and refuses on the
+first rather than mutating something it could never prove. **NO PRE-STATE REFUSAL IS ADDED**: unlike a
+level change on an existing heading, applying an alignment a paragraph already carries is an IDEMPOTENT
+write whose readback proves itself (`alignBefore === alignAfter === requested`), and a `before` value that
+differs from the request is a MEASUREMENT, not a contradiction — it is published, not judged.
+
+**The mechanism and the carriage, unchanged from the three mutations before it.** ONE authored command body
+in the bridge (`formatRange` → `command.format`), a full inline static literal, the validated
+`{ paragraph, start, end, align }` quadruple carried as **DATA** through `Asc.scope` (never interpolated
+into source, ADR 0002), the explicit `PRE_INSERT`/`POST_INSERT` phase slot turned to `POST_INSERT`
+**immediately before** the single `SetJc`, and ONE strict decoder (`decodeRange`, nine slots:
+`[POST_INSERT, paragraphsStable, textUnchanged, rangeRead, rangeUnchanged, rangeShifted, align, alignBefore,
+alignAfter]`, or the two-slot `[PRE_INSERT, name]` refusal). Only `[PRE_INSERT, name]` is a known refusal
+and only it RELEASES the slot; a phase-less or POST-insert refusal, a malformed answer, a non-exact proof
+and a POST-insert throw are all `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot **HELD** and no retry.
+The ticket kind is `rangeformat` and it is named in `WRITE_KINDS`, so the timeout, abort, pending-mutation
+and uncertain-settlement rules cover it automatically rather than by four separate lists.
+
+**THE FAILURE MAP, each class closed** (and resolved at the earliest place it can be): a wrong editor is
+`CAPABILITY_UNAVAILABLE` (precondition AND handler, because a descriptor is executable when held directly);
+an address or alignment outside the advertised bounds, `start >= end`, a reversed range or an unknown
+format property is the closed **argument** class with ZERO writes (schema, precondition and handler); a
+missing bridge entry point is `CAPABILITY_UNAVAILABLE`; a paragraph index outside the DOCUMENT, offsets
+outside the paragraph's own length and an UNREADABLE pre-state alignment are decided in the body BEFORE the
+one mutation — the first two as the closed argument class (`TOOL_ERROR`), the third as
+`CAPABILITY_UNAVAILABLE` — all with ZERO writes; a bridge refusal keeps the class it reported
+(`refusalCode`); an envelope this handler cannot interpret is `known()`; a returned or thrown
+`APPLY_UNCERTAIN`, an unread (`rangeRead: false`) or disagreeing readback, a moved region, a changed text and
+a moved paragraph count are `TOOL_UNCERTAIN` with the slot HELD and no retry; and an over-ceiling result
+entry is `BYTE_LIMIT`.
+
+**TDD: the exact RED, then GREEN.** The tests were written FIRST and run against `0700639` →
+`node --test tests/unit/tools-word.test.js` → **228 tests, pass 213, fail 15** (13 new + the three existing
+registry lists that must now name the eighth tool). Every failure was the expected one:
+`format_range advertises the closed bounded schema…` → `TypeError: Cannot read properties of undefined
+(reading 'name')` (no descriptor), `format_range refuses an editor that is not Word…` → `TypeError: …
+(reading 'execute')`, `bridge formatRange dispatches ONE command…` → `TypeError: r.bridge.formatRange is not
+a function`, and `format_range is offered with policy auto…` → the offered catalogue contains no such tool.
+GREEN: **228/228** on that file, full suite **860 tests, pass 860, fail 0** (845 → 860, never shrunk), and
+the package classifier grew its eighth leg in the same round.
+
+**TWO REAL DEFECTS THE RED ROUND CAUGHT, both worth recording.** (1) The bridge entry point originally bound
+its two offsets to locals named `start`/`end`, and `start` is the bridge's own ticket opener in that closure:
+`await start(...)` became a call on a NUMBER, which the catch classified as `EDITOR_ERROR` — a mutation that
+never reached the editor, reported as an editor failure. The locals are now `from`/`to`, with the reason in
+the code. (2) The authored body's region flag referenced `rangeAfterRead` where the local is
+`regionAfterRead`, so every dispatch threw inside the body's own `try` and answered
+`['POST_INSERT', 'CAPABILITY_UNAVAILABLE']`, which the decoder correctly turned into `APPLY_UNCERTAIN` with
+the slot held. Neither was a design flaw in the contract; both were caught only because the tests drive the
+REAL body against a state double rather than a stub.
+
+**Verification (this round, final tree).** Focused set
+`tests/unit/tools-word.test.js tests/integration/package.test.js` → **233/233**, `fail 0`; full suite
+`node --test` → **860 tests, pass 860, fail 0, skipped 0** (845 → 860); `node scripts/static-audit.mjs` →
+`Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs` → exit 0, `Plugin build: 8 allowlisted
+files; ZIP STORE SHA-256 3247ce8be04cdbf8558ffd59bf62187657651e59fba536ca206ec3eeb9bd10f5`. The SHA moved
+from the `0700639` pin `cb566f681c647b4fbf8eae02783acd827c9425d3b35dbc81f1d9ff07f278d0c9` because the
+authored body, one decoder, the bridge envelope, the limits table and the descriptor all changed (the
+builder runs with `minify: false`). The phase protocol and the slot discipline are UNCHANGED (**only
+`[PRE_INSERT, name]` releases this leg's slot**), `src/agent/*` is untouched, no dynamic execution was added
+to `src/`, and there is exactly ONE mutating call per dispatch (`SetJc`).
+
+**Natively UNVERIFIED at this round's close, and fail-safe rather than fail-open.** What the host-side suite
+cannot prove about the SHIPPED carriage: (1) that `{ paragraph, start, end, align }` written into the page's
+`Asc.scope` reaches the body's `scope` binding; (2) that `paragraph.GetParaPr().SetJc(word)` on a real R7
+document changes what `GetJc()` then answers — **both halves of that pair are on the SAME builder type and
+the getter sits directly beside the setter in the vendored source, which is why this route was chosen over
+every character-level one**, but the pair was not exercised on the target; (3) that the two offsets the
+paragraph's own `GetRange(start, end)` accepts are the same offsets `GetText().length` counts, and that the
+region read is STABLE across a paragraph-level alignment change (a build that renumbers the address would
+settle every call `APPLY_UNCERTAIN` with the slot held — fail-safe, but the tool unusable, which is exactly
+the risk `set_heading`'s identity leg carried and this leg must have MEASURED before it can be considered
+done); (4) that `GetAllParagraphs()` enumerates in the SAME order the address indexes; and (5) that the
+native return validator passes the nine-member flat array of primitives unaltered. Each unknown lands on a
+closed path — a scope that does not arrive or a missing primitive answers the body's own phase-marked
+refusal (`[PRE_INSERT, …]`, nothing mutated, slot released); an unreadable readback, a non-exact answer, a
+malformed one or a throwing mutation is `APPLY_UNCERTAIN` → `TOOL_UNCERTAIN` with the slot HELD and no
+retry — never an `ok` with the slot released.
+
+**STATED LIMITATION OF THIS TOOL, in one sentence, so a future round does not have to rediscover it:**
+`format_range` applies and proves a PARAGRAPH-LEVEL alignment over an address the caller names as a
+character range, because the public builder API exposes no getter for any character-level property — a tool
+that formats CHARACTERS inside a range cannot be built honestly against this SDK surface until either a
+builder getter or a measured indirect readback exists, and it must not be advertised before then.

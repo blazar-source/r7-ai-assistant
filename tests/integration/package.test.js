@@ -97,6 +97,19 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // second read of `GetAllParagraphs`, and authors NEITHER the append primitive nor the legacy whole-array
   // insert primitive — the one route measured to land at the START and to replace existing text under a
   // selection, which this leg must never take because its contract is that the text does NOT change.
+  // EIGHT legs are carried inline, and the last one is the RANGE FORMAT: the fourth body that MUTATES the
+  // document through the `Api` builder, the SECOND one that APPENDS NOTHING, and the ONE leg whose schema
+  // advertises a SINGLE formatting property. It is classified by its ONE mutating call
+  // (`paragraph.GetParaPr().SetJc`, which no other leg authors), and that branch is placed BEFORE the
+  // heading body's `.SetStyle(` branch because BOTH legs author `GetParaPr()` — without its own branch this
+  // body would be classified as the heading leg it shares that read with. It takes its
+  // `{ paragraph, start, end, align }` address from the injected command scope, resolves the range through
+  // the paragraph's own `GetRange`, and proves the mutation through the MEASURED `GetJc` readback of the
+  // same paragraph-properties chain. The character-level properties are absent BY CONSTRUCTION — the
+  // vendored SDK exposes setters only for them and the schema refuses them as unknown keys — so this body
+  // must never author `SetBold`/`SetItalic`/`SetFontSize`, and it appends nothing and never takes the legacy
+  // whole-array insert primitive (measured to land at the START and to replace existing text under a
+  // selection), because its contract is that the addressed paragraph's TEXT does not change.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -110,7 +123,22 @@ test('generated authored browser bundle passes audit with literal synchronous st
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
         'the carried body must be self-contained, never a forward to a module-scope binding');
       assert.match(code, /typeof Api !== ['"]undefined['"]/, 'the carried body reads the public Api facade itself');
-      if (code.includes('CreateTable')) {
+      if (code.includes('.SetJc(')) {
+        assert.match(code, /\bscope\b/, 'the format body takes its address from the injected command scope');
+        assert.match(code, /GetRange\(/, 'and resolves the addressed region through the paragraph\u2019s own GetRange');
+        assert.match(code, /GetAllParagraphs/, 'and checks the index against the document\u2019s own paragraph list');
+        assert.match(code, /GetParaPr\(\)/, 'and reads the addressed paragraph through the paragraph-properties chain');
+        assert.match(code, /GetJc\(\)/, 'and proves the mutation through the measured GetJc readback');
+        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
+        assert.equal(code.includes('document.Push('), false, 'and never the append primitive: this leg changes an existing paragraph in place');
+        // THE PROPERTIES THIS LEG CANNOT PROVE ARE AUTHORED NOWHERE. The SDK inspection found SETTERS ONLY on
+        // the range/text-properties types, so a body that reached one of these would be applying an effect it
+        // has no getter to read back — exactly what the closed schema refuses.
+        for (const setter of ['.SetBold(', '.SetItalic(', '.SetFontSize(', '.SetColor(', '.SetFontFamily(', '.SetHighlight(']) {
+          assert.equal(code.includes(setter), false, `the format body must not author ${setter}: the SDK exposes no getter for it`);
+        }
+        legs.push('format');
+      } else if (code.includes('CreateTable')) {
         assert.match(code, /\bscope\b/, 'the table body takes its matrix from the injected command scope');
         assert.match(code, /GetAllTables/, 'and reads the document\u2019s own table count around the insert');
         assert.match(code, /GetCell/, 'and fills and re-reads every cell through the measured cell chain');
@@ -149,8 +177,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 7, 'the adapter dispatches exactly the seven authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'heading', 'search', 'structure', 'table'],
+  assert.equal(commands, 8, 'the adapter dispatches exactly the eight authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'context', 'format', 'heading', 'search', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that
