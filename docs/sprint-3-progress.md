@@ -3860,3 +3860,79 @@ the elements it claims, and `ORCH_INCOMPLETE` with its missing list is the hones
 The list heuristic (a line-marker match in the bounded 2000-character probe) is the one check a native document can
 falsify: a list formatted as a real Word numbering list, with a bullet character this reader does not recognise,
 would be reported missing and cost one continuation pass.
+
+## Stage B, round 2 вЂ” the plan becomes ENFORCED CRITERIA and the execute-pass cap doubles
+
+**What changed, and why the cap was the ceiling.** Three free-form native runs of the owner's long request produced
+187/11/6/11 908, 50/11/0/10 295 and 7/5/0/705 (paragraphs/headings/tables/characters). The orchestration behaved
+correctly вЂ” it verified the document itself, named an explicit missing list and never claimed a false done вЂ” but
+the owner's acceptance criterion (three clean consecutive runs, each в‰Ґ 18 000 characters, with the required
+sections and conclusions and в‰Ґ 2 tables, never a false done) was NOT met, and the six-pass cap was reached in
+runs 1 and 2. `ORCHESTRATION_MAX_EXECUTE_PASSES` therefore moves from 6 to **12**, keeping the NAMED constant (no
+inlined literal) so the honest report still prints exactly how many passes were spent.
+
+**Change 1 вЂ” the cap.** `ORCHESTRATION_MAX_EXECUTE_PASSES = 12`. The two tests that pinned it
+(`tests/unit/ui-orchestrator.test.js` and `tests/unit/controller.test.js`) now assert 12 and were driven to the
+FULL budget: one plan pass plus twelve execute passes, eleven of them carrying a continuation, and the thirteenth
+answer never requested.
+
+**Change 2 вЂ” the floor, derived from the owner's REQUEST.** `floorFrom(request)` is pure and derives the
+un-lowerable minimum before any model text exists: a table mention в†’ 2 tables; a conclusion/summary mention в†’ a
+conclusion; a page or large-volume mention (`страниц`, `крупный объём`, `N знаков`) в†’ 18 000 characters; numbered
+parts (`1) вЂ¦ 2) вЂ¦`) or an explicit count (`5 разделов`, `три главы`) в†’ that many headings, and a bare plural
+chapter/section mention в†’ at least 2. The state machine derives it ONCE, before the plan pass, and carries it in
+every published phase and in the final result.
+
+**Change 2 вЂ” the fixed, parseable key shape.** The plan pass's own request text now prescribes four lines вЂ”
+`РАЗДЕЛЫ: 1) вЂ¦ 2) вЂ¦`, `ОБЪЁМ: 18000`, `ТАБЛИЦЫ: 2`, `ЗАКЛЮЧЕНИЕ: да` вЂ” with the request-derived floor as their
+numbers, and the panel's existing JSON object is still accepted as a second spelling of the same contract. The
+key shape is parsed defensively (`keyField`/`keySections`, bounded by `ORCHESTRATION_PLAN_SECTIONS_MAX` and
+`ORCHESTRATION_MAX_PLAN_TABLES`): a key that is MISSING or MALFORMED is UNESTABLISHED, and the request floor
+supplies the requirement вЂ” never zero and never a number below the floor. A malformed SECTION LINE is the one
+refusal, because the plan's own section list IS the plan (`PLAN_UNUSABLE`, stop, no execute pass).
+
+**Change 2 вЂ” criteria = max(floor, plan).** `criteriaFrom(floor, plan)` takes the maximum of every criterion, so
+a modest plan can never lower the owner's demand while a plan MAY raise it (`ОБЪЁМ`/`targetCharacters` up to the
+existing 100 000 ceiling; the table count up to 20; the heading count up to 40). The criteria are stated to the
+model in the FIRST line of every execute request (`КРИТЕРИИ ПРИЁМКИ: знаков вЂ” вЂ¦; заголовков вЂ” вЂ¦; вЂ¦`) and
+checked after EVERY pass.
+
+**Change 2 вЂ” the missing list IS the unmet-criteria list.** `missingFrom(criteria, measured)` compares each
+criterion against what the panel's own two bridge reads measured and names only the unmet ones with both numbers:
+`объём: 12 400 из 18 000 знаков (примерно вЂ¦)`, `разделов (заголовков): 3 из 4 заявленных`, `таблиц 1 из 2`
+(or `таблиц нет ни одной`), `списков нет ни одного`, `заключения нет`. That list is what the next continuation
+request carries. `complete` is returned ONLY when the list is empty вЂ” never on a status or a model claim вЂ” and
+`TOOL_UNCERTAIN` keeps its existing behaviour (stop, no retry, not investigated this round).
+
+**Change 2 вЂ” the report exposes what was required AND what was reached.** `resultOf` and every `emit` record now
+carry `criteria` and `floor`; the controller's `orchestrationRecord` republishes them in
+`snapshot().orchestration`, and `orchestrationText` prints the enforced line
+(`Критерии приёмки: знаков вЂ” вЂ¦, заголовков вЂ” вЂ¦, таблиц вЂ” вЂ¦, списки вЂ” вЂ¦, заключение вЂ” вЂ¦.`) above the
+verified numbers, so a native check can read exactly what was required next to what was measured.
+
+**Tests (RED first, then GREEN).** The RED run failed at the import (`does not provide an export named
+'ORCHESTRATION_MAX_PLAN_TABLES'`), then, once the exports existed but the logic was still the old one, at 8
+behavioural assertions вЂ” the cap (`6 !== 12`), the floor derivation, the fallback-to-floor, `criteriaFrom`, the
+missing-list wording and the criteria/complete exposure. The new coverage: `floorFrom` for tables, conclusions,
+volume, ordinals, cardinal counts, word counts and the no-demand case; the key shape parsed equally to the JSON
+shape and its missing/malformed keys falling back to the floor; the cap at 12 with the full budget and a
+recomputed report; criteria = max(floor, plan) with a plan that RAISES the volume and the table count; the exact
+missing-list wording; `complete` only when every criterion is met and NOT when any single one is missed; the
+continuation request carrying the missing list; the plan pass prescribing the four keys; and the criteria in the
+PUBLISHED progress, in the controller's `snapshot().orchestration` and in the view's rendered text.
+
+**Verification (this round, final tree).** Focused set `node --test tests/unit/ui-orchestrator.test.js
+tests/unit/controller.test.js tests/unit/view.test.js` в†’ **92 tests, pass 92, fail 0**; `node --test` в†’ **993
+tests, pass 993, fail 0, cancelled 0, skipped 0, todo 0** (grew from 988, never shrank); `node
+scripts/static-audit.mjs` в†’ **`Authored-code audit PASS`**, exit 0; `node scripts/build-plugin.mjs` в†’ exit 0,
+**`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+f164d03d3c89de0e36d0e77cf784e5b051cd35cc396cdbc606469a014f4b5bf0`** вЂ” the bundle pass stayed GREEN, so the
+round introduced no optionally-chained method call and no non-constant key. `git diff --stat -- src/agent` is
+empty: `src/agent/` is untouched.
+
+**What only a native run can settle (this round).** Whether twelve passes are enough: the cap was the measured
+ceiling, so the first native run's report must be read as `criteria` vs `verified` вЂ” if `ORCH_INCOMPLETE`
+`PASS_BUDGET_EXHAUSTED` still appears, the per-pass size (the model's own choice, 3000вЂ“5000 characters is an
+instruction, not a measurement) is the remaining constraint, not the cap. The floor derivation's own risk is
+language: the markers are Russian, so a request phrased differently than the owner's measured one may derive a
+lower floor than the owner intended вЂ” the report's `floor` field makes that visible in one line.

@@ -53,6 +53,10 @@ function orchestrationRecord(progress, outcome) {
     pass: progress.passes ?? 0,
     maxPasses: ORCHESTRATION_MAX_EXECUTE_PASSES,
     targetChars: progress.targetChars ?? ORCHESTRATION_TARGET_CHARS,
+    // The criteria and the request-derived floor travel with the report, so the panel and a native check
+    // can read exactly what was REQUIRED — not only what the plan said — next to what was measured.
+    criteria: progress.criteria ?? null,
+    floor: progress.floor ?? null,
     plan: progress.plan ?? null,
     verified: progress.verified ?? null,
     missing: progress.missing ?? Object.freeze([]),

@@ -192,13 +192,17 @@ test('the actions block renders one line per action and stays empty for a run wi
 });
 
 test('the orchestration report renders the plan, the verified numbers and the missing list as text', () => {
-  const record = { phase: 'incomplete', status: 'ORCH_INCOMPLETE', pass: 3, maxPasses: 6, targetChars: 18000,
+  const record = { phase: 'incomplete', status: 'ORCH_INCOMPLETE', pass: 3, maxPasses: 12, targetChars: 18000,
+    criteria: { targetChars: 18000, tables: 2, lists: false, sections: 2, conclusions: true },
+    floor: { targetChars: 18000, tables: 2, conclusions: true, sections: null },
     plan: { sections: ['Введение', 'Глава 1'], targetChars: 18000, required: { tables: true, lists: false, conclusions: true } },
     verified: { chars: 9000, paragraphs: 22, headings: 1, tables: 0, lists: false, conclusions: false },
     missing: ['объём: 9000 из 18000 знаков', 'таблиц нет ни одной'], missingTools: [], uncertainty: null,
     planCalledTools: false, error: 'PASS_BUDGET_EXHAUSTED' };
   const text = orchestrationText(record);
-  assert.match(text, /Проходов: 3 \/ 6/);
+  assert.match(text, /Проходов: 3 \/ 12/);
+  // The ENFORCED criteria are printed next to the measurement they were checked against.
+  assert.match(text, /Критерии приёмки: знаков — 18000, заголовков — 2, таблиц — 2, списки — нет, заключение — да\./);
   assert.match(text, /абзацев — 22, заголовков — 1, таблиц — 0, знаков — 9000/);
   assert.match(text, /План: 2 разделов/);
   assert.match(text, /таблицы, выводы/);

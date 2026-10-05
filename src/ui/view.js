@@ -34,6 +34,11 @@ export function statusText(code) { return statuses[code] ?? statuses.INTERNAL_ER
 export function orchestrationText(record) {
   if (!record) return '';
   const lines = [`Проходов: ${record.pass} / ${record.maxPasses}. Целевой объём: ${record.targetChars} знаков.`];
+  // The ENFORCED criteria are the panel's own authored numbers, printed before the measurement they were
+  // checked against, so the report always shows what was required next to what was reached.
+  if (record.criteria) {
+    lines.push(`Критерии приёмки: знаков — ${record.criteria.targetChars}, заголовков — ${record.criteria.sections}, таблиц — ${record.criteria.tables}, списки — ${record.criteria.lists ? 'да' : 'нет'}, заключение — ${record.criteria.conclusions ? 'да' : 'нет'}.`);
+  }
   if (record.verified) {
     lines.push(`Проверено по документу: абзацев — ${record.verified.paragraphs ?? '—'}, заголовков — ${record.verified.headings}, таблиц — ${record.verified.tables}, знаков — ${record.verified.chars}.`);
   }

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOrchestrator, createDocumentReader, parsePlan, missingFrom, measuredFrom, isLongGenerationRequest,
-  uncertaintyOf, ORCHESTRATION_TARGET_CHARS, ORCHESTRATION_MAX_EXECUTE_PASSES, ORCHESTRATION_MAX_TARGET_CHARS,
-  ORCHESTRATION_TEXT_PROBE_CHARS } from '../../src/ui/orchestrator.js';
+import { createOrchestrator, createDocumentReader, parsePlan, floorFrom, criteriaFrom, missingFrom, measuredFrom,
+  isLongGenerationRequest, uncertaintyOf, ORCHESTRATION_TARGET_CHARS, ORCHESTRATION_MAX_EXECUTE_PASSES,
+  ORCHESTRATION_MAX_TARGET_CHARS, ORCHESTRATION_MAX_PLAN_TABLES, ORCHESTRATION_TEXT_PROBE_CHARS,
+  ORCHESTRATION_PLAN_SECTIONS_MAX } from '../../src/ui/orchestrator.js';
 
 // A plan that satisfies the parser's closed contract. `sections` is the only part the verification
 // counts against the document's own heading count.
@@ -29,6 +30,20 @@ function fakeDocument(initial) {
 }
 const okPass = (message = planJson(), actions = []) => ({ ok: true, status: 'FINAL', message, actions, steps: 1, toolCalls: 0 });
 
+// The exact criteria format the plan pass's OWN request text prescribes, built here from the numbers so
+// every test can say what the criteria are without retyping the authored line. `null` omits the key.
+const planKeys = ({ sections = ['Введение', 'Глава 1', 'Глава 2', 'Выводы'], volume = 20000, tables = 2, conclusion = 'да' } = {}) => [
+  sections === null ? null : `РАЗДЕЛЫ: ${sections.map((title, index) => `${index + 1}) ${title}`).join(' ')}`,
+  volume === null ? null : `ОБЪЁМ: ${volume}`,
+  tables === null ? null : `ТАБЛИЦЫ: ${tables}`,
+  conclusion === null ? null : `ЗАКЛЮЧЕНИЕ: ${conclusion}`
+].filter(line => line !== null).join('\n');
+// The request-derived floor for the owner's measured ten-page request: tables, conclusions, ten pages,
+// chapters.
+const floor = floorFrom('создай структурированный документ примерно на 10 страниц, добавь главы, несколько таблиц, списки, выводы');
+// The canonical criteria: this floor raised by the full plan above (20000 characters, 2 tables, 4 sections).
+const criteria = criteriaFrom(floor, parsePlan(planJson()));
+
 test('the long-generation trigger is narrow: it fires on a named volume or several parts, not on an ordinary request', () => {
   assert.equal(isLongGenerationRequest('создай структурированный документ примерно на 10 страниц, добавь главы, несколько таблиц, списки, выводы и оформи его'), true);
   assert.equal(isLongGenerationRequest('добавь 5 разделов о безопасности'), true);
@@ -44,7 +59,13 @@ test('the plan parser refuses anything that is not a bounded plan and clamps a l
   assert.equal(parsePlan('{}'), null, 'no sections');
   assert.equal(parsePlan(JSON.stringify({ sections: [], targetCharacters: 20000, required: { tables: false, lists: false, conclusions: false }, summary: 's' })), null);
   assert.equal(parsePlan(JSON.stringify({ sections: ['A'], targetCharacters: 0, required: { tables: false, lists: false, conclusions: false }, summary: 's' })), null);
-  assert.equal(parsePlan(JSON.stringify({ sections: ['A'], targetCharacters: 20000, required: { tables: 'да', lists: false, conclusions: false }, summary: 's' })), null);
+  // A key that is MALFORMED is undeclared, not a refusal: the FLOOR supplies the requirement, so a plan
+  // that lists nothing required still cannot lower the owner's demand (the parser has no floor argument,
+  // and the canonical floor requires a conclusion).
+  const malformed = parsePlan(JSON.stringify({ sections: ['A'], targetCharacters: 20000,
+    required: { tables: 'да', lists: 'нет', conclusions: 'ага' }, summary: 's' }));
+  assert.equal(malformed.required.tables, false);
+  assert.equal(malformed.required.conclusions, true, 'an unparseable declaration falls back to the floor');
   const floor = parsePlan(planJson({ targetCharacters: 1000 }));
   assert.equal(floor.targetChars, ORCHESTRATION_TARGET_CHARS, 'the owner\'s ten pages may not be lowered by a plan');
   const ceiling = parsePlan(planJson({ targetCharacters: 10 ** 9 }));
@@ -54,19 +75,63 @@ test('the plan parser refuses anything that is not a bounded plan and clamps a l
   assert.deepEqual(strings.sections, ['A', 'B']);
 });
 
+test('the fixed key format is parsed defensively, and a missing or malformed key falls back to the request floor, never below it', () => {
+  const ownerFloor = floorFrom('создай документ примерно на 10 страниц с несколькими таблицами и выводами');
+  assert.deepEqual(ownerFloor, { targetChars: 18000, tables: 2, conclusions: true, sections: null });
+  assert.deepEqual(floorFrom('исправь орфографию в первом абзаце'), { targetChars: 0, tables: 0, conclusions: false, sections: null });
+  assert.deepEqual(floorFrom('добавь 5 разделов о безопасности'), { targetChars: 0, tables: 0, conclusions: false, sections: 5 });
+  assert.equal(floorFrom('сделай главы и подглавы').sections, 2, 'a plural chapter request is at least two headings');
+  assert.equal(floorFrom('создай документ на 10 страниц').targetChars, ORCHESTRATION_TARGET_CHARS);
+  assert.equal(floorFrom('создай документ на 3 страницы').targetChars, ORCHESTRATION_TARGET_CHARS, 'a SHORT page count is still a volume request, so the floor holds');
+  assert.equal(floorFrom('выведи 1) цели 2) задачи 3) риски 4) выводы').sections, 4, 'the named ordinal list is the count');
+  assert.equal(floorFrom('документ с таблицами').tables, 2);
+  assert.equal(floorFrom('сделай выводы').conclusions, true);
+
+  // THE FLOOR, the plan's own JSON, and the same plan as the fixed keys — three spellings, one answer.
+  assert.deepEqual(parsePlan(planJson()), { sections: ['Введение', 'Глава 1', 'Глава 2', 'Выводы'], targetChars: 20000,
+    required: { volume: true, sections: true, tables: true, lists: true, conclusions: true }, requiredTables: null, summary: 'структура' });
+  // The same plan spelled as keys: the count the key shape declares is EXACT (two), so both spellings mean
+  // the same two tables, and a key that names no count at all is unestablished rather than zero.
+  assert.deepEqual(parsePlan(planKeys()), { sections: ['Введение', 'Глава 1', 'Глава 2', 'Выводы'], targetChars: 20000,
+    required: { volume: true, sections: true, tables: true, lists: false, conclusions: true }, requiredTables: 2, summary: '' });
+  assert.equal(parsePlan(planKeys({ tables: null })).requiredTables, null);
+  // A plan MAY raise the volume and is bounded by the existing ceiling; a malformed VOLUME cannot lower it.
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ volume: 25000 }))).targetChars, 25000);
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ volume: 10 ** 9 }))).targetChars, ORCHESTRATION_MAX_TARGET_CHARS);
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ volume: null }))).targetChars, ownerFloor.targetChars, 'the floor is the fallback, never zero');
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ volume: 'не число' }))).targetChars, ownerFloor.targetChars);
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ tables: null }))).tables, ownerFloor.tables);
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ conclusion: null }))).conclusions, true);
+  // A key the PLAN raises is honoured; one it cannot establish falls back to the request's own number.
+  assert.deepEqual(parsePlan(planKeys({ tables: 5 })).required, { volume: true, sections: true, tables: true, lists: false, conclusions: true });
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ tables: 5 }))).tables, 5);
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ tables: 'две' }))).tables, ownerFloor.tables, 'an unparseable table count never lowers the owner\'s two tables');
+  // A plan whose key shape carries no section line at all is not a plan: the section list IS the plan.
+  assert.equal(parsePlan(planKeys({ sections: null })), null);
+  // A malformed or unbounded table count falls back to the floor rather than refusing the whole plan.
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ tables: 0 }))).tables, ownerFloor.tables);
+  assert.equal(criteriaFrom(ownerFloor, parsePlan(planKeys({ tables: 999 }))).tables, ORCHESTRATION_MAX_PLAN_TABLES);
+  assert.equal(parsePlan(planKeys({ tables: 999 })).required.tables, true);
+  // The plan pass is the ONLY place the plan's own text is free-form; the keys are bounded by the parser.
+  assert.equal(parsePlan(planJson({ sections: Array.from({ length: ORCHESTRATION_PLAN_SECTIONS_MAX + 1 }, () => 'A') })), null);
+});
+
+
 test('a plan pass, an execute pass and a verify that confirms the plan ends complete after one pass', async () => {
   const doc = fakeDocument({ chars: 20000, headings: 4, tables: 2, paragraphs: 30, body: 'Выводы\n- первый пункт\n- второй пункт' });
   const scripted = scriptedPasses([okPass(), okPass('готово')]);
   const progress = [];
   const orchestrator = createOrchestrator({ runPass: scripted.runPass, readDocument: doc.readDocument,
     emit: record => progress.push(record) });
-  const outcome = await orchestrator.run('документ на 10 страниц');
+  const outcome = await orchestrator.run('создай документ примерно на 10 страниц с несколькими таблицами, главами и выводами');
   assert.equal(outcome.phase, 'complete');
   assert.equal(outcome.passes, 1);
   assert.equal(outcome.plan.sections.length, 4);
   assert.equal(outcome.plan.targetChars, 20000);
   assert.deepEqual(outcome.missing, []);
   assert.deepEqual(outcome.verified, { chars: 20000, headings: 4, tables: 2, paragraphs: 30, lists: true, conclusions: true });
+  // The criteria the verify holds the document to are exposed next to the verified numbers.
+  assert.deepEqual(outcome.criteria, { targetChars: 20000, tables: 2, lists: true, sections: 4, conclusions: true });
   // The plan pass is FIRST and asks for the plan only; the execute pass carries the plan itself.
   assert.equal(scripted.seen.length, 2);
   assert.equal(scripted.seen[0].kind, 'plan');
@@ -74,20 +139,31 @@ test('a plan pass, an execute pass and a verify that confirms the plan ends comp
   // runs under is the ordinary confirm-free one rather than the bulk view.
   assert.equal(scripted.seen[0].profile, undefined);
   assert.match(scripted.seen[0].text, /ТОЛЬКО ПЛАН/);
+  // THE FIXED KEY SHAPE is prescribed by the plan pass's own request text and derived from the request.
+  assert.match(scripted.seen[0].text, /РАЗДЕЛЫ: 1\)/);
+  assert.match(scripted.seen[0].text, /ОБЪЁМ: 18000/);
+  assert.match(scripted.seen[0].text, /ТАБЛИЦЫ: 2/);
+  assert.match(scripted.seen[0].text, /ЗАКЛЮЧЕНИЕ: да/);
   assert.equal(scripted.seen[1].kind, 'execute');
   assert.equal(scripted.seen[1].profile, 'bulk');
   assert.match(scripted.seen[1].text, /УТВЕРЖДЁННЫЙ ПЛАН/);
   assert.match(scripted.seen[1].text, /Глава 1/);
   assert.match(scripted.seen[1].text, /insert_blocks/);
+  // The FIRST execute pass names the criteria themselves, so the model can aim at them from the start.
+  assert.match(scripted.seen[1].text, /КРИТЕРИИ ПРИЁМКИ/);
+  assert.match(scripted.seen[1].text, /знаков — 20000/);
+  assert.match(scripted.seen[1].text, /таблиц — 2/);
   // The published phases are the state machine's own, in order: a plan, one execute pass and the verify
   // that CONFIRMED the plan, with no continuation because nothing was measured missing.
   assert.deepEqual(progress.map(record => record.phase), ['planning', 'executing', 'verifying']);
+  // The criteria travel in the PUBLISHED progress as well, so the panel's report carries them.
+  assert.deepEqual(progress[1].criteria, { targetChars: 20000, tables: 2, lists: true, sections: 4, conclusions: true });
 });
 
 test('a verify that finds the volume short starts exactly one more pass and the request names the missing list', async () => {
   const doc = fakeDocument({ chars: 6000, headings: 2, tables: 0, paragraphs: 8, body: 'обычный текст' });
   const scripted = scriptedPasses([okPass(), okPass('часть 1'), () => {
-    doc.state.chars = 20000; doc.state.headings = 4; doc.state.tables = 1; doc.state.body = 'выводы\n- пункт 1';
+    doc.state.chars = 20000; doc.state.headings = 4; doc.state.tables = 2; doc.state.body = 'выводы\n- пункт 1';
     return okPass('часть 2');
   }]);
   const orchestrator = createOrchestrator({ runPass: scripted.runPass, readDocument: doc.readDocument });
@@ -104,22 +180,99 @@ test('a verify that finds the volume short starts exactly one more pass and the 
   assert.match(continuation.text, /разделов \(заголовков\): 2 из 4/);
   assert.match(continuation.text, /таблиц нет ни одной/);
   assert.match(continuation.text, /списков нет ни одного/);
-  assert.match(continuation.text, /нет раздела с выводами/);
+  assert.match(continuation.text, /заключения нет/);
 });
 
 test('the pass budget is bounded by the named cap and stops with an honest incomplete report', async () => {
   const doc = fakeDocument({ chars: 10, headings: 0, tables: 0, paragraphs: 1, body: '' });
-  // The plan pass plus SEVEN execute answers: the cap must end the run after six of them, and the
-  // seventh answer must never be requested.
+  // The plan pass plus THIRTEEN execute answers: the cap must end the run after twelve of them, and the
+  // thirteenth answer must never be requested.
   const scripted = scriptedPasses([okPass(), ...Array.from({ length: ORCHESTRATION_MAX_EXECUTE_PASSES + 1 }, () => okPass('часть'))]);
   const orchestrator = createOrchestrator({ runPass: scripted.runPass, readDocument: doc.readDocument });
   const outcome = await orchestrator.run('документ на 10 страниц');
   assert.equal(outcome.phase, 'incomplete');
   assert.equal(outcome.error, 'PASS_BUDGET_EXHAUSTED');
   assert.equal(outcome.passes, ORCHESTRATION_MAX_EXECUTE_PASSES);
-  assert.equal(ORCHESTRATION_MAX_EXECUTE_PASSES, 6);
-  assert.equal(scripted.seen.length, ORCHESTRATION_MAX_EXECUTE_PASSES + 1, 'six execute passes and one plan pass');
+  assert.equal(ORCHESTRATION_MAX_EXECUTE_PASSES, 12, 'the cap is the named twelve passes');
+  assert.equal(scripted.seen.length, ORCHESTRATION_MAX_EXECUTE_PASSES + 1, 'twelve execute passes and one plan pass');
   assert.ok(outcome.missing.length > 0, 'the honest report carries what is still missing');
+  // The report exposes WHAT was required and WHAT was reached, so the native check can read both.
+  assert.equal(outcome.floor.targetChars, 18000);
+  assert.equal(outcome.criteria.targetChars, 20000, 'the plan MAY raise the volume; the floor cannot be lowered');
+  assert.ok(outcome.criteria.sections > 0, 'the plan\'s own section count is the heading criterion');
+  assert.equal(outcome.verified.chars, 10);
+  const last = scripted.seen[scripted.seen.length - 1];
+  assert.match(last.text, /НЕ ВЫПОЛНИЛ ПЛАН/, 'the continuation carries the missing list the verify measured');
+  assert.match(last.text, /объём: 10 из 20000 знаков/);
+});
+
+test('the plan pass asks for the fixed, parseable key shape and the first execute pass pins the criteria', async () => {
+  const doc = fakeDocument({ chars: 20000, headings: 4, tables: 2, paragraphs: 30, body: 'Выводы\n- один\n- два' });
+  const scripted = scriptedPasses([okPass(planJson()), okPass('done')]);
+  const outcome = await createOrchestrator({ runPass: scripted.runPass, readDocument: doc.readDocument })
+    .run('создай документ примерно на 10 страниц с несколькими таблицами и выводами');
+  const planRequest = scripted.seen[0].text;
+  assert.match(planRequest, /РАЗДЕЛЫ: 1\)/);
+  assert.match(planRequest, /ОБЪЁМ: 18000/);
+  assert.match(planRequest, /ТАБЛИЦЫ: 2/);
+  assert.match(planRequest, /ЗАКЛЮЧЕНИЕ: да/);
+  assert.match(scripted.seen[1].text, /КРИТЕРИИ ПРИЁМКИ/);
+  assert.match(scripted.seen[1].text, /знаков — 20000/);
+  assert.match(scripted.seen[1].text, /таблиц — 2/);
+  assert.deepEqual(outcome.criteria, { targetChars: 20000, tables: 2, lists: true, sections: 4, conclusions: true });
+  assert.equal(outcome.phase, 'complete', 'all criteria were measured met, so the orchestration is complete');
+});
+
+test('complete needs EVERY criterion: one missed criterion keeps the run going and the report honest', async () => {
+  // The document meets the volume, the sections, the tables and the conclusions, and misses ONLY the plan's
+  // lists — one unmet criterion is enough to keep the run honest and to stop it being called complete.
+  const doc = fakeDocument({ chars: 20000, headings: 4, tables: 2, paragraphs: 30, body: 'Выводы\nобычный текст' });
+  const scripted = scriptedPasses([okPass(planJson({ targetCharacters: 20000 })),
+    ...Array.from({ length: ORCHESTRATION_MAX_EXECUTE_PASSES }, () => okPass('часть'))]);
+  const outcome = await createOrchestrator({ runPass: scripted.runPass, readDocument: doc.readDocument })
+    .run('создай документ примерно на 10 страниц с несколькими таблицами и выводами');
+  assert.equal(outcome.phase, 'incomplete');
+  assert.equal(outcome.error, 'PASS_BUDGET_EXHAUSTED');
+  assert.equal(outcome.criteria.tables, 2, 'the floor\'s two tables, raised by nothing here');
+  assert.deepEqual(outcome.missing, ['списков нет ни одного'], 'only the one unmet criterion is named');
+  // THE COMPLETE RULE: the document met the volume, the sections, the tables and the conclusions, and the
+  // run still did not report a done — one missed criterion is enough to keep it honest.
+  assert.equal(outcome.passes, ORCHESTRATION_MAX_EXECUTE_PASSES);
+  assert.match(scripted.seen[scripted.seen.length - 1].text, /списков нет ни одного/);
+});
+
+test('a plan that cannot establish a key falls back to the request floor, and a plan below it can never lower the demand', async () => {
+  const doc = fakeDocument({ chars: 20000, headings: 4, tables: 2, paragraphs: 30, body: 'Выводы\n- один\n- два' });
+  // THE MODEST PLAN: it declares the owner's demand away completely, and the floor restores it.
+  const modest = planJson({ targetCharacters: 1000, required: { tables: false, lists: false, conclusions: false } });
+  const modestRun = await createOrchestrator({ runPass: scriptedPasses([okPass(modest), okPass('done')]).runPass,
+    readDocument: doc.readDocument }).run('создай документ примерно на 10 страниц с таблицами и выводами');
+  assert.equal(modestRun.criteria.targetChars, ORCHESTRATION_TARGET_CHARS);
+  assert.equal(modestRun.criteria.tables, 2);
+  assert.equal(modestRun.criteria.conclusions, true);
+  // THE MALFORMED KEYS: sections parse, volume and tables do not, so both fall back to the floor.
+  const malformed = planKeys({ volume: 'очень много', tables: 'две' });
+  const malformedRun = await createOrchestrator({ runPass: scriptedPasses([okPass(malformed), okPass('done')]).runPass,
+    readDocument: doc.readDocument }).run('создай документ примерно на 10 страниц с таблицами и выводами');
+  assert.equal(malformedRun.criteria.targetChars, ORCHESTRATION_TARGET_CHARS, 'never zero, never below the floor');
+  assert.equal(malformedRun.criteria.tables, 2);
+  assert.equal(malformedRun.phase, 'complete');
+});
+
+test('the far end of the cap is reached with a full twelve-pass budget and the criteria are recomputed for the report', async () => {
+  const doc = fakeDocument({ chars: 100, headings: 1, tables: 0, paragraphs: 2, body: '' });
+  const plan = planJson({ targetCharacters: 50000, sections: ['A', 'B', 'C', 'D', 'E', 'F'] });
+  const scripted = scriptedPasses([okPass(plan), ...Array.from({ length: ORCHESTRATION_MAX_EXECUTE_PASSES }, () => okPass('часть'))]);
+  const outcome = await createOrchestrator({ runPass: scripted.runPass, readDocument: doc.readDocument })
+    .run('создай документ на 10 страниц с несколькими таблицами и выводами');
+  assert.equal(ORCHESTRATION_MAX_EXECUTE_PASSES, 12);
+  assert.equal(outcome.passes, 12);
+  assert.equal(scripted.seen.length, 13, 'one plan pass and twelve execute passes');
+  assert.equal(outcome.criteria.targetChars, 50000, 'the plan raised the volume inside the bounded range');
+  assert.equal(outcome.criteria.sections, 6, 'the plan MAY raise the owner\'s heading count too');
+  assert.equal(outcome.criteria.tables, 2);
+  assert.ok(outcome.missing.some(item => item.includes('из 50000')));
+  assert.ok(outcome.verified.chars === 100, 'the report carries the reached numbers next to the criteria');
 });
 
 test('an uncertain action stops the orchestration with no further pass and names the unverified tool', async () => {
@@ -140,7 +293,7 @@ test('an uncertain action stops the orchestration with no further pass and names
 });
 
 test('a plan pass that wrongly calls tools keeps its plan text and reports the calls', async () => {
-  const doc = fakeDocument({ chars: 20000, headings: 4, tables: 1, paragraphs: 20, body: 'Выводы\n- один\n- два' });
+  const doc = fakeDocument({ chars: 20000, headings: 4, tables: 2, paragraphs: 20, body: 'Выводы\n- один\n- два' });
   const planWithTools = { ok: true, status: 'FINAL', message: planJson(),
     actions: [{ tool: 'read_structure', outcome: 'ok' }], steps: 2, toolCalls: 1 };
   const scripted = scriptedPasses([planWithTools, okPass('выполнено')]);
@@ -206,14 +359,33 @@ test('the document reader reads the structure and one bounded text probe through
   assert.deepEqual(refused, { ok: false, error: 'CAPABILITY_UNAVAILABLE' });
 });
 
-test('the missing list is derived only from what a read proved', () => {
-  const plan = parsePlan(planJson({ targetCharacters: 18000 }));
-  const measured = measuredFrom({ statistics: { SymbolsWSCount: 5000, ParagraphCount: 4 }, counts: { headings: 1, tables: 0, paragraphs: 4 },
+test('the missing list reports the unmet CRITERIA with their numbers, and complete is reached only when none is unmet', () => {
+  // The floor ALONE, with a plan that lowered the declarable elements and the volume: `max` restores the
+  // owner's demand, so several criteria are unmet at once and the list names each with its own numbers.
+  const modest = parsePlan(planJson({ targetCharacters: 1000, sections: ['A'],
+    required: { tables: false, lists: false, conclusions: false } }));
+  const strong = criteriaFrom(floor, modest);
+  assert.deepEqual(strong, { targetChars: 18000, tables: 2, lists: false, sections: 2, conclusions: true });
+  const measured = measuredFrom({ statistics: { SymbolsWSCount: 5000, ParagraphCount: 4 }, counts: { headings: 3, tables: 1, paragraphs: 4 },
     headings: [], text: 'обычный текст' });
-  const missing = missingFrom(plan, measured);
-  assert.equal(missing.length, 5);
-  assert.match(missing[0], /объём: 5000 из 18000 знаков/);
-  assert.match(missing[0], /3 из 10 страниц/);
-  assert.equal(missingFrom(plan, measuredFrom({ statistics: { SymbolsWSCount: 19000, ParagraphCount: 9 },
-    counts: { headings: 4, tables: 1, paragraphs: 9 }, headings: [], text: 'Выводы\n- один\n- два' })).length, 0);
+  const missing = missingFrom(strong, measured);
+  assert.deepEqual(missing, ['объём: 5000 из 18000 знаков (примерно 3 из 10 страниц)', 'таблиц 1 из 2', 'заключения нет']);
+  // The exact wording the owner asked for, on the measured numbers of a real run.
+  const thin = measuredFrom({ statistics: { SymbolsWSCount: 12400, ParagraphCount: 40 }, counts: { headings: 8, tables: 1, paragraphs: 40 },
+    headings: [], text: '- пункт' });
+  assert.deepEqual(missingFrom(criteria, thin), ['объём: 12400 из 20000 знаков (примерно 7 из 12 страниц)', 'таблиц 1 из 2', 'заключения нет']);
+  // A document that leaves exactly ONE criterion unmet is missing exactly that one, and no other.
+  const met = measuredFrom({ statistics: { SymbolsWSCount: 20000, ParagraphCount: 9 },
+    counts: { headings: 4, tables: 2, paragraphs: 9 }, headings: [], text: 'Заключение\n- один\n- два' });
+  assert.deepEqual(missingFrom(criteria, met), []);
+  assert.deepEqual(missingFrom(criteria, { ...met, chars: 100 }), ['объём: 100 из 20000 знаков (примерно 1 из 12 страниц)']);
+  assert.deepEqual(missingFrom(criteria, { ...met, headings: 3 }), ['разделов (заголовков): 3 из 4 заявленных']);
+  assert.deepEqual(missingFrom(criteria, { ...met, tables: 1 }), ['таблиц 1 из 2']);
+  assert.deepEqual(missingFrom(criteria, { ...met, tables: 0 }), ['таблиц нет ни одной']);
+  assert.deepEqual(missingFrom(criteria, { ...met, conclusions: false }), ['заключения нет']);
+  const withLists = criteriaFrom(floor, parsePlan(planJson()));
+  assert.deepEqual(missingFrom(withLists, { ...met, lists: false }), ['списков нет ни одного']);
+  // A plan MAY raise a criterion above the floor: the max is the plan's own number.
+  assert.equal(criteriaFrom(floor, parsePlan(planJson({ sections: ['A', 'B', 'C', 'D', 'E'] }))).sections, 5);
 });
+

@@ -589,12 +589,13 @@ function orchestrationTransport(doc) {
     step += 1;
     if (step === 1) return { content: JSON.stringify({ type: 'final', message: orchestrationPlan }) };
     // Every execute answer appends ONE batch and the panel's own verify step sees the document grow the
-    // way an editor would. The volume reaches 5000 characters in the FIRST execute pass, and the model
-    // then ends that pass — which is exactly the measured pilot shape — so the verify finds it far short
-    // of the target and one continuation is required. The SECOND pass takes the document to the target.
+    // way an editor would. The volume reaches 5000 characters and ONE table in the FIRST execute pass, and
+    // the model then ends that pass — which is exactly the measured pilot shape — so the verify finds it
+    // far short of the criteria (the request asks for tables and the plan raises the volume) and one
+    // continuation is required. The SECOND pass takes the document to the target and to its second table.
     doc.chars = Math.min(doc.chars + 1000, 19000);
     doc.paragraphs = Math.min(doc.paragraphs + 2, 30);
-    doc.headings = 4; doc.tables = 1;
+    doc.headings = 4; doc.tables = doc.chars === 5000 ? 1 : 2;
     doc.body = 'Выводы\n- пункт\n- пункт 2\n' + 'текст '.repeat(20);
     if (doc.chars === 5000 || doc.chars === 19000) return { content: JSON.stringify({ type: 'final', message: 'проход завершён' }) };
     return { content: JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_blocks',
@@ -619,14 +620,18 @@ test('a long-generation request is planned, executed in parts, measured and cont
   assert.equal(record.status, 'ORCH_COMPLETE');
   assert.equal(state.status, 'ORCH_COMPLETE');
   assert.equal(record.pass, 2, 'the first pass left the volume short, so exactly one more was run');
-  assert.equal(record.maxPasses, 6);
+  assert.equal(record.maxPasses, 12);
   assert.equal(record.targetChars, 18000);
   assert.equal(record.plan.sections.length, 4);
+  // The ENFORCED criteria and the request-derived floor are published with the report, so a native check
+  // can read exactly what was required: the request's own two tables, its conclusion and the plan's volume.
+  assert.deepEqual(record.floor, { targetChars: 18000, tables: 2, conclusions: true, sections: 2 });
+  assert.deepEqual(record.criteria, { targetChars: 18000, tables: 2, lists: true, sections: 4, conclusions: true });
   // The verified numbers are the READ ones, not the model's: the first pass ended at 5000 characters and
   // the document was measured again after the second.
   assert.equal(record.verified.chars, 19000);
   assert.equal(record.verified.headings, 4);
-  assert.equal(record.verified.tables, 1);
+  assert.equal(record.verified.tables, 2);
   assert.ok(record.verified.paragraphs >= 12);
   assert.deepEqual(record.missing, []);
   assert.equal(record.error, null);
@@ -640,11 +645,12 @@ test('a long-generation request is planned, executed in parts, measured and cont
   assert.match(firstExecute, /insert_blocks/);
   assert.ok(continuation, 'the second execute pass names what the first left missing');
   assert.match(continuation, /объём: 5000 из 18000 знаков/);
-  // The missing list names EXACTLY what the read proved absent: the sections, the table, the list and the
-  // conclusions were already measured present, so only the volume is asked for.
+  assert.match(continuation, /таблиц 1 из 2/, 'the missing list names the unmet TABLE criterion with its numbers');
+  // The missing list names EXACTLY what the read proved absent: the sections, the list and the conclusions
+  // were already measured present, so only the volume and the second table are asked for.
   assert.equal(continuation.includes('разделов (заголовков)'), false);
-  assert.equal(continuation.includes('таблиц нет ни одной'), false);
   assert.equal(continuation.includes('списков нет ни одного'), false);
+  assert.equal(continuation.includes('заключения нет'), false);
   assert.match(continuation, /ОГРАНИЧЕНИЯ ЭТОГО РЕЖИМА: Профиль 'bulk'/);
   assert.equal(f.controller.getState().chat.history.length, 0, 'the panel\'s own wording never becomes chat history');
 });
@@ -689,18 +695,20 @@ test('the execute-pass budget is capped and the panel reports an honest incomple
   assert.equal(f.controller.getState().status, 'ORCH_INCOMPLETE');
   assert.equal(record.phase, 'incomplete');
   assert.equal(record.error, 'PASS_BUDGET_EXHAUSTED');
-  assert.equal(record.pass, 6, 'the named cap is six execute passes');
+  assert.equal(record.pass, 12, 'the named cap is twelve execute passes');
   assert.equal(record.verified.chars, 0);
   assert.ok(record.missing.length > 0);
-  // The execute requests are the plan pass plus exactly six execute passes, and the last five of them
+  // The execute requests are the plan pass plus exactly twelve execute passes, and the last eleven of them
   // carry the missing list the previous verify measured. The `ТОЛЬКО ПЛАН` phrase also appears inside the
   // bulk PROFILES's own authored line, so the plan pass is identified by its own opening line instead.
   const planRequests = calls.filter(text => text.startsWith('Ниже — задача владельца. Сейчас НУЖЕН ТОЛЬКО ПЛАН'));
   const executeRequests = calls.filter(text => text.startsWith('Ниже — задача владельца и уже утверждённый ПЛАН'));
   const continuations = executeRequests.filter(text => text.includes('ПРЕДЫДУЩИЙ ПРОХОД НЕ ВЫПОЛНИЛ ПЛАН'));
   assert.equal(planRequests.length, 1);
-  assert.equal(executeRequests.length, 6);
-  assert.equal(continuations.length, 5);
+  assert.equal(executeRequests.length, 12);
+  assert.equal(continuations.length, 11);
+  // Every execute pass states the criteria it will be measured against, including the last one.
+  assert.equal(executeRequests.filter(text => text.includes('КРИТЕРИИ ПРИЁМКИ')).length, 12);
 });
 test('an unusable plan stops before any execute pass and reports it honestly', async () => {
   const sent = [];
