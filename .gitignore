@@ -3,6 +3,7 @@ node_modules/
 dist/
 artifacts/
 .local/
+.superpowers/
 .env
 .env.*
 !.env.example
