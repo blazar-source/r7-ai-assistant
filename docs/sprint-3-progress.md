@@ -2577,21 +2577,34 @@ below).
 **THE PROOF, and the honest limits of a string match.** `ok` now requires **both** legs. The ALIGNMENT leg is
 §16's, unchanged (`GetParaPr().GetJc()` before and after the one `SetJc`). The RUN leg is: the addressed
 region's own text — the text the **PRE-mutation** `paragraph.GetRange(from,to).GetText()` answered, kept from
-the pre-read and never re-derived after the write — must occur **EXACTLY ONCE** in the export AND be wrapped
-**CONTIGUOUSLY** in the requested property's measured marker. Three properties of that rule are deliberate and
-are stated in the code as well as here:
+the pre-read and never re-derived after the write — must occur **EXACTLY ONCE** in the export AND lie **INSIDE
+that property's own marker pair within the addressed paragraph's own fragment**: the property's **last opener**
+at or before the region and its **first closer** after it, with other markers and other text **allowed in
+between**, plus the one condition that makes the located pair **one** pair — the judged opener's own first
+closer must be the judged closer. The two tolerated shapes are the measured NESTING (two properties on one
+region nest, and the outer property's pair is wider than the region) and a pair wrapping a **superset** of the
+address, which is what a range write wider than the address produces. This REPLACED the older
+`open + region + close` adjacency rule, which answered 0 for a legitimate outer property in the measured
+nesting, and the intermediate rule that accepted any last-opener/first-closer pair, which a review turned into a
+**false success** with `<strong>Ц</strong>ел<strong>ь</strong>` over the region `ел`. Three properties of the
+current rule are deliberate and are stated in the code as well as here:
 1. **A duplicate region text is UNVERIFIABLE, not guessed at.** If the region text stands twice — inside the
    addressed paragraph, or anywhere else in the document — the marker's target cannot be told apart, so the
    outcome is `APPLY_UNCERTAIN` with the slot HELD rather than a silent choice of the first occurrence. The
    count runs over the RAW export string, because the authored body has no HTML parser; an occurrence inside
    MARKUP (a short ASCII region such as `p`, `span` or `style`) therefore counts too, which can only cost a
    false UNCERTAIN, never a false `ok`.
-2. **A marker that merely appears NEAR the region proves nothing.** The check is `open + region + close`, so a
-   property applied to a SUPERSET of the address (the file's own `<strong>Цель</strong>` over a `Це` address,
-   pinned by a test) fails while the marker really is present in the export.
-3. **The markers were measured ONE PROPERTY PER REGION**, so a call naming TWO run properties for the SAME
-   region proves each leg independently and may fail to prove if the exporter nests them. That is a stated
-   limitation, not a silent one; a caller that needs two properties on one region can issue two calls.
+2. **A marker that merely appears NEAR the region proves nothing, and a marker that belongs to a DIFFERENT
+   pair proves nothing either.** The pair is judged as ONE pair: the opener's own first closer must be the
+   closer that was found, so a property applied to a SUPERSET of the address is still proven (the pair really
+   covers the region) while a pair that CLOSES before the region and reopens after it is not — the file's own
+   `<strong>Цель</strong>` over a `Це` address is the pinned positive case, and the review's
+   `<strong>Ц</strong>ел<strong>ь</strong>` over `ел` is the pinned negative one.
+3. **The markers were measured ONE PROPERTY PER REGION**, and the nesting-tolerant pair rule above is what
+   lets TWO properties on the same region prove: the property applied FIRST becomes the INNERMOST marker and
+   the property applied second wraps it, and the outer property is proven by the wider pair around the region.
+   A shape the exporter nests in a way the pair condition rejects (a pair closing before the region) still
+   settles UNCERTAIN rather than a false `ok`.
 
 **THE EXPORT BOUND: `LIMITS.formatRangeHtmlChars` = 131072 CHARACTERS, and why.** It is a **character** bound
 rather than a byte bound because the export never CROSSES anything: the authored body reads it inside the
@@ -2819,14 +2832,14 @@ the same call that produced the false UNCERTAIN, (2) that underlining exports th
 closed path — no proof means `TOOL_UNCERTAIN` with the slot held, and no run property means no export read at
 all.
 
-## 17. Tool 9 — `add_hyperlink`, the THIRD append, and the fragment proof the markdown export enables
+## 17. Tool 9 — `add_hyperlink`, the THIRD append, and the MEASURED per-object element readback
 
 `add_hyperlink` is the NINTH Sprint 3 Word tool, the FIFTH mutation, the THIRD write leg that APPENDS, and the
 FIRST one that takes a URL from the model. Its contract is the house one — closed schema, ZERO writes on every
 pre-insert refusal, ONE mutation phase, an explicit `PRE_INSERT`/`POST_INSERT` phase slot, an exact proof or
 `TOOL_UNCERTAIN` with the slot HELD and no retry, closed failure classes, a static self-contained `callCommand`
 body whose data crosses as `Asc.scope`, a bounded serialized result entry and a classifier leg — so this
-section records only what is NEW: the route, the two forms, the proof, the duplicate rule and the residuals.
+section records only what is NEW: the route, the two forms, the proof, the retired export and the residuals.
 
 ### 17.1 The route, read out of the vendored SDK
 
@@ -2861,7 +2874,7 @@ changes); OMITTED creates a new paragraph, places the link in it and pushes it a
 paragraph count grows by exactly one). Both forms are implemented, both are tested, and the result states which
 one ran — `appended` plus `paragraph` (`null` for the append form) — so the model is never left to infer it.
 
-### 17.3 The proof: three legs, one of them a MEASURED fragment
+### 17.3 The proof: three legs, and the URL is proven by the element ITSELF
 
 1. **THE ADDRESSED PARAGRAPH'S OWN TEXT**, read through `GetAllParagraphs()` before and after. NAMED requires
    the AFTER text to be EXACTLY the BEFORE text plus the link text — a string equality, not a length, and the
@@ -2873,95 +2886,119 @@ one ran — `appended` plus `paragraph` (`null` for the append form) — so the 
 2. **THE DOCUMENT'S OWN PARAGRAPH COUNT**, unchanged for NAMED and +1 for APPEND, derived by the bridge from the
    two pushed counts against the REQUEST rather than from a flag in the answer. It is SECONDARY: a count that
    moved can only REFUTE.
-3. **THE MARKDOWN FRAGMENT**, and this is the leg that makes the URL itself provable.
-   `L.prototype.ToMarkdown(...)` builds the markdown converter, whose
-   `HandleHyperlink` renders `"[" + <runs> + "](" + GetLinkedText() + ")"`, and whose `HandleRun` emits every
-   run character RAW through `String.fromCharCode` (and emits the hyperlink's own inner runs with NO mode
-   argument at all, so the displayed text gets neither escaping nor emphasis markers). The addressed paragraph's
-   own PRE-mutation text is therefore the fragment's context, and the needle is
-   `preText + "[" + text + "]("`. The proof requires that needle to occur EXACTLY ONCE in the POST-mutation
-   export AND the requested URL to follow it IMMEDIATELY, closed by `)`. The needle is built from the PRE read
-   on BOTH sides, so a post-read that moved cannot supply its own context.
+3. **THE ADDRESSED PARAGRAPH'S OWN ELEMENT**, and this is the leg that makes the URL itself provable. The
+   paragraph's `GetElementsCount()` is read BEFORE the mutation; after it the count must be EXACTLY that plus
+   one (`elementCountGrew`) and the element AT the PRE count index must answer `GetClassType() === 'hyperlink'`
+   with `GetLinkedText()` EXACTLY the requested URL and `GetDisplayedText()` EXACTLY the requested label
+   (`elementAppended`). The index is the PRE count on BOTH sides of the boundary, so the element being judged is
+   the one THIS write appended — a position, not a search. **This readback is MEASURED, not deduced**: the Lead
+   measured on the target (Astra / R7 2026.1.2.1942, in the SAME native session that ran the tool) that after a
+   named-form call `GetElementsCount()` went 1 → 2, that `GetElement(i)` answered a usable object for every
+   index, and that the appended element answered `GetClassType() === 'hyperlink'`,
+   `GetLinkedText() === 'https://example.com/astra-r7-pilot'` and `GetDisplayedText() === 'ССЫЛКА-ПИЛОТ'`.
 
-**THE DUPLICATE DECISION, STATED EXACTLY.** A needle the PRE-mutation export ALREADY holds is the closed
-argument class with ZERO writes, decided in the body BEFORE the phase turns: the fragment could not be
-attributed one-to-one, so the honest answer is a known refusal rather than a write whose outcome nothing can
-tell apart. A needle that is only ABSENT, DUPLICATED or URL-LESS after the write — a concurrent writer, an
-editor that stored another URL — cannot be refused closed, because the write has already run: it is
-`APPLY_UNCERTAIN` with the slot HELD and NO retry. Both directions are pinned by tests, and neither can produce
-a false `ok`.
+**EVERY CHAIN STEP IS FUNCTION-CHECKED BEFORE THE MUTATION**, and the ordering is a contract: the addressed
+paragraph must expose `GetElementsCount` and `GetElement`, and the object `GetElement` answers must expose
+`GetClassType`/`GetLinkedText`/`GetDisplayedText`. A missing primitive — or a PRE read that throws — is the
+closed capability class with ZERO writes, never a link written into a document whose proof cannot be read. An
+absent or throwing member on the POST side is NOT a refusal, because the write has already run: it is the
+uncertain class with the slot held.
 
-### 17.4 The residuals, named rather than relied on
+### 17.4 What the export cost, and what replaced it
 
-* **A FORMATTING BOUNDARY INSIDE THE ADDRESSED PARAGRAPH'S OWN TEXT MAKES THE FRAGMENT UNLOCATABLE.** The
-  converter wraps a formatted run with its measured markdown symbol
-  (`MdSymbols = { Bold: "**", Italic: "*", Strikeout: "~~", Code: "`", ... }`; underline has none), so a
-  paragraph containing bold/italic/strikeout text — or ending in such a run, whose closer lands between its last
-  character and the link's `[` — exports its text with markers INSIDE the needle. A LINE BREAK does the same
-  (`para_NewLine` renders as ` \` plus a newline while `GetText()` answers `\r`). The needle is then not found:
-  a **FALSE UNCERTAIN** with the slot held, **never a false `ok`**. This is the leg's primary residual and it is
-  the FIRST thing a native run should settle. The STRUCTURAL REMEDY for a later round, already visible in the
-  vendored SDK and deliberately NOT used here because no native run has measured it: `ApiParagraph` exposes
-  `GetElementsCount()` and `GetElement(i)`, and the hyperlink wrapper exposes `GetLinkedText()`/`GetDisplayedText()`
-  — a PER-OBJECT readback over the addressed paragraph's own content that would need no export at all. It is not
-  adopted in this round because the contract prescribes the fragment proof and the export route is the one the
-  Lead MEASURED; swapping the readback channel on an unmeasured route is exactly the mistake this sprint has
-  already paid for twice.
-* **THE CONCURRENT WINDOW**, the same one the other mutations acknowledge: a writer who appends exactly the link
-  text to the addressed paragraph while another fragment appears elsewhere inside the two reads. Accepted and
-  recorded, not silently relied on.
+**THE RETIRED CHANNEL.** The previous round proved the URL by locating `preText + "[" + label + "](" + url + ")"`
+exactly once in `doc.ToMarkdown()`. A close-out review REPRODUCED on the real bridge that this needle is broken
+by ANY character formatting inside the addressed paragraph — the converter wraps the OTHER runs in the measured
+`MdSymbols` (`**`/`*`/`~~`/`` ` ``; underline has none), so a marker lands inside the needle, and a formatted run
+ENDING the pre text puts its closer between the text's last character and the link's `[` — and by a line break
+(`para_NewLine` renders as a space plus a backslash plus a newline while `GetText()` answers `\r`). A formatted
+paragraph therefore cost a **FALSE UNCERTAIN with the write slot HELD**: fail-safe, but the pilot request
+explicitly asks to format the document, which made it reachable. The export also forced a document-wide
+uniqueness rule and a size bound on a string no part of the proof needed.
+
+* **THE PRE-EXPORT CHECK became the PRE ELEMENT COUNT.** The body used to read the whole export before the write
+  to refuse a fragment it already rendered; it now reads `GetElementsCount()` on the addressed paragraph, which
+  is the index the proof will address.
+* **THE UNIQUENESS RULE IS GONE AND NEEDS NO REPLACEMENT.** The readback addresses ONE element by its index
+  inside the ADDRESSED paragraph's own content, so a second paragraph carrying the same label — or even the
+  same url — is simply not part of the proof. There is no document-wide needle to disambiguate.
+* **THE EXPORT BOUND IS GONE.** `LIMITS.addHyperlinkMarkdownChars` (131072 characters) was removed from
+  `src/shared/limits.js` with the export it bounded, and `preInsertRefusal` no longer grants the hyperlink leg a
+  phase-gated `BYTE_LIMIT`: this body can produce no byte-gated refusal at all, so a forged
+  `[PRE_INSERT, 'BYTE_LIMIT']` settles `APPLY_UNCERTAIN` with the slot HELD rather than releasing the slot.
+* **THE FORMATTING CASE IS NOW A TEST.** `a FORMATTED addressed paragraph still verifies: the element readback
+  is not a string match` reproduces the review's exact scenario (bold and italic runs present in the addressed
+  paragraph when the link is appended) and asserts the call VERIFIES with the slot released.
+
+### 17.5 The residuals, named rather than relied on
+
+* **AN ABSENT OR THROWING ELEMENT MEMBER CAN ONLY BE UNCERTAIN.** `GetClassType`/`GetLinkedText`/
+  `GetDisplayedText` live on the element `GetElement` answers, and the element does not exist before the write —
+  so their absence cannot be a PRE-insert refusal and settles `APPLY_UNCERTAIN` with the slot HELD. That is the
+  fail-safe direction, and it is exactly the shape of a build whose `ApiHyperlink` surface differs from the
+  measured one.
+* **A CONCURRENT WRITER THAT SPLICES AN ELEMENT INTO THE ADDRESSED PARAGRAPH** between the PRE count read and
+  the mutation shifts the index the proof addresses, so the element at that index is not this call's link: a
+  FALSE UNCERTAIN with the slot held, never a false `ok`. The window is the same one the other mutations
+  acknowledge.
 * **THE `%20` NORMALISATION IS REFUSED, NOT WRITTEN.** `ApiHyperlink.SetLink` ends with
   `url = url && url.replace(new RegExp("%20","g"), " ")`, so a URL holding `%20` is stored with a literal space
-  and could never be compared verbatim with the export. It is the closed argument class with ZERO writes — a
-  clean refusal instead of a write that would wedge the slot. Every other percent escape survives unchanged.
+  and `GetLinkedText()` could never answer the requested string. It is the closed argument class with ZERO
+  writes — a clean refusal instead of a write that would wedge the slot. Every other percent escape survives
+  unchanged.
 * **THE CLOSED SCHEME VOCABULARY.** `SetLink` also REWRITES a URL its `AscCommon.rx_allowedProtocols` test does
   not match (`url = type === 0 ? null : (type === 2 ? "mailto:" : "http://") + url`). The tool serves only the
   two absolute, lower-case schemes it can prove (`http://`, `https://`, in `LIMITS.addHyperlinkSchemes`); a
   relative path, a `mailto:` and an upper-case scheme are refused closed with ZERO writes.
-* **THE EXPORT IS BOUNDED** by `LIMITS.addHyperlinkMarkdownChars` (131072 characters, the read path's pilot byte
-  ceiling divided by the worst-case two bytes per character) and never truncated to a prefix: above it the body
-  answers the closed `BYTE_LIMIT` with ZERO writes before the mutation and the UNCERTAIN class after one.
+* **THE LABEL'S CONTROL-CHARACTER RULE IS KEPT.** It was the retired needle's requirement, and it is retained
+  deliberately: this leg stays CONSERVATIVE about the two strings it takes from the model, and relaxing a closed
+  argument rule is a widening of the request contract rather than a consequence of the swap.
 
-### 17.5 The failure map, and the RED/GREEN record
+### 17.6 The failure map, and the RED/GREEN record
 
-Wrong editor / missing bridge entry point / unusable baseline / missing `ToMarkdown` / missing factories →
-`CAPABILITY_UNAVAILABLE`; a bad URL, an empty or over-bound label, an uninterpretable address, a `%20` URL, an
-index outside the document and an already-rendered fragment → the closed argument class with ZERO writes
-(precondition AND handler AND the body, because a descriptor is also executable when it is held directly); a
-pre-mutation export above the bound → `BYTE_LIMIT` with ZERO writes; a bridge refusal → `refusalCode`; an
-uninterpretable envelope → `known()`; a thrown or returned `APPLY_UNCERTAIN` and every non-exact outcome →
-`TOOL_UNCERTAIN` with the slot HELD and no retry; an over-ceiling entry → `BYTE_LIMIT`.
+Wrong editor / missing bridge entry point / unusable baseline / a missing or throwing readback primitive →
+`CAPABILITY_UNAVAILABLE`; a bad URL, an empty or over-bound label, an uninterpretable address, a `%20` URL and
+an index outside the document → the closed argument class with ZERO writes (precondition AND handler AND the
+body, because a descriptor is also executable when it is held directly); a bridge refusal → `refusalCode`; an
+uninterpretable envelope → `known()`; a thrown or returned `APPLY_UNCERTAIN` and every non-exact outcome —
+including an element count that did not grow by one and an element at the PRE index that is not this request's
+link — → `TOOL_UNCERTAIN` with the slot HELD and no retry; an over-ceiling entry → `BYTE_LIMIT`.
 
-**RED.** The 18 new tests were written first and run against the untouched tree: 21 failures — the three
-catalogue/registry name lists (because `add_hyperlink` did not exist) plus the 18 new tests, every bridge test
-dying on `TypeError: r.bridge.addHyperlink is not a function` and the schema test on the missing descriptor.
-**GREEN.** Focused set `tests/unit/tools-word.test.js tests/integration/package.test.js` → **267/267**
-(262 + 5), `fail 0`. Four fixes were required by the RED run itself and none of them weakened a proof: the three
-index bounds are equal by SCALE and are therefore asserted as equal-but-separate decisions instead of as
-inequalities (`contextReadBytes`' own rule); the schema-closed cases are checked with the existing
-`schemaRefused` pattern, with the URL-shape and control-character cases asserted explicitly as the ones the
-schema CANNOT express and the handler therefore refuses; the "at the bound" export had to be split into a
-PRE read that holds no fragment and a POST read that holds exactly one, because the single-string version
-tripped this leg's own zero-write duplicate refusal — which is the rule working.
+**RED.** The tests were rewritten to the measured ELEMENT shape FIRST and run against the untouched tree: the
+focused set reported **9 failures**, every one of them a markdown-route assertion losing to the new contract —
+`bridge addHyperlink dispatches ONE command…` and `…creates and PUSHES a new paragraph…` received
+`['POST_INSERT',2,2,12,24,1,1,1]` (EIGHT slots, text lengths 12/24, fragment flags) where the element shape
+demands `['POST_INSERT',2,2,1,2,12,24,1,1,1]`; `a FORMATTED addressed paragraph still verifies` — the exact case
+the review reproduced — received a payload whose slots the old body could not fill at all;
+`the hyperlink body is self-contained…` failed on `the markdown export is authored NOWHERE` because the old body
+really authors `ToMarkdown()`; `a missing or throwing ELEMENT PRIMITIVE…`, `the ELEMENT proof is judged…`,
+`the retired export bound is GONE…` and the model-call test all failed on the same missing element route; and
+`package.test.js`'s `generated authored browser bundle passes audit…` failed on
+`and proves the url inside the measured markdown fragment`.
+**GREEN.** Focused set `tests/unit/tools-word.test.js tests/integration/package.test.js` → **272/272**
+(269 + 3), `fail 0`. Two fixes were required by the RED run itself: the body's element-chain helper asked the
+PARAGRAPH for `GetClassType`/`GetLinkedText` (which are the ELEMENT's members), so `elementAppended` answered 0
+for a correct write — the function check now asks the paragraph only for `GetElement` and the element for its
+own three members; and `GetElement` throwing cannot be a PRE-insert refusal, because the primitive is only
+CALLED after the mutation, so that case was moved to the POST side where it settles UNCERTAIN with the slot
+held.
 
-### 17.6 Verification (this round, final tree)
+### 17.7 Verification (this round, final tree)
 
-Full suite `node --test` → **894 tests, pass 894, fail 0, cancelled 0, skipped 0** (**876 → 894**, never
+Full suite `node --test` → **899 tests, pass 899, fail 0, cancelled 0, skipped 0** (**896 → 899**, never
 shrunk); `node scripts/static-audit.mjs` → `Authored-code audit PASS`, exit 0; `node scripts/build-plugin.mjs`
 → exit 0, `Plugin build: 8 allowlisted files; ZIP STORE SHA-256
-dd54e294a3f4edecfe1ef114ca6b73ae975e9fe10e280f71b27b2791f672ddc0`. The SHA moved from `927770d`'s because the
-builder runs with **`minify: false`** and this round added one authored body, one decoder and the descriptor.
-The classifier counts NINE inline legs, and the hyperlink branch is placed FIRST on purpose: this body also
-authors `CreateParagraph`, `Push` and `GetAllParagraphs`, so without its own branch it would have been blessed
-as the BLOCK APPEND. `src/agent/*` is untouched and no dynamic execution was added to `src/`.
+884c20ea908401fd7387f4e7d73fdc6df6c735d042fbdc72745dc073db0cb6cc`. The SHA moved from `d2c2ee8`'s because the
+builder runs with **`minify: false`** and this round rewrote the hyperlink body and its decoder. The classifier
+counts NINE inline legs, and the hyperlink branch is placed FIRST on purpose: this body also authors
+`CreateParagraph`, `Push` and `GetAllParagraphs`, so without its own branch it would have been blessed as the
+BLOCK APPEND. `src/agent/*` is untouched and no dynamic execution was added to `src/`.
 
-### 17.7 What only a native run can settle
+### 17.8 What only a native run can settle
 
-(1) That the fragment needle is found for a REAL document — the first native run should try a plain paragraph
-AND a paragraph containing bold text and a line break, to measure exactly how much of §17.4's residual bites.
-(2) That `doc.ToMarkdown()` really carries `[displayedText](url)` with the URL byte-identical to the request
-(the vendor converter says so; Phase 0 measured the text and the URL in the export without recording the exact
-bracketing). (3) That `Api.CreateParagraph()` + `AddElement` + `Push` really lands the created paragraph as the
-document's LAST one, which is the index the append form's own readback addresses. Each unknown lands on a closed
-path: no located fragment means `TOOL_UNCERTAIN` with the slot held and no retry, and no write means a known
-refusal.
+(1) That `GetElement(i)` answers a usable object for EVERY index on a real document, not only the one the proof
+addresses — the measured session sampled the appended index. The body tolerates an unreadable index by
+answering the uncertain class, so the failure direction is fail-safe. (2) That
+`Api.CreateParagraph()` + `AddElement` + `Push` really lands the created paragraph as the document's LAST one,
+which is the index the append form's own readback addresses. Each unknown lands on a closed path: an unreadable
+element means `TOOL_UNCERTAIN` with the slot held and no retry, and no write means a known refusal.

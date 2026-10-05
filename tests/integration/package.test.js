@@ -119,11 +119,16 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // authors) — and its OWN branch must come FIRST, because the append form ALSO authors
   // `CreateParagraph`/`Push`/`GetAllParagraphs`, so every later branch would otherwise recognise it: left to
   // the `.Push(` branch it would be blessed as the BLOCK APPEND, whose body looks the same and whose contract
-  // is entirely different. It takes its `{ url, text, paragraph, append, markdownMax }` scope as DATA, places
-  // the link through the measured `AddElement` (an APPEND at the end of the paragraph's own content), pushes
-  // the created paragraph for the append form, and proves the outcome through the MEASURED markdown export
-  // (`ToMarkdown()`), in whose fragment the addressed paragraph's own pre text and the link's `](url)` are
-  // located. `ApiParagraph.AddHyperlink` is FORBIDDEN here rather than merely unused: its own body starts with
+  // is entirely different. It takes its `{ url, text, paragraph, append }` scope as DATA, places the link
+  // through the measured `AddElement` (an APPEND at the end of the paragraph's own content), pushes the
+  // created paragraph for the append form, and proves the outcome through the MEASURED per-object element
+  // readback: the addressed paragraph's own `GetElementsCount()` before the mutation gives the index the
+  // appended element must occupy, and after it `GetElement(i)` must answer a `hyperlink` whose
+  // `GetLinkedText()` and `GetDisplayedText()` are the requested url and label. The markdown export this leg
+  // used to scan (`ToMarkdown`) is AUTHORED NOWHERE any more: an independent review measured its fragment
+  // needle broken by ANY character formatting inside the addressed paragraph and by a line break, so it cost
+  // a false UNCERTAIN on exactly the documents this product asks the model to format.
+  // `ApiParagraph.AddHyperlink` is FORBIDDEN here rather than merely unused: its own body starts with
   // `this.Paragraph.SelectAll(1)` and would replace the paragraph's content, so it must never appear in this
   // body. The legacy whole-array insert primitive — measured to land at the START and to replace existing text
   // under a selection — is absent too.
@@ -147,7 +152,15 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /AddElement\(/, 'and places the link through the measured element append');
         assert.match(code, /CreateParagraph\(/, 'and builds the appended paragraph through the measured factory');
         assert.match(code, /\.Push\(/, 'and appends it with the measured document primitive, which lands at the END');
-        assert.match(code, /ToMarkdown\(\)/, 'and proves the url inside the measured markdown fragment');
+        // THE READBACK CHAIN, pinned step by step: the paragraph's own count and element, then the element's
+        // own class, url and displayed text. The retired markdown export must be authored NOWHERE.
+        assert.match(code, /GetElementsCount\(\)/, 'and reads the addressed paragraph\u2019s own element count');
+        assert.match(code, /GetElement\(/, 'and the element at the PRE count index');
+        assert.match(code, /GetClassType\(\)/, 'and proves the element\u2019s own class');
+        assert.match(code, /GetLinkedText\(\)/, 'and the url the editor really stored');
+        assert.match(code, /GetDisplayedText\(\)/, 'and the label it really displays');
+        assert.equal(code.includes('ToMarkdown'), false,
+          'the markdown export is authored nowhere: its fragment needle was measured broken by formatting');
         assert.equal(/\.AddHyperlink\s*\(/.test(code), false,
           'the paragraph-level AddHyperlink route selects the whole paragraph (measured) and is authored nowhere');
         assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
