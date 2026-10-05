@@ -12,6 +12,19 @@ Pilot RC **не выпущен**. Целевая версия: `0.9.0-pilot-rc`.
 Только встроенный browser plugin: Chat UI → Context Manager → bounded JSON Agent Runtime → Security Validator → allowlisted R7 Plugin API tools / HTTPS AI adapter.
 Нет Node runtime, MCP, daemon, localhost, WebSocket, CDN, telemetry, автоматического сохранения документа.
 
+## Разработка
+
+Dev-зависимости обязательны для гейта: без них 4 теста и `scripts/static-audit.mjs` не находят `acorn`, а `scripts/build-plugin.mjs` — `esbuild`. Чистый клон без установки даёт 844 теста / 4 fail и падение аудита.
+
+```
+npm ci
+node --test                    # 995/995 pass, 0 fail
+node scripts/static-audit.mjs  # Authored-code audit PASS
+node scripts/build-plugin.mjs  # ZIP STORE SHA-256 42f96c78…f499a73
+```
+
+Проверено на Node.js `v24.21.0`. `npm ci` ставит `acorn@8.15.0` и `esbuild@0.25.10`; версия esbuild закреплена в `scripts/build-plugin.mjs` (иначе `UNPINNED_BUILD_TOOL`). Сборка пишет в `dist/` — это вне Git.
+
 ## Документы
 
 - [Архитектура](docs/architecture.md)
@@ -26,4 +39,4 @@ Pilot RC **не выпущен**. Целевая версия: `0.9.0-pilot-rc`.
 - [Лицензирование](docs/licensing.md)
 - [ADR](docs/decisions/0001-embedded-runtime-and-compatibility-gate.md)
 
-Локальный Git — источник истины. Remote отсутствует; публикация запрещена без отдельной команды. Secrets, пользовательские endpoints, персональные данные и содержимое рабочих документов не коммитятся.
+Локальный Git — источник истины. Основной remote — приватный `blazar-source/r7-ai-assistant` (`main` стабильна, работа через feature branches / PR); публичный репозиторий, релизы и любые публикации по-прежнему требуют отдельной команды. Secrets, пользовательские endpoints, персональные данные и содержимое рабочих документов не коммитятся.
