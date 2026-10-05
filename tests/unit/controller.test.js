@@ -558,3 +558,187 @@ test('Stop before the first step cancels the run without inventing actions', asy
   assert.equal(state.agent.status, 'CANCELLED'); assert.deepEqual(state.agent.actions, []);
   assert.equal(state.status, 'STOPPED');
 });
+
+// A LONG-GENERATION document the bridge READS: the VERIFY step measures these numbers, and a test moves
+// them exactly as an editor would after a pass appended text. The two reads are the same public legs the
+// `read_structure` and `read_document_text` tools dispatch.
+function longDocument() {
+  const doc = { chars: 0, headings: 0, tables: 0, paragraphs: 0, body: '', reads: 0 };
+  function structure() {
+    doc.reads += 1;
+    return { ok: true, pages: Math.max(1, Math.ceil(doc.chars / 1800)),
+      statistics: { PageCount: Math.max(1, Math.ceil(doc.chars / 1800)), WordsCount: Math.ceil(doc.chars / 6),
+        ParagraphCount: doc.paragraphs, SymbolsCount: doc.chars, SymbolsWSCount: doc.chars },
+      counts: { paragraphs: doc.paragraphs, headings: doc.headings, tables: doc.tables, sections: 1 },
+      headings: Array.from({ length: doc.headings }, (_value, index) => ({ index, text: `Раздел ${index + 1}` })), truncated: false };
+  }
+  function text() { return { ok: true, text: doc.body, totalChars: doc.body.length }; }
+  return { doc, structure, text };
+}
+// The plan pass and the execute passes as the MODEL answers them. Each execute answer names ONE
+// `insert_blocks` batch, and the bridge-side effect of that batch is applied to the same document the
+// verify step reads — a mutation the panel never sees as a claim, only as a measurement afterwards.
+const orchestrationPlan = JSON.stringify({ sections: ['Введение', 'Глава 1', 'Глава 2', 'Выводы'],
+  targetCharacters: 18000, required: { tables: true, lists: true, conclusions: true }, summary: 'структура' });
+function orchestrationTransport(doc) {
+  const requests = [];
+  let step = 0;
+  return { requests, transport: async (settings, messages) => {
+    const user = messages[messages.length - 1].content;
+    requests.push(user);
+    step += 1;
+    if (step === 1) return { content: JSON.stringify({ type: 'final', message: orchestrationPlan }) };
+    // Every execute answer appends ONE batch and the panel's own verify step sees the document grow the
+    // way an editor would. The volume reaches 5000 characters in the FIRST execute pass, and the model
+    // then ends that pass — which is exactly the measured pilot shape — so the verify finds it far short
+    // of the target and one continuation is required. The SECOND pass takes the document to the target.
+    doc.chars = Math.min(doc.chars + 1000, 19000);
+    doc.paragraphs = Math.min(doc.paragraphs + 2, 30);
+    doc.headings = 4; doc.tables = 1;
+    doc.body = 'Выводы\n- пункт\n- пункт 2\n' + 'текст '.repeat(20);
+    if (doc.chars === 5000 || doc.chars === 19000) return { content: JSON.stringify({ type: 'final', message: 'проход завершён' }) };
+    return { content: JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_blocks',
+      arguments: { blocks: [{ text: 'абзац', heading: 1 }, { text: 'абзац 2' }] } }] }) };
+  } };
+}
+async function orchestrated(options = {}) {
+  const model = longDocument();
+  const run = orchestrationTransport(model.doc);
+  const f = setup({ bridge: { readStructure: model.structure, readDocumentText: model.text, ...options.bridge },
+    transport: options.transport ?? run.transport });
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('создай структурированный документ примерно на 10 страниц, добавь главы, несколько таблиц, списки, выводы');
+  return { ...f, model, requests: run.requests };
+}
+test('a long-generation request is planned, executed in parts, measured and continued until the plan holds', async () => {
+  const f = await orchestrated();
+  const state = f.controller.getState();
+  const record = state.orchestration;
+  assert.ok(record, 'the panel publishes the orchestration report');
+  assert.equal(record.phase, 'complete');
+  assert.equal(record.status, 'ORCH_COMPLETE');
+  assert.equal(state.status, 'ORCH_COMPLETE');
+  assert.equal(record.pass, 2, 'the first pass left the volume short, so exactly one more was run');
+  assert.equal(record.maxPasses, 6);
+  assert.equal(record.targetChars, 18000);
+  assert.equal(record.plan.sections.length, 4);
+  // The verified numbers are the READ ones, not the model's: the first pass ended at 5000 characters and
+  // the document was measured again after the second.
+  assert.equal(record.verified.chars, 19000);
+  assert.equal(record.verified.headings, 4);
+  assert.equal(record.verified.tables, 1);
+  assert.ok(record.verified.paragraphs >= 12);
+  assert.deepEqual(record.missing, []);
+  assert.equal(record.error, null);
+  // The plan pass asked for the plan ONLY; the execute passes carried the plan and then the missing list.
+  const planRequest = f.requests[0];
+  const firstExecute = f.requests[1];
+  const continuation = f.requests.find(text => text.includes('ПРЕДЫДУЩИЙ ПРОХОД НЕ ВЫПОЛНИЛ ПЛАН'));
+  assert.match(planRequest, /ТОЛЬКО ПЛАН/);
+  assert.equal(planRequest.includes('УТВЕРЖДЁННЫЙ ПЛАН'), false);
+  assert.match(firstExecute, /УТВЕРЖДЁННЫЙ ПЛАН/);
+  assert.match(firstExecute, /insert_blocks/);
+  assert.ok(continuation, 'the second execute pass names what the first left missing');
+  assert.match(continuation, /объём: 5000 из 18000 знаков/);
+  // The missing list names EXACTLY what the read proved absent: the sections, the table, the list and the
+  // conclusions were already measured present, so only the volume is asked for.
+  assert.equal(continuation.includes('разделов (заголовков)'), false);
+  assert.equal(continuation.includes('таблиц нет ни одной'), false);
+  assert.equal(continuation.includes('списков нет ни одного'), false);
+  assert.match(continuation, /ОГРАНИЧЕНИЯ ЭТОГО РЕЖИМА: Профиль 'bulk'/);
+  assert.equal(f.controller.getState().chat.history.length, 0, 'the panel\'s own wording never becomes chat history');
+});
+test('an uncertain action stops the orchestration with no retry and names the unverified tool', async () => {
+  const model = longDocument();
+  let dispatches = 0;
+  const transport = async (settings, messages) => {
+    dispatches += 1;
+    if (dispatches === 1) return { content: JSON.stringify({ type: 'final', message: orchestrationPlan }) };
+    return { content: JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_blocks',
+      arguments: { blocks: [{ text: 'абзац' }] } }] }) };
+  };
+  const f = setup({ bridge: { readStructure: model.structure, readDocumentText: model.text,
+    async insertBlocks() { throw new SafeError('APPLY_UNCERTAIN'); } }, transport });
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('создай документ примерно на 10 страниц с главами и таблицами');
+  const state = f.controller.getState();
+  assert.equal(state.status, 'ORCH_UNCERTAIN');
+  assert.equal(state.orchestration.phase, 'uncertain');
+  assert.equal(state.orchestration.error, 'TOOL_UNCERTAIN');
+  assert.equal(state.orchestration.pass, 1);
+  assert.deepEqual(state.orchestration.missingTools, ['insert_blocks']);
+  assert.equal(dispatches, 2, 'no further pass is started after an uncertain write');
+  assert.equal(state.agent.actions[0].outcome, 'uncertain');
+});
+test('the execute-pass budget is capped and the panel reports an honest incomplete list', async () => {
+  const calls = [];
+  const transport = async (settings, messages) => {
+    const user = messages[messages.length - 1].content;
+    calls.push(user);
+    if (user.includes('ТОЛЬКО ПЛАН')) return { content: JSON.stringify({ type: 'final', message: orchestrationPlan }) };
+    // Every execute pass appends nothing the verify step can see, so the plan never holds. The
+    // orchestration must stop at its named cap and report what is still missing, not loop forever.
+    return { content: JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_blocks',
+      arguments: { blocks: [{ text: 'абзац' }] } }] }) };
+  };
+  const model = longDocument();
+  const f = setup({ bridge: { readStructure: model.structure, readDocumentText: model.text }, transport });
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('создай документ примерно на 10 страниц с главами, таблицами и выводами');
+  const record = f.controller.getState().orchestration;
+  assert.equal(f.controller.getState().status, 'ORCH_INCOMPLETE');
+  assert.equal(record.phase, 'incomplete');
+  assert.equal(record.error, 'PASS_BUDGET_EXHAUSTED');
+  assert.equal(record.pass, 6, 'the named cap is six execute passes');
+  assert.equal(record.verified.chars, 0);
+  assert.ok(record.missing.length > 0);
+  // The execute requests are the plan pass plus exactly six execute passes, and the last five of them
+  // carry the missing list the previous verify measured. The `ТОЛЬКО ПЛАН` phrase also appears inside the
+  // bulk PROFILES's own authored line, so the plan pass is identified by its own opening line instead.
+  const planRequests = calls.filter(text => text.startsWith('Ниже — задача владельца. Сейчас НУЖЕН ТОЛЬКО ПЛАН'));
+  const executeRequests = calls.filter(text => text.startsWith('Ниже — задача владельца и уже утверждённый ПЛАН'));
+  const continuations = executeRequests.filter(text => text.includes('ПРЕДЫДУЩИЙ ПРОХОД НЕ ВЫПОЛНИЛ ПЛАН'));
+  assert.equal(planRequests.length, 1);
+  assert.equal(executeRequests.length, 6);
+  assert.equal(continuations.length, 5);
+});
+test('an unusable plan stops before any execute pass and reports it honestly', async () => {
+  const sent = [];
+  const f = setup({ transport: async (settings, messages) => {
+    sent.push(messages[messages.length - 1].content);
+    return { content: JSON.stringify({ type: 'final', message: 'не план' }) };
+  } });
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('создай документ примерно на 10 страниц');
+  const record = f.controller.getState().orchestration;
+  assert.equal(record.phase, 'incomplete');
+  assert.equal(record.error, 'PLAN_UNUSABLE');
+  assert.equal(record.pass, 0);
+  assert.equal(record.plan, null);
+  // The plan text the model wrote is NOT published as an authoring plan, and no execute pass ran: the
+  // one request sent is the plan pass itself.
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /Сейчас НУЖЕН ТОЛЬКО ПЛАН/);
+});
+test('the ordinary single-run path is unchanged: only a long-generation EDIT request is orchestrated', async () => {
+  // The same long request in ASK exposes no mutation tool, so it is not an authoring task.
+  const ask = setup({ response: final('ответ') });
+  assert.equal(await ask.controller.analyze('документ примерно на 10 страниц'), true);
+  assert.equal(ask.controller.getState().status, 'COMPLETE');
+  assert.equal(ask.controller.getState().orchestration, null);
+  assert.equal(ask.replies.length, 1);
+  // An EDIT request that names no volume, several parts or a count keeps the single-run path.
+  const edit = setup({ response: final('ответ') });
+  edit.controller.setMode('EDIT');
+  assert.equal(await edit.controller.analyze('исправь орфографию'), true);
+  assert.equal(edit.controller.getState().status, 'COMPLETE');
+  assert.equal(edit.controller.getState().orchestration, null);
+  assert.equal(edit.replies.length, 1);
+  // The preview/apply path is untouched by the orchestration: a confirm proposal still publishes the
+  // Sprint 1 Preview from the ordinary single run.
+  const preview = setup({ response: toolCalls(['replace_selection', { text: 'замена' }]) });
+  preview.controller.setMode('EDIT');
+  assert.equal(await preview.controller.analyze('исправь орфографию'), true);
+  assert.equal(preview.controller.getState().status, 'PREVIEW_READY');
+  assert.equal(preview.controller.getState().orchestration, null);
+});

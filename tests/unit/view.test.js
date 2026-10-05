@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mountPanel, statusText } from '../../src/ui/view.js';
+import { mountPanel, statusText, orchestrationText } from '../../src/ui/view.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { SafeError } from '../../src/shared/errors.js';
@@ -25,7 +25,7 @@ function fixture(response = final('<img src=x onerror=alert(1)> **not markdown**
     async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: true, target }; },
     async insertParagraph() { return { ok: true, data: { sent: true } }; }, ...options.bridge };
   const controller = createController({ store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
-    bridge, transport });
+    bridge, transport: options.transport ?? transport });
   controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   const panel = mountPanel(tree.root, controller);
   assert.ok(tree.id('prompt'), 'mounted composer');
@@ -188,5 +188,64 @@ test('the actions block renders one line per action and stays empty for a run wi
   await f.controller.analyze('сделай');
   assert.equal(f.id('actions').textContent, '');
   assert.equal(f.id('actions').hidden, true);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('the orchestration report renders the plan, the verified numbers and the missing list as text', () => {
+  const record = { phase: 'incomplete', status: 'ORCH_INCOMPLETE', pass: 3, maxPasses: 6, targetChars: 18000,
+    plan: { sections: ['Введение', 'Глава 1'], targetChars: 18000, required: { tables: true, lists: false, conclusions: true } },
+    verified: { chars: 9000, paragraphs: 22, headings: 1, tables: 0, lists: false, conclusions: false },
+    missing: ['объём: 9000 из 18000 знаков', 'таблиц нет ни одной'], missingTools: [], uncertainty: null,
+    planCalledTools: false, error: 'PASS_BUDGET_EXHAUSTED' };
+  const text = orchestrationText(record);
+  assert.match(text, /Проходов: 3 \/ 6/);
+  assert.match(text, /абзацев — 22, заголовков — 1, таблиц — 0, знаков — 9000/);
+  assert.match(text, /План: 2 разделов/);
+  assert.match(text, /таблицы, выводы/);
+  assert.match(text, /Не хватает: объём: 9000 из 18000 знаков; таблиц нет ни одной\./);
+  assert.match(text, /Причина остановки: PASS_BUDGET_EXHAUSTED\./);
+  assert.equal(orchestrationText(null), '');
+  // The uncertain report names the unverified tool and never claims the document is complete.
+  const uncertain = orchestrationText({ ...record, phase: 'uncertain', pass: 1, missing: [], missingTools: ['insert_blocks'],
+    error: 'TOOL_UNCERTAIN' });
+  assert.match(uncertain, /Неподтверждённое действие: insert_blocks\./);
+  assert.equal(statusText('ORCH_UNCERTAIN').includes('проверьте документ'), true);
+  assert.equal(statusText('ORCH_COMPLETE').includes('проверка самого документа'), true);
+});
+test('a plan authored by the model reaches the DOM as literal text and the panel shows the report', async () => {
+  const plan = JSON.stringify({ sections: ['<img src=x onerror=alert(1)>', 'Глава 1'], targetCharacters: 18000,
+    required: { tables: false, lists: false, conclusions: false }, summary: 's' });
+  // The execute pass appends one batch and ENDS: the document then satisfies the plan, so the panel
+  // publishes a COMPLETE report carrying the plan's own (markup-shaped) section title.
+  const transport = async (settings, messages) => {
+    const user = messages[messages.length - 1].content;
+    if (user.includes('ТОЛЬКО ПЛАН')) return { content: JSON.stringify({ type: 'final', message: plan }) };
+    return { content: JSON.stringify({ type: 'tool_calls', calls: [{ tool: 'insert_blocks',
+      arguments: { blocks: [{ text: '<img src=x onerror=alert(1)>' }] } }] }) };
+  };
+  const bridge = {
+    readStructure() { return { ok: true, pages: 10,
+      statistics: { PageCount: 10, WordsCount: 3000, ParagraphCount: 30, SymbolsCount: 19000, SymbolsWSCount: 19000 },
+      counts: { paragraphs: 30, headings: 2, tables: 0, sections: 1 }, headings: [{ index: 0, text: 'Глава 1' }], truncated: false }; },
+    readDocumentText() { return { ok: true, text: 'текст', totalChars: 4 }; }
+  };
+  const f = fixture(plan, { bridge, transport });
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('создай документ примерно на 10 страниц');
+  const report = f.id('orchestration');
+  assert.ok(report, 'the panel publishes the orchestration element');
+  assert.equal(report.hidden, false);
+  assert.equal(report.tagName, 'PRE');
+  // The plan's own text is present VERBATIM in the report and created no element from its content.
+  assert.ok(report.textContent.includes('<img src=x onerror=alert(1)>'));
+  assert.deepEqual(report.children.map(child => child.tagName), []);
+  assert.equal(f.all().some(node => ['IMG', 'SCRIPT'].includes(node.tagName)), false);
+  f.panel.dispose(); f.controller.dispose();
+});
+test('the ordinary single run shows no orchestration report', async () => {
+  const f = fixture(final('Готово'));
+  await f.controller.analyze('вопрос');
+  assert.equal(f.id('orchestration').hidden, true);
+  assert.equal(f.id('orchestration').textContent, '');
   f.panel.dispose(); f.controller.dispose();
 });

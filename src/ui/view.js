@@ -7,6 +7,14 @@ const statuses = Object.freeze({
   COMPLETE: 'Ответ получен', PREVIEW_READY: 'Предложение готово. Документ не изменён.', PREVIEW_EXPIRED: 'Срок предложения истёк', PREVIEW_CANCELLED: 'Предложение отменено. Документ не изменён.',
   SETTINGS_CHANGED: 'Настройки изменены; предыдущий запрос и предложение недействительны', SETTINGS_SAVED: 'Настройки применены', STOPPED: 'Запрос остановлен. Поздние ответы не используются.',
   AGENT_LIMIT: 'Достигнут предел выполнения задачи. Результат неполный; проверьте документ.',
+  ORCH_PLANNING: 'Составляю план документа… Документ не изменяется.',
+  ORCH_EXECUTING: 'Выполняю план по частям…',
+  ORCH_VERIFYING: 'Проверяю документ по факту: структура и объём.',
+  ORCH_CONTINUING: 'План выполнен не полностью; продолжаю с недостающими элементами.',
+  ORCH_COMPLETE: 'План выполнен: проверка самого документа подтвердила объём и обязательные элементы.',
+  ORCH_INCOMPLETE: 'План выполнен не полностью. Изменения сохранены; ниже — чего не хватает.',
+  ORCH_UNCERTAIN: 'Исход последнего действия неизвестен. Остановлено без повтора; проверьте документ.',
+  ORCH_BLOCKED: 'Оркестрация остановлена: проверка или проход недоступны. Изменения сохранены.',
   INVALID_SETTINGS: 'Проверьте настройки соединения', INVALID_ENDPOINT: 'Нужен полный HTTPS URL с окончанием /v1/chat/completions', INVALID_KEY: 'Введите корректный ключ',
   INVALID_DATA: 'Некорректные данные', BYTE_LIMIT: 'Превышен лимит UTF-8 для ввода, выделения или ответа; текст не обрезается.',
   STORAGE_UNAVAILABLE: 'Хранилище недоступно; настройки остаются в памяти', STORAGE_CORRUPT: 'Сохранённые настройки повреждены', INTERNAL_ERROR: 'Не удалось завершить операцию',
@@ -20,6 +28,34 @@ const statuses = Object.freeze({
   EDITOR_BUSY: 'Редактор занят / исход предыдущего вызова неизвестен. Дождитесь его завершения; новый мост не создаётся.', EDITOR_ERROR: 'Не удалось получить результат редактора'
 });
 export function statusText(code) { return statuses[code] ?? statuses.INTERNAL_ERROR; }
+// The orchestration report, in the same authored, closed coding the status captions use: the panel's own
+// numbers and the plan's own text, never a model envelope. Every line is authored text rendered with
+// textContent, so no plan or document text can become markup.
+export function orchestrationText(record) {
+  if (!record) return '';
+  const lines = [`Проходов: ${record.pass} / ${record.maxPasses}. Целевой объём: ${record.targetChars} знаков.`];
+  if (record.verified) {
+    lines.push(`Проверено по документу: абзацев — ${record.verified.paragraphs ?? '—'}, заголовков — ${record.verified.headings}, таблиц — ${record.verified.tables}, знаков — ${record.verified.chars}.`);
+  }
+  if (record.plan) {
+    lines.push(`План: ${record.plan.sections.length} разделов, объём ${record.plan.targetChars} знаков, обязательные элементы: ${requiredText(record.plan.required)}.`);
+    // The plan's own section titles are AUTHORED BY THE MODEL and are shown as DATA: one bullet per
+    // title, joined into the same text node the report renders, so no title can become markup.
+    lines.push(`Разделы плана: ${record.plan.sections.join(' · ')}`);
+  }
+  if (record.planCalledTools) lines.push('План был получен вместе с вызовами инструментов; текст плана сохранён.');
+  if (record.missing.length > 0) lines.push(`Не хватает: ${record.missing.join('; ')}.`);
+  if (record.missingTools.length > 0) lines.push(`Неподтверждённое действие: ${record.missingTools.join(', ')}.`);
+  if (record.error) lines.push(`Причина остановки: ${record.error}.`);
+  return lines.join('\n');
+}
+function requiredText(required) {
+  const names = [];
+  if (required.tables) names.push('таблицы');
+  if (required.lists) names.push('списки');
+  if (required.conclusions) names.push('выводы');
+  return names.length === 0 ? 'нет' : names.join(', ');
+}
 function contextText(value) {
   if (value.kind === 'UNAVAILABLE') return 'Чтение выделения недоступно для этого редактора';
   if (value.kind === 'EMPTY') return 'Выделение пустое';
@@ -65,8 +101,14 @@ export function mountPanel(root, controller) {
   const history = node('section', '', 'history'); history.setAttribute('aria-label', 'История чата');
   // The actions summary is a technical, content-free record: the tool name, the closed outcome and,
   // for a failed action, its closed code. It is rendered with textContent only, so no raw model JSON,
-  // tool argument or document text can ever reach the DOM.
-  const actions = node('section', '', 'actions'); actions.setAttribute('aria-live', 'polite'); actions.setAttribute('aria-label', 'Журнал действий');
+  // tool argument or document text can ever reach the DOM. The element is named `journal` rather than
+  // `actions` because the authored-code audit tracks an identifier by NAME across the whole bundle and
+  // the `actions` name is shared with unrelated modules; the ELEMENT ID stays `actions`.
+  const journal = node('section', '', 'actions'); journal.setAttribute('aria-live', 'polite'); journal.setAttribute('aria-label', 'Журнал действий');
+  // The orchestration report: the plan, the pass count, the VERIFIED numbers and what is still missing.
+  // It is rendered with textContent only, so the plan text a model authored stays literal text and can
+  // never become an element or an attribute.
+  const orchestration = node('pre', '', 'orchestration'); orchestration.setAttribute('aria-live', 'polite'); orchestration.hidden = true;
   const composer = node('form', '', 'composer');
   const promptLabel = node('label', 'Запрос'); promptLabel.htmlFor = 'prompt';
   const prompt = node('textarea', '', 'prompt'); prompt.rows = 4; prompt.setAttribute('aria-describedby', 'input-budget');
@@ -107,7 +149,7 @@ export function mountPanel(root, controller) {
   on(composer, 'submit', function (event) { event.preventDefault(); submit(); });
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
-  root.replaceChildren(header, status, lifecycleWarning, toolbar, history, composer, preview, actions, settings);
+  root.replaceChildren(header, status, lifecycleWarning, toolbar, history, composer, preview, orchestration, journal, settings);
   let lastSettings = null;
   let lastHistory = null;
   let lastAgentActions = null;
@@ -139,9 +181,12 @@ export function mountPanel(root, controller) {
       lastAgentActions = lines;
       // One paragraph per action: `tool: outcome`, plus the closed code when the action failed.
       // textContent only — a fixed, authored line, never a serialized model object.
-      actions.replaceChildren(...lines.map(entry => node('p', entry.code === undefined ? `${entry.tool}: ${entry.outcome}` : `${entry.tool}: ${entry.outcome} (${entry.code})`)));
+      journal.replaceChildren(...lines.map(entry => node('p', entry.code === undefined ? `${entry.tool}: ${entry.outcome}` : `${entry.tool}: ${entry.outcome} (${entry.code})`)));
     }
-    actions.hidden = lines.length === 0 && record?.status !== 'RUNNING';
+    journal.hidden = lines.length === 0 && record?.status !== 'RUNNING';
+    const report = orchestrationText(state.orchestration);
+    orchestration.textContent = report;
+    orchestration.hidden = report === '';
     persistence.hidden = !state.keyPersistenceWarning;
     storage.textContent = state.storageError ? statusText(state.storageError) : '';
     if (lastSettings !== state.settings) {

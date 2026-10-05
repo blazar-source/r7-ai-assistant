@@ -3740,3 +3740,123 @@ demands, (b) reaches `insert_blocks` / `insert_table` for volume instead of stal
 after a `read_structure` pass instead of answering `final` early. Nothing here changes what the loop accepts, so a
 model that ignores the list can still call any tool: the profile is a shorter list plus guidance, never a
 permission.
+
+### 23. PLAN → EXECUTE → VERIFY → CONTINUE, owned by the PANEL
+
+The profile round (§22a) narrowed what the model is OFFERED; this round makes the panel run the task in the shape
+the profile describes, and — the part no wording can supply — MEASURES the document after every execute pass. The
+orchestration lives in `src/ui/`: a new `src/ui/orchestrator.js` plus `src/ui/controller.js` and `src/ui/view.js`.
+**`git diff HEAD -- src/agent` is empty for this round**, and nothing in `src/` executes dynamically: each pass is
+an ordinary `runAgent` request whose plan/execute/continue WORDING the panel composes into the REQUEST TEXT.
+
+**The state machine.** `planning → executing → verifying → (continuing → executing…) → complete | incomplete |
+uncertain | blocked`. A request enters it only when it is an EDIT request that NAMES a volume, several parts or an
+explicit count (`isLongGenerationRequest`): the owner's *«создай структурированный документ примерно на 10
+страниц…»* enters it; an ordinary question or edit keeps the existing single-run path byte-for-byte.
+
+```js
+// controller.js — analyze() decides the path; the ordinary one is untouched
+if (mode === 'EDIT' && isLongGenerationRequest(user)) return runOrchestration(user);
+return run('analysis', user);
+// orchestrator.js — one pass is an ordinary agent request whose TEXT carries the phase
+const planPass = await runPass({ kind: 'plan', text: composePlanRequest(request, …), profile: undefined, pass: 0 });
+const pass = await runPass({ kind: 'execute', text: composeExecuteRequest(request, plan, …, missing), profile: 'bulk', pass: passes });
+```
+
+**The targets, and why these numbers.** The volume target is **18000 characters**, counted as the document's own
+`statistics.SymbolsWSCount` from `read_structure`: a full A4 text field (~165 × 250 mm) at 12 pt single-spaced
+Cyrillic (~90–95 characters a line, ~2.3 mm of line pitch) holds about 2500 characters, while normal business
+formatting with paragraph spacing holds nearer **1800** — so 10 × 1800 takes the DENSE end of the range and a
+document that reaches it is ten pages of solid text rather than a short text with wide spacing. The plan may name a
+HIGHER target (bounded at 100000); it can never lower this floor (`Math.max`). The pass cap is **six execute
+passes** (`ORCHESTRATION_MAX_EXECUTE_PASSES`), a NAMED number the honest report prints when the plan is still
+unfulfilled. The execute request asks for **3000–5000 characters per pass**, and the per-element requirements come
+from the plan's own three declarations (`tables`, `lists`, `conclusions`); `volume` and `sections` are CHECKED but
+never declarable — the volume is the owner's requirement and the section count is the plan's own array, so the
+model cannot switch either off.
+
+**How the verification reads the document — and what it will NOT claim.** VERIFY does no model step and consumes no
+tool budget: it calls the SAME TWO public bridge legs the `read_structure` and `read_document_text` tools dispatch
+(`bridge.readStructure({ maxHeadings: 32 })`, `bridge.readDocumentText({ offset: 0, maxChars: 2000 })`) and decides
+from their decoded answers. The missing list is then derived from measured facts only: `объём: 5000 из 18000 знаков
+(примерно 3 из 10 страниц)` from the symbols-with-spaces count; `разделов (заголовков): 2 из 4 заявленных` from
+`counts.headings` against the plan's own `sections`; `таблиц нет ни одной` from `counts.tables` when the plan
+declared tables; `списков нет ни одного` from a NAMED line-marker heuristic over the bounded body probe; and `нет
+раздела с выводами` from a heading-or-body keyword. The two heuristic checks are named as heuristics and are used
+only where the volume and the section count already agreed, so a false negative can ask for one more pass but can
+never declare a short document complete. Nothing a read cannot prove is ever reported as a number — a refused read
+stops the orchestration as `blocked` instead of publishing an invented zero.
+
+**`TOOL_UNCERTAIN` NEVER retries.** The single place the orchestration looks at action outcomes treats
+`outcome === 'uncertain'` as terminal: it records the tool, returns `phase: 'uncertain'` and starts NO further pass
+(the loop's next iteration is never reached), and the panel publishes `ORCH_UNCERTAIN` with the unverified tool
+named. The runtime already holds the write slot; the panel adds no retry, no rollback and no second write. A
+`PREVIEW_READY` execute pass (a confirm proposal) also ends the orchestration rather than running a pass over the
+user's own pending write.
+
+**Reported through the existing mechanism.** `snapshot().orchestration` carries `phase`, the closed `status`
+(`ORCH_PLANNING|EXECUTING|VERIFYING|CONTINUING|COMPLETE|INCOMPLETE|UNCERTAIN|BLOCKED`), `pass/maxPasses`,
+`targetChars`, the plan (section titles included, as literal text), the VERIFIED numbers (`chars`, `paragraphs`,
+`headings`, `tables`), `missing`, `missingTools`, `planCalledTools` and the closed stop reason; `view.js` renders it
+in `#orchestration` with `textContent` only, so a plan title shaped like `<img src=x onerror=alert(1)>` stays text
+for the same reason a model final message does. An orchestrated pass keeps NO chat pair: a plan and six
+multi-thousand-character requests are the panel's own wording, and the panel reports them as the report.
+
+**RED, then GREEN.** Measured with only the two `src/ui/` wiring files stashed and the new tests in place:
+`node --test tests/unit/ui-orchestrator.test.js tests/unit/controller.test.js` → **tests 71, pass 66, fail 5** —
+each of the five controller cases fails because `state.orchestration` is `undefined` (the panel publishes
+nothing), and the orchestrator file's own 12 cases pass in that state because it does not depend on the wiring.
+GREEN: focused set `node --test tests/unit/ui-orchestrator.test.js tests/unit/controller.test.js
+tests/unit/view.test.js` → **87 tests, pass 87, fail 0**.
+
+**What pins it.** `tests/unit/ui-orchestrator.test.js` (12 new cases, no bridge at all): the trigger's narrowness;
+`parsePlan`'s closed contract (a lower target is clamped UP to 18000, a huge one DOWN to 100000, a missing declared
+element is refused, object sections are accepted); the complete-after-one-pass path with the published phase order;
+the volume-short case starting EXACTLY ONE more pass whose request names the missing items; the pass cap ending
+after six execute passes with an honest `PASS_BUDGET_EXHAUSTED`; an uncertain action stopping with no third pass and
+naming `insert_blocks`; a plan pass that wrongly called tools keeping its plan and reporting `planCalledTools`; an
+unusable plan and a failed plan pass both stopping before any execute pass; a `PREVIEW_READY` stop; a refused read
+stopping as `blocked`; the document reader's two legs with the `undefined`-profile contract; and `missingFrom`
+deriving only what was measured. `tests/unit/controller.test.js` (5 new cases): the end-to-end plan → execute →
+verify → continue against a bridge whose document GREW during the passes, with the verified numbers taken from the
+reads (19000 characters, not the model's claims), the plan in the execute request, the missing list in the
+continuation request, and an empty chat history; the uncertain stop with `dispatches === 2` (no further pass) and
+`missingTools === ['insert_blocks']`; the six-pass cap; an unusable plan; and the ordinary path unchanged (ASK long
+request, EDIT short request, and the preview/apply path all publish no orchestration). `tests/unit/view.test.js` (3
+new cases): the report's text (passes, verified numbers, plan, required elements, missing list, stop reason) and its
+uncertain variant; the model's own plan title reaching the DOM as VERBATIM text in `#orchestration` with no element
+created; and no report for an ordinary run. The view fixture gained `transport: options.transport ?? transport`,
+which is what let a test script the plan and execute answers instead of the fixture's single reply.
+
+**The audit trap this round hit, and how it was fixed.** `static-audit.mjs` PASSED (exit 0) while
+`build-plugin.mjs` FAILED `BUNDLE_AUDIT_FAILED` — the bundle-level pass runs over the concatenated output. Measured
+by bundling `src/ui/entry.js` and running `auditSource` on it: **5 findings**, whose lines were `runtime.js:219
+actions.push`, `orchestrator.js` `actions.find`, and `view.js` `actions.setAttribute ×2 / actions.replaceChildren`.
+The audit marks an identifier TAINTED by NAME, bundle-wide, when it is assigned a value it cannot statically resolve
+— and `result?.actions` (an OPTIONALLY-CHAINED property read) is exactly such a value, so the local in
+`uncertaintyOf` tainted the shared name `actions` and the runtime's and the view's uses were reported too. The fix
+is to call NO method on a value read through an optional chain: `uncertaintyOf` now walks its actions with a
+`for...of` over the ordinary property (first `uncertain` outcome wins, as before), and the view's local is renamed
+`journal` (its ELEMENT ID stays `actions`, so every existing DOM test is untouched). Re-measured: **0 findings**,
+`build-plugin.mjs` exit 0. Renaming alone was measured to be a PARTIAL fix only — it moved the report from the view
+to the orchestrator, which is what identified the taint's real source.
+
+**Verification (this round, final tree).** Focused set `node --test tests/unit/ui-orchestrator.test.js
+tests/unit/controller.test.js tests/unit/view.test.js` → **87 tests, pass 87, fail 0**; `node --test` → **988 tests,
+pass 988, fail 0, cancelled 0, skipped 0, todo 0** (never shrunk; the parallel profile round's committed tree was
+the baseline); `node scripts/static-audit.mjs` → **`Authored-code audit PASS`**, exit 0; `node
+scripts/build-plugin.mjs` → exit 0, **`Plugin build: 8 allowlisted files; ZIP STORE SHA-256
+8ce927020735403f8d157be83f2fe5d27045d2e4e9d94459a73ac0e3a148320e`**. `git diff HEAD -- src/agent` is empty.
+
+### What only a native run can settle (this round)
+
+Whether the panel's own wording moves the model. The panel now returns a plan, executes it under `profile: 'bulk'`,
+measures the document itself and continues — but the SIZE of each pass is the model's choice, and the two
+quantities this round cannot measure are (a) how many characters a model actually appends per execute pass under
+this request text (the 3000–5000 figure is the instruction, not a measurement) and (b) whether six passes reach
+18000 characters at all. The first native run should therefore read the orchestration report's VERIFIED numbers
+after every pass, not the run's final status: a `complete` verdict means the document really holds the volume and
+the elements it claims, and `ORCH_INCOMPLETE` with its missing list is the honest signal that the cap was reached.
+The list heuristic (a line-marker match in the bounded 2000-character probe) is the one check a native document can
+falsify: a list formatted as a real Word numbering list, with a bullet character this reader does not recognise,
+would be reported missing and cost one continuation pass.

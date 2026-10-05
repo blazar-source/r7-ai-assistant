@@ -8,6 +8,8 @@ import { requestCompletion } from '../ai/transport.js';
 import { runAgent } from '../agent/runtime.js';
 import { createRegistry } from '../tools/registry.js';
 import { createWordTools } from '../tools/word.js';
+import { createOrchestrator, createDocumentReader, isLongGenerationRequest, ORCHESTRATION_TARGET_CHARS,
+  ORCHESTRATION_MAX_EXECUTE_PASSES, ORCHESTRATION_MAX_HEADINGS } from './orchestrator.js';
 
 const noContext = () => Object.freeze({ kind: 'UNKNOWN', text: '', bytes: 0, ownershipVerified: false });
 // A published status is certified by MEMBERSHIP in the closed vocabulary, never by the error's
@@ -35,6 +37,31 @@ const CONNECTION_REQUEST = 'Проверка соединения. Ответь 
 // TIMEOUT. Raising the guardrails therefore needs no runtime change (limits.js:598-599,
 // session.js:74); it does need this host bound to move with them, which is all that happens here.
 const AGENT_RUN_HOST_DEADLINE_MS = AGENT_GUARDRAILS.operationDeadlineMs + LIMITS.operationTimeoutMs;
+// The panel's OWN statuses for the long-generation orchestration. They are published by MEMBERSHIP in
+// this closed table (`ORCH_STATUS`) rather than assembled from a phase string, so a phase the panel does
+// not know can never reach the UI as an arbitrary caption.
+const ORCH_STATUS = Object.freeze({ planning: 'ORCH_PLANNING', executing: 'ORCH_EXECUTING',
+  verifying: 'ORCH_VERIFYING', continuing: 'ORCH_CONTINUING',
+  complete: 'ORCH_COMPLETE', incomplete: 'ORCH_INCOMPLETE', uncertain: 'ORCH_UNCERTAIN', blocked: 'ORCH_BLOCKED' });
+// The last published orchestration record, in the ONE shape the panel and its view share. It carries
+// the plan text, the measured numbers and the closed codes only; it never carries a model envelope.
+function orchestrationRecord(progress, outcome) {
+  const phase = ORCH_STATUS[outcome.phase] === undefined ? ORCH_STATUS.blocked : outcome.phase;
+  return Object.freeze({
+    phase: outcome.phase,
+    status: ORCH_STATUS[phase],
+    pass: progress.passes ?? 0,
+    maxPasses: ORCHESTRATION_MAX_EXECUTE_PASSES,
+    targetChars: progress.targetChars ?? ORCHESTRATION_TARGET_CHARS,
+    plan: progress.plan ?? null,
+    verified: progress.verified ?? null,
+    missing: progress.missing ?? Object.freeze([]),
+    missingTools: progress.missingTools ?? Object.freeze([]),
+    uncertainty: progress.uncertainty ?? null,
+    planCalledTools: progress.planCalledTools === true,
+    error: outcome.error ?? null
+  });
+}
 
 // Multi-step Agent Runtime run + explicit Preview/Apply only. Ownership capabilities stay private;
 // neither model proposals nor public UI snapshots can supply an editor target.
@@ -56,6 +83,14 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let previewTimer = null;
   let capabilityCount = null;
   let agent = null;
+  // The last PLAN -> EXECUTE -> VERIFY -> CONTINUE summary the panel published, or null while no
+  // orchestration is in flight. It is a closed, content-free record built from measurements and closed
+  // codes — never from a model envelope — and it is cleared whenever a new run takes ownership.
+  let orchestration = null;
+  // The FINAL message of the run being observed. The chat pair is the ordinary path's business, so an
+  // orchestrated plan pass — which keeps no chat pair — reads its own answer from here, and the variable
+  // is overwritten by every FINAL run so no earlier reply can be read back as a later pass's result.
+  let lastAssistantMessage = null;
   let registryBuilt = false;
   let registry = null;
   let disposed = false;
@@ -92,7 +127,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   function snapshot() {
     return Object.freeze({ status, active: active !== null, mode, includeContext, context, chat,
       settings: stored.settings, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
-      preview, capabilityCount, agent, canApply: canApply(), writeLocked: writeLocked(), generation, editorType: bridge?.getState().editorType ?? 'unknown',
+      preview, capabilityCount, agent, orchestration, canApply: canApply(), writeLocked: writeLocked(), generation, editorType: bridge?.getState().editorType ?? 'unknown',
       mutationReason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED', runtimeVerified: false, lifecycleEventsVerified: false });
   }
   function emit() { if (disposed) return; const state = snapshot(); for (const listener of listeners) listener(state); }
@@ -123,9 +158,13 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     }
     return true;
   }
-  function begin(kind) {
+  function begin(kind, orchestrated = false) {
     if (disposed || active || writeLocked()) return null;
     dropPreview();
+    // A new run takes the panel over, so the previous orchestration report is cleared: a stale summary
+    // must never be shown beside a status that belongs to a different request. An ORCHESTRATED pass is
+    // the continuation of the report in flight, so it keeps it and republishes it per phase.
+    if (!orchestrated) { orchestration = null; lastAssistantMessage = null; }
     const deadline = now() + AGENT_RUN_HOST_DEADLINE_MS; // BEFORE any context/SDK work
     const owned = { kind, generation: ++generation, settings: validateRequestSettings(stored.settings),
       mode: kind === 'connection' ? 'ASK' : mode, includeContext, uuid: kind === 'connection' ? createConnectionSession(crypto).uuid : chat.uuid,
@@ -205,12 +244,17 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   // Drives one owned run through the bounded Agent Runtime. The injected Sprint 1 transport keeps its
   // own signature and is adapted to the runtime's shape here; completion publishes only after the
   // ownership/deadline recheck, exactly like the single-shot path did.
-  async function run(kind, user) {
+  async function run(kind, user, extra = {}) {
     if (disposed || active || writeLocked()) return false;
+    // `profile` is the model-visible tool PROFILE this pass runs under. The registry's own contract is
+    // that an ABSENT profile is `undefined` and a NAME it does not declare is a refusal, so an absent
+    // profile is forwarded as `undefined` (never as `null`, which the registry refuses and the runtime's
+    // own fallback would answer with the FULL list — the opposite of what an orchestrated pass wants).
+    const profile = extra.profile ?? undefined;
     let owned = null;
     try {
       if (kind === 'analysis') assertByteLimit(user, LIMITS.userInputBytes);
-      owned = begin(kind);
+      owned = begin(kind, extra.orchestrated === true);
       let capturedRun = null;
       if (kind === 'analysis' && owned.includeContext) capturedRun = await read(owned);
       if (!valid(owned)) return false;
@@ -246,6 +290,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       emit();
       const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities: CAPABILITIES,
         mode: owned.mode, settings, uuid, request: kind === 'connection' ? CONNECTION_REQUEST : user,
+        profile,
         // The panel's agent runs carry the named pilot guardrails IN THE REQUEST: the runtime validates
         // them through the same `createGuardrails` (runtime.js:111) and needs no edit of its own
         // (limits.js:598-599, session.js:74). Without them the defaults (maxSteps 12 / maxToolCalls 32 /
@@ -280,14 +325,100 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       if (now() >= deadline) { invalidate('TIMEOUT', true); emit(); return false; }
       const captured = kind === 'analysis' && capturedRun !== null && capturedRun.text !== '' ? capturedRun : null;      const candidate = previewFrom(done, captured);
       const reply = done.status === 'FINAL' && typeof done.message === 'string' ? done.message : candidate ? candidate.replacement : '';
-      const append = kind === 'analysis' && (done.status === 'FINAL' || candidate) ? { user, assistant: reply } : null;
+      if (done.status === 'FINAL' && typeof done.message === 'string') lastAssistantMessage = done.message;
+      // An ORCHESTRATED pass reports its outcome through the orchestration record, not through the chat:
+      // a plan pass and six multi-thousand-character execute requests would otherwise fill the history
+      // with the panel's own wording. The panel's ordinary single-run path appends exactly as before.
+      const append = kind === 'analysis' && extra.appendToChat !== false && (done.status === 'FINAL' || candidate) ? { user, assistant: reply } : null;
       return settle(owned, statusFor(kind, done, candidate), append, candidate, captured ? captured.target : null);
     } catch (error) { return fail(owned, error); }
+  }
+  // The panel's bridge legs the VERIFY step reads the document with: the same public entry points the
+  // `read_structure` and `read_document_text` tools dispatch, called directly so no model step and no
+  // tool-call budget is spent on measuring the result. Both are READS: neither can open a write slot.
+  function structureLeg(raw) {
+    if (typeof bridge?.readStructure !== 'function') return Promise.resolve({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+    return Promise.resolve(bridge.readStructure(raw));
+  }
+  function documentLeg(raw) {
+    if (typeof bridge?.readDocumentText !== 'function') return Promise.resolve({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+    return Promise.resolve(bridge.readDocumentText(raw));
+  }
+  // ONE ORCHESTRATED PASS: an ordinary owned agent run under the controller's existing ownership,
+  // deadline and transport rules, reported as a closed result rather than as a boolean. Nothing about
+  // the single-run path moves: a pass is `run('analysis', text, { profile, appendToChat: false })` plus
+  // the classification of its terminal outcome.
+  async function runPass({ text, profile }) {
+    let completed = false;
+    try {
+      if (typeof text !== 'string' || text === '') return Object.freeze({ ok: false, error: ERROR_CODES.INVALID_DATA });
+      if (disposed || writeLocked()) return Object.freeze({ ok: false, error: bridge?.getState?.().busy === true ? ERROR_CODES.EDITOR_BUSY : ERROR_CODES.INTERNAL_ERROR });
+      completed = await run('analysis', text, { profile, appendToChat: false, orchestrated: true });
+    } catch (error) { return Object.freeze({ ok: false, error: safeCode(error) }); }
+    // An orchestrated pass never publishes a Preview of its own: the selection-replacement proposal is
+    // left to the ordinary single-run path, where the user's selection is what it was built from.
+    dropPreview();
+    const record = agent;
+    // The run's own terminal outcome is the pass result. `completed === false` with the run still
+    // owned means the pass was superseded or timed out: that is an infrastructure stop, never a silent
+    // success, and the orchestration reports it instead of starting another pass.
+    if (active !== null || !completed) {
+      return Object.freeze({ ok: false, error: record?.status === 'CANCELLED' ? ERROR_CODES.CANCELLED : 'SUPERSEDED',
+        status: record?.status ?? 'UNKNOWN', actions: record?.actions ?? Object.freeze([]), steps: record?.steps ?? 0 });
+    }
+    return Object.freeze({ ok: true, status: record?.status ?? 'UNKNOWN', message: lastAssistantMessage,
+      actions: record?.actions ?? Object.freeze([]), steps: record?.steps ?? 0, toolCalls: record?.toolCalls ?? 0 });
+  }
+  // The plan pass's own answer. The controller does not keep chat history for an orchestrated pass, so
+  // the FINAL message the runtime returned is captured here, where it is the pass's result and nothing
+  // else: no reply text from any other run can be read back through this variable.
+  async function runPlanPass(text) {
+    lastAssistantMessage = null;
+    const result = await runPass({ text, profile: null });
+    return Object.freeze({ ...result, message: result.ok === true ? lastAssistantMessage : null });
+  }
+  // PLAN -> EXECUTE -> VERIFY -> CONTINUE, driven entirely from here. Every pass is an ordinary agent
+  // request composed by the orchestrator module; the panel supplies the transport-level `runPass` and the
+  // bridge-level document read, and publishes the outcome through its existing status/emit mechanism.
+  async function runOrchestration(user) {
+    try {
+      const outcome = await createOrchestrator({
+        // The plan pass needs the FINAL message as its plan; the execute passes need only their closed
+        // outcome, so the message capture is switched on for the plan pass alone.
+        runPass: pass => pass.kind === 'plan' ? runPlanPass(pass.text) : runPass(pass),
+        readDocument: createDocumentReader({ readStructure: structureLeg, readDocumentText: documentLeg }),
+        profileInstruction: profile => typeof registryOrNull()?.profileInstruction === 'function' ? registryOrNull().profileInstruction(profile) : null,
+        emit: progress => publishOrchestration(progress, null)
+      }).run(user);
+      publishOrchestration(outcome, outcome);
+      return true;
+    } catch (error) {
+      // The orchestration ends through the controller's own classified failure path, and the record of
+      // what was measured so far is still published: a failure that occurs BEFORE any measurement must
+      // not leave a stale report of a previous request standing.
+      return fail(null, error);
+    }
+  }
+  function publishOrchestration(progress, outcome) {
+    if (disposed) return;
+    const record = orchestrationRecord(progress, outcome ?? progress);
+    orchestration = record;
+    // The status is the orchestration's OWN status while none of the controller's guards has taken over:
+    // a Stop, a superseded run or a refusal keeps its own closed status and the orchestration record is
+    // the report of what was measured up to that point.
+    if (!active && !writeLocked()) status = record.status;
+    emit();
   }
   return Object.freeze({
     getState: snapshot,
     subscribe(listener) { listeners.add(listener); listener(snapshot()); return function () { listeners.delete(listener); }; },
-    analyze(user) { return run('analysis', user); },
+    analyze(user) {
+      // THE LONG-GENERATION ENTRY: a request that names a volume, several parts or an explicit count is
+      // planned, executed in parts, measured and continued. Every other request keeps the existing
+      // single-run path exactly as it was, so an ordinary question or edit is unchanged.
+      if (mode === 'EDIT' && isLongGenerationRequest(user)) return runOrchestration(user);
+      return run('analysis', user);
+    },
     testConnection() { return run('connection'); },
     async checkR7() {
       if (disposed || active || writeLocked()) return false;
