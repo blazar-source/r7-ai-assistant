@@ -59,7 +59,7 @@
 | T2 | Bounded Cell reads | `read_sheet`, `read_range` | **DONE** (ретроспективно), **с KNOWN DEFECT** |
 | T3 | `write_range` | `write_range` | **DONE** (ретроспективно) |
 | T4 | Cell formatting | `format_cells` (план: `format_range`) | T4.0 **DONE**, T4.1 реализация **DONE** (коммит `7b0480b`), T4.2 native proof **DONE** на Windows и на целевом Astra/R7 2026.1.2.1942 — см. [T4.0 evidence](<../../evidence/sprint-4/t4.0-format-range-evidence.md>) и её §13 |
-| T5 | Workbook / worksheet operations | `list_sheets`, `add_sheet`, адресация листа; `rename_sheet` — условно | T5.0 **DONE** (матрица измерена); T5.1 `list_sheets` **DONE** (`f948e3d`); T5.2 `add_sheet` **DONE** (`4f3d1b9`); T5.3+ NOT STARTED |
+| T5 | Workbook / worksheet operations | `list_sheets`, `add_sheet`, адресация листа; `rename_sheet` — условно | T5.0 **DONE** (матрица измерена); T5.1 `list_sheets` **DONE** (`f948e3d`); T5.2 `add_sheet` **DONE** (`4f3d1b9`); T5.3a адресация листа в `read_range` **DONE** (`db130a0`); T5.3b/c NOT STARTED |
 
 ## 4. T1 — Native Cell API measurement — DONE
 
@@ -210,6 +210,15 @@
 
 Полная матрица замеров книги, нативные трассы и результаты гейта T5.1/T5.2 — в
 [T5 evidence](<../../evidence/sprint-4/t5-workbook-tools-evidence.md>).
+
+**Статус T5.3a — DONE** (коммит `db130a0`). Существующее чтение получило необязательный селектор
+листа в двух закрытых формах (`sheet` — имя, `sheetIndex` — индекс; оба сразу — отказ), без селектора поведение
+прежнее. Разрешение — только через измеренный `Api.GetSheet(...)`, и **и значения, и формульный проход** читаются
+с объекта выбранного листа, поэтому активный лист не переключается (проверено нативно после каждого чтения).
+Несуществующий лист — известный отказ: новый узкий однослотовый `['TOOL_ERROR']` рядом с прежним
+`['CAPABILITY_UNAVAILABLE']`. Форма результата не менялась — `sheetName`/`sheetIndex` описывают прочитанный
+лист. Замерено попутно: числовая строка **не** коэрцится в индекс (`Api.GetSheet('1')` при отсутствии такого
+имени отвечает `null`), поэтому `sheet: '1'` — это имя.
 
 **Порядок работ T5:**
 
