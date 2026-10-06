@@ -367,7 +367,7 @@ CAPABILITY_UNAVAILABLE **до** обращения к модели — тумб�
 
 ## Критерий 7 плана: Qwen-калибровка — что измерено, и решение владельца
 
-**Инструмент:** `tests/acceptance/agent/dev-qwen-workloads.mjs` (см. его README:156/170). Agent Runtime не менялся и
+**Инструмент:** `tests/acceptance/agent/dev-qwen-workloads.mjs` (см. его README:156 — per-step ms/bytes — и :166 — `repairs`). Agent Runtime не менялся и
 ни один продуктовый guardrail не повышался: первый замер ниже — вообще дефолты рантайма, второй — настройки панели,
 то есть условия принятого прогона.
 
@@ -409,6 +409,9 @@ Mock-контроль существен: тот же workload, тот же Runt
 
 Поэтому **не утверждается**, что длинный P&L workload с этой model family гарантированно достигает `FINAL` в
 текущем временном бюджете.
+
+**ИТОГ: SPRINT 4 ЗАКРЫТ (ACCEPTED)** — финальный scoped review дал APPROVE на замороженной ревизии
+(`bridge.js` `f503a2d4…`, артефакт `e9410935…`, ZIP STORE `1d0c5932…`, гейт 1233/1233 + аудит PASS).
 
 **ЗАРЕГИСТРИРОВАННЫЙ HARDENING ITEM (не Cell-specific; в presentation scope Sprint 5 не входит):**
 *long-running model completion / protocol-envelope discipline* — поведение Runtime и транспорта, когда ответ модели
