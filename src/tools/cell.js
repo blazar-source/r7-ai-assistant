@@ -253,7 +253,7 @@ export function createCellTools(bridge) {
       // so the tool reports BOTH ranges instead of pretending they are the same one: `requestAddress` is
       // what the caller asked for, and `readAddress` is the range the editor actually answered.
       name: 'read_range', kind: 'read', editors: ['cell'], policy: 'auto', requires: ['document.read'],
-      description: 'Читает диапазон листа (A1 или A1:C10): значения и формулы. sheet — имя листа, sheetIndex — индекс; без них активный.',
+      description: 'Читает диапазон: address — диапазон (A1 или A1:C10), значения и формулы. sheet — имя листа, sheetIndex — индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address'],
         properties: {
           address: { type: 'string', maxBytes: 24 },
@@ -342,7 +342,7 @@ export function createCellTools(bridge) {
       // refusal is deliberate — an account code silently renumbered would be worse — but such a code cannot
       // be written here on this build.
       name: 'write_range', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Пишет блок ячеек (числа, текст или формулы). Адрес должен точно совпасть с блоком. sheet — имя листа, sheetIndex — индекс; без них активный.',
+      description: 'Пишет блок: address — адрес (совпадает с блоком), cells — строки (числа строкой, формулы с «=»). sheet — имя листа, sheetIndex — индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address', 'cells'],
         properties: {
           address: { type: 'string', maxBytes: 24 },
@@ -517,7 +517,7 @@ export function createCellTools(bridge) {
       // AFTER THE MUTATION THERE IS NO KNOWN FAILURE CLASS: an unproved postcondition is the uncertain outcome
       // (the run stops, nothing is retried), and a sheet that may have been created is never deleted here.
       name: 'add_sheet', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Добавляет лист в конец книги; имя необязательно (фактическое имя читается из редактора).',
+      description: 'Добавляет лист в конец книги: name — имя (необязательно; фактическое читается из редактора).',
       schema: { type: 'object', additionalProperties: false,
         properties: { name: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
@@ -645,7 +645,7 @@ export function createCellTools(bridge) {
       // spreadsheet run exactly one formatting tool and none of the Cell reads. Renaming the CELL leg avoids
       // both without changing the shared registry, which this task must not touch.
       name: 'format_cells', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Форматирует блок ячеек: числовой формат, жирный, курсив, шрифт, заливку, ширину и высоту. sheet — имя, sheetIndex — индекс; без них активный.',
+      description: 'Форматирует блок: address — адрес; ключи bold, italic, numberFormat, fill, clearFill, fontFamily, fontSize, wrapText, columnWidth, rowHeight. sheet — имя, sheetIndex — индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address'],
         properties: {
           address: { type: 'string', maxBytes: 24 },
