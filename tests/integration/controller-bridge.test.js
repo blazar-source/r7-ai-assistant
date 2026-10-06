@@ -69,12 +69,26 @@ test('UI capability action reaches native owned bridge without credentials, HTTP
   f.panel.dispose(); f.controller.dispose();
 });
 
-for (const editor of ['cell', 'slide', 'unknown', null]) test(`UI probe reports unsupported ${editor} locally without SDK guesses`, async () => {
+for (const editor of ['slide', 'unknown', null]) test(`UI probe reports unsupported ${editor} locally without SDK guesses`, async () => {
   const f = probeFixture(editor); f.checkAction();
   assert.equal(await f.controller.checkR7(), false);
   assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
   assert.equal(f.controller.getState().capabilityCount, null); assert.equal(f.callbacks.length, 0);
   assert.match(f.id('status').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
+  f.panel.dispose(); f.controller.dispose();
+});
+test('UI probe reports a SPREADSHEET ready from its own adapter, still without SDK guesses', async () => {
+  // A Cell bridge has no Word method to probe, so it answers LOCALLY and readiness is what it reports about itself.
+  // The properties the old expectation protected are asserted HERE rather than dropped: nothing is read through the
+  // SDK, nothing is dispatched to the editor, and adapter metadata is explicitly NOT runtime proof.
+  const f = probeFixture('cell'); f.checkAction();
+  assert.equal(await f.controller.checkR7(), true, 'a workbook whose adapter can dispatch is READY');
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().capabilityCount, 0, 'the count is the availability flags it reported');
+  assert.equal(f.controller.getState().runtimeVerified, false, 'adapter metadata is still NOT runtime proof');
+  assert.equal(f.counters().reads, 0, 'and nothing was read through the SDK');
+  assert.equal(f.callbacks.length, 0, 'nor was anything dispatched to the editor');
+  assert.equal(f.counters().httpCalls, 0);
   f.panel.dispose(); f.controller.dispose();
 });
 test('Word without callCommand reports unsupported rather than treating adapter metadata as runtime proof', async () => {

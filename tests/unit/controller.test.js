@@ -766,7 +766,10 @@ test('a CELL bridge reports presence for a spreadsheet instead of R7_CHECK_UNAVA
       readings.push('probed');
       return Object.freeze({
         editorType: 'cell',
-        adapter: 'commandDispatch',
+        // THE REAL SHAPE, from the bridge's own measured report: the adapter is an OBJECT naming the primitives,
+        // not a string. The first version of this test used a string, so the branch under test refused a perfectly
+        // usable spreadsheet — a rig that did not match the bridge is what hid the defect.
+        adapter: Object.freeze({ executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' }),
         methodPresence: null,
         runtimeVerified: false,
         selectionRead: Object.freeze({ available: false, runtimeVerified: false, reason: 'NO_SELECTION_IN_CELL' }),
@@ -780,6 +783,20 @@ test('a CELL bridge reports presence for a spreadsheet instead of R7_CHECK_UNAVA
   assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
   assert.equal(f.controller.getState().capabilityCount, 0, 'the count is the reported availability flags, not a Word list');
   assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
+});
+
+test('a CELL bridge with NO usable adapter primitive is refused', async () => {
+  // Readiness is that ONE of the named primitives is available: an object naming two unavailable ones is not an
+  // adapter, and the panel must say so rather than offer a run that cannot dispatch anything.
+  const unusable = { getState() { return { editorType: 'cell', busy: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'cell', methodPresence: null,
+      adapter: Object.freeze({ executeMethod: false, commandDispatch: false, commandMethod: null }),
+      selectionRead: { available: false, runtimeVerified: false, reason: 'READ_UNAVAILABLE' },
+      mutation: { available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } }; } };
+  const f = setup({ dependencies: { bridge: unusable } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), false);
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
 });
 
 test('a CELL bridge that reports a misleading payload is refused, and the WORD decode is unchanged', async () => {

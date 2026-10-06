@@ -457,7 +457,14 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         // `R7_CHECK_UNAVAILABLE`; the exit-gate run reads and mutates sheets through exactly this adapter, which is
         // why this fix is editor-AWARE rather than a relaxed Word check.
         if (platform?.editorType === 'cell') {
-          if (capabilities?.editorType !== 'cell' || typeof capabilities?.adapter !== 'string' || capabilities.adapter === '') {
+          // The adapter the bridge reports is an OBJECT naming the primitives it can use
+          // (`{ executeMethod, commandDispatch, commandMethod }`), not a string: readiness is that ONE of them is
+          // available. An earlier version of this branch required a string and therefore refused a perfectly usable
+          // spreadsheet — the shape is taken from the bridge's own measured report, and the test below uses it too.
+          const adapter = capabilities?.adapter;
+          const adapterUsable = adapter !== null && typeof adapter === 'object'
+            && (adapter.commandDispatch === true || adapter.executeMethod === true);
+          if (capabilities?.editorType !== 'cell' || adapterUsable !== true) {
             finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
           }
           const cellAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
