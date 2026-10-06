@@ -7,8 +7,10 @@
 
 - **Windows runtime = VERIFIED** для `list_sheets` и `add_sheet`: исполнялись **поставочные** тела, извлечённые
   из собранного артефакта, через вендорский канал `Asc.plugin.callCommand`, с независимой проверкой чтением.
-  самого стенда: `artifact dist/plugin/panel.js sha256 5e8ed2175131a312303957a743c2ce17520883389d1c92df890ed9b70467fca2`
-  (печатает `make-native-proof-decimal.mjs:9` при каждом прогоне; это артефакт ревизии, чей ZIP STORE был `ff8dfc56…`).
+  Хеш артефакта, который стенд печатает сам (`make-native-proof-decimal.mjs:9`), зафиксирован для **десятичной
+  corrective**: `artifact dist/plugin/panel.js sha256 5e8ed2175131a312303957a743c2ce17520883389d1c92df890ed9b70467fca2`
+  (ревизия, чей ZIP STORE был `ff8dfc56…`); сборки ног `list_sheets`/`add_sheet` перечислены в таблице §8 своими
+  ZIP-хешами.
 - **Astra runtime для T5 = VERIFIED для пройденного объёма** (Astra SE 1.7.9.41 + R7 2026.1.2.1942; поставочная сборка установлена побайтово, все пункты минимума пройдены, см. раздел Astra в exit-gate-pnl-evidence.md). Исторически харнесс на целевом стенде был поднят и работал (см. evidence T4.0 §13),
   и на нём **прогнан компактный сценарий exit gate** (`list_sheets`, `add_sheet` ×2, запись/чтение с адресацией по листу включая дроби, `format_cells` вместе с отказом по лимиту 400 ячеек, `rename_sheet`, readback и active-invariant — см. раздел Astra в `exit-gate-pnl-evidence.md`); классы ОТКАЗОВ и границ T5 на цели не прогонялись и перечислены в §9. Метод тот же — поставочный артефакт ставится на стенд и исполняется его
   же телом; это предмет exit-gate.
