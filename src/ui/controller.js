@@ -443,11 +443,28 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         emit();
         const platform = bridge?.getState();
         if (platform?.busy) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
-        if (platform?.editorType !== 'word' || typeof bridge?.probeCapabilities !== 'function') {
+        if (platform?.editorType !== 'word' && platform?.editorType !== 'cell') {
+          finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+        }
+        if (typeof bridge?.probeCapabilities !== 'function') {
           finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
         }
         const capabilities = await bridge.probeCapabilities({ signal: owned.abort.signal });
         if (!valid(owned)) return false;
+        // THE SPREADSHEET PATH. A Cell bridge has no Word method to probe, so it reports its capabilities LOCALLY
+        // and `methodPresence` is null by construction — readiness is what the bridge says about ITSELF. The Word
+        // decode below used to run for every editor, so a HEALTHY workbook was answered with
+        // `R7_CHECK_UNAVAILABLE`; the exit-gate run reads and mutates sheets through exactly this adapter, which is
+        // why this fix is editor-AWARE rather than a relaxed Word check.
+        if (platform?.editorType === 'cell') {
+          if (capabilities?.editorType !== 'cell' || typeof capabilities?.adapter !== 'string' || capabilities.adapter === '') {
+            finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+          }
+          const cellAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
+          if (cellAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
+          const cellCount = cellAvailability.filter(value => value === true).length;
+          return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = cellCount; });
+        }
         const flags = capabilities?.methodPresence;
         if (!flags) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
         // The owned bridge decodes a closed six-boolean schema. Retain only a

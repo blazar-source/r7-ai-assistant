@@ -750,3 +750,54 @@ test('the ordinary single-run path is unchanged: only a long-generation EDIT req
   assert.equal(preview.controller.getState().status, 'PREVIEW_READY');
   assert.equal(preview.controller.getState().orchestration, null);
 });
+
+// --- Exit gate: the read-only capability probe must be EDITOR-AWARE --------------------------------
+// MEASURED: on a healthy workbook the panel answered `R7_CHECK_UNAVAILABLE`, because the probe required the Word
+// editor and then decoded a Word-only six-boolean payload. A Cell bridge has no Word method to probe at all — it
+// reports its capabilities LOCALLY, with `methodPresence` null by construction — and the exit-gate run reads and
+// mutates sheets through exactly that adapter. The Word path is untouched: these tests pin BOTH sides.
+
+test('a CELL bridge reports presence for a spreadsheet instead of R7_CHECK_UNAVAILABLE', async () => {
+  const readings = [];
+  const cellBridge = {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    invalidate() {},
+    async probeCapabilities() {
+      readings.push('probed');
+      return Object.freeze({
+        editorType: 'cell',
+        adapter: 'commandDispatch',
+        methodPresence: null,
+        runtimeVerified: false,
+        selectionRead: Object.freeze({ available: false, runtimeVerified: false, reason: 'NO_SELECTION_IN_CELL' }),
+        mutation: Object.freeze({ available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' })
+      });
+    }
+  };
+  const f = setup({ dependencies: { bridge: cellBridge } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), true, 'a workbook with a usable adapter is READY, not unavailable');
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().capabilityCount, 0, 'the count is the reported availability flags, not a Word list');
+  assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
+});
+
+test('a CELL bridge that reports a misleading payload is refused, and the WORD decode is unchanged', async () => {
+  // A cell bridge claiming the WORD shape must not be believed: the payload has to describe the editor it came from.
+  const liar = { getState() { return { editorType: 'cell', busy: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'word', adapter: 'executeMethod', methodPresence: { api: true } }; } };
+  const f = setup({ dependencies: { bridge: liar } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), false);
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+
+  // And a WORD bridge keeps its exact previous behaviour: six booleans, counted.
+  const wordBridge = { getState() { return { editorType: 'word', busy: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'word', adapter: 'executeMethod',
+      methodPresence: { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: false } }; } };
+  const w = setup({ dependencies: { bridge: wordBridge } });
+  w.controller.reset();
+  assert.equal(await w.controller.checkR7(), true);
+  assert.equal(w.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(w.controller.getState().capabilityCount, 3, 'the Word count is the six-boolean sum, as before');
+});
