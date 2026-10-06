@@ -10,6 +10,19 @@ export const LIMITS = Object.freeze({
   modelContentBytes: 65536,
   jsonBytes: 65536,
   editorResultBytes: 65536,
+  // Sprint 5 (T2) — the Slide READ caps. They live HERE, not in the bridge bodies, so one number bounds the host's
+  // check and the body's loop alike; a body only READS what it is handed in the scope.
+  //
+  // MEASURED BASIS (T1; Astra SE 1.7.9.41 + R7 2026.1.2.1942, identical on Windows R7 2026.3.1): `presentation.ToJSON()`
+  // answered 205 339 characters on a ONE-slide deck and `slide.ToJSON()` 34 481, so neither JSON may be the model's
+  // contract; a slide carries a handful of objects (2 on the test deck, inherited from its layout); per-object text is
+  // read through `content.GetElement(i).GetText()`, and an object whose text exceeds `slideReadTextBytes` is reported
+  // WITHOUT text (`textOmitted`) rather than cut in half; `slideReadResultBytes` sits deliberately BELOW the general
+  // `editorResultBytes` window above, because a slide read is a scoped summary and the model must never receive a blob.
+  slideReadSlidesMax: 60,
+  slideReadObjectsMax: 40,
+  slideReadTextBytes: 2048,
+  slideReadResultBytes: 32768,
   // The whole-document HTML export the insert confirmation counts occurrences in (`GetFileHTML`).
   // It is deliberately larger than `editorResultBytes`, because it bounds a DOCUMENT read rather than
   // a scoped one: the 64 KiB window that bounds a selection or paragraph read would refuse the export
