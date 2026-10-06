@@ -58,7 +58,7 @@
 | T1 | Native Cell API measurement | — (измерения, пробники) | **DONE** (ретроспективно) |
 | T2 | Bounded Cell reads | `read_sheet`, `read_range` | **DONE** (ретроспективно), **с KNOWN DEFECT** |
 | T3 | `write_range` | `write_range` | **DONE** (ретроспективно) |
-| T4 | Cell formatting | `format_range` | PLANNED, NOT STARTED |
+| T4 | Cell formatting | `format_range` | T4.0 **DONE** (матрица и контракт измерены — см. [T4.0 evidence](<../../evidence/sprint-4/t4.0-format-range-evidence.md>)); T4.1 реализация NOT STARTED |
 | T5 | Workbook / worksheet operations | `list_sheets`, `add_sheet`, адресация листа; `rename_sheet` — условно | PLANNED, NOT STARTED |
 
 ## 4. T1 — Native Cell API measurement — DONE
@@ -112,6 +112,25 @@
 **Цель:** агент должен уметь не просто записать расчёт, а **оформить полноценную финансовую таблицу**.
 
 **Целевой high-level инструмент:** `format_range` — **один** bounded range-инструмент с закрытой схемой (никаких `set_cell_bold` и подобных).
+
+**Статус T4.0 — DONE.** Поверхность форматирования измерена, схема и числовой контракт зафиксированы, dev cap
+откалиброван; полная матрица «свойство → сеттер → readback → Windows → Astra surface → supported»,
+закрытый контракт number-format, границы значений, семантика `fill`/очистки и калибровка производительности
+1..400 ячеек — в [T4.0 evidence](<../../evidence/sprint-4/t4.0-format-range-evidence.md>).
+
+**Результат T4.0, который обязателен для реализации:**
+
+- **Supported:** number/percentage/currency, `bold`, `italic`, `fontFamily`, `fontSize`, `fill` (включая
+  `null` = очистка), `columnWidth`, `rowHeight`, `wrapText`.
+- **Excluded (отказ до мутации):** `fontColor`, `horizontalAlignment`, `verticalAlignment`, `borders`,
+  `autofit` — сеттер есть, публичного readback, доказывающего применение, нет.
+- **Дискриминированный** `numberFormat`: `currency` обязателен для `type:'currency'` и запрещён для
+  остальных типов; произвольных символов нет.
+- Вызов обязан содержать **хотя бы одно** свойство кроме `address`; смешанный запрос не выполняется
+  частично; проверка доказывает **итоговое состояние** (идемпотентный успех допустим).
+- **Cap 400 ячеек — Windows-calibrated**, перепроверить на Astra/R7 2026.1.2.1942 до Sprint 4 PASS.
+- `columnWidth` действует на **все** пересекаемые столбцы (подтверждение по каждому), `rowHeight` — на
+  **все** пересекаемые строки (по каждой).
 
 **Минимальная область (целевые свойства; каждое подтверждается до реализации):**
 
