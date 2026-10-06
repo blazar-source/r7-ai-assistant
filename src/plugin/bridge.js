@@ -41,7 +41,11 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // than a document, through ONE `range.SetValue` per cell of the addressed block inside its own command body,
 // and it is the FIRST whose proof is a bounded readback of the very block it wrote (one flag per cell) rather
 // than a document delta. It is named here explicitly for the same reason every other write leg is.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite']));
+// `cellformat` is the CELL FORMATTING: it changes PRESENTATION rather than content, through the measured
+// formatting setters on the addressed block, and its proof is one flag per (property, cell) and per
+// (geometry property, column/row) — the first leg whose proof is per-PROPERTY rather than per-target, because
+// a single flag per cell could hide one unproven property behind the proven ones.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -853,6 +857,308 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             return answer;
           } catch (error) {
             return writeRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, false, callback);
+      },
+      // ----- CELL: the bounded SPREADSHEET FORMATTING ---------------------------------------------
+      // The SECOND Cell mutation and the FIRST that changes PRESENTATION rather than content. Every primitive
+      // it authors was MEASURED on a live Cell session (R7-Office Editors 2026.3.1) and the measurement is
+      // recorded in `docs/evidence/sprint-4/t4.0-format-range-evidence.md`: which properties have BOTH a
+      // setter and a public readback, the closed number-format code families, and the value ranges that read
+      // back EXACTLY.
+      // THE PROOF IS ONE FLAG PER (PROPERTY, CELL) AND PER (GEOMETRY PROPERTY, COLUMN|ROW), and that shape is
+      // the point: a single flag per cell would let one unproven property hide behind the proven ones, while a
+      // flag list lets the bridge require EVERY requested property to be confirmed while it still owns the
+      // slot. The check proves the FINAL STATE and never the fact of a change: a cell that already held the
+      // requested value is an idempotent success, because the readback is compared against the REQUEST and
+      // never against a baseline.
+      // THE MEASURED SHAPES THIS BODY DEPENDS ON, all recorded in the evidence above:
+      //   * `range.GetNumberFormat()` answers the very CODE that was set, which makes the number-format proof
+      //     an exact equality against the code the bridge itself composed;
+      //   * `range.GetFillColor()` answers the string `"No Fill"` for an unfilled cell and an object whose
+      //     colour exposes `getRgb()` for a filled one — PUBLIC accessors, not private fields — while
+      //     `Api.CreateNoFill()` is the measured way to clear a fill back to `"No Fill"`;
+      //   * a TEXT property is readable only through `range.GetCharacters().GetFont()`, where bold and italic
+      //     answer the STRING `"true"` when set and `null` when not (never `"false"`), `GetSize()` answers a
+      //     STRING, and `GetName()` answers the family VERBATIM even when the engine does not have it;
+      //   * `range.GetWrapText()` answers a real boolean, and a COLUMN's width / a ROW's height are readable
+      //     from any cell of that column or row, which is how the geometry proof is done per affected
+      //     column/row rather than once for the block.
+      // A property WITHOUT such a readback is not in the schema at all — font colour, both alignments, borders
+      // and autofit are refused by the TOOL before any dispatch — because this body can only prove what these
+      // primitives can be asked. `SetFillColor` with a colour STRING is the measured trap that justifies that
+      // rule: it returns `undefined` and is silently ignored, so an unproven format property would be
+      // reported as applied when nothing happened.
+      // THE ANSWER IS ONE FLAT ARRAY OF PRIMITIVES, exactly like the other legs (the native return validator
+      // keeps those and strips a plain object):
+      //   `[PRE_INSERT, name]` — the body's own closed refusal, or
+      //   `[POST_INSERT, rowCount, columnCount, checkCount, flag0, …]`
+      // where the count lets the decoder require EXACTLY as many flags as the request owes.
+      cellformat(callback) {
+        return plugin.callCommand(function () {
+          // The phase is an explicit slot of every answer and it turns POST_INSERT immediately before the
+          // FIRST mutating call: a refusal built before that point is a KNOWN class, and every refusal after
+          // it leaves the sheet possibly touched, which is the UNCERTAIN class the decoder turns it into.
+          var phase = 'PRE_INSERT';
+          function formatRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          function columnName(position) {
+            var name = '';
+            var remaining = position;
+            while (remaining > 0) {
+              var remainder = (remaining - 1) % 26;
+              name = String.fromCharCode(65 + remainder) + name;
+              remaining = Math.floor((remaining - 1) / 26);
+            }
+            return name;
+          }
+          // A boolean PROPERTY is proved by what the engine answers for `true` and for `false` MEASURED
+          // separately (`"true"` versus `null`), so the two directions are not collapsed into a truthiness
+          // test that a missing readback would pass.
+          function booleanFlag(raw, wanted) {
+            if (wanted === true) return String(raw) === 'true' ? 1 : 0;
+            return raw === null || raw === undefined || String(raw) === 'false' ? 1 : 0;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var address = request.address;
+            var expectedRows = request.rows;
+            var expectedColumns = request.columns;
+            var expectedChecks = request.checks;
+            var maxCells = request.maxCells;
+            if (typeof address !== 'string' || address === '') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof expectedRows !== 'number' || expectedRows < 1 || expectedRows % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof expectedColumns !== 'number' || expectedColumns < 1 || expectedColumns % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof expectedChecks !== 'number' || expectedChecks < 1 || expectedChecks % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof maxCells !== 'number' || maxCells < 1 || maxCells % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (expectedRows * expectedColumns > maxCells) return formatRefusal('TOOL_ERROR');
+            // The facade is checked through the SAME literal guard every other authored body carries.
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var sheet = Api.GetActiveSheet();
+            if (sheet === null || sheet === undefined || typeof sheet.GetRange !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ADDRESS IS PARSED, and the rectangle it names must BE the rectangle the request declared:
+            // a body and a bridge that disagree about the addressed block would format cells the caller
+            // never named, which is exactly the approximation this module refuses.
+            var head = address;
+            var tail = null;
+            var colon = address.indexOf(':');
+            if (colon > 0) {
+              head = address.slice(0, colon);
+              tail = address.slice(colon + 1);
+            }
+            var cleanHead = head.replace(/\$/g, '');
+            var headColumn = cleanHead.replace(/[0-9]+$/, '');
+            var headRow = cleanHead.replace(/^[A-Z]+/, '');
+            if (headColumn === '' || headRow === '') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var startColumn = 0;
+            for (var headLetter = 0; headLetter < headColumn.length; headLetter++) {
+              startColumn = startColumn * 26 + (headColumn.charCodeAt(headLetter) - 64);
+            }
+            var startRow = Number(headRow);
+            if (!(startColumn >= 1) || !(startRow >= 1)) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var endColumn = startColumn;
+            var endRow = startRow;
+            if (tail !== null) {
+              var cleanTail = tail.replace(/\$/g, '');
+              var tailColumn = cleanTail.replace(/[0-9]+$/, '');
+              var tailRow = cleanTail.replace(/^[A-Z]+/, '');
+              if (tailColumn === '' || tailRow === '') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              endColumn = 0;
+              for (var tailLetter = 0; tailLetter < tailColumn.length; tailLetter++) {
+                endColumn = endColumn * 26 + (tailColumn.charCodeAt(tailLetter) - 64);
+              }
+              endRow = Number(tailRow);
+              if (!(endColumn >= 1) || !(endRow >= 1)) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (endColumn - startColumn + 1 !== expectedColumns || endRow - startRow + 1 !== expectedRows) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // WHICH PROPERTIES WERE REQUESTED. The bridge sends `null` (or omits) everything the caller did
+            // not ask for, so the body never has to guess, and a property it was not asked to change is never
+            // written and never proved.
+            var numberFormatCode = request.numberFormatCode;
+            var wantsNumberFormat = typeof numberFormatCode === 'string' && numberFormatCode !== '';
+            var wantBold = request.bold;
+            var wantsBold = typeof wantBold === 'boolean';
+            var wantItalic = request.italic;
+            var wantsItalic = typeof wantItalic === 'boolean';
+            var wantFontFamily = request.fontFamily;
+            var wantsFontFamily = typeof wantFontFamily === 'string' && wantFontFamily !== '';
+            var wantFontSize = request.fontSize;
+            var wantsFontSize = typeof wantFontSize === 'number';
+            var wantWrap = request.wrapText;
+            var wantsWrap = typeof wantWrap === 'boolean';
+            var wantsFill = typeof request.fillR === 'number' && typeof request.fillG === 'number' && typeof request.fillB === 'number';
+            var wantsFillClear = request.fillClear === true;
+            var wantColumnWidth = request.columnWidth;
+            var wantsColumnWidth = typeof wantColumnWidth === 'number';
+            var wantRowHeight = request.rowHeight;
+            var wantsRowHeight = typeof wantRowHeight === 'number';
+            var propertyCount = 0;
+            if (wantsNumberFormat) propertyCount++;
+            if (wantsBold) propertyCount++;
+            if (wantsItalic) propertyCount++;
+            if (wantsFontFamily) propertyCount++;
+            if (wantsFontSize) propertyCount++;
+            if (wantsWrap) propertyCount++;
+            if (wantsFill) propertyCount++;
+            if (wantsFillClear) propertyCount++;
+            // A request that asks for NOTHING must never reach a mutation. The CELL properties and the two
+            // GEOMETRY properties are counted SEPARATELY and for a stated reason: the flag arithmetic below is
+            // per cell for the first group and per affected column/row for the second, while the rule "at least
+            // one formatting property" is about the REQUEST — so a request that asks only for a column width is
+            // a legitimate formatting request and must not be refused as empty.
+            var requestedCount = propertyCount;
+            if (wantsColumnWidth) requestedCount++;
+            if (wantsRowHeight) requestedCount++;
+            if (requestedCount < 1) return formatRefusal('TOOL_ERROR');
+            var expectedCheckCount = propertyCount * expectedRows * expectedColumns;
+            if (wantsColumnWidth) expectedCheckCount += expectedColumns;
+            if (wantsRowHeight) expectedCheckCount += expectedRows;
+            if (expectedCheckCount !== expectedChecks) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // The COLOUR objects are created ONCE, before the loop, because they are the same for every cell
+            // (and because a colour is what the measured setter requires: a string is silently ignored).
+            var fillColour = null;
+            if (wantsFill) {
+              if (typeof Api.CreateColorFromRGB !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              fillColour = Api.CreateColorFromRGB(request.fillR, request.fillG, request.fillB);
+            }
+            var clearColour = null;
+            if (wantsFillClear) {
+              if (typeof Api.CreateNoFill !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              clearColour = Api.CreateNoFill();
+            }
+            if (wantsColumnWidth || wantsRowHeight) {
+              var geometryBlock = sheet.GetRange(address);
+              if (geometryBlock === null || geometryBlock === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (wantsColumnWidth && typeof geometryBlock.SetColumnWidth !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (wantsRowHeight && typeof geometryBlock.SetRowHeight !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            // THE MUTATION, and the boundary the two refusal classes are split on: the phase turns
+            // POST_INSERT here, immediately before the first call that can change the sheet.
+            phase = 'POST_INSERT';
+            for (var writeRow = 0; writeRow < expectedRows; writeRow++) {
+              for (var writeColumn = 0; writeColumn < expectedColumns; writeColumn++) {
+                var cellAddress = columnName(startColumn + writeColumn) + String(startRow + writeRow);
+                var target = sheet.GetRange(cellAddress);
+                if (target === null || target === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (wantsNumberFormat) {
+                  if (typeof target.SetNumberFormat !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetNumberFormat(numberFormatCode);
+                }
+                if (wantsBold) {
+                  if (typeof target.SetBold !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetBold(wantBold);
+                }
+                if (wantsItalic) {
+                  if (typeof target.SetItalic !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetItalic(wantItalic);
+                }
+                if (wantsFontFamily) {
+                  if (typeof target.SetFontName !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFontName(wantFontFamily);
+                }
+                if (wantsFontSize) {
+                  if (typeof target.SetFontSize !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFontSize(wantFontSize);
+                }
+                if (wantsFill) {
+                  if (typeof target.SetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFillColor(fillColour);
+                }
+                if (wantsFillClear) {
+                  if (typeof target.SetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFillColor(clearColour);
+                }
+                if (wantsWrap) {
+                  if (typeof target.SetWrapText !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetWrapText(wantWrap);
+                }
+              }
+            }
+            // The geometry is applied to the ADDRESSED BLOCK, so `columnWidth` reaches every column the address
+            // intersects and `rowHeight` every row it intersects — the semantics stated in the tool's own
+            // documentation — and each of them is PROVED per affected column/row below.
+            if (wantsColumnWidth || wantsRowHeight) {
+              var applyBlock = sheet.GetRange(address);
+              if (applyBlock === null || applyBlock === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (wantsColumnWidth) applyBlock.SetColumnWidth(wantColumnWidth);
+              if (wantsRowHeight) applyBlock.SetRowHeight(wantRowHeight);
+            }
+            // THE VERIFICATION, one flag per (property, cell), then per (geometry property, column/row).
+            var answer = [];
+            answer.push(phase);
+            answer.push(expectedRows);
+            answer.push(expectedColumns);
+            answer.push(expectedCheckCount);
+            for (var checkRow = 0; checkRow < expectedRows; checkRow++) {
+              for (var checkColumn = 0; checkColumn < expectedColumns; checkColumn++) {
+                var checkAddress = columnName(startColumn + checkColumn) + String(startRow + checkRow);
+                var checked = sheet.GetRange(checkAddress);
+                if (checked === null || checked === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (wantsNumberFormat) {
+                  if (typeof checked.GetNumberFormat !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  answer.push(String(checked.GetNumberFormat()) === numberFormatCode ? 1 : 0);
+                }
+                if (wantsBold || wantsItalic || wantsFontFamily || wantsFontSize) {
+                  if (typeof checked.GetCharacters !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var characters = checked.GetCharacters();
+                  if (characters === null || characters === undefined || typeof characters.GetFont !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var font = characters.GetFont();
+                  if (font === null || font === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  if (wantsBold) answer.push(booleanFlag(font.GetBold(), wantBold));
+                  if (wantsItalic) answer.push(booleanFlag(font.GetItalic(), wantItalic));
+                  if (wantsFontFamily) answer.push(String(font.GetName()) === wantFontFamily ? 1 : 0);
+                  if (wantsFontSize) answer.push(String(font.GetSize()) === String(wantFontSize) ? 1 : 0);
+                }
+                if (wantsFill) {
+                  if (typeof checked.GetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var fillAnswer = checked.GetFillColor();
+                  var fillFlag = 0;
+                  if (fillAnswer !== null && fillAnswer !== undefined && typeof fillAnswer === 'object' && fillAnswer.color) {
+                    if (typeof fillAnswer.color.getRgb === 'function') {
+                      var wantedRgb = request.fillR * 65536 + request.fillG * 256 + request.fillB;
+                      fillFlag = String(fillAnswer.color.getRgb()) === String(wantedRgb) ? 1 : 0;
+                    }
+                  }
+                  answer.push(fillFlag);
+                }
+                if (wantsFillClear) {
+                  if (typeof checked.GetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var clearedAnswer = checked.GetFillColor();
+                  answer.push(String(clearedAnswer) === 'No Fill' ? 1 : 0);
+                }
+                if (wantsWrap) {
+                  if (typeof checked.GetWrapText !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  answer.push(String(checked.GetWrapText()) === String(wantWrap) ? 1 : 0);
+                }
+              }
+            }
+            if (wantsColumnWidth) {
+              for (var widthColumn = 0; widthColumn < expectedColumns; widthColumn++) {
+                var widthAddress = columnName(startColumn + widthColumn) + String(startRow);
+                var widthCell = sheet.GetRange(widthAddress);
+                if (widthCell === null || widthCell === undefined || typeof widthCell.GetColumnWidth !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                answer.push(String(widthCell.GetColumnWidth()) === String(wantColumnWidth) ? 1 : 0);
+              }
+            }
+            if (wantsRowHeight) {
+              for (var heightRow = 0; heightRow < expectedRows; heightRow++) {
+                var heightAddress = columnName(startColumn) + String(startRow + heightRow);
+                var heightCell = sheet.GetRange(heightAddress);
+                if (heightCell === null || heightCell === undefined || typeof heightCell.GetRowHeight !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                answer.push(String(heightCell.GetRowHeight()) === String(wantRowHeight) ? 1 : 0);
+              }
+            }
+            if (answer.length !== 4 + expectedCheckCount) return formatRefusal('TOOL_ERROR');
+            return answer;
+          } catch (error) {
+            return formatRefusal('CAPABILITY_UNAVAILABLE');
           }
         }, false, false, callback);
       },
@@ -3187,6 +3493,108 @@ function decodeWriteRange(value, expectedRows, expectedColumns) {
   return Object.freeze({ phase: 'POST_INSERT', rowCount: expectedRows, columnCount: expectedColumns,
     matches: Object.freeze(matches) });
 }
+// The SPREADSHEET-FORMATTING answer, decoded with the SAME strictness as `decodeWriteRange` and for the same
+// reason: the phase is the one decision rule, the flag list is the proof, and a body that answers a different
+// number of flags than the request owes is not one this leg can have produced.
+//   * a TWO-slot `[PRE_INSERT, name]` is a KNOWN refusal — nothing reached the sheet — and it keeps the closed
+//     code the body named, which this decoder republishes unchanged. Whether its slot is RELEASED is the
+//     downstream `preInsertRefusal` decision, and for this leg that is the two classes every other write leg
+//     accepts (`CAPABILITY_UNAVAILABLE` and `TOOL_ERROR`), so a phase-marked `BYTE_LIMIT` — which this body
+//     cannot produce — still settles UNCERTAIN with the slot HELD.
+//   * every other shape — a `POST_INSERT` refusal, a malformed answer, a flag count that is not the expected
+//     one, counts that disagree with the request, or a flag that is not 0 or 1 — is the UNCERTAIN class: the
+//     callback ARRIVED, so the body's mutation loop was entered and the sheet may already be formatted. This
+//     decoder therefore never returns a "bad shape" as a plain known error.
+// WHAT THIS DECODER DOES NOT DECIDE: that EVERY flag must be 1 for success. It publishes the flags as booleans
+// and the DISPATCHER applies the exact-proof rule while it still owns the slot (the same division of labour
+// `decodeWriteRange` has), so a single unproved property settles the ticket there rather than here.
+function decodeCellFormat(value, expectedRows, expectedColumns, expectedChecks) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (!Number.isSafeInteger(expectedRows) || expectedRows < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(expectedColumns) || expectedColumns < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(expectedChecks) || expectedChecks < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== 4 + expectedChecks) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[1] !== expectedRows || members[2] !== expectedColumns || members[3] !== expectedChecks) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const matches = [];
+  for (let index = 0; index < expectedChecks; index++) {
+    const flag = members[4 + index];
+    if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    matches.push(flag === 1);
+  }
+  return Object.freeze({ phase: 'POST_INSERT', rowCount: expectedRows, columnCount: expectedColumns,
+    checks: expectedChecks, matches: Object.freeze(matches) });
+}
+// THE CLOSED NUMBER-FORMAT CONTRACT, composed host-side so the authored body never interprets a request: every
+// code these two functions can produce was measured to round-trip through `GetNumberFormat()` EXACTLY (T4.0
+// evidence: 3 families x decimals 0..10 plus three currencies = 55 codes, 0 mismatches). The currency enum is
+// exactly the three symbols that were measured, and no arbitrary symbol is accepted; `currency` is required
+// for the currency type and refused for the others.
+const CELL_FORMAT_CURRENCIES = Object.freeze({ RUB: '\u20BD', USD: '$', EUR: '\u20AC' });
+// The CLOSED key set of a Cell formatting request, checked by `formatCells` itself: the measured properties,
+// BOTH spellings of the clearing request, and the signal. A key outside it refuses the whole request, which is
+// what makes "nothing is ever applied partially" true at the layer that promises it.
+const CELL_FORMAT_KEYS = Object.freeze(new Set(['address', 'numberFormat', 'bold', 'italic', 'fontFamily',
+  'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText', 'signal']));
+function cellFormatCode(numberFormat) {
+  const type = numberFormat.type;
+  const decimals = numberFormat.decimals === undefined ? 2 : numberFormat.decimals;
+  if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > LIMITS.formatRangeDecimalsMax) return null;
+  let zeros = '';
+  for (let index = 0; index < decimals; index++) zeros += '0';
+  const decimalPart = decimals > 0 ? `.${zeros}` : '';
+  if (type === 'number') return `#,##0${decimalPart}`;
+  if (type === 'percent') return `0${decimalPart}%`;
+  if (type === 'currency') {
+    const symbol = CELL_FORMAT_CURRENCIES[numberFormat.currency];
+    if (symbol === undefined) return null;
+    return `#,##0${decimalPart} ${symbol}`;
+  }
+  return null;
+}
+// The rectangle a CLOSED Cell address names, or null when it is not one this module accepts. It is the same
+// arithmetic the authored bodies do, kept here so the tool, the bridge and the body cannot disagree about what
+// an address covers — and so the cell cap can be enforced before anything is dispatched.
+function sheetAddressShape(address) {
+  const parts = address.split(':');
+  if (parts.length > 2) return null;
+  const head = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(parts[0]);
+  if (head === null) return null;
+  let startColumn = 0;
+  for (const letter of head[1]) startColumn = startColumn * 26 + (letter.charCodeAt(0) - 64);
+  const startRow = Number(head[2]);
+  let endColumn = startColumn;
+  let endRow = startRow;
+  if (parts.length === 2) {
+    const tail = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(parts[1]);
+    if (tail === null) return null;
+    endColumn = 0;
+    for (const letter of tail[1]) endColumn = endColumn * 26 + (letter.charCodeAt(0) - 64);
+    endRow = Number(tail[2]);
+  }
+  const rows = endRow - startRow + 1;
+  const columns = endColumn - startColumn + 1;
+  if (rows < 1 || columns < 1) return null;
+  return Object.freeze({ rows, columns });
+}
 function decodeSheetRead(value, maxCells) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -4917,6 +5325,19 @@ export function createR7Bridge(plugin, {
             if (!allMatched) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
             result = outcome;
           }
+          // THE SPREADSHEET FORMATTING. Its answer is the authored flat array with ONE flag per (property,
+          // cell) and per (geometry property, column/row), decoded against the CHECK COUNT this ticket carried
+          // — the same number the body built its flags against — and the exact-proof rule decides the ticket
+          // HERE, while it still owns the slot: a single flag that is not 1 means the sheet may already be
+          // formatted but the request is not PROVED, which is the UNCERTAIN class with the slot HELD, never a
+          // known error about a sheet the editor may already have changed.
+          else if (kind === 'cellformat') {
+            const outcome = decodeCellFormat(value, params.rows, params.columns, params.checks);
+            let allMatched = true;
+            for (const flag of outcome.matches) if (!flag) { allMatched = false; break; }
+            if (!allMatched) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE BLOCK APPEND. Its answer is the authored flat array of primitives, decoded against the
           // BLOCK COUNT this ticket carried — the same number the body built its one region flag per
           // block against — so the decode and the body can never disagree about how many blocks are owed.
@@ -5058,7 +5479,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite' || kind === 'cellformat') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -5218,6 +5639,23 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.sheetwrite(callback); }
           finally { clearScope(previousSheetWrite); }
+        } else if (kind === 'cellformat') {
+          // THE SPREADSHEET FORMATTING: ONE command, and the SAME parameter channel the other Cell and Word
+          // legs use — the validated address, the property set and the counts written into the page's
+          // `Asc.scope`, never composed into command source (ADR 0002). It needs the entry point that OWNS
+          // that wrapper (`callCommand`); a build whose command channel is the bare `executeCommand`
+          // transport has no sanctioned parameter channel at all, so it refuses HERE, before any dispatch,
+          // and releases the slot because nothing reached the editor. The kind IS in `WRITE_KINDS`, so from
+          // the dispatch on the ticket presents itself as a pending mutation: an unresolved callback can
+          // never be mistaken for an idle bridge, and the caller is never told a write they cannot retry is
+          // safe to retry.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousCellFormat;
+          try { previousCellFormat = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.cellformat(callback); }
+          finally { clearScope(previousCellFormat); }
         } else if (kind === 'blocksinsert') {
           // THE BLOCK APPEND: ONE command, and the SAME parameter channel the search and structure legs
           // use — the validated block array written into the page's `Asc.scope`, never composed into
@@ -5713,6 +6151,145 @@ export function createR7Bridge(plugin, {
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         const outcome = await start('sheetwrite', signal, {}, Object.freeze({ address, cells }));
         return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded CELL FORMATTING behind `format_cells` — the SECOND Cell mutation and the FIRST that changes
+    // PRESENTATION rather than content. THE METHOD IS NAMED `formatCells`, NOT `formatRange`, and the reason is
+    // measured rather than stylistic: the WORD leg already exposes a `formatRange` method on this same returned
+    // object, and a second key with that name would be silently SHADOWED — the object literal keeps only the
+    // last one, so a Cell request would have reached the Word handler. Nothing in the type system or the tests
+    // can catch a shadowed key, which is why the leg's method name is spelled out here.
+    // NOTHING IS EVER APPLIED PARTIALLY: a request that names an unknown property, an address the closed
+    // pattern rejects, no formatting property at all, a property value outside the MEASURED contract, a
+    // discriminated `numberFormat` that breaks its own rule, or a block over the cell cap is refused HERE,
+    // whole, before `start` is reached — so a mixed request that mentions one unsupported property changes
+    // nothing at all, and the property set is assembled in one place. The unknown-property half of that promise
+    // needs the key enumeration below: without it a request carrying `fontColor` beside a provable property
+    // would be SERVED, with the unknown key silently dropped, which is exactly the partial apply this layer
+    // promises not to perform. The tool and the argument schema also refuse such a request, but a promise made
+    // at THIS layer has to hold at this layer.
+    async formatCells(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      // The closed key set of the Cell formatting request: the measured properties, the two spellings of the
+      // clearing request, and the signal. A key outside it refuses the WHOLE request.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!CELL_FORMAT_KEYS.has(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const address = raw?.address;
+      const numberFormat = raw?.numberFormat;
+      const bold = raw?.bold;
+      const italic = raw?.italic;
+      const fontFamily = raw?.fontFamily;
+      const fontSize = raw?.fontSize;
+      const fill = raw?.fill;
+      const columnWidth = raw?.columnWidth;
+      const rowHeight = raw?.rowHeight;
+      const wrapText = raw?.wrapText;
+      const signal = raw?.signal;
+      if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const shape = sheetAddressShape(address);
+      if (shape === null) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const cellCount = shape.rows * shape.columns;
+      if (cellCount > LIMITS.formatRangeCellsMax) return refuse(ERROR_CODES.TOOL_ERROR);
+      // `numberFormat` is a DISCRIMINATED contract: `currency` is required for the currency type and refused
+      // for the others, and the code itself is composed only from the measured families.
+      let numberFormatCode = null;
+      if (numberFormat !== undefined) {
+        if (numberFormat === null || typeof numberFormat !== 'object' || Array.isArray(numberFormat)) return refuse(ERROR_CODES.TOOL_ERROR);
+        const type = numberFormat.type;
+        if (type !== 'number' && type !== 'percent' && type !== 'currency') return refuse(ERROR_CODES.TOOL_ERROR);
+        if (type === 'currency') {
+          if (typeof numberFormat.currency !== 'string' || !Object.hasOwn(CELL_FORMAT_CURRENCIES, numberFormat.currency)) return refuse(ERROR_CODES.TOOL_ERROR);
+        } else if (numberFormat.currency !== undefined) {
+          return refuse(ERROR_CODES.TOOL_ERROR);
+        }
+        if (numberFormat.decimals !== undefined && (!Number.isSafeInteger(numberFormat.decimals) || numberFormat.decimals < 0 || numberFormat.decimals > LIMITS.formatRangeDecimalsMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+        numberFormatCode = cellFormatCode(numberFormat);
+        if (numberFormatCode === null) return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (bold !== undefined && typeof bold !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (italic !== undefined && typeof italic !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (wrapText !== undefined && typeof wrapText !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (fontFamily !== undefined && (typeof fontFamily !== 'string' || fontFamily === '' || utf8ByteLength(fontFamily) > LIMITS.formatRangeFontFamilyBytes)) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (fontSize !== undefined && (!Number.isSafeInteger(fontSize) || fontSize < 1 || fontSize > LIMITS.formatRangeFontSizeMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (columnWidth !== undefined && (!Number.isSafeInteger(columnWidth) || columnWidth < 1 || columnWidth > LIMITS.formatRangeColumnWidthMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (rowHeight !== undefined && (!Number.isSafeInteger(rowHeight) || rowHeight < 1 || rowHeight > LIMITS.formatRangeRowHeightMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+      // `fill` SETS a colour from `#RRGGBB`, or — as `null` — CLEARS it, which the measurement proved the
+      // readback can confirm (`Api.CreateNoFill()` answers `"No Fill"`, the same reading a never-filled cell
+      // gives). The colour reaches the body as components, because the measured setter wants a Colour OBJECT
+      // and a CSS string is silently ignored. `clearFill` is the SAME request under the name the CLOSED tool
+      // schema can express (that schema has no null type), and asking for both at once is refused because the
+      // request would be self-contradictory.
+      const clearFill = raw?.clearFill;
+      let fillR = null;
+      let fillG = null;
+      let fillB = null;
+      let fillClear = false;
+      if (clearFill !== undefined && typeof clearFill !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (fill === null) fillClear = true;
+      else if (fill !== undefined) {
+        if (typeof fill !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(fill)) return refuse(ERROR_CODES.TOOL_ERROR);
+        fillR = Number.parseInt(fill.slice(1, 3), 16);
+        fillG = Number.parseInt(fill.slice(3, 5), 16);
+        fillB = Number.parseInt(fill.slice(5, 7), 16);
+      }
+      if (clearFill === true) {
+        if (fill !== undefined) return refuse(ERROR_CODES.TOOL_ERROR);
+        fillClear = true;
+      }
+      // AT LEAST ONE formatting property besides the address, or there is nothing to prove. The CELL
+      // properties and the two GEOMETRY properties are counted separately for a stated reason: the flag
+      // arithmetic is per cell for the first group and per affected column/row for the second, while the rule
+      // is about the REQUEST — so a request that asks only for a column width must be served, not refused.
+      // THE CLEARING REQUEST HAS TWO SPELLINGS AND IS COUNTED ONCE. `fill: null` and `clearFill: true` are the
+      // same request (`null` is the spelling the owner's schema used, `clearFill` is the one the CLOSED tool
+      // schema can express), so a null colour must NOT be counted as a colour property as well: counting it
+      // twice made the bridge owe twice the flags the body computes and refused a CORRECT clear before it could
+      // ever dispatch.
+      let cellPropertyCount = 0;
+      if (numberFormatCode !== null) cellPropertyCount += 1;
+      if (bold !== undefined) cellPropertyCount += 1;
+      if (italic !== undefined) cellPropertyCount += 1;
+      if (fontFamily !== undefined) cellPropertyCount += 1;
+      if (fontSize !== undefined) cellPropertyCount += 1;
+      if (fill !== undefined && fill !== null) cellPropertyCount += 1;
+      if (fillClear) cellPropertyCount += 1;
+      if (wrapText !== undefined) cellPropertyCount += 1;
+      let requestedCount = cellPropertyCount;
+      if (columnWidth !== undefined) requestedCount += 1;
+      if (rowHeight !== undefined) requestedCount += 1;
+      if (requestedCount < 1) return refuse(ERROR_CODES.TOOL_ERROR);
+      // The flags the body owes: one per (property, cell), plus one per affected COLUMN for the width and one
+      // per affected ROW for the height, because those two properties act on every line the address intersects.
+      let checks = cellPropertyCount * cellCount;
+      if (columnWidth !== undefined) checks += shape.columns;
+      if (rowHeight !== undefined) checks += shape.rows;
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('cellformat', signal, {}, Object.freeze({
+          address,
+          rows: shape.rows,
+          columns: shape.columns,
+          checks,
+          maxCells: LIMITS.formatRangeCellsMax,
+          numberFormatCode,
+          bold,
+          italic,
+          fontFamily,
+          fontSize,
+          fillR,
+          fillG,
+          fillB,
+          fillClear,
+          columnWidth,
+          rowHeight,
+          wrapText
+        }));
+        return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount,
+          properties: requestedCount });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

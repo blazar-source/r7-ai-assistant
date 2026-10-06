@@ -45,7 +45,7 @@ test('RED anchor: write_range exists, is a Cell mutation, and is offered in EDIT
   const registry = createRegistry(createCellTools(bridge));
   const capabilities = ['document.read', 'document.write'];
   assert.deepEqual(registry.catalogue({ editor: 'cell', capabilities, mode: 'EDIT' }).map(e => e.name).sort(),
-    ['read_range', 'read_sheet', 'write_range']);
+    ['format_cells', 'read_range', 'read_sheet', 'write_range']);
   assert.deepEqual(registry.catalogue({ editor: 'cell', capabilities, mode: 'ASK' }).map(e => e.name).sort(),
     ['read_range', 'read_sheet'], 'a mutation is never offered to ASK');
 });

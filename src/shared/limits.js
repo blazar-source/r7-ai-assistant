@@ -343,6 +343,31 @@ export const LIMITS = Object.freeze({
   writeRangeCellBytes: 256,
   writeRangeBytes: 8192,
   writeRangeCellsMax: 400,
+  // The bounded CELL FORMATTING (`format_range`) — the SECOND Cell mutation, and the FIRST one that changes
+  // PRESENTATION rather than content. Every bound below is MEASURED (T4.0, see
+  // `docs/evidence/sprint-4/t4.0-format-range-evidence.md`), because the authored formatter must never ask
+  // the engine for a value outside the range it reads back EXACTLY: a silently clamped value would fail the
+  // proof on a CORRECT request and settle it uncertain.
+  //   * `formatRangeCellsMax` equals `sheetReadCellsMax`/`writeRangeCellsMax`. The 1..400-cell calibration
+  //     measured a whole cycle (mutation plus per-property, per-cell verification) at 0.2 ms for one cell and
+  //     7–9 ms for 400, with the worst confirmed channel — the per-cell font readback — costing about 2 ms at
+  //     400 cells, so the cap is affordable rather than merely conventional. It is WINDOWS-calibrated and must
+  //     be re-verified on the target build before Sprint 4 PASS.
+  //   * `formatRangeDecimalsMax` is the largest decimal count whose number-format CODE round-trips exactly
+  //     (`0.0000000000` measured equal); 0..10 were all exact.
+  //   * `formatRangeFontSizeMax` and `formatRangeColumnWidthMax` are the largest values measured to read back
+  //     exactly (1000 each; the engine also accepted a fractional column width, which the closed schema
+  //     deliberately refuses because it has no `number` type).
+  //   * `formatRangeRowHeightMax` is DELIBERATELY below what the engine accepts: a request for 500 was measured
+  //     to be clamped to 409.5, so the bound stops at the largest value proven exact.
+  //   * `formatRangeFontFamilyBytes` bounds ONE family name. The engine returns any name VERBATIM (including a
+  //     name it does not have), so this is a schema guard rather than a measured engine limit.
+  formatRangeCellsMax: 400,
+  formatRangeDecimalsMax: 10,
+  formatRangeFontSizeMax: 1000,
+  formatRangeColumnWidthMax: 1000,
+  formatRangeRowHeightMax: 400,
+  formatRangeFontFamilyBytes: 64,
   // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
   // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
   // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because

@@ -390,6 +390,160 @@ export function createCellTools(bridge) {
         if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
         return ok(data);
       }
+    }),
+    defineTool({
+      // Sprint 4 Cell tool 4: the FIRST Cell tool that changes PRESENTATION rather than content, and the first
+      // in this module whose proof is per-PROPERTY rather than per-target — one flag per (property, cell) and
+      // per (geometry property, column/row), so one unproven property can never hide behind the proven ones.
+      // ONLY PROOF-CARRYING PROPERTIES ARE IN THE SCHEMA. Each one below has BOTH a setter and a public
+      // readback that T4.0 measured on a live Cell session, and the measurement is recorded in
+      // `docs/evidence/sprint-4/t4.0-format-range-evidence.md`. The five that were measured and EXCLUDED are
+      // named there with their reason (`fontColor`, both alignments, `borders`, `autofit` — a setter with no
+      // readback that can prove it was applied), and this schema does not carry them, so a request that names
+      // one is refused by the closed schema before anything is dispatched.
+      // THE REQUEST IS WHOLE OR REFUSED. A mixed request that names one unsupported property changes NOTHING,
+      // an empty formatting request (an address and nothing else) is a known refusal, and every argument rule
+      // is re-checked in the handler as well because a descriptor is also executable when held directly.
+      // THE MEASURED BOUNDS ARE NOT DECORATION: `rowHeight` stops at 400 because a request for 500 is silently
+      // clamped to 409.5 by the engine, which would fail the proof on a CORRECT request; `decimals` stops at
+      // 10 because that is where the number-format code still round-trips exactly; and `columnWidth` is an
+      // INTEGER here even though the engine also accepted a fractional width, because this closed schema has
+      // no `number` type and a stricter schema can never produce a false success.
+      // GEOMETRY SEMANTICS, stated because they are not per-cell: `columnWidth` acts on EVERY column the
+      // address intersects and is confirmed per affected column, and `rowHeight` acts on EVERY row it
+      // intersects and is confirmed per affected row.
+      // THE NAME IS `format_cells`, NOT `format_range`, and the reason is measured rather than stylistic: the
+      // Word leg already owns `format_range` (src/tools/word.js:2048), and it is not merely a naming clash. The
+      // controller builds ONE registry from the Word and Cell catalogues together (src/ui/controller.js), and
+      // `defineTool`/`createRegistry` THROW on a duplicate tool name (src/tools/registry.js), so a second
+      // `format_range` would have been a HARD REGISTRY FAILURE at load. The registry's bulk-profile VIEW is a
+      // filter by NAME (`BULK_TOOLS`) rather than by editor, so a duplicate would ALSO have offered a bulk
+      // spreadsheet run exactly one formatting tool and none of the Cell reads. Renaming the CELL leg avoids
+      // both without changing the shared registry, which this task must not touch.
+      name: 'format_cells', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
+      description: 'Форматирует блок ячеек: числовой формат, жирный/курсив, шрифт, заливку, ширину столбцов и высоту строк.',
+      schema: { type: 'object', additionalProperties: false, required: ['address'],
+        properties: {
+          address: { type: 'string', maxBytes: 24 },
+          numberFormat: { type: 'object', additionalProperties: false, required: ['type'],
+            properties: {
+              type: { type: 'string', enum: ['number', 'percent', 'currency'] },
+              decimals: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeDecimalsMax },
+              currency: { type: 'string', enum: ['RUB', 'USD', 'EUR'] } } },
+          bold: { type: 'boolean' },
+          italic: { type: 'boolean' },
+          fontFamily: { type: 'string', minBytes: 1, maxBytes: LIMITS.formatRangeFontFamilyBytes },
+          fontSize: { type: 'integer', minimum: 1, maximum: LIMITS.formatRangeFontSizeMax },
+          fill: { type: 'string', maxBytes: 7 },
+          clearFill: { type: 'boolean' },
+          columnWidth: { type: 'integer', minimum: 1, maximum: LIMITS.formatRangeColumnWidthMax },
+          rowHeight: { type: 'integer', minimum: 1, maximum: LIMITS.formatRangeRowHeightMax },
+          wrapText: { type: 'boolean' } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        const address = args?.address;
+        const numberFormat = args?.numberFormat;
+        const bold = args?.bold;
+        const italic = args?.italic;
+        const fontFamily = args?.fontFamily;
+        const fontSize = args?.fontSize;
+        const fill = args?.fill;
+        const clearFill = args?.clearFill;
+        const columnWidth = args?.columnWidth;
+        const rowHeight = args?.rowHeight;
+        const wrapText = args?.wrapText;
+        // The closed key sets, checked here as well and at BOTH levels: an unknown property (`fontColor`, an
+        // alignment, a border, `autofit`, or anything else) must be a known refusal with NOTHING dispatched,
+        // never a partial apply — and the NESTED `numberFormat` object is closed too, because a `symbol` or any
+        // other stray key inside it would otherwise be silently dropped and the request served as if it had
+        // been understood.
+        const allowed = new Set(['address', 'numberFormat', 'bold', 'italic', 'fontFamily', 'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText']);
+        for (const key of Object.keys(args ?? {})) if (!allowed.has(key)) return known();
+        if (numberFormat !== undefined && numberFormat !== null && typeof numberFormat === 'object' && !Array.isArray(numberFormat)) {
+          for (const key of Object.keys(numberFormat)) if (key !== 'type' && key !== 'decimals' && key !== 'currency') return known();
+        }
+        if (typeof address !== 'string' || address === '' || !ADDRESS.test(address)) return known();
+        if (utf8ByteLength(address) > 24) return known();
+        const shape = addressShape(address);
+        if (shape === null) return known();
+        const cellCount = shape.rows * shape.columns;
+        if (cellCount > LIMITS.formatRangeCellsMax) return known();
+        // The DISCRIMINATED number-format rule, which the closed schema cannot express: `currency` is required
+        // for the currency type and refused for the others, and the type itself must be one of the measured
+        // families.
+        if (numberFormat !== undefined) {
+          if (numberFormat === null || typeof numberFormat !== 'object' || Array.isArray(numberFormat)) return known();
+          const type = numberFormat.type;
+          if (type !== 'number' && type !== 'percent' && type !== 'currency') return known();
+          if (type === 'currency') {
+            if (numberFormat.currency !== 'RUB' && numberFormat.currency !== 'USD' && numberFormat.currency !== 'EUR') return known();
+          } else if (numberFormat.currency !== undefined) return known();
+          const decimals = numberFormat.decimals;
+          if (decimals !== undefined && (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > LIMITS.formatRangeDecimalsMax)) return known();
+        }
+        if (bold !== undefined && typeof bold !== 'boolean') return known();
+        if (italic !== undefined && typeof italic !== 'boolean') return known();
+        if (wrapText !== undefined && typeof wrapText !== 'boolean') return known();
+        if (clearFill !== undefined && typeof clearFill !== 'boolean') return known();
+        if (fontFamily !== undefined && (typeof fontFamily !== 'string' || fontFamily === '' || utf8ByteLength(fontFamily) > LIMITS.formatRangeFontFamilyBytes)) return known();
+        if (fontSize !== undefined && (!Number.isSafeInteger(fontSize) || fontSize < 1 || fontSize > LIMITS.formatRangeFontSizeMax)) return known();
+        if (columnWidth !== undefined && (!Number.isSafeInteger(columnWidth) || columnWidth < 1 || columnWidth > LIMITS.formatRangeColumnWidthMax)) return known();
+        if (rowHeight !== undefined && (!Number.isSafeInteger(rowHeight) || rowHeight < 1 || rowHeight > LIMITS.formatRangeRowHeightMax)) return known();
+        // `fill` is the measured colour spelling (`#RRGGBB`, a Colour object behind it), and `clearFill` is the
+        // same clearing request under a name this closed schema can express. Asking for both is refused.
+        if (fill !== undefined && (typeof fill !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(fill))) return known();
+        if (clearFill === true && fill !== undefined) return known();
+        // AT LEAST ONE formatting property besides the address, or there is nothing to prove.
+        let propertyCount = 0;
+        if (numberFormat !== undefined) propertyCount += 1;
+        if (bold !== undefined) propertyCount += 1;
+        if (italic !== undefined) propertyCount += 1;
+        if (fontFamily !== undefined) propertyCount += 1;
+        if (fontSize !== undefined) propertyCount += 1;
+        if (fill !== undefined) propertyCount += 1;
+        if (clearFill === true) propertyCount += 1;
+        if (columnWidth !== undefined) propertyCount += 1;
+        if (rowHeight !== undefined) propertyCount += 1;
+        if (wrapText !== undefined) propertyCount += 1;
+        if (propertyCount < 1) return known();
+        if (missingBridgeMethod(bridge, 'formatCells')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        let response;
+        try {
+          response = await bridge.formatCells({
+            address,
+            ...(numberFormat === undefined ? {} : { numberFormat }),
+            ...(bold === undefined ? {} : { bold }),
+            ...(italic === undefined ? {} : { italic }),
+            ...(fontFamily === undefined ? {} : { fontFamily }),
+            ...(fontSize === undefined ? {} : { fontSize }),
+            ...(fill === undefined ? {} : { fill }),
+            ...(clearFill === undefined ? {} : { clearFill }),
+            ...(columnWidth === undefined ? {} : { columnWidth }),
+            ...(rowHeight === undefined ? {} : { rowHeight }),
+            ...(wrapText === undefined ? {} : { wrapText }),
+            ...(ctx?.signal === undefined ? {} : { signal: ctx.signal })
+          });
+        } catch (error) {
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        if (!response || typeof response !== 'object') return known();
+        // A returned UNCERTAIN class is the one outcome that must stop the run rather than read as an ordinary
+        // known error: a formatting request that dispatched but could not be proved may already be applied.
+        const uncertain = uncertainResult(response);
+        if (uncertain) return uncertain;
+        if (response.ok !== true) return known(refusalCode(response.code, ERROR_CODES.TOOL_ERROR));
+        // The bridge's envelope re-checked here, so a bridge that drifted can never publish a format of
+        // another shape as this one's result.
+        if (response.address !== address) return known();
+        if (response.rowCount !== shape.rows || response.columnCount !== shape.columns) return known();
+        if (response.properties !== propertyCount) return known();
+        const data = Object.freeze({ address, rowCount: shape.rows, columnCount: shape.columns, properties: propertyCount });
+        const entry = toolResultEntryBytes('format_cells', data);
+        if (entry === null || entry > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
+      }
     })
   ];
 }

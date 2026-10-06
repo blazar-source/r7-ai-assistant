@@ -215,7 +215,37 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // primitive and of any document push. What is NOT pinned here is what the body DECIDES — the phase/flag
       // classification and the bound arithmetic are covered through the real bridge by
       // `tests/unit/bridge-sheetwrite.test.js` and by `tests/unit/tools-cell-write.test.js`.
-      if (code.includes('SetValue')) {
+      // THE FIFTEENTH LEG — the SECOND CELL (spreadsheet) mutation and the first that changes PRESENTATION
+      // rather than content. Its branch must come FIRST for the same reason the two Cell branches below state:
+      // this body authors `GetActiveSheet`, so without its own branch it would be classified as the Cell READ
+      // leg and held to that leg's primitives, which it does not have. `SetNumberFormat` is what identifies it:
+      // no other body in this bundle authors it, and the Word range-format leg beside it authors none of the
+      // spreadsheet primitives. These are BUNDLE-CONTENT pins, so what they hold is the SHAPE of the shipped
+      // body: its parameter channel, its explicit phase in BOTH directions, the measured formatting setters it
+      // authors, the ONE route it proves text through, the PUBLIC colour readback, the geometry reads that make
+      // a per-column/per-row proof possible, and the ABSENCE of every property the tool refuses.
+      if (code.includes('SetNumberFormat')) {
+        assert.match(code, /\bscope\b/, 'the format body takes its address, properties and counts from the injected command scope');
+        assert.match(code, /PRE_INSERT/, 'and marks its pre-mutation refusals with the explicit phase');
+        assert.match(code, /POST_INSERT/, 'and turns that phase immediately before its first mutating call');
+        for (const setter of ['SetNumberFormat', 'SetBold', 'SetItalic', 'SetFontName', 'SetFontSize',
+          'SetFillColor', 'SetWrapText', 'SetColumnWidth', 'SetRowHeight']) {
+          assert.match(code, new RegExp(`${setter}\\s*\\(`), `the measured setter ${setter} is authored`);
+        }
+        for (const readback of ['GetNumberFormat\\(\\)', 'GetCharacters\\(\\)', 'GetFont\\(\\)', 'getRgb\\(\\)',
+          'GetWrapText\\(\\)', 'GetColumnWidth\\(\\)', 'GetRowHeight\\(\\)']) {
+          assert.match(code, new RegExp(readback), `the measured readback ${readback} is authored`);
+        }
+        // The five properties the tool refuses are absent from the body AS WELL: a setter the tool refuses must
+        // not be authored at all, which is what makes "refused before any mutation" true at both layers.
+        for (const excluded of ['SetFontColor', 'SetAlignHorizontal', 'SetAlignVertical', 'SetBorders', 'AutoFit',
+          'SetUnderline']) {
+          assert.equal(code.includes(excluded), false, `${excluded} is excluded: no public readback proves it`);
+        }
+        assert.equal(code.includes('SetValue'), false, 'and it writes no CELL VALUE: this leg formats, never writes content');
+        assert.equal(code.includes('Push('), false, 'and pushes nothing into a document');
+        legs.push('cellformat');
+      } else if (code.includes('SetValue')) {
         assert.match(code, /\bscope\b/, 'the sheet-write body takes its address and matrix from the injected command scope');
         assert.match(code, /POST_INSERT/, 'and marks the moment the sheet may already have been touched');
         assert.match(code, /PRE_INSERT/, 'and its pre-write refusals with the explicit phase');
@@ -372,8 +402,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 14, 'the adapter dispatches exactly the fourteen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetwrite', 'structure', 'table'],
+  assert.equal(commands, 15, 'the adapter dispatches exactly the fifteen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetwrite', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that
