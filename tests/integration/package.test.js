@@ -224,7 +224,25 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // body: its parameter channel, its explicit phase in BOTH directions, the measured formatting setters it
       // authors, the ONE route it proves text through, the PUBLIC colour readback, the geometry reads that make
       // a per-column/per-row proof possible, and the ABSENCE of every property the tool refuses.
-      if (code.includes('SetNumberFormat')) {
+      // THE SIXTEENTH LEG — the WORKBOOK LISTING, and the FIRST body whose subject is the BOOK rather than one
+      // sheet. Its branch must come before the Cell read branch because it authors `GetActiveSheet` too; what
+      // identifies it is `GetVisible(`, which no other body authors. These are BUNDLE-CONTENT pins, so what they
+      // hold is the shape of the shipped body: the injected bound, the collection read, the ACTIVE pair, the
+      // per-sheet name/index/visibility reads that make the listing possible, its own one-slot refusal, and the
+      // absence of every mutation primitive — the listing is a read that cannot change a workbook.
+      if (code.includes('GetVisible(')) {
+        assert.match(code, /\bscope\b/, 'the listing takes the sheet bound from the injected command scope');
+        assert.match(code, /GetSheets\(\)/, 'and reads the book collection');
+        assert.match(code, /GetSheet\(/, 'and addresses each sheet through the measured lookup, never by indexing the collection');
+        assert.match(code, /GetActiveSheet\(\)/, 'and the active sheet');
+        assert.match(code, /GetName\(\)/, 'and each sheet own name');
+        assert.match(code, /GetIndex\(\)/, 'and each sheet own index, which is what identifies the active one');
+        assert.match(code, /CAPABILITY_UNAVAILABLE/, 'and answers its own closed refusal');
+        for (const absent of ['SetValue', 'SetNumberFormat', 'SetName', 'SetActive', 'Delete', 'Push(']) {
+          assert.equal(code.includes(absent), false, `a read authors no ${absent}`);
+        }
+        legs.push('sheetlist');
+      } else if (code.includes('SetNumberFormat')) {
         assert.match(code, /\bscope\b/, 'the format body takes its address, properties and counts from the injected command scope');
         assert.match(code, /PRE_INSERT/, 'and marks its pre-mutation refusals with the explicit phase');
         assert.match(code, /POST_INSERT/, 'and turns that phase immediately before its first mutating call');
@@ -402,8 +420,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 15, 'the adapter dispatches exactly the fifteen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetwrite', 'structure', 'table'],
+  assert.equal(commands, 16, 'the adapter dispatches exactly the sixteen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetlist', 'sheetwrite', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

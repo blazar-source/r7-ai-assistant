@@ -368,6 +368,17 @@ export const LIMITS = Object.freeze({
   formatRangeColumnWidthMax: 1000,
   formatRangeRowHeightMax: 400,
   formatRangeFontFamilyBytes: 64,
+  // The bounded WORKBOOK LISTING (`list_sheets`) — the first WORKBOOK-level read, and the first tool in this
+  // module whose subject is the book rather than one sheet.
+  //   * `sheetListMax` bounds how many SHEETS one listing may carry. A daily workbook has a handful, and 64 is
+  //     the same scale as this module's other block caps (`insertTableRowsMax`/`writeRangeRowsMax`); the bound
+  //     exists so the listing cannot grow with the book without limit. A workbook ABOVE it is a KNOWN refusal,
+  //     never a silently truncated list — a listing that omitted sheets would misrepresent the book.
+  //   * `sheetListNameBytes` bounds ONE sheet name. Excel caps a sheet name at 31 CHARACTERS; in this product's
+  //     own locale that is at most 62 UTF-8 bytes, so 128 is four times the worst case and cannot refuse a name
+  //     the editor would have accepted.
+  sheetListMax: 64,
+  sheetListNameBytes: 128,
   // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
   // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
   // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because

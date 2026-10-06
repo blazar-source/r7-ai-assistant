@@ -332,6 +332,89 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // where the `rowCount × columnCount` value strings are followed by the same number of FORMULA SOURCE
       // strings ONLY when `formulasMatch` is 1. It is a READ: it has no phase, no mutation and no leg
       // that could reach a write class.
+      // ----- CELL: the bounded WORKBOOK LISTING ------------------------------------------------
+      // The first WORKBOOK-level body: its subject is the BOOK, not one sheet. It answers the listing the
+      // agent needs before it can address anything — what sheets exist, which one is ACTIVE, and which are
+      // hidden — and it is a READ, so it has no phase and nothing it refuses can have changed the book.
+      // THE ACTIVE SHEET IS DECIDED BY INDEX, NEVER BY OBJECT IDENTITY, and that is MEASURED rather than
+      // stylistic: on a live editor `Api.GetSheets()[i]` and `Api.GetActiveSheet()` answer DIFFERENT wrapper
+      // objects even for the same sheet (measured: `GetSheet('Sprint1') === GetActiveSheet()` is false), so a
+      // listing that compared objects would mark EVERY sheet inactive — a lie a caller could not detect.
+      // WHAT THE BODY CHECKS BEFORE IT ANSWERS: the book is non-empty, its size is inside the bound the tool
+      // carries, the active sheet's name and index are readable, and every sheet can answer its own name,
+      // index and visibility. Anything else is this body's own ONE-slot refusal.
+      // THE ANSWER IS A FLAT ARRAY OF PRIMITIVES, header first and then FOUR slots per sheet
+      // (`name`, `index`, `active`, `visible`), because a body that needs structured output must encode it:
+      // the native return validator keeps an array of primitives and strips a plain object.
+      sheetlist(callback) {
+        return plugin.callCommand(function () {
+          function listRefusal() {
+            var refusal = [];
+            refusal.push('CAPABILITY_UNAVAILABLE');
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return listRefusal();
+            var sheetListMax = request.maxSheets;
+            if (typeof sheetListMax !== 'number' || sheetListMax < 1 || sheetListMax % 1 !== 0) return listRefusal();
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return listRefusal();
+            // These three guards are DEFENSIVE rather than load-bearing, and that is stated because it was
+            // measured: the whole body runs inside a try/catch that answers the SAME one-slot refusal, so
+            // deleting any one of them changes no observable outcome. They stay because a missing primitive
+            // should be named where it is used rather than discovered by the catch.
+            if (typeof Api.GetSheets !== 'function') return listRefusal();
+            if (typeof Api.GetSheet !== 'function') return listRefusal();
+            if (typeof Api.GetActiveSheet !== 'function') return listRefusal();
+            // THE COLLECTION IS READ ONLY FOR ITS SIZE, and each sheet is then addressed by INDEX through
+            // `Api.GetSheet(position)` — MEASURED to answer the same sheet. That is not a style choice: a call
+            // RESULT is what the authored-code audit accepts as a receiver, while indexing an editor collection
+            // taints the local BY NAME across the whole bundle and turns every later call on it into a
+            // dynamic-property finding (the same trap the write leg records for its `block` local).
+            var sheetListCollection = Api.GetSheets();
+            if (sheetListCollection === null || sheetListCollection === undefined) return listRefusal();
+            if (typeof sheetListCollection.length !== 'number') return listRefusal();
+            var sheetListCount = sheetListCollection.length;
+            if (sheetListCount < 1) return listRefusal();
+            // A book larger than the bound is a KNOWN refusal, never a truncated listing: a listing that
+            // omitted sheets would misrepresent the workbook to the caller.
+            if (sheetListCount > sheetListMax) return listRefusal();
+            var sheetListActive = Api.GetActiveSheet();
+            if (sheetListActive === null || sheetListActive === undefined) return listRefusal();
+            if (typeof sheetListActive.GetName !== 'function') return listRefusal();
+            if (typeof sheetListActive.GetIndex !== 'function') return listRefusal();
+            var sheetListActiveName = String(sheetListActive.GetName());
+            var sheetListActiveIndex = Number(sheetListActive.GetIndex());
+            if (sheetListActiveName === '') return listRefusal();
+            if (!(sheetListActiveIndex >= 0) || sheetListActiveIndex % 1 !== 0) return listRefusal();
+            if (sheetListActiveIndex >= sheetListCount) return listRefusal();
+            var sheetListAnswer = [];
+            sheetListAnswer.push(sheetListCount);
+            sheetListAnswer.push(sheetListActiveIndex);
+            sheetListAnswer.push(sheetListActiveName);
+            for (var sheetListPosition = 0; sheetListPosition < sheetListCount; sheetListPosition++) {
+              var sheetListEntry = Api.GetSheet(sheetListPosition);
+              if (sheetListEntry === null || sheetListEntry === undefined) return listRefusal();
+              if (typeof sheetListEntry.GetName !== 'function') return listRefusal();
+              if (typeof sheetListEntry.GetIndex !== 'function') return listRefusal();
+              if (typeof sheetListEntry.GetVisible !== 'function') return listRefusal();
+              var sheetListName = String(sheetListEntry.GetName());
+              var sheetListEntryIndex = Number(sheetListEntry.GetIndex());
+              if (sheetListName === '') return listRefusal();
+              sheetListAnswer.push(sheetListName);
+              sheetListAnswer.push(sheetListEntryIndex);
+              // THE ACTIVE SHEET IS DECIDED BY INDEX, NEVER BY OBJECT IDENTITY (measured: the editor answers
+              // different wrapper objects for the same sheet).
+              sheetListAnswer.push(sheetListEntryIndex === sheetListActiveIndex ? 1 : 0);
+              sheetListAnswer.push(String(sheetListEntry.GetVisible()) === 'true' ? 1 : 0);
+            }
+            return sheetListAnswer;
+          } catch (error) {
+            return listRefusal();
+          }
+        }, false, false, callback);
+      },
       sheet(callback) {
         return plugin.callCommand(function () {
           // The refusal is a ONE-slot array, and it is built by APPENDING to a literal for the same
@@ -3493,6 +3576,76 @@ function decodeWriteRange(value, expectedRows, expectedColumns) {
   return Object.freeze({ phase: 'POST_INSERT', rowCount: expectedRows, columnCount: expectedColumns,
     matches: Object.freeze(matches) });
 }
+// The WORKBOOK-LISTING answer: a header of three slots and then a fixed STRIDE per sheet, decoded strictly
+// against the bound the ticket carried. A READ changes nothing, so every malformed shape here is the closed
+// `INVALID_DATA` class rather than the uncertain one — there is no sheet state that could have been left
+// behind by a listing that cannot be interpreted.
+const SHEET_LIST_SLOTS = 3;
+const SHEET_LIST_STRIDE = 4;
+function decodeSheetList(value, maxSheets) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  if (!Number.isSafeInteger(maxSheets) || maxSheets < 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (size < SHEET_LIST_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const count = members[0];
+  const activeIndex = members[1];
+  const activeName = members[2];
+  // The DECLARED count, the SIZE of the answer and the bound must all agree: any of the three disagreeing means
+  // this answer is not one this leg can have produced.
+  if (!Number.isSafeInteger(count) || count < 1 || count > maxSheets) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (size !== SHEET_LIST_SLOTS + SHEET_LIST_STRIDE * count) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!Number.isSafeInteger(activeIndex) || activeIndex < 0 || activeIndex >= count) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // The header's active name is bounded here as BELT AND BRACES, and it is worth stating that this bound is
+  // provably unreachable on its own: the header name must EQUAL the name of the entry at `activeIndex` (checked
+  // below), and that entry's own name is bounded by the same rule, so no input can be refused by this line
+  // alone. It stays because a bound on a published field should be visible where the field is read.
+  if (typeof activeName !== 'string' || activeName === '' || utf8ByteLength(activeName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const sheets = [];
+  let activeSeen = 0;
+  for (let index = 0; index < count; index++) {
+    const base = SHEET_LIST_SLOTS + index * SHEET_LIST_STRIDE;
+    // A RECORD READ AT CONSTANT OFFSETS. The load-bearing half of the audit fix is in the BODY (addressing each
+    // sheet through `Api.GetSheet(position)` rather than indexing the collection); what is measured HERE is that
+    // a COMPUTED member read assigned to a SHARED identifier name taints that name across the whole bundle, so
+    // `const name = members[base]` turned unrelated `name.toLowerCase()`-style calls in other legs into
+    // dynamic-property findings. Constant offsets and leg-local names keep this decoder out of that class
+    // entirely rather than relying on a name being free.
+    const record = members.slice(base, base + SHEET_LIST_STRIDE);
+    const recordName = record[0];
+    const recordIndex = record[1];
+    const recordActive = record[2];
+    const recordVisible = record[3];
+    if (typeof recordName !== 'string' || recordName === '' || utf8ByteLength(recordName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    // The index is POSITIONAL, which is STRICTER than the read leg: `decodeSheetRead` tolerates any non-negative
+    // `GetIndex()` because it only reports that sheet's own index, while a listing needs the entries to BE the
+    // book's positions. On a build whose `GetIndex()` were not 0-based (unconfirmed on the target) this leg would
+    // therefore refuse a book the read leg still reads — a fail-CLOSED disagreement, recorded rather than hidden.
+    if (!Number.isSafeInteger(recordIndex) || recordIndex !== index) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    if (recordActive !== 0 && recordActive !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    if (recordVisible !== 0 && recordVisible !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const isActive = recordActive === 1;
+    if (isActive) activeSeen += 1;
+    sheets.push(Object.freeze({ name: recordName, index: recordIndex, active: isActive, visible: recordVisible === 1 }));
+  }
+  // A workbook has EXACTLY ONE active sheet: no sheet marked active and two of them are both refusals, and the
+  // active entry must agree with the header in BOTH slots (`activeIndex` and `activeName`).
+  if (activeSeen !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const activeEntry = sheets[activeIndex];
+  if (activeEntry.active !== true || activeEntry.name !== activeName) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  return Object.freeze({ count, activeIndex, activeName, sheets: Object.freeze(sheets) });
+}
 // The SPREADSHEET-FORMATTING answer, decoded with the SAME strictness as `decodeWriteRange` and for the same
 // reason: the phase is the one decision rule, the flag list is the proof, and a body that answers a different
 // number of flags than the request owes is not one this leg can have produced.
@@ -5312,6 +5465,7 @@ export function createR7Bridge(plugin, {
           // decode and the extraction can never disagree about how many cells are owed. A one-slot
           // `CAPABILITY_UNAVAILABLE` answer crosses as the capability class; there is no uncertain class
           // here, because a read that cannot be performed changed nothing.
+          else if (kind === 'sheetlist') result = decodeSheetList(value, params.maxSheets);
           else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
           // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
           // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
@@ -5623,6 +5777,18 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.sheet(callback); }
           finally { clearScope(previousSheetRead); }
+        } else if (kind === 'sheetlist') {
+          // THE WORKBOOK LISTING: ONE command, and the SAME parameter channel the other Cell legs use — the
+          // bound the body checks against is written into the page's `Asc.scope`, never composed into command
+          // source (ADR 0002). The leg carries NO request: it lists the book as it is, and its only argument is
+          // the bound, so there is nothing caller-derived to validate beyond it.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetList;
+          try { previousSheetList = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetlist(callback); }
+          finally { clearScope(previousSheetList); }
         } else if (kind === 'sheetwrite') {
           // THE SPREADSHEET WRITE: ONE command, and the SAME parameter channel the other Cell and Word
           // legs use — the validated address and matrix written into the page's `Asc.scope`, never
@@ -6290,6 +6456,29 @@ export function createR7Bridge(plugin, {
         }));
         return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount,
           properties: requestedCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded WORKBOOK LISTING behind `list_sheets` — the FIRST tool in this bridge whose subject is the
+    // book rather than one sheet. It takes the leg shape every other read takes: the request is a CLOSED
+    // precondition checked before any dispatch, ONE authored body answers the whole listing, and the decoder
+    // proves it against the bound the ticket carried.
+    // THE LEG HAS NO CALLER ARGUMENTS AT ALL. It lists the book as it is; the only thing that crosses the scope
+    // is the bound the body checks against, so there is nothing caller-derived to validate beyond the closed
+    // key set (the signal, which every leg accepts).
+    async listSheets(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (key !== 'signal') return refuse(ERROR_CODES.TOOL_ERROR);
+      const signal = raw.signal;
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetlist', signal, {}, Object.freeze({ maxSheets: LIMITS.sheetListMax }));
+        return Object.freeze({ ok: true, count: outcome.count, activeIndex: outcome.activeIndex,
+          activeName: outcome.activeName, sheets: outcome.sheets });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

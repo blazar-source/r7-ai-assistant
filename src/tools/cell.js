@@ -392,6 +392,57 @@ export function createCellTools(bridge) {
       }
     }),
     defineTool({
+      // Sprint 4 Cell tool 5 (T5.1): the FIRST WORKBOOK-level tool. Its subject is the BOOK, not one sheet, and
+      // it exists because everything else in T5 addresses something inside a book: before a caller can name a
+      // sheet it has to know which ones exist and which one is active.
+      // IT IS A READ, AND IT TAKES NO ARGUMENTS AT ALL. The schema is the empty closed object, so a caller that
+      // passes anything is refused by the closed class; there is no sheet NAME to validate because the answer is
+      // the list of names.
+      // THE ACTIVE SHEET IS REPORTED BY NAME **AND** INDEX, and the underlying measurement is why: on a live
+      // editor `Api.GetSheets()[i]` and `Api.GetActiveSheet()` are DIFFERENT wrapper objects for the same sheet,
+      // so object identity cannot identify the active one. That pair of slots is what a caller can rely on.
+      // A LISTING IS NEVER TRUNCATED. A workbook above `LIMITS.sheetListMax` is a known refusal, because a list
+      // that silently omitted sheets would misrepresent the book to the caller and to the model reading it.
+      name: 'list_sheets', kind: 'read', editors: ['cell'], policy: 'auto', requires: ['document.read'],
+      description: 'Перечисляет листы книги: имя, индекс, признак активного и скрытого листа.',
+      schema: { type: 'object', additionalProperties: false, properties: {} },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also executable
+        // when it is held directly, and this leg accepts NOTHING — deliberately stricter than the sibling READS,
+        // which ignore an argument they do not use. A leg whose whole contract is "no arguments" should say so.
+        if (args === null || typeof args !== 'object' || Array.isArray(args)) return known();
+        if (Object.keys(args).length > 0) return known();
+        if (missingBridgeMethod(bridge, 'listSheets')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        let response;
+        try {
+          response = await bridge.listSheets(ctx?.signal === undefined ? {} : { signal: ctx.signal });
+        } catch (error) {
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        const refused = refusedEnvelope(response);
+        if (refused !== null) return refused;
+        // THE PER-SHEET SHAPE IS THE DECODER'S, and this handler deliberately does not re-walk it: the decoder
+        // is the layer that reads the native answer, and it already refuses a listing whose declared count
+        // disagrees with its entries, whose indices are not positional, that marks no sheet active or two of
+        // them, or whose header disagrees with the entry it names (covered by
+        // `tests/unit/bridge-sheetlist.test.js`). What this handler re-checks is the SCALAR envelope it
+        // publishes, so a bridge that drifted can still never publish another book's counts as this result.
+        const sheets = response.sheets;
+        if (!Array.isArray(sheets) || sheets.length < 1 || sheets.length > LIMITS.sheetListMax) return known();
+        if (response.count !== sheets.length) return known();
+        if (!Number.isSafeInteger(response.activeIndex) || response.activeIndex < 0 || response.activeIndex >= sheets.length) return known();
+        if (typeof response.activeName !== 'string' || response.activeName === '') return known();
+        const data = Object.freeze({ count: response.count, activeIndex: response.activeIndex,
+          activeName: response.activeName, sheets });
+        const entryBytes = toolResultEntryBytes('list_sheets', data);
+        if (entryBytes === null || entryBytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
+      }
+    }),
+    defineTool({
       // Sprint 4 Cell tool 4: the FIRST Cell tool that changes PRESENTATION rather than content, and the first
       // in this module whose proof is per-PROPERTY rather than per-target — one flag per (property, cell) and
       // per (geometry property, column/row), so one unproven property can never hide behind the proven ones.
