@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { LIMITS } from '../../src/shared/limits.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 function rig(options = {}) {
   const book = (options.sheets ?? [{ name: 'Sprint1' }, { name: 'Данные' }]).map((entry, index) => ({
@@ -174,7 +175,7 @@ test('an unproved postcondition after the mutation is UNCERTAIN, the slot stays 
 test('the closed request class refuses BEFORE any dispatch', async () => {
   const cases = [
     [{ sourceName: 'Sprint1', newName: '' }, 'an empty new name'],
-    [{ sourceName: 'Sprint1', newName: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) }, 'a new name above the byte bound'],
+    [{ sourceName: 'Sprint1', newName: 'я'.repeat(LIMITS.sheetNameCharactersMax + 1) }, 'a new name above the measured character bound'],
     [{ sourceName: 'Sprint1', newName: 42 }, 'a numeric new name'],
     [{ sourceName: 'Sprint1', newName: 'a\u0000b' }, 'a control character in the new name'],
     [{ sourceName: 'Sprint1', sourceIndex: 0, newName: 'X' }, 'BOTH source spellings'],
@@ -279,17 +280,37 @@ test('a FORGED or malformed answer is UNCERTAIN, never a known error', async () 
 });
 
 test('the bridge bounds the NEW NAME itself, not only the tool', async () => {
-  // The tool refuses an over-bound name before dispatch, so the bridge's own bound is only observable here — which
-  // is exactly why it needs its own case: the bridge is reachable directly.
+  // The tool refuses an over-bound name before dispatch, so the bridge's own bounds are only observable here — which
+  // is exactly why they need their own cases: the bridge is reachable directly. NOTE the BYTE bound is now SUBSUMED
+  // for this argument (31 characters can never exceed 128 bytes), so it stays as belt and braces while the
+  // CHARACTER bound below is the one that can actually refuse a real name.
   const f = rig();
-  const over = await f.bridge.renameSheet({ sourceName: 'Данные', newName: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) });
+  const over = await f.bridge.renameSheet({ sourceName: 'Данные', newName: 'я'.repeat(LIMITS.sheetNameCharactersMax + 1) });
   assert.equal(over.ok, false);
   assert.equal(over.code, 'TOOL_ERROR');
   assert.equal(f.commands.length, 0, 'nothing reached the editor');
-  // Exactly AT the bound is served, so the bound is not off by one.
-  const exact = 'я'.repeat(LIMITS.sheetListNameBytes / 2);
-  assert.equal((await f.bridge.renameSheet({ sourceName: 'Данные', newName: exact })).ok, true);
-  assert.equal(f.commands.length, 1);
+  assert.deepEqual(f.renameCalls, [], 'and the editor was never asked');
+});
+
+test('a name above the MEASURED 31-CHARACTER limit is refused BEFORE the mutation, never as uncertainty', async () => {
+  // MEASURED natively: the editor SILENTLY IGNORES a 33-character name, keeping the old one, so the request used to
+  // spend a mutation and come back as UNCERTAIN. It is now a known refusal with nothing dispatched — and the bound
+  // is CHARACTERS, not bytes, so 31 Cyrillic characters (62 bytes) must still be accepted.
+  const at_limit = 'я'.repeat(LIMITS.sheetNameCharactersMax);
+  assert.equal(utf8ByteLength(at_limit) > 31, true, 'the fixture really is above 31 BYTES, so the byte bound cannot be what accepts it');
+  const served = rig();
+  assert.equal((await served.bridge.renameSheet({ sourceName: 'Данные', newName: at_limit })).ok, true,
+    'a name AT the character limit is served');
+  assert.equal(served.commands.length, 1, 'and it did reach the editor');
+  assert.equal(served.book[1].name, at_limit);
+
+  const over = rig();
+  const tooLong = 'я'.repeat(LIMITS.sheetNameCharactersMax + 1);
+  const refused = await over.bridge.renameSheet({ sourceName: 'Данные', newName: tooLong });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'TOOL_ERROR', 'a known-invalid name is a KNOWN refusal, not uncertainty');
+  assert.equal(over.commands.length, 0, 'and NOTHING was dispatched, so no mutation was ever spent');
+  assert.deepEqual(over.renameCalls, [], 'and the editor was never asked to rename');
 });
 
 test('a native that THROWS during the rename is UNCERTAIN with the slot HELD, and is never retried', async () => {

@@ -377,8 +377,14 @@ export const LIMITS = Object.freeze({
   //   * `sheetListNameBytes` bounds ONE sheet name. Excel caps a sheet name at 31 CHARACTERS; in this product's
   //     own locale that is at most 62 UTF-8 bytes, so 128 is four times the worst case and cannot refuse a name
   //     the editor would have accepted.
+  //   * `sheetNameCharactersMax` is that 31-character limit as an ENFORCED bound, because a byte bound alone is
+  //     not the limit the editor applies. MEASURED natively: a 33-character NAME was SILENTLY REJECTED by
+  //     `SetName` — the sheet kept its old name and the new one did not resolve — so a request carrying one used to
+  //     spend a mutation and come back as uncertainty. It is now a KNOWN refusal BEFORE any mutation, which is why
+  //     the bound is characters and not bytes: 31 Cyrillic characters are 62 bytes and must still be accepted.
   sheetListMax: 64,
   sheetListNameBytes: 128,
+  sheetNameCharactersMax: 31,
   // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
   // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
   // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because

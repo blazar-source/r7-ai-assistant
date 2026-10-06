@@ -31,7 +31,7 @@
 import { defineTool } from './registry.js';
 import { ERROR_CODES } from '../shared/errors.js';
 import { AGENT_CEILINGS, LIMITS } from '../shared/limits.js';
-import { utf8ByteLength } from '../shared/bytes.js';
+import { utf8ByteLength, characterLength } from '../shared/bytes.js';
 
 // Every refusal this module writes carries a closed class, never a raw exception message.
 const REFUSAL = 'отказ';
@@ -446,7 +446,7 @@ export function createCellTools(bridge) {
       // name resolves at that index, and the OLD name no longer resolves at all. The active sheet is RECORDED, never
       // switched and never restored. An unproved outcome is the uncertain class, the run stops, nothing is retried.
       name: 'rename_sheet', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Переименовывает лист: newName — новое имя, sheet — имя источника, sheetIndex — его индекс; без них активный.',
+      description: 'Переименовывает лист: newName — новое имя (до 31 символа), sheet — имя источника, sheetIndex — его индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['newName'],
         properties: {
           newName: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes },
@@ -461,7 +461,11 @@ export function createCellTools(bridge) {
         const newName = args?.newName;
         const sheet = args?.sheet;
         const sheetIndex = args?.sheetIndex;
+        // BOTH NAME BOUNDS, checked here as well as in the bridge, because a MUTATION must not dispatch with a name
+        // the editor will silently ignore: the byte bound and the measured 31-CHARACTER bound, so a 33-character
+        // name is a KNOWN refusal before anything is dispatched rather than uncertainty after a spent mutation.
         if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes
+          || characterLength(newName) > LIMITS.sheetNameCharactersMax
           || /[\u0000-\u001f\u007f]/.test(newName)) return known();
         if (sheet !== undefined && (typeof sheet !== 'string' || sheet === '' || utf8ByteLength(sheet) > LIMITS.sheetListNameBytes)) return known();
         if (sheetIndex !== undefined && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) return known();

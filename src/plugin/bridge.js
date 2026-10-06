@@ -1,5 +1,5 @@
 import { LIMITS } from '../shared/limits.js';
-import { assertByteLimit, utf8ByteLength } from '../shared/bytes.js';
+import { assertByteLimit, characterLength, utf8ByteLength } from '../shared/bytes.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 
 // Identity leases persist through disposal: replacing a JS adapter is not proof
@@ -7106,9 +7106,13 @@ export function createR7Bridge(plugin, {
       }
       const sourceName = raw.sourceName, sourceIndex = raw.sourceIndex, newName = raw.newName, signal = raw.signal;
       // THE NEW NAME is the argument this leg exists for, so it is closed first and closed tightly: a non-empty
-      // string inside the name bound, with no CONTROL character anywhere in it. The engine decides the rest, and a
-      // name it rejects simply fails the postcondition below.
+      // string inside BOTH bounds — 31 CHARACTERS, the measured limit the editor itself applies, and the name byte
+      // bound — with no CONTROL character anywhere in it. The character bound is why a 33-character name is now a
+      // KNOWN refusal BEFORE any mutation: MEASURED natively, the editor SILENTLY IGNORES such a name (the sheet
+      // keeps its old one and the new one never resolves), so a request carrying it used to spend a mutation and
+      // come back as UNCERTAINTY. The engine decides the rest, and a name it rejects still fails the postcondition.
       if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes
+        || characterLength(newName) > LIMITS.sheetNameCharactersMax
         || /[\u0000-\u001f\u007f]/.test(newName)) {
         return refuse(ERROR_CODES.TOOL_ERROR);
       }

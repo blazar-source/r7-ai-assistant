@@ -80,12 +80,12 @@ test('the source selector is optional, and index ZERO is a selector rather than 
 });
 
 test('the closed argument class refuses BEFORE any dispatch', async () => {
-  const exact = 'я'.repeat(LIMITS.sheetListNameBytes / 2);
-  assert.equal(utf8ByteLength(exact), LIMITS.sheetListNameBytes);
+  const exact = 'я'.repeat(LIMITS.sheetNameCharactersMax);
+  assert.equal(utf8ByteLength(exact) > LIMITS.sheetNameCharactersMax, true);
   const cases = [
     [{}, 'no new name at all'],
     [{ newName: '' }, 'an empty new name'],
-    [{ newName: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) }, 'a new name above the byte bound'],
+    [{ newName: 'я'.repeat(LIMITS.sheetNameCharactersMax + 1) }, 'a new name above the measured character bound'],
     [{ newName: 42 }, 'a numeric new name'],
     [{ newName: 'a\u0000b' }, 'a control character in the new name'],
     [{ newName: 'X', sheet: 'a', sheetIndex: 0 }, 'BOTH source spellings'],
@@ -148,6 +148,22 @@ test('a bridge without the method refuses as a capability, and a non-Cell editor
   assert.equal(tool.precondition({}, { editor: 'word' }).code, 'CAPABILITY_UNAVAILABLE');
 });
 
+test('a name above the MEASURED 31-CHARACTER limit is refused BEFORE any dispatch', async () => {
+  // The handler re-checks BOTH name bounds, so a 33-character name never reaches the bridge at all — the same
+  // measured limit the bridge enforces, pinned at this layer too because a mutation must not be dispatched with a
+  // name the editor will silently ignore.
+  const at_limit = 'я'.repeat(LIMITS.sheetNameCharactersMax);
+  const served = bridgeWith();
+  const ok = await toolWith(served).execute({ newName: at_limit }, cellCtx);
+  assert.equal(ok.ok, true, 'a name AT the character limit is served');
+  assert.equal(served.calls.renameSheet, 1);
+  const over = bridgeWith();
+  const refused = await toolWith(over).execute({ newName: 'я'.repeat(LIMITS.sheetNameCharactersMax + 1) }, cellCtx);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'TOOL_ERROR');
+  assert.equal(over.calls.renameSheet, 0, 'nothing was dispatched');
+});
+
 test('the DESCRIPTION names newName AND both source spellings, because the model reads only that', async () => {
   // The description is the only MODEL-FACING field (the schema is validation-only and never rendered), so a
   // selector it does not name is undiscoverable — the lesson the T5.3b review rejected the work for.
@@ -155,6 +171,7 @@ test('the DESCRIPTION names newName AND both source spellings, because the model
   assert.match(tool.description, /newName\s*—/, 'names the new-name argument');
   assert.match(tool.description, /sheet\s*—/, 'names the source-name argument');
   assert.match(tool.description, /sheetIndex\s*—/, 'names the source-index argument');
+  assert.match(tool.description, /31/, 'and states the measured character limit the model must respect');
   assert.ok(utf8ByteLength(tool.description) <= 256, 'and stays inside the model-facing byte bound');
   assert.equal(/[\u0000-\u001f\u007f]/.test(tool.description), false, 'one authored line, never a control character');
   assert.equal(tool.schema.additionalProperties, false);
@@ -163,8 +180,8 @@ test('the DESCRIPTION names newName AND both source spellings, because the model
 });
 
 test('the published entry stays inside the runtime ceiling by construction', async () => {
-  const tool = toolWith(bridgeWith(renamed({ name: 'я'.repeat(LIMITS.sheetListNameBytes / 2) })));
-  const result = await tool.execute({ newName: 'я'.repeat(LIMITS.sheetListNameBytes / 2) }, cellCtx);
+  const tool = toolWith(bridgeWith(renamed({ name: 'я'.repeat(LIMITS.sheetNameCharactersMax) })));
+  const result = await tool.execute({ newName: 'я'.repeat(LIMITS.sheetNameCharactersMax) }, cellCtx);
   assert.equal(result.ok, true);
   const entry = JSON.stringify({ tool: 'rename_sheet', ok: true, data: result.data });
   assert.ok(utf8ByteLength(entry) <= AGENT_CEILINGS.toolResultBytes, `${utf8ByteLength(entry)} bytes`);
