@@ -45,7 +45,7 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // formatting setters on the addressed block, and its proof is one flag per (property, cell) and per
 // (geometry property, column/row) — the first leg whose proof is per-PROPERTY rather than per-target, because
 // a single flag per cell could hide one unproven property behind the proven ones.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat']));
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -332,6 +332,119 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // where the `rowCount × columnCount` value strings are followed by the same number of FORMULA SOURCE
       // strings ONLY when `formulasMatch` is 1. It is a READ: it has no phase, no mutation and no leg
       // that could reach a write class.
+      // ----- CELL: the bounded WORKBOOK MUTATION (add a sheet) -----------------------------------
+      // The first MUTATION whose subject is the book. `Api.AddSheet(name?)` answers `undefined`, which is
+      // neither success nor failure, so NOTHING is read from its return value: the outcome is a POSTCONDITION
+      // measured from the editor afterwards, and the decoder proves it. `AddSheet` MEASURABLY appends the new
+      // sheet LAST and makes it ACTIVE, and the previous active sheet is deliberately NOT restored — restoring
+      // it would be a hidden second action, and the caller is told which sheet was active before instead.
+      // TWO REFUSALS HAPPEN BEFORE THE MUTATION, because both are states the book must never be left in: adding
+      // would exceed the sheet bound, or the requested name ALREADY EXISTS (measured: `Api.GetSheet(name)`
+      // answers that sheet, and null for a name that does not exist).
+      // THE PHASE TURNS POST_INSERT IMMEDIATELY BEFORE `AddSheet`: from that call on, an unproved postcondition
+      // is the UNCERTAIN class with the callback slot HELD — never a known error, never a retry, and a sheet that
+      // may have been created is deliberately NOT deleted.
+      sheetadd(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          function addRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddMax = request.maxSheets;
+            if (typeof sheetAddMax !== 'number' || sheetAddMax < 1 || sheetAddMax % 1 !== 0) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddRequested = request.requestedName === undefined ? null : request.requestedName;
+            if (sheetAddRequested !== null && (typeof sheetAddRequested !== 'string' || sheetAddRequested === '')) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return addRefusal('CAPABILITY_UNAVAILABLE');
+            // DEFENSIVE guards, like the listing body's: the surrounding catch answers the same refusal.
+            if (typeof Api.GetSheets !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetSheet !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.AddSheet !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddCollection = Api.GetSheets();
+            if (sheetAddCollection === null || sheetAddCollection === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddCollection.length !== 'number') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddBefore = sheetAddCollection.length;
+            if (sheetAddBefore < 1) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetAddBefore + 1 > sheetAddMax) return addRefusal('TOOL_ERROR');
+            if (sheetAddRequested !== null) {
+              var sheetAddExisting = Api.GetSheet(sheetAddRequested);
+              if (sheetAddExisting !== null && sheetAddExisting !== undefined) return addRefusal('TOOL_ERROR');
+            }
+            // THE BASELINE: the ordered names, and the active sheet by NAME and INDEX (never by object identity).
+            var sheetAddBeforeNames = [];
+            for (var sheetAddPre = 0; sheetAddPre < sheetAddBefore; sheetAddPre++) {
+              var sheetAddPreSheet = Api.GetSheet(sheetAddPre);
+              if (sheetAddPreSheet === null || sheetAddPreSheet === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetAddPreSheet.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetAddPreName = String(sheetAddPreSheet.GetName());
+              if (sheetAddPreName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+              sheetAddBeforeNames.push(sheetAddPreName);
+            }
+            var sheetAddActive = Api.GetActiveSheet();
+            if (sheetAddActive === null || sheetAddActive === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActive.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActive.GetIndex !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddWasActiveName = String(sheetAddActive.GetName());
+            var sheetAddWasActiveIndex = Number(sheetAddActive.GetIndex());
+            if (sheetAddWasActiveName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(sheetAddWasActiveIndex >= 0) || sheetAddWasActiveIndex % 1 !== 0) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetAddWasActiveIndex >= sheetAddBefore) return addRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ONE MUTATION. Nothing else is called on the book, and the previous active sheet is not restored.
+            phase = 'POST_INSERT';
+            if (sheetAddRequested === null) Api.AddSheet();
+            else Api.AddSheet(sheetAddRequested);
+            // THE POSTCONDITION, measured from the editor: the sizes, the ordered names, the new LAST sheet and
+            // the active sheet. The DECODER proves the arithmetic; this body reports what it measured.
+            var sheetAddAfterCollection = Api.GetSheets();
+            if (sheetAddAfterCollection === null || sheetAddAfterCollection === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddAfterCollection.length !== 'number') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddAfter = sheetAddAfterCollection.length;
+            if (sheetAddAfter < 1) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddAfterNames = [];
+            for (var sheetAddPost = 0; sheetAddPost < sheetAddAfter; sheetAddPost++) {
+              var sheetAddPostSheet = Api.GetSheet(sheetAddPost);
+              if (sheetAddPostSheet === null || sheetAddPostSheet === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetAddPostSheet.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetAddPostName = String(sheetAddPostSheet.GetName());
+              if (sheetAddPostName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+              sheetAddAfterNames.push(sheetAddPostName);
+            }
+            var sheetAddLast = Api.GetSheet(sheetAddAfter - 1);
+            if (sheetAddLast === null || sheetAddLast === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddLast.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddLastName = String(sheetAddLast.GetName());
+            if (sheetAddLastName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddActiveAfter = Api.GetActiveSheet();
+            if (sheetAddActiveAfter === null || sheetAddActiveAfter === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActiveAfter.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActiveAfter.GetIndex !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddActiveName = String(sheetAddActiveAfter.GetName());
+            var sheetAddActiveIndex = Number(sheetAddActiveAfter.GetIndex());
+            var sheetAddAnswer = [];
+            sheetAddAnswer.push(phase);
+            sheetAddAnswer.push(sheetAddBefore);
+            sheetAddAnswer.push(sheetAddAfter);
+            sheetAddAnswer.push(sheetAddAfter - 1);
+            sheetAddAnswer.push(sheetAddLastName);
+            sheetAddAnswer.push(sheetAddActiveIndex);
+            sheetAddAnswer.push(sheetAddActiveName);
+            sheetAddAnswer.push(sheetAddWasActiveIndex);
+            sheetAddAnswer.push(sheetAddWasActiveName);
+            for (var sheetAddPreOut = 0; sheetAddPreOut < sheetAddBeforeNames.length; sheetAddPreOut++) sheetAddAnswer.push(sheetAddBeforeNames[sheetAddPreOut]);
+            for (var sheetAddPostOut = 0; sheetAddPostOut < sheetAddAfterNames.length; sheetAddPostOut++) sheetAddAnswer.push(sheetAddAfterNames[sheetAddPostOut]);
+            return sheetAddAnswer;
+          } catch (error) {
+            return addRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, false, callback);
+      },
       // ----- CELL: the bounded WORKBOOK LISTING ------------------------------------------------
       // The first WORKBOOK-level body: its subject is the BOOK, not one sheet. It answers the listing the
       // agent needs before it can address anything — what sheets exist, which one is ACTIVE, and which are
@@ -3582,6 +3695,81 @@ function decodeWriteRange(value, expectedRows, expectedColumns) {
 // behind by a listing that cannot be interpreted.
 const SHEET_LIST_SLOTS = 3;
 const SHEET_LIST_STRIDE = 4;
+// The WORKBOOK-MUTATION answer (add a sheet): a header of nine slots, then the ordered names BEFORE the call and
+// the ordered names AFTER it. THE POSTCONDITION IS PROVED HERE rather than trusted from the body, because this is
+// the layer that can refuse while the ticket still owns the callback slot: a two-slot `[PRE_INSERT, code]` is a
+// KNOWN refusal (nothing was added), and EVERY other shape — a `POST_INSERT` refusal included — is the UNCERTAIN
+// class, because `Api.AddSheet` may already have created a sheet. That is the whole reason no post-mutation
+// failure can come back as an ordinary error, and why a sheet that may exist is never deleted on the way out.
+const SHEET_ADD_SLOTS = 9;
+function decodeSheetAdd(value, expectedName, maxSheets) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (!Number.isSafeInteger(maxSheets) || maxSheets < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size < SHEET_ADD_SLOTS) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const beforeCount = members[1];
+  const afterCount = members[2];
+  const newIndex = members[3];
+  const newName = members[4];
+  const activeIndex = members[5];
+  const activeName = members[6];
+  const previousActiveIndex = members[7];
+  const previousActiveName = members[8];
+  if (!Number.isSafeInteger(beforeCount) || beforeCount < 1 || beforeCount >= maxSheets) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // EXACTLY ONE sheet more, and the new one LAST: both halves are the postcondition the caller was promised.
+  // THIS CHECK IS LOAD-BEARING, and an earlier draft of this comment claimed the opposite — that deleting it
+  // changed no outcome because the size equation below would catch a short answer. A review refuted that with a
+  // forged answer that GROWS BY MORE THAN ONE and carries trailing members: the size equation ties the answer's
+  // length to the DECLARED counts, so `afterCount` itself has to be pinned for the trailing members to be
+  // inspected at all. It is pinned by its own test.
+  if (afterCount !== beforeCount + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (newIndex !== beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (afterCount > maxSheets) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== SHEET_ADD_SLOTS + beforeCount + afterCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // When the caller NAMED the sheet, the editor must confirm THAT name; when it did not, whatever the editor
+  // produced is the answer (this leg never predicts a localised default).
+  if (expectedName !== null && newName !== expectedName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (activeIndex !== newIndex || activeName !== newName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(previousActiveIndex) || previousActiveIndex < 0 || previousActiveIndex >= beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof previousActiveName !== 'string' || previousActiveName === '' || utf8ByteLength(previousActiveName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The two name lists are SLICES read at constant offsets, for the audit reason the listing decoder states.
+  const beforeName = members.slice(SHEET_ADD_SLOTS, SHEET_ADD_SLOTS + beforeCount);
+  const afterName = members.slice(SHEET_ADD_SLOTS + beforeCount, SHEET_ADD_SLOTS + beforeCount + afterCount);
+  for (let index = 0; index < beforeCount; index++) {
+    if (typeof beforeName[index] !== 'string' || beforeName[index] === '' || utf8ByteLength(beforeName[index]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    // EVERY FORMER SHEET KEPT ITS POSITION, compared entry by entry rather than by count alone.
+    if (afterName[index] !== beforeName[index]) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (typeof afterName[beforeCount] !== 'string' || afterName[beforeCount] === '' || utf8ByteLength(afterName[beforeCount]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The LAST entry of the measured list and the name this answer REPORTS must be the same name: they are two
+  // readings of the same sheet, so an answer where they disagree is not one this leg can have produced.
+  if (afterName[beforeCount] !== newName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The sheet that WAS active is still where it was, and the new name is genuinely new: a duplicate would mean
+  // the pre-mutation check did not hold on this build, which is exactly the ambiguous state to refuse.
+  if (afterName[previousActiveIndex] !== previousActiveName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  for (let index = 0; index < beforeCount; index++) if (beforeName[index] === newName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ index: newIndex, name: newName, active: true,
+    previousActive: Object.freeze({ index: previousActiveIndex, name: previousActiveName }) });
+}
 function decodeSheetList(value, maxSheets) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -5465,6 +5653,11 @@ export function createR7Bridge(plugin, {
           // decode and the extraction can never disagree about how many cells are owed. A one-slot
           // `CAPABILITY_UNAVAILABLE` answer crosses as the capability class; there is no uncertain class
           // here, because a read that cannot be performed changed nothing.
+          // THE WORKBOOK MUTATION (add a sheet). A `[PRE_INSERT, code]` answer is a KNOWN refusal — nothing was
+          // added — and EVERY other shape, a post-phase refusal included, is the UNCERTAIN class with the slot
+          // HELD: `Api.AddSheet` may already have created a sheet, so there is no known error to report and
+          // nothing to retry.
+          else if (kind === 'sheetadd') result = decodeSheetAdd(value, params.requestedName, params.maxSheets);
           else if (kind === 'sheetlist') result = decodeSheetList(value, params.maxSheets);
           else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
           // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
@@ -5633,7 +5826,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite' || kind === 'cellformat') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite' || kind === 'cellformat' || kind === 'sheetadd') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -5777,6 +5970,17 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.sheet(callback); }
           finally { clearScope(previousSheetRead); }
+        } else if (kind === 'sheetadd') {
+          // THE WORKBOOK MUTATION: ONE command, and the SAME parameter channel the other Cell legs use — the
+          // bound and the requested name written into the page's `Asc.scope`, never composed into command source
+          // (ADR 0002). The requested name is `null` when the caller named none, so the body never invents one.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetAdd;
+          try { previousSheetAdd = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetadd(callback); }
+          finally { clearScope(previousSheetAdd); }
         } else if (kind === 'sheetlist') {
           // THE WORKBOOK LISTING: ONE command, and the SAME parameter channel the other Cell legs use — the
           // bound the body checks against is written into the page's `Asc.scope`, never composed into command
@@ -6456,6 +6660,36 @@ export function createR7Bridge(plugin, {
         }));
         return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount,
           properties: requestedCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded WORKBOOK MUTATION behind `add_sheet` — the FIRST mutation whose subject is the book. It takes
+    // the leg shape every other dispatched write takes: the request is a CLOSED precondition checked before any
+    // dispatch, ONE authored body adds at most one sheet, and the decoder proves the POSTCONDITION while the
+    // ticket still owns the slot.
+    // `Api.AddSheet` ANSWERS `undefined`, so its return value is read as NEITHER success nor failure: what the
+    // caller is told is what the editor MEASURED afterwards. The name is OPTIONAL and is never invented here: a
+    // caller that named none gets back exactly the (localised) name the editor produced.
+    async addSheet(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (key !== 'name' && key !== 'signal') return refuse(ERROR_CODES.TOOL_ERROR);
+      const name = raw.name;
+      const signal = raw.signal;
+      if (name !== undefined && (typeof name !== 'string' || name === '' || utf8ByteLength(name) > LIMITS.sheetListNameBytes)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetadd', signal, {}, Object.freeze({
+          maxSheets: LIMITS.sheetListMax,
+          requestedName: name === undefined ? null : name
+        }));
+        return Object.freeze({ ok: true, index: outcome.index, name: outcome.name, active: outcome.active,
+          previousActive: outcome.previousActive });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

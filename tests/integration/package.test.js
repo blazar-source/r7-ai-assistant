@@ -230,7 +230,29 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // hold is the shape of the shipped body: the injected bound, the collection read, the ACTIVE pair, the
       // per-sheet name/index/visibility reads that make the listing possible, its own one-slot refusal, and the
       // absence of every mutation primitive — the listing is a read that cannot change a workbook.
-      if (code.includes('GetVisible(')) {
+      // THE SEVENTEENTH LEG — the WORKBOOK MUTATION (add a sheet), and the first body that CHANGES the book
+      // rather than one sheet. `AddSheet(` identifies it: no other body authors it. What is pinned is the shape
+      // of the shipped body: the injected bound and requested name, the baseline reads, the ONE mutation (which
+      // is authored TWICE because the no-name form must not pass `undefined` — the two sites are mutually
+      // exclusive branches of the same single call), the postcondition reads, its explicit phase in BOTH
+      // directions, its own closed refusal, and the ABSENCE of every primitive that would be a second action.
+      if (code.includes('AddSheet(')) {
+        assert.match(code, /\bscope\b/, 'the add takes the bound and the requested name from the injected command scope');
+        assert.match(code, /GetSheets\(\)/, 'and measures the book size before and after');
+        assert.match(code, /GetSheet\(/, 'and addresses every sheet through the measured lookup');
+        assert.match(code, /GetActiveSheet\(\)/, 'and identifies the active sheet by name/index');
+        assert.match(code, /GetName\(\)/, 'and reads every sheet own name');
+        assert.match(code, /GetIndex\(\)/, 'and the active sheet own index');
+        assert.equal((code.match(/AddSheet\s*\(/g) ?? []).length, 2,
+          'the ONE mutation is authored exactly twice: the named branch and the unnamed branch, never a loop');
+        assert.match(code, /PRE_INSERT/, 'and marks its pre-mutation refusals with an explicit phase');
+        assert.match(code, /POST_INSERT/, 'and turns that phase immediately before the ONE mutating call');
+        assert.match(code, /CAPABILITY_UNAVAILABLE/, 'and answers its own closed refusal');
+        for (const absent of ['SetValue', 'SetNumberFormat', 'SetName', 'SetActive', 'Delete', 'SetVisible']) {
+          assert.equal(code.includes(absent), false, `the add authors no ${absent}: it performs exactly ONE action`);
+        }
+        legs.push('sheetadd');
+      } else if (code.includes('GetVisible(')) {
         assert.match(code, /\bscope\b/, 'the listing takes the sheet bound from the injected command scope');
         assert.match(code, /GetSheets\(\)/, 'and reads the book collection');
         assert.match(code, /GetSheet\(/, 'and addresses each sheet through the measured lookup, never by indexing the collection');
@@ -420,8 +442,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 16, 'the adapter dispatches exactly the sixteen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetlist', 'sheetwrite', 'structure', 'table'],
+  assert.equal(commands, 17, 'the adapter dispatches exactly the seventeen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetwrite', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

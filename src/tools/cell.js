@@ -392,6 +392,67 @@ export function createCellTools(bridge) {
       }
     }),
     defineTool({
+      // Sprint 4 Cell tool 6 (T5.2): the FIRST WORKBOOK-level MUTATION. It adds exactly ONE sheet, at the END of
+      // the book, and `Api.AddSheet` answers `undefined` — which is neither success nor failure, so nothing is
+      // read from its return value. What the caller is told is the POSTCONDITION the bridge measured and proved
+      // after the call: the book grew by exactly one, the new sheet is the LAST one, its name is the name the
+      // editor reports, it is the ACTIVE sheet, and every former sheet kept its position.
+      // THE NAME IS OPTIONAL AND IS NEVER INVENTED. With a name, the confirmed name must EQUAL it; without one,
+      // the caller gets exactly the (localised) default the editor produced, read back from the editor. A name
+      // that already exists is a KNOWN refusal BEFORE the mutation, so the book never ends up with a duplicate.
+      // THE FORMER ACTIVE SHEET IS REPORTED, NOT RESTORED: `AddSheet` measurably activates the new sheet, and
+      // silently switching back would be a second, hidden action.
+      // AFTER THE MUTATION THERE IS NO KNOWN FAILURE CLASS: an unproved postcondition is the uncertain outcome
+      // (the run stops, nothing is retried), and a sheet that may have been created is never deleted here.
+      name: 'add_sheet', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
+      description: 'Добавляет лист в конец книги; имя необязательно (фактическое имя читается из редактора).',
+      schema: { type: 'object', additionalProperties: false,
+        properties: { name: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also executable
+        // when it is held directly.
+        if (args === null || typeof args !== 'object' || Array.isArray(args)) return known();
+        for (const key of Object.keys(args)) if (key !== 'name') return known();
+        const name = args.name;
+        if (name !== undefined && (typeof name !== 'string' || name === '' || utf8ByteLength(name) > LIMITS.sheetListNameBytes)) return known();
+        if (missingBridgeMethod(bridge, 'addSheet')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        let response;
+        try {
+          response = await bridge.addSheet({
+            ...(name === undefined ? {} : { name }),
+            ...(ctx?.signal === undefined ? {} : { signal: ctx.signal })
+          });
+        } catch (error) {
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        const refused = refusedEnvelope(response);
+        if (refused !== null) return refused;
+        // The envelope re-checked here, so a bridge that drifted cannot publish an add of another shape: a new
+        // sheet is never the FIRST one (a book always holds at least the sheet that was there before), its name
+        // is bounded, an add is by definition ACTIVE, and the former active sheet is named and indexed.
+        const previousActive = response.previousActive;
+        if (!Number.isSafeInteger(response.index) || response.index < 1) return known();
+        if (typeof response.name !== 'string' || response.name === '' || utf8ByteLength(response.name) > LIMITS.sheetListNameBytes) return known();
+        if (response.active !== true) return known();
+        if (previousActive === null || typeof previousActive !== 'object' || Array.isArray(previousActive)) return known();
+        // The former active sheet must be a sheet that ALREADY EXISTED, so its index is strictly BELOW the new
+        // sheet's. The UPPER bound is checked as well as the lower one: without it a drifted bridge could report
+        // the NEW sheet as its own predecessor.
+        if (!Number.isSafeInteger(previousActive.index) || previousActive.index < 0 || previousActive.index >= response.index) return known();
+        if (typeof previousActive.name !== 'string' || previousActive.name === '' || utf8ByteLength(previousActive.name) > LIMITS.sheetListNameBytes) return known();
+        const data = Object.freeze({ index: response.index, name: response.name, active: true,
+          previousActive: Object.freeze({ index: previousActive.index, name: previousActive.name }) });
+        // The published entry is bounded BY CONSTRUCTION (the name bound plus four small scalars); the
+        // measurement is kept as the ENFORCED bound rather than trusted, like every other leg in this module.
+        const entryBytes = toolResultEntryBytes('add_sheet', data);
+        if (entryBytes === null || entryBytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
+      }
+    }),
+    defineTool({
       // Sprint 4 Cell tool 5 (T5.1): the FIRST WORKBOOK-level tool. Its subject is the BOOK, not one sheet, and
       // it exists because everything else in T5 addresses something inside a book: before a caller can name a
       // sheet it has to know which ones exist and which one is active.
