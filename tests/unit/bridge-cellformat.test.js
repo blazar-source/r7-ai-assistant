@@ -321,6 +321,7 @@ test('a forged or malformed answer is UNCERTAIN, and a phase-marked refusal is a
     [['POST_INSERT', 1, 2, 1, 1], 'a column count the request does not owe'],
     [['POST_INSERT', 1, 1, 1, 2], 'a flag that is not 0 or 1'],
     [['POST_INSERT', 1, 1, 1], 'too few flags'],
+    [['POST_INSERT', 1, 1, 1, 1, 1], 'a TRAILING member the request does not owe'],
     [['PRE_INSERT', 1, 1, 1, 1], 'a refusal shape carrying the post phase'],
     [['POST_INSERT', 1, 1, 1, 'yes'], 'a string flag'],
     ['POST_INSERT', 'not an array'],
@@ -676,4 +677,59 @@ test('the phase turns IMMEDIATELY before the first formatting setter, and no act
   assert.ok(phaseAt < firstSetter, 'the phase turns before the first mutating call, never after it');
   assert.match(source, /Api\.GetSheet\(/, 'the body resolves the selected sheet through Api.GetSheet');
   assert.equal(source.includes('SetActive'), false, 'and never activates it');
+});
+
+// --- A final review showed these four proofs could be replaced by an unconditional 1 ---------------------------
+// The rig's own documented knob exists for exactly this: a SINGLE cell answers another value for one property, so a
+// body that never re-read the property (or replicated one cell's flag) can no longer pass. Each pair asserts BOTH
+// directions, because a proof that refuses everything would be as wrong as one that accepts everything.
+
+test('an ITALIC the cell does not hold is never reported as proved', async () => {
+  const lying = rig({ readOverrides: new Map([['A1', { italic: 'true' }]]) });
+  const refused = await lying.bridge.formatCells({ address: 'A1', italic: false });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.code, 'APPLY_UNCERTAIN', 'a cell still holding italic cannot prove it was cleared');
+  const honest = rig();
+  assert.equal((await honest.bridge.formatCells({ address: 'A1', italic: true })).ok, true);
+});
+
+test('a FONT SIZE the cell does not hold is never reported as proved', async () => {
+  const lying = rig({ readOverrides: new Map([['A1', { size: '99' }]]) });
+  const refused = await lying.bridge.formatCells({ address: 'A1', fontSize: 12 });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.code, 'APPLY_UNCERTAIN');
+  const honest = rig();
+  assert.equal((await honest.bridge.formatCells({ address: 'A1', fontSize: 12 })).ok, true);
+});
+
+test('a FONT FAMILY the cell does not hold is never reported as proved', async () => {
+  const lying = rig({ readOverrides: new Map([['A1', { name: 'Some Other Face' }]]) });
+  const refused = await lying.bridge.formatCells({ address: 'A1', fontFamily: 'Liberation Serif' });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.code, 'APPLY_UNCERTAIN');
+  const honest = rig();
+  assert.equal((await honest.bridge.formatCells({ address: 'A1', fontFamily: 'Liberation Serif' })).ok, true);
+});
+
+test('a NUMBER FORMAT the cell does not hold is never reported as proved', async () => {
+  // Until this case existed the number-format proof was pinned only by a source-text assertion, so replacing its flag
+  // with a literal 1 left the whole suite green.
+  const lying = rig({ readOverrides: new Map([['A1', { numberFormat: 'General' }]]) });
+  const refused = await lying.bridge.formatCells({ address: 'A1', numberFormat: { type: 'percent' } });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.code, 'APPLY_UNCERTAIN');
+  const honest = rig();
+  assert.equal((await honest.bridge.formatCells({ address: 'A1', numberFormat: { type: 'percent' } })).ok, true);
+});
+
+test('a percent format with DECIMALS is built and proved, not only the integer percent code', async () => {
+  // The rounding code is not the plain percent code. The rig does not expose its store, so the property is asserted
+  // the way the proof itself works: a cell answering the PLAIN percent code cannot prove a one-decimal request, and
+  // the same request against an honest cell is proved.
+  const lying = rig({ readOverrides: new Map([['A1', { numberFormat: '0%' }]]) });
+  const refused = await lying.bridge.formatCells({ address: 'A1', numberFormat: { type: 'percent', decimals: 1 } });
+  assert.equal(refused.ok, false, JSON.stringify(refused));
+  assert.equal(refused.code, 'APPLY_UNCERTAIN', 'the one-decimal code is a different code from 0%');
+  const honest = rig();
+  assert.equal((await honest.bridge.formatCells({ address: 'A1', numberFormat: { type: 'percent', decimals: 1 } })).ok, true);
 });

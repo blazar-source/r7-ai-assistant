@@ -253,3 +253,34 @@ test('the ordinary single run shows no orchestration report', async () => {
   assert.equal(f.id('orchestration').textContent, '');
   f.panel.dispose(); f.controller.dispose();
 });
+
+test('the readiness summary names the denominator of the EDITOR it describes', async () => {
+  // MEASURED on the target: a spreadsheet readiness printed "Наличие API: 0 / 6", a Word-shaped denominator for a
+  // count that is two booleans. The sentence after the count differs too, because for a spreadsheet the check is
+  // about the adapter, not about Word selection, formatting and undo.
+  const cellBridge = {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, invalidate() {},
+    async probeCapabilities() {
+      return { editorType: 'cell', adapter: { executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' },
+        methodPresence: null, selectionRead: { available: false, runtimeVerified: false, reason: 'READ_UNAVAILABLE' },
+        mutation: { available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } };
+    }
+  };
+  const cell = fixture(final('ok'), { bridge: cellBridge });
+  await cell.controller.checkR7();
+  const cellSummary = cell.id('r7-capabilities').textContent;
+  assert.match(cellSummary, /0 \/ 2/, 'a spreadsheet counts its own two flags: ' + cellSummary);
+  assert.match(cellSummary, /готовность адаптера/, 'and says what the check was about');
+  assert.equal(cellSummary.includes('/ 6'), false, 'never with a document denominator');
+
+  const word = fixture(final('ok'), { bridge: {
+    async probeCapabilities() {
+      return { editorType: 'word', adapter: { executeMethod: true, commandDispatch: false, commandMethod: null },
+        methodPresence: { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: false } };
+    }
+  } });
+  await word.controller.checkR7();
+  const wordSummary = word.id('r7-capabilities').textContent;
+  assert.match(wordSummary, /3 \/ 6/, 'a document keeps its six primitives: ' + wordSummary);
+  cell.panel.dispose(); cell.controller.dispose(); word.panel.dispose(); word.controller.dispose();
+});

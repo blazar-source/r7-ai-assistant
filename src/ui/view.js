@@ -170,8 +170,15 @@ export function mountPanel(root, controller) {
     fresh.disabled = locked; reset.disabled = locked; save.disabled = locked; mode.disabled = locked;
     for (const control of Object.values(controls)) control.disabled = locked;
     apply.disabled = state.canApply !== true; cancel.disabled = state.active || locked;
-    capabilitySummary.textContent = Number.isInteger(state.capabilityCount) && state.capabilityCount >= 0 && state.capabilityCount <= 6 ?
-      `Наличие API: ${state.capabilityCount} / 6. Область, форматирование и отмена этой проверкой не подтверждены; она не разрешает Применить.` : '';
+    // THE DENOMINATOR BELONGS TO THE EDITOR. A spreadsheet readiness counts TWO booleans — the bridge's own adapter
+    // flags — while a document counts SIX Word primitives, and printing "N / 6" for a spreadsheet told the user a
+    // Word-shaped truth (the Astra run recorded exactly that string). The sentence after the count is editor-specific
+    // for the same reason: on a spreadsheet the check is about the adapter, not about Word's selection and undo.
+    const capabilityCeiling = state.editorType === 'cell' ? 2 : 6;
+    capabilitySummary.textContent = Number.isInteger(state.capabilityCount) && state.capabilityCount >= 0 && state.capabilityCount <= capabilityCeiling ?
+      (state.editorType === 'cell'
+        ? `Наличие API: ${state.capabilityCount} / ${capabilityCeiling}. Проверка подтверждает только готовность адаптера; она не разрешает Применить.`
+        : `Наличие API: ${state.capabilityCount} / ${capabilityCeiling}. Область, форматирование и отмена этой проверкой не подтверждены; она не разрешает Применить.`) : '';
     context.textContent = contextText(state.context);
     selected.textContent = state.context.text;
     if (lastHistory !== state.chat.history) {

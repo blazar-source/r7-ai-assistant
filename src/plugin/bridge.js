@@ -397,9 +397,12 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               // TIED TO THE REQUEST before anything is renamed: the resolved sheet's OWN identity must agree, so a
               // build that resolved a different sheet cannot silently rename the wrong one.
               // MEASURED EQUIVALENCE, stated because a mutant campaign found it: deleting the INDEX half below
-              // changes no observable outcome, because a lying index is caught first by the bound further down (a
-              // large lie) or by the name/index agreement check (a small one). It stays because it names the rule
-              // where the resolution happens, and the NAME half is load-bearing and pinned.
+              // changes no observable outcome FOR A STATELESS LOOKUP, because a lying index is caught first by the
+              // bound further down (a large lie) or by the name/index agreement check (a small one). A
+              // STATE-DEPENDENT lookup — one that answered differently on a second call — would defeat that
+              // argument, so the equivalence is bounded by what was measured, not asserted in general. The clause
+              // stays because it names the rule where the resolution happens, and the NAME half is load-bearing and
+              // pinned.
               if (sheetRenameSourceName !== null) {
                 if (typeof sheetRenameSource.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
                 if (String(sheetRenameSource.GetName()) !== sheetRenameSourceName) return renameRefusal('TOOL_ERROR');
@@ -1031,10 +1034,15 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       //   * A DOT-DECIMAL is therefore rewritten into the engine's OWN numeric form before it is sent, and the
       //     SEPARATOR comes from the engine rather than from an assumption: MEASURED on this build,
       //     `Api.GetLocale()` answers 1049 (ru-RU), whose numeric form is the comma one — the native proof wrote
-      //     `0,15` and the engine answered `=ЕЧИСЛО` TRUE. Any OTHER locale gets the dot, and the proof below
-      //     decides the outcome NUMERICALLY, so a wrong guess is the fail-CLOSED uncertain class rather than a
-      //     text cell reported as a success. The rewrite is a MATCH test on a closed decimal shape, never a sweep:
-      //     ordinary text and formulas are written verbatim.
+      //     `0,15` and the engine answered `=ЕЧИСЛО` TRUE. The COMMA LOCALES are an explicit set below, and what a
+      //     locale OUTSIDE it gets is stated exactly: the value is still sent in the dot form (the behaviour this
+      //     body had before the decimal route existed) and the NUMERIC CLAIM IS NOT MADE for it — it falls to the
+      //     spelling proof, which passes for a cell whose text equals the request. That is NOT fail-closed, and a
+      //     reviewer measured it: on a build whose numeric form is the comma (i.e. NOT this one), locale 1033 keeps
+      //     the value as TEXT and the write still reports success. What the gate buys is that no locale this body
+      //     does not know can be told a NUMBER was stored on the strength of a separator it guessed.
+      //     The rewrite is a MATCH test on a closed decimal shape, never a sweep: ordinary text and formulas are
+      //     written verbatim.
       //   * a cell whose text begins with `=` is a FORMULA, and the engine's own parser decides whether
       //     it is valid. A `.` in a formula source is rejected by the parser and CLEARS the cell, which
       //     is exactly the failure the readback below exists to catch.

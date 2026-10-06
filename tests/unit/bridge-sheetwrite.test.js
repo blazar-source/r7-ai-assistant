@@ -577,7 +577,7 @@ test('the phase turns IMMEDIATELY before the first SetValue, and no activation i
 // comparison silently broke (`1.0` came back as `1`, so a correct write was reported UNCERTAIN and the run
 // stopped with the slot held).
 
-test('the SEPARATOR comes from the engine locale, and a build that stores TEXT is refused', async () => {
+test('the SEPARATOR comes from the engine locale (measured 1049); the echo double records what is SENT', async () => {
   // This rig echoes the argument verbatim, so it observes exactly ONE thing: the separator the body chose. Both
   // halves matter — the comma is what the measured locale wants, and the dot is what any other locale wants — and
   // because the echo models a build that stores the value as TEXT, the outcome must be the fail-CLOSED uncertain
@@ -709,9 +709,12 @@ test('a comma locale OTHER than the measured one also gets the locale form', asy
   }
 });
 
-test('a UNLISTED locale is not told a text cell was a number', async () => {
-  // The separator defaults to the dot (the pre-existing behaviour) and the numeric claim is NOT made, so a decimal
-  // there is proved by its spelling: the body never asserts numericity for a locale it does not know.
+test('an UNLISTED locale is SENT the dot form, and its value is proved by SPELLING (not fail-closed)', async () => {
+  // WHAT THIS PINS, and what it must NOT be read as: the echo double observes the ARGUMENT, so this asserts the
+  // separator the body chooses for a locale outside its set. It does NOT establish that a text cell cannot be
+  // reported as a number there — a final review measured the opposite on a build whose numeric form is the comma
+  // (locale 1033 -> stored TEXT, write reported ok), because off-list the value is proved by its SPELLING, which by
+  // definition passes for text equal to the request. The gate withholds the NUMERIC CLAIM, not success.
   const f = rig({ locale: 9999 });
   await f.bridge.writeRange({ address: 'A1', cells: [['0.15']] });
   assert.equal(f.store.get('A1'), '0.15', 'the dot form, as before the decimal route existed');
@@ -780,4 +783,13 @@ test('a batch whose ONLY content is empty still proves every cell', async () => 
   const result = await f.bridge.writeRange({ address: 'A1:C1', cells: [['', '', '']] });
   assert.equal(result.ok, true, JSON.stringify(result));
   for (const cell of ['A1', 'B1', 'C1']) assert.equal(f.store.has(cell), false, cell);
+});
+
+test('a write answer carrying a TRAILING member is refused, not read as a success', async () => {
+  // The size equation ties the answer's length to the declared request; without a case for the EXTRA direction the
+  // equation could be deleted with the suite still green, and a longer answer would be read as a proved write.
+  const f = rig({ forge: ['POST_INSERT', 1, 1, 1, 1] });
+  const result = await f.bridge.writeRange({ address: 'A1', cells: [['x']] });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
 });
