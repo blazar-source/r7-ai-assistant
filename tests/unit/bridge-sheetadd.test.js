@@ -174,6 +174,7 @@ test('a forged or malformed answer after the mutation is UNCERTAIN, never a know
     [['POST_INSERT', 1, 2, 1, 'X', 1, 'X', 0, 'Sprint1', 'Sprint1', 'Sprint1', 'Иначе'], 'the after-list last name disagrees with the reported new name'],
     [['POST_INSERT', 1, 3, 1, 'X', 1, 'X', 0, 'Sprint1', 'Sprint1', 'Sprint1', 'X', 'ZZZ'], 'a count that grew by TWO, with a trailing member nothing validates'],
     [['POST_INSERT', 1, 2, 1, 'X', 1, 'X', 0, 'Sprint1', 'Sprint1', 'Sprint1', 'X', 'EXTRA'], 'one unvalidated trailing member under a correct count'],
+    [['PRE_INSERT', 2, 3, 2, 'X', 2, 'X', 0, 'A', 'A', 'B', 'A', 'B', 'X'], 'a PRE-phase answer carrying measurements as if the mutation were proved'],
     [['POST_INSERT', 1, 2, 0, 'X', 0, 'X', 0, 'Sprint1', 'Sprint1', 'Sprint1', 'X'], 'the new sheet claimed at a NON-last index'],
     [['POST_INSERT', 3, 4, 3, 'X', 3, 'X', 0, 'A', 'A', 'B', 'C', 'A', 'C', 'B', 'X'], 'the former sheets changed order away from the active position'],
     [['POST_INSERT', 1, 2, 1, 'X', 1, 'X', 0, 'X', 'X', 'X', 'X'], 'the new name DUPLICATES a former sheet'],

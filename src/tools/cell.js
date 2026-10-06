@@ -433,6 +433,73 @@ export function createCellTools(bridge) {
       }
     }),
     defineTool({
+      // Sprint 4 Cell tool 7 (T5.4): RENAMING a sheet — the last toolkit addition of the series, and the one whose
+      // failure is least recoverable: a name cannot be un-renamed without a SECOND hidden mutation, so this leg
+      // NEVER renames anything back.
+      // THE SOURCE IS CHOSEN LIKE EVERY OTHER SHEET-AWARE LEG (`sheet` / `sheetIndex`, both at once refused), and no
+      // selector renames the ACTIVE sheet. `newName` is REQUIRED and closed: a non-empty string inside the name
+      // bound with no control character. A name that ALREADY RESOLVES — including the sheet's own current name — is
+      // a KNOWN refusal raised BEFORE the mutation, so the book is never left with a duplicate or with a no-op whose
+      // outcome could not be proved.
+      // AFTER `SetName` the result is a POSTCONDITION measured through the INDEPENDENT readers: the sheet count is
+      // unchanged, every other sheet keeps its name AND its position, the renamed sheet keeps its INDEX, the new
+      // name resolves at that index, and the OLD name no longer resolves at all. The active sheet is RECORDED, never
+      // switched and never restored. An unproved outcome is the uncertain class, the run stops, nothing is retried.
+      name: 'rename_sheet', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
+      description: 'Переименовывает лист: newName — новое имя, sheet — имя источника, sheetIndex — его индекс; без них активный.',
+      schema: { type: 'object', additionalProperties: false, required: ['newName'],
+        properties: {
+          newName: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes },
+          sheet: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes },
+          sheetIndex: { type: 'integer', minimum: 0, maximum: LIMITS.sheetListMax - 1 } } },
+      precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
+      execute: async (args, ctx) => {
+        // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also executable when it
+        // is held directly, and a rename this leg cannot interpret must be a closed refusal with NOTHING dispatched.
+        if (args === null || typeof args !== 'object' || Array.isArray(args)) return known();
+        for (const key of Object.keys(args)) if (key !== 'newName' && key !== 'sheet' && key !== 'sheetIndex') return known();
+        const newName = args?.newName;
+        const sheet = args?.sheet;
+        const sheetIndex = args?.sheetIndex;
+        if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes
+          || /[\u0000-\u001f\u007f]/.test(newName)) return known();
+        if (sheet !== undefined && (typeof sheet !== 'string' || sheet === '' || utf8ByteLength(sheet) > LIMITS.sheetListNameBytes)) return known();
+        if (sheetIndex !== undefined && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) return known();
+        if (sheet !== undefined && sheetIndex !== undefined) return known();
+        if (missingBridgeMethod(bridge, 'renameSheet')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        let response;
+        try {
+          response = await bridge.renameSheet({
+            ...(sheet === undefined ? {} : { sourceName: sheet }),
+            ...(sheetIndex === undefined ? {} : { sourceIndex: sheetIndex }),
+            newName,
+            ...(ctx?.signal === undefined ? {} : { signal: ctx.signal })
+          });
+        } catch (error) {
+          const uncertain = uncertainResult(error);
+          if (uncertain) return uncertain;
+          return known(refusalCode(error?.code, ERROR_CODES.TOOL_ERROR));
+        }
+        const refused = refusedEnvelope(response);
+        if (refused !== null) return refused;
+        // The envelope re-checked here, so a bridge that drifted cannot publish a rename of another shape: the index
+        // is a real position, the confirmed name DIFFERS from the previous one (a rename that renamed nothing is not
+        // a success), and the recorded active pair is coherent.
+        if (!Number.isSafeInteger(response.index) || response.index < 0) return known();
+        if (typeof response.name !== 'string' || response.name === '' || utf8ByteLength(response.name) > LIMITS.sheetListNameBytes) return known();
+        if (typeof response.previousName !== 'string' || response.previousName === ''
+          || utf8ByteLength(response.previousName) > LIMITS.sheetListNameBytes) return known();
+        if (response.name === response.previousName) return known();
+        if (!Number.isSafeInteger(response.activeIndex) || response.activeIndex < 0) return known();
+        if (typeof response.activeName !== 'string' || response.activeName === '' || utf8ByteLength(response.activeName) > LIMITS.sheetListNameBytes) return known();
+        const data = Object.freeze({ index: response.index, name: response.name, previousName: response.previousName,
+          activeIndex: response.activeIndex, activeName: response.activeName });
+        const entryBytes = toolResultEntryBytes('rename_sheet', data);
+        if (entryBytes === null || entryBytes > AGENT_CEILINGS.toolResultBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        return ok(data);
+      }
+    }),
+    defineTool({
       // Sprint 4 Cell tool 6 (T5.2): the FIRST WORKBOOK-level MUTATION. It adds exactly ONE sheet, at the END of
       // the book, and `Api.AddSheet` answers `undefined` — which is neither success nor failure, so nothing is
       // read from its return value. What the caller is told is the POSTCONDITION the bridge measured and proved

@@ -45,7 +45,7 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // formatting setters on the addressed block, and its proof is one flag per (property, cell) and per
 // (geometry property, column/row) — the first leg whose proof is per-PROPERTY rather than per-target, because
 // a single flag per cell could hide one unproven property behind the proven ones.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd']));
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd', 'sheetrename']));
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -332,6 +332,150 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // where the `rowCount × columnCount` value strings are followed by the same number of FORMULA SOURCE
       // strings ONLY when `formulasMatch` is 1. It is a READ: it has no phase, no mutation and no leg
       // that could reach a write class.
+      // ----- CELL: the bounded RENAME of a sheet's own name -----------------------------
+      // `Api.SetName(...)` answers `undefined` like `AddSheet`, so nothing is read from its return value: the
+      // verdict is a POSTCONDITION measured through the INDEPENDENT readers — the collection, the lookup by INDEX,
+      // the lookup by NAME and the active sheet. MEASURED before this leg existed: the engine rewrites cross-sheet
+      // references when a sheet is renamed, so the legs do NOT rescan for them; that capability is accepted once,
+      // natively, instead of being re-proved on every call.
+      // TWO REFUSALS HAPPEN BEFORE THE MUTATION, because both states must be impossible to leave behind: the source
+      // sheet does not resolve (or resolves to a DIFFERENT sheet than the request named), or the requested new name
+      // ALREADY RESOLVES — including the sheet's own current name, which would be a no-op whose outcome could not
+      // be proved at all.
+      // THE PHASE TURNS IMMEDIATELY BEFORE THE ONE `SetName`: from that call on an unproved postcondition is the
+      // UNCERTAIN class with the callback slot HELD, and the name is NEVER renamed back — an attempted rollback
+      // would be a SECOND hidden mutation on top of an unknown state.
+      sheetrename(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          function renameRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameMax = request.maxSheets;
+            if (typeof sheetRenameMax !== 'number' || sheetRenameMax < 1 || sheetRenameMax % 1 !== 0) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameWanted = request.newName;
+            if (typeof sheetRenameWanted !== 'string' || sheetRenameWanted === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameSourceName = request.sourceName === undefined ? null : request.sourceName;
+            var sheetRenameSourceIndex = request.sourceIndex === undefined ? null : request.sourceIndex;
+            if (sheetRenameSourceName !== null && typeof sheetRenameSourceName !== 'string') return renameRefusal('TOOL_ERROR');
+            if (sheetRenameSourceName !== null && sheetRenameSourceName === '') return renameRefusal('TOOL_ERROR');
+            if (sheetRenameSourceIndex !== null && (typeof sheetRenameSourceIndex !== 'number' || sheetRenameSourceIndex < 0 || sheetRenameSourceIndex % 1 !== 0)) return renameRefusal('TOOL_ERROR');
+            if (sheetRenameSourceName !== null && sheetRenameSourceIndex !== null) return renameRefusal('TOOL_ERROR');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // DEFENSIVE guards, like every other authored body here: the surrounding catch answers the same refusal.
+            if (typeof Api.GetSheets !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetSheet !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // THE BASELINE: the count, the ordered names and the active sheet by NAME and INDEX.
+            var sheetRenameCollection = Api.GetSheets();
+            if (sheetRenameCollection === null || sheetRenameCollection === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameCollection.length !== 'number') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameBefore = sheetRenameCollection.length;
+            if (sheetRenameBefore < 1) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetRenameBefore > sheetRenameMax) return renameRefusal('TOOL_ERROR');
+            var sheetRenameBeforeNames = [];
+            for (var sheetRenamePre = 0; sheetRenamePre < sheetRenameBefore; sheetRenamePre++) {
+              var sheetRenamePreSheet = Api.GetSheet(sheetRenamePre);
+              if (sheetRenamePreSheet === null || sheetRenamePreSheet === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetRenamePreSheet.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetRenamePreName = String(sheetRenamePreSheet.GetName());
+              if (sheetRenamePreName === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              sheetRenameBeforeNames.push(sheetRenamePreName);
+            }
+            // THE SOURCE: the caller's selector, or the ACTIVE sheet when the caller named none.
+            var sheetRenameSource = null;
+            if (sheetRenameSourceName !== null || sheetRenameSourceIndex !== null) {
+              sheetRenameSource = sheetRenameSourceName !== null ? Api.GetSheet(sheetRenameSourceName) : Api.GetSheet(sheetRenameSourceIndex);
+              if (sheetRenameSource === null || sheetRenameSource === undefined) return renameRefusal('TOOL_ERROR');
+              // TIED TO THE REQUEST before anything is renamed: the resolved sheet's OWN identity must agree, so a
+              // build that resolved a different sheet cannot silently rename the wrong one.
+              // MEASURED EQUIVALENCE, stated because a mutant campaign found it: deleting the INDEX half below
+              // changes no observable outcome, because a lying index is caught first by the bound further down (a
+              // large lie) or by the name/index agreement check (a small one). It stays because it names the rule
+              // where the resolution happens, and the NAME half is load-bearing and pinned.
+              if (sheetRenameSourceName !== null) {
+                if (typeof sheetRenameSource.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+                if (String(sheetRenameSource.GetName()) !== sheetRenameSourceName) return renameRefusal('TOOL_ERROR');
+              } else {
+                if (typeof sheetRenameSource.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+                if (Number(sheetRenameSource.GetIndex()) !== sheetRenameSourceIndex) return renameRefusal('TOOL_ERROR');
+              }
+            } else {
+              sheetRenameSource = Api.GetActiveSheet();
+              if (sheetRenameSource === null || sheetRenameSource === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (typeof sheetRenameSource.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameSource.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameSource.SetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameOldName = String(sheetRenameSource.GetName());
+            var sheetRenameIndex = Number(sheetRenameSource.GetIndex());
+            if (sheetRenameOldName === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(sheetRenameIndex >= 0) || sheetRenameIndex % 1 !== 0) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetRenameIndex >= sheetRenameBefore) return renameRefusal('TOOL_ERROR');
+            // The INDEX and the NAME must agree about which sheet this is, or the proof below could rename one
+            // sheet while measuring another one. DEFENCE IN DEPTH, and stated as such: a build whose collection and
+            // lookup disagree is ALSO caught by the decoder's coherence clause (`byIndexValue`/`byNameValue`), so
+            // removing this line changes WHICH guard refuses and never turns a disagreement into a success.
+            if (sheetRenameBeforeNames[sheetRenameIndex] !== sheetRenameOldName) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameTaken = Api.GetSheet(sheetRenameWanted);
+            if (sheetRenameTaken !== null && sheetRenameTaken !== undefined) return renameRefusal('TOOL_ERROR');
+            var sheetRenameActive = Api.GetActiveSheet();
+            if (sheetRenameActive === null || sheetRenameActive === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActive.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActive.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ONE MUTATION.
+            phase = 'POST_INSERT';
+            sheetRenameSource.SetName(sheetRenameWanted);
+            // THE POSTCONDITION, through the INDEPENDENT readers: the collection, the lookup by INDEX, the lookup by
+            // NAME, the OLD name that must be gone, and the active sheet (RECORDED, never switched or restored).
+            var sheetRenameAfterCollection = Api.GetSheets();
+            if (sheetRenameAfterCollection === null || sheetRenameAfterCollection === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameAfterCollection.length !== 'number') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameAfter = sheetRenameAfterCollection.length;
+            var sheetRenameAfterNames = [];
+            for (var sheetRenamePost = 0; sheetRenamePost < sheetRenameAfter; sheetRenamePost++) {
+              var sheetRenamePostSheet = Api.GetSheet(sheetRenamePost);
+              if (sheetRenamePostSheet === null || sheetRenamePostSheet === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetRenamePostSheet.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetRenamePostName = String(sheetRenamePostSheet.GetName());
+              if (sheetRenamePostName === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              sheetRenameAfterNames.push(sheetRenamePostName);
+            }
+            var sheetRenameByIndex = Api.GetSheet(sheetRenameIndex);
+            var sheetRenameByIndexValue = sheetRenameByIndex === null || sheetRenameByIndex === undefined ? -1 : Number(sheetRenameByIndex.GetIndex());
+            var sheetRenameByName = Api.GetSheet(sheetRenameWanted);
+            var sheetRenameByNameValue = sheetRenameByName === null || sheetRenameByName === undefined ? -1 : Number(sheetRenameByName.GetIndex());
+            var sheetRenameOldStill = Api.GetSheet(sheetRenameOldName);
+            var sheetRenameOldStillValue = sheetRenameOldStill === null || sheetRenameOldStill === undefined ? 0 : 1;
+            var sheetRenameActiveAfter = Api.GetActiveSheet();
+            if (sheetRenameActiveAfter === null || sheetRenameActiveAfter === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActiveAfter.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActiveAfter.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameAnswer = [];
+            sheetRenameAnswer.push(phase);
+            sheetRenameAnswer.push(sheetRenameBefore);
+            sheetRenameAnswer.push(sheetRenameAfter);
+            sheetRenameAnswer.push(sheetRenameIndex);
+            sheetRenameAnswer.push(sheetRenameOldStillValue);
+            sheetRenameAnswer.push(sheetRenameByIndexValue);
+            sheetRenameAnswer.push(sheetRenameByNameValue);
+            sheetRenameAnswer.push(Number(sheetRenameActiveAfter.GetIndex()));
+            sheetRenameAnswer.push(String(sheetRenameActiveAfter.GetName()));
+            for (var sheetRenamePreOut = 0; sheetRenamePreOut < sheetRenameBeforeNames.length; sheetRenamePreOut++) sheetRenameAnswer.push(sheetRenameBeforeNames[sheetRenamePreOut]);
+            for (var sheetRenamePostOut = 0; sheetRenamePostOut < sheetRenameAfterNames.length; sheetRenamePostOut++) sheetRenameAnswer.push(sheetRenameAfterNames[sheetRenamePostOut]);
+            return sheetRenameAnswer;
+          } catch (error) {
+            return renameRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, false, callback);
+      },
       // ----- CELL: the bounded WORKBOOK MUTATION (add a sheet) -----------------------------------
       // The first MUTATION whose subject is the book. `Api.AddSheet(name?)` answers `undefined`, which is
       // neither success nor failure, so NOTHING is read from its return value: the outcome is a POSTCONDITION
@@ -3799,6 +3943,76 @@ const SHEET_LIST_STRIDE = 4;
 // class, because `Api.AddSheet` may already have created a sheet. That is the whole reason no post-mutation
 // failure can come back as an ordinary error, and why a sheet that may exist is never deleted on the way out.
 const SHEET_ADD_SLOTS = 9;
+// The RENAME answer: a header of nine slots, then the ordered names BEFORE the call and the ordered names AFTER it.
+// Like the add-a-sheet answer, everything except a two-slot `[PRE_INSERT, code]` is the UNCERTAIN class, because
+// `Api.SetName` may already have changed the book — and unlike a sheet that may exist, a NAME cannot be
+// un-renamed without a second hidden mutation, which this leg refuses to perform.
+const SHEET_RENAME_SLOTS = 9;
+function decodeSheetRename(value, expectedNewName, maxSheets) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (!Number.isSafeInteger(maxSheets) || maxSheets < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size < SHEET_RENAME_SLOTS) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const beforeCount = members[1];
+  const afterCount = members[2];
+  const sourceIndex = members[3];
+  const oldStillResolves = members[4];
+  const byIndexValue = members[5];
+  const byNameValue = members[6];
+  const activeIndex = members[7];
+  const activeName = members[8];
+  if (!Number.isSafeInteger(beforeCount) || beforeCount < 1 || beforeCount > maxSheets) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // THE BOOK MUST BE THE SAME SIZE after a rename: nothing was added and nothing was removed.
+  if (afterCount !== beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== SHEET_RENAME_SLOTS + beforeCount + afterCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // THE OLD NAME MUST BE GONE, the new one must resolve at the SAME index, and the index must still resolve.
+  if (oldStillResolves !== 0) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (byIndexValue !== sourceIndex || byNameValue !== sourceIndex) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof expectedNewName !== 'string' || expectedNewName === '' || utf8ByteLength(expectedNewName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The active sheet is RECORDED rather than required — the leg neither switches nor restores it — but a recorded
+  // FACT must at least be coherent with the book that was measured, so it is a non-empty name AND, once the
+  // ordered list is sliced below, the name that list carries at that index. An empty name is not a fact.
+  if (!Number.isSafeInteger(activeIndex) || activeIndex < 0 || activeIndex >= afterCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof activeName !== 'string' || activeName === '' || utf8ByteLength(activeName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const beforeName = members.slice(SHEET_RENAME_SLOTS, SHEET_RENAME_SLOTS + beforeCount);
+  const afterName = members.slice(SHEET_RENAME_SLOTS + beforeCount, SHEET_RENAME_SLOTS + beforeCount + afterCount);
+  for (let index = 0; index < beforeCount; index++) {
+    if (typeof beforeName[index] !== 'string' || beforeName[index] === '' || utf8ByteLength(beforeName[index]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (typeof afterName[index] !== 'string' || afterName[index] === '' || utf8ByteLength(afterName[index]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    // EVERY OTHER SHEET KEEPS ITS NAME AND ITS POSITION, and the renamed one carries the requested name.
+    if (index === sourceIndex) {
+      if (afterName[index] !== expectedNewName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    } else {
+      if (afterName[index] !== beforeName[index]) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+      // The new name is UNIQUE: no other sheet carries it, before or after.
+      if (afterName[index] === expectedNewName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    }
+  }
+  // The RECORDED active sheet must be the sheet the measured list carries at that index: a recorded pair that
+  // disagrees with the book is not a fact that can be published as one.
+  if (afterName[activeIndex] !== activeName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ index: sourceIndex, name: afterName[sourceIndex], previousName: beforeName[sourceIndex],
+    activeIndex, activeName });
+}
 function decodeSheetAdd(value, expectedName, maxSheets) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -5757,6 +5971,7 @@ export function createR7Bridge(plugin, {
           // added — and EVERY other shape, a post-phase refusal included, is the UNCERTAIN class with the slot
           // HELD: `Api.AddSheet` may already have created a sheet, so there is no known error to report and
           // nothing to retry.
+          else if (kind === 'sheetrename') result = decodeSheetRename(value, params.newName, params.maxSheets);
           else if (kind === 'sheetadd') result = decodeSheetAdd(value, params.requestedName, params.maxSheets);
           else if (kind === 'sheetlist') result = decodeSheetList(value, params.maxSheets);
           else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
@@ -5926,7 +6141,7 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite' || kind === 'cellformat' || kind === 'sheetadd') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite' || kind === 'cellformat' || kind === 'sheetadd' || kind === 'sheetrename') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -6070,6 +6285,16 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.sheet(callback); }
           finally { clearScope(previousSheetRead); }
+        } else if (kind === 'sheetrename') {
+          // THE RENAME: ONE command, and the SAME parameter channel the other Cell legs use — the bound, the source
+          // selector and the requested name written into the page's `Asc.scope`, never composed into command source.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetRename;
+          try { previousSheetRename = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetrename(callback); }
+          finally { clearScope(previousSheetRename); }
         } else if (kind === 'sheetadd') {
           // THE WORKBOOK MUTATION: ONE command, and the SAME parameter channel the other Cell legs use — the
           // bound and the requested name written into the page's `Asc.scope`, never composed into command source
@@ -6860,6 +7085,56 @@ export function createR7Bridge(plugin, {
         }));
         return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount,
           properties: requestedCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded RENAME behind `rename_sheet`. It takes the leg shape every other dispatched write takes: a CLOSED
+    // request checked before any dispatch, ONE authored body performs the rename, and the decoder proves the
+    // POSTCONDITION while the ticket still owns the slot.
+    // `Api.SetName` ANSWERS `undefined`, so its return value is read as NEITHER success nor failure: what the caller
+    // is told is what the INDEPENDENT readers MEASURED afterwards — the count and the ordered names, the lookup by
+    // index and by name, the OLD name that must be gone, and the active sheet, which is RECORDED rather than
+    // switched or restored. A failure after the mutation is the UNCERTAIN class and the name is NEVER renamed back.
+    async renameSheet(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) {
+        if (key !== 'sourceName' && key !== 'sourceIndex' && key !== 'newName' && key !== 'signal') {
+          return refuse(ERROR_CODES.TOOL_ERROR);
+        }
+      }
+      const sourceName = raw.sourceName, sourceIndex = raw.sourceIndex, newName = raw.newName, signal = raw.signal;
+      // THE NEW NAME is the argument this leg exists for, so it is closed first and closed tightly: a non-empty
+      // string inside the name bound, with no CONTROL character anywhere in it. The engine decides the rest, and a
+      // name it rejects simply fails the postcondition below.
+      if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes
+        || /[\u0000-\u001f\u007f]/.test(newName)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sourceName !== undefined && sourceName !== null
+        && (typeof sourceName !== 'string' || sourceName === '' || utf8ByteLength(sourceName) > LIMITS.sheetListNameBytes)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sourceIndex !== undefined && sourceIndex !== null
+        && (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= LIMITS.sheetListMax)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sourceName !== undefined && sourceName !== null && sourceIndex !== undefined && sourceIndex !== null) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetrename', signal, {}, Object.freeze({
+          maxSheets: LIMITS.sheetListMax,
+          sourceName: sourceName === undefined ? null : sourceName,
+          sourceIndex: sourceIndex === undefined ? null : sourceIndex,
+          newName
+        }));
+        return Object.freeze({ ok: true, index: outcome.index, name: outcome.name,
+          previousName: outcome.previousName, activeIndex: outcome.activeIndex, activeName: outcome.activeName });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }

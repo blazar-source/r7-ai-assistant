@@ -44,7 +44,7 @@ test('RED anchor: list_sheets exists, is a Cell read, and is offered in EDIT and
   const registry = createRegistry(createCellTools(bridge));
   const capabilities = ['document.read', 'document.write'];
   assert.deepEqual(registry.catalogue({ editor: 'cell', capabilities, mode: 'EDIT' }).map(e => e.name).sort(),
-    ['add_sheet', 'format_cells', 'list_sheets', 'read_range', 'read_sheet', 'write_range']);
+    ['add_sheet', 'format_cells', 'list_sheets', 'read_range', 'read_sheet', 'rename_sheet', 'write_range']);
   assert.deepEqual(registry.catalogue({ editor: 'cell', capabilities, mode: 'ASK' }).map(e => e.name).sort(),
     ['list_sheets', 'read_range', 'read_sheet'], 'a read is offered to ASK as well');
 });

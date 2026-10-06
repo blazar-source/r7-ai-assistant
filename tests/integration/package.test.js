@@ -236,7 +236,37 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // is authored TWICE because the no-name form must not pass `undefined` — the two sites are mutually
       // exclusive branches of the same single call), the postcondition reads, its explicit phase in BOTH
       // directions, its own closed refusal, and the ABSENCE of every primitive that would be a second action.
-      if (code.includes('AddSheet(')) {
+      // THE EIGHTEENTH LEG — RENAMING a sheet's own name. `SetName(` identifies it: no other body authors it. The
+      // pins are the SHAPE of the shipped body, and they are exact expressions rather than mere call names: the
+      // postcondition must read the book back through the collection AND the lookup by index AND the lookup by
+      // name (that is what "independent readers" means), and nothing may activate a sheet.
+      if (code.includes('SetName(')) {
+        assert.match(code, /\bscope\b/, 'the rename takes the bound, the source selector and the new name from the injected scope');
+        assert.match(code, /SetName\(sheetRenameWanted\)/, 'the ONE mutation is authored with the requested name');
+        assert.equal((code.match(/\.SetName\s*\(/g) ?? []).length, 1,
+          'exactly ONE SetName call site: a failed rename is NEVER renamed back');
+        assert.match(code, /Api\.GetSheets\(\)/, 'and the book is measured before and after');
+        assert.match(code, /Api\.GetSheet\(sheetRenameIndex\)/, 'and resolved by INDEX for the postcondition');
+        assert.match(code, /Api\.GetSheet\(sheetRenameWanted\)/, 'and by NAME for the postcondition');
+        assert.match(code, /Api\.GetSheet\(sheetRenameOldName\)/, 'and the OLD name is looked up so that it can be shown to be gone');
+        assert.match(code, /PRE_INSERT/, 'and its pre-mutation refusals carry the explicit phase');
+        // THE ORDER, not the mere presence of two names: the phase must turn BEFORE the one mutation, or a failure
+        // whose effect is unknown would be classified as a known error and retried. The markers are QUOTE-FREE on
+        // purpose — esbuild re-prints string literals with double quotes, so a marker carrying single quotes is
+        // absent from the artifact even though it is present in the source. `indexOf` on two markers is the only
+        // thing a text pin can honestly claim, so the message says exactly that.
+        const renamePhaseAt = code.indexOf('POST_INSERT');
+        const renameMutationAt = code.indexOf('.SetName(');
+        assert.ok(renamePhaseAt > 0 && renameMutationAt > 0, 'both markers are authored');
+        assert.ok(renamePhaseAt < renameMutationAt, 'the phase assignment precedes the SetName call in the body');
+        // THE TIE, by exact expression rather than by a call name that unrelated code could satisfy.
+        assert.match(code, /String\(sheetRenameSource\.GetName\(\)\) !== sheetRenameSourceName/, 'and the resolved sheet is tied to the requested NAME');
+        assert.match(code, /Number\(sheetRenameSource\.GetIndex\(\)\) !== sheetRenameSourceIndex/, 'and to the requested INDEX');
+        assert.equal(code.includes('Api.GetActiveSheet().SetName'), false, 'no rename is applied to the active sheet by a direct reach-around');
+        assert.equal(code.includes('SetActive'), false, 'and nothing activates a sheet');
+        assert.equal(code.includes('Push('), false, 'and pushes nothing into a document');
+        legs.push('sheetrename');
+      } else if (code.includes('AddSheet(')) {
         assert.match(code, /\bscope\b/, 'the add takes the bound and the requested name from the injected command scope');
         assert.match(code, /GetSheets\(\)/, 'and measures the book size before and after');
         assert.match(code, /GetSheet\(/, 'and addresses every sheet through the measured lookup');
@@ -456,8 +486,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 17, 'the adapter dispatches exactly the seventeen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetwrite', 'structure', 'table'],
+  assert.equal(commands, 18, 'the adapter dispatches exactly the eighteen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

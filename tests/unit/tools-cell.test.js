@@ -56,7 +56,7 @@ test('the Cell reads are offered for the cell editor only, and Word tools never 
   const registry = createRegistry([...createWordTools(bridge), ...createCellTools(bridge)]);
   const capabilities = ['document.read', 'document.write'];
   const cellEdit = registry.catalogue({ editor: 'cell', capabilities, mode: 'EDIT' }).map(entry => entry.name);
-  assert.deepEqual(cellEdit.sort(), ['add_sheet', 'format_cells', 'list_sheets', 'read_range', 'read_sheet', 'write_range'],
+  assert.deepEqual(cellEdit.sort(), ['add_sheet', 'format_cells', 'list_sheets', 'read_range', 'read_sheet', 'rename_sheet', 'write_range'],
     'a spreadsheet is offered the Cell reads, the Cell write and the Cell formatting, and no Word descriptor');
   const cellAsk = registry.catalogue({ editor: 'cell', capabilities, mode: 'ASK' }).map(entry => entry.name);
   assert.deepEqual(cellAsk.sort(), ['list_sheets', 'read_range', 'read_sheet'],
