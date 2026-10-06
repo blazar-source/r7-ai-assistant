@@ -293,6 +293,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
           'the ONE write primitive is authored exactly twice: the integer route and the string route');
         assert.match(code, /GetValue\(\)/, 'and proves itself by reading the block back');
         assert.match(code, /GetFormula\(\)/, 'and by requiring a written formula to HOLD a formula');
+        assert.match(code, /GetSheet\(/, 'and resolves a caller-NAMED sheet through the measured lookup, for the write AND its readback');
+        assert.equal(code.includes('SetActive'), false, 'while never activating a sheet: the write goes through a sheet object');
         assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
         assert.equal(code.includes('Push('), false, 'and pushes nothing into a document');
         legs.push('sheetwrite');

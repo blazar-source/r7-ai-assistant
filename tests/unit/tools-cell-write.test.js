@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { createCellTools } from '../../src/tools/cell.js';
 import { createRegistry } from '../../src/tools/registry.js';
 import { LIMITS } from '../../src/shared/limits.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 // A well-shaped bridge answer: the authored body reports the post-write phase and ONE flag per cell,
 // 1 meaning "the cell now holds exactly what was asked for".
@@ -186,4 +187,95 @@ test('the write description stays one authored line inside the byte bound', () =
   assert.equal(/[\u0000-\u001f\u007f]/.test(tool.description), false);
   assert.equal(tool.precondition({}, { editor: 'word' }).code, 'CAPABILITY_UNAVAILABLE');
   assert.equal(tool.precondition({}, cellCtx), null);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE SHEET SELECTOR on `write_range` (T5.3b): the same two closed spellings `read_range` proved, on a MUTATION.
+// ---------------------------------------------------------------------------------------------------------
+test('write_range offers the sheet selector as two optional, closed spellings', () => {
+  const tool = toolWith(bridgeWith(outcome([true])));
+  assert.equal(tool.schema.additionalProperties, false);
+  assert.deepEqual(Object.keys(tool.schema.properties).sort(), ['address', 'cells', 'sheet', 'sheetIndex']);
+  assert.deepEqual(tool.schema.required, ['address', 'cells'], 'the block is still the required part');
+  assert.equal(tool.schema.properties.sheet.maxBytes, LIMITS.sheetListNameBytes);
+  assert.equal(tool.schema.properties.sheetIndex.maximum, LIMITS.sheetListMax - 1);
+  assert.equal(tool.schema.properties.sheetIndex.minimum, 0);
+});
+
+test('write_range forwards the selector, and index ZERO is a selector rather than an absent one', async () => {
+  const plain = bridgeWith(outcome([true]));
+  await toolWith(plain).execute({ address: 'A1', cells: [['a']] }, cellCtx);
+  assert.equal(plain.lastRequest.sheetName, null);
+  assert.equal(plain.lastRequest.sheetIndex, null);
+
+  const byName = bridgeWith(outcome([true]));
+  await toolWith(byName).execute({ address: 'A1', cells: [['a']], sheet: 'Данные' }, cellCtx);
+  assert.equal(byName.lastRequest.sheetName, 'Данные');
+  assert.equal(byName.lastRequest.sheetIndex, null);
+
+  const zero = bridgeWith(outcome([true]));
+  await toolWith(zero).execute({ address: 'A1', cells: [['a']], sheetIndex: 0 }, cellCtx);
+  assert.equal(zero.lastRequest.sheetIndex, 0, 'a zero index must cross as 0, never as null');
+  assert.equal(zero.lastRequest.sheetName, null);
+});
+
+test('write_range refuses an ambiguous or out-of-contract selector BEFORE any dispatch', async () => {
+  const exact = 'я'.repeat(LIMITS.sheetListNameBytes / 2);
+  assert.equal(utf8ByteLength(exact), LIMITS.sheetListNameBytes);
+  const cases = [
+    [{ sheet: 'Sprint1', sheetIndex: 0 }, 'BOTH spellings'],
+    [{ sheet: '' }, 'an empty name'],
+    [{ sheet: exact + 'я' }, 'a name one byte above the bound'],
+    [{ sheet: 42 }, 'a numeric name'],
+    [{ sheetIndex: -1 }, 'a negative index'],
+    [{ sheetIndex: 1.5 }, 'a fractional index'],
+    [{ sheetIndex: LIMITS.sheetListMax }, 'an index at the workbook bound'],
+    [{ sheet: 'Sprint1', extra: 1 }, 'an unknown key']
+  ];
+  for (const [selector, why] of cases) {
+    const bridge = bridgeWith(outcome([true]));
+    const result = await toolWith(bridge).execute({ address: 'A1', cells: [['a']], ...selector }, cellCtx);
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.equal(bridge.calls.writeRange, 0, `${why}: a mutation must not be dispatched`);
+  }
+  // A name exactly AT the bound is a valid selector, so the bound is not off by one.
+  const served = bridgeWith(outcome([true], { rowCount: 1, columnCount: 1 }));
+  const ok = await toolWith(served).execute({ address: 'A1', cells: [['a']], sheet: exact }, cellCtx);
+  assert.equal(ok.ok, true);
+  assert.equal(served.calls.writeRange, 1);
+});
+
+test('BOTH sheet-addressing tools NAME their arguments in the DESCRIPTION the model reads', async () => {
+  // THE DESCRIPTION IS THE ONLY MODEL-FACING FIELD: the catalogue is rendered as `name (kind, policy):
+  // description` (src/agent/runtime.js) and the JSON schema is validation-only, never shown. A selector that the
+  // description does not name is therefore UNDISCOVERABLE — the agent would emit `{address, cells}` and silently
+  // target the active sheet — which is why this asserts the CONTENT of both lines rather than their length.
+  const bridge = bridgeWith(outcome([true]));
+  const tools = createCellTools(bridge);
+  const write = tools.find((entry) => entry.name === 'write_range');
+  const read = tools.find((entry) => entry.name === 'read_range');
+  for (const [tool, name] of [[write, 'write_range'], [read, 'read_range']]) {
+    assert.match(tool.description, /sheet\s*—/, `${name} names the sheet argument`);
+    assert.match(tool.description, /sheetIndex\s*—/, `${name} names the index argument`);
+    assert.ok(utf8ByteLength(tool.description) <= 256, `${name} stays inside the model-facing byte bound`);
+  }
+});
+
+test('a selected write keeps the published shape and crosses both failure classes unchanged', async () => {
+  const selected = bridgeWith(outcome([true], { rowCount: 1, columnCount: 1 }));
+  const result = await toolWith(selected).execute({ address: 'A1', cells: [['a']], sheet: 'Данные' }, cellCtx);
+  assert.equal(result.ok, true);
+  // The published result is UNCHANGED by the selector: no new field, so nothing that read it before is affected,
+  // and the identity of the sheet is proven by the READBACK of the selected sheet rather than by a new field.
+  assert.deepEqual(result.data, { address: 'A1', rowCount: 1, columnCount: 1, cells: 1, bytes: 1 });
+  // A PRE-mutation refusal (an unknown sheet) is the known argument class; a post-mutation one is uncertain.
+  for (const [answer, expected] of [[{ ok: false, code: 'TOOL_ERROR' }, 'TOOL_ERROR'],
+    [{ ok: false, code: 'APPLY_UNCERTAIN' }, 'TOOL_UNCERTAIN']]) {
+    const bridge = bridgeWith(answer);
+    const refused = await toolWith(bridge).execute({ address: 'A1', cells: [['a']], sheet: 'Нет' }, cellCtx);
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, expected);
+    assert.equal(bridge.calls.writeRange, 1, 'and it is never retried');
+  }
 });

@@ -342,13 +342,18 @@ export function createCellTools(bridge) {
       // refusal is deliberate — an account code silently renumbered would be worse — but such a code cannot
       // be written here on this build.
       name: 'write_range', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Пишет блок ячеек (числа, текст или формулы). Адрес должен точно совпасть с блоком.',
+      description: 'Пишет блок ячеек (числа, текст или формулы). Адрес должен точно совпасть с блоком. sheet — имя листа, sheetIndex — индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address', 'cells'],
         properties: {
           address: { type: 'string', maxBytes: 24 },
           cells: { type: 'array', maxItems: LIMITS.writeRangeRowsMax,
             items: { type: 'array', maxItems: LIMITS.writeRangeColumnsMax,
-              items: { type: 'string', maxBytes: LIMITS.writeRangeCellBytes } } } } },
+              items: { type: 'string', maxBytes: LIMITS.writeRangeCellBytes } } },
+          // THE SAME TWO CLOSED SPELLINGS THE READ LEG PROVED (T5.3a): `sheet` is a name, `sheetIndex` is a
+          // 0-based index, naming BOTH is refused as ambiguous, and NO selector keeps the previous behaviour — the
+          // ACTIVE sheet. The measured lookup takes either form and this schema language has no union type.
+          sheet: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes },
+          sheetIndex: { type: 'integer', minimum: 0, maximum: LIMITS.sheetListMax - 1 } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async (args, ctx) => {
         // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also
@@ -356,6 +361,20 @@ export function createCellTools(bridge) {
         // refusal with NOTHING dispatched.
         const address = args?.address;
         const cells = args?.cells;
+        const sheet = args?.sheet;
+        const sheetIndex = args?.sheetIndex;
+        for (const key of Object.keys(args ?? {})) {
+          if (key !== 'address' && key !== 'cells' && key !== 'sheet' && key !== 'sheetIndex') return known();
+        }
+        // A MUTATION MUST NOT DISPATCH WITH A SELECTOR IT CANNOT HONOUR, so the selector is closed here, before
+        // the block is even inspected: naming BOTH spellings is refused because the request would not say which
+        // sheet it means, and the index bound reuses `sheetListMax` — the only MEASURED sheet count — so the
+        // failure mode is fail-closed rather than a write into the wrong sheet. (The READ leg checks the address
+        // first instead; the order differs because for a MUTATION the sheet is the subject that has to be settled
+        // before anything else is looked at, and BOTH orders refuse the whole request before any dispatch.)
+        if (sheet !== undefined && (typeof sheet !== 'string' || sheet === '' || utf8ByteLength(sheet) > LIMITS.sheetListNameBytes)) return known();
+        if (sheetIndex !== undefined && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) return known();
+        if (sheet !== undefined && sheetIndex !== undefined) return known();
         if (typeof address !== 'string' || address === '' || !ADDRESS.test(address)) return known();
         if (utf8ByteLength(address) > 24) return known();
         const shape = addressShape(address);
@@ -387,6 +406,8 @@ export function createCellTools(bridge) {
         let response;
         try {
           response = await bridge.writeRange({ address, cells: Object.freeze(forwarded),
+            sheetName: sheet === undefined ? null : sheet,
+            sheetIndex: sheetIndex === undefined ? null : sheetIndex,
             ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) });
         } catch (error) {
           const uncertain = uncertainResult(error);

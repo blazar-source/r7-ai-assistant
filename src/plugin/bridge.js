@@ -930,7 +930,40 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var available = typeof Api !== 'undefined' && Api !== null;
             if (!available) return writeRefusal('CAPABILITY_UNAVAILABLE');
             if (typeof Api.GetActiveSheet !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
-            var sheet = Api.GetActiveSheet();
+            // WHICH SHEET IS WRITTEN: the caller's selector, or the ACTIVE sheet when the caller named none. The
+            // selector is resolved through the MEASURED lookup `Api.GetSheet(name | index)`, and the write and ALL
+            // its proofs then use THAT sheet's own ranges, so the active sheet is neither read nor switched: the
+            // body authors no activation at all. (MEASURED before this leg existed: writing through another
+            // sheet's range object leaves the active sheet exactly where it was.) A selector that names nothing
+            // is a KNOWN refusal raised HERE, before the phase turns, so nothing is written.
+            // A malformed selector answers the ARGUMENT class on purpose — the same class the bridge answers
+            // above — so ONE argument does not have two failure classes depending on which layer noticed it.
+            var selectorName = request.sheetName === undefined ? null : request.sheetName;
+            var selectorIndex = request.sheetIndex === undefined ? null : request.sheetIndex;
+            if (selectorName !== null && typeof selectorName !== 'string') return writeRefusal('TOOL_ERROR');
+            if (selectorName !== null && selectorName === '') return writeRefusal('TOOL_ERROR');
+            if (selectorIndex !== null && (typeof selectorIndex !== 'number' || selectorIndex < 0 || selectorIndex % 1 !== 0)) return writeRefusal('TOOL_ERROR');
+            var sheet = null;
+            if (selectorName !== null || selectorIndex !== null) {
+              if (typeof Api.GetSheet !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+              sheet = selectorName !== null ? Api.GetSheet(selectorName) : Api.GetSheet(selectorIndex);
+              if (sheet === null || sheet === undefined) return writeRefusal('TOOL_ERROR');
+              // THE RESOLVED SHEET IS TIED TO THE REQUEST BEFORE ANYTHING IS WRITTEN, and this is what makes the
+              // selector's promise checkable rather than assumed. The readback below reads the SAME object it
+              // wrote, so BY CONSTRUCTION it can never notice that the OBJECT was the wrong sheet: a build that
+              // resolved another sheet, or that clamped an index, would write elsewhere and still prove itself
+              // cell by cell. The sheet's own name/index must therefore AGREE with what the caller asked for, and
+              // a disagreement refuses with NOTHING written (the argument is what is wrong, so the argument class).
+              if (selectorName !== null) {
+                if (typeof sheet.GetName !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+                if (String(sheet.GetName()) !== selectorName) return writeRefusal('TOOL_ERROR');
+              } else {
+                if (typeof sheet.GetIndex !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+                if (Number(sheet.GetIndex()) !== selectorIndex) return writeRefusal('TOOL_ERROR');
+              }
+            } else {
+              sheet = Api.GetActiveSheet();
+            }
             if (sheet === null || sheet === undefined) return writeRefusal('CAPABILITY_UNAVAILABLE');
             if (typeof sheet.GetRange !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
             // The addressed block, split into its two corners. The address shape was closed by the
@@ -6574,6 +6607,32 @@ export function createR7Bridge(plugin, {
     // or holding a non-string, and an over-bound payload are refused HERE with NOTHING dispatched.
     async writeRange(raw) {
       const address = raw?.address, cells = raw?.cells, signal = raw?.signal;
+      const sheetName = raw?.sheetName, sheetIndex = raw?.sheetIndex;
+      // THE REQUEST KEY SET IS CLOSED, like the newer Cell legs: an unknown key would otherwise be silently
+      // ignored and a request that mentioned something unread would be served as if it had been understood.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      for (const key of Object.keys(raw)) {
+        if (key !== 'address' && key !== 'cells' && key !== 'sheetName' && key !== 'sheetIndex' && key !== 'signal') {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
+      // The selector is closed BEFORE the block is even inspected, and before any dispatch: a mutation that
+      // cannot say which sheet it means must not reach the editor at all. The index bound reuses
+      // `LIMITS.sheetListMax` for the same reason the read leg does — it is the only measured sheet count —
+      // and the failure mode is fail-closed rather than a write into the wrong sheet.
+      if (sheetName !== undefined && sheetName !== null
+        && (typeof sheetName !== 'string' || sheetName === '' || utf8ByteLength(sheetName) > LIMITS.sheetListNameBytes)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetIndex !== undefined && sheetIndex !== null
+        && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetName !== undefined && sheetName !== null && sheetIndex !== undefined && sheetIndex !== null) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
       if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) {
         return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
       }
@@ -6603,7 +6662,12 @@ export function createR7Bridge(plugin, {
         ensureIdle();
         if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-        const outcome = await start('sheetwrite', signal, {}, Object.freeze({ address, cells }));
+        const outcome = await start('sheetwrite', signal, {}, Object.freeze({
+        address,
+        cells,
+        sheetName: sheetName === undefined ? null : sheetName,
+        sheetIndex: sheetIndex === undefined ? null : sheetIndex
+      }));
         return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount });
       } catch (error) {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });

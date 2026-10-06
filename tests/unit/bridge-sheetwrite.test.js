@@ -41,7 +41,7 @@ function corners(address) {
 // `store` holds what was really written; `noOp` makes every `SetValue` a no-op so a test can prove the
 // readback cannot be satisfied by a cell the write never touched; `values` overrides what `GetValue()`
 // answers for an address, which is how a hostile or differently-behaving build is modelled.
-function sheetDouble(store, { noOp = false, values = new Map() } = {}) {
+function sheetDouble(store, { noOp = false, values = new Map(), formulas = new Map(), name = 'Sprint1', index = 0, nameLies = false, indexLies = false, onSetValue = null, onSetActive = null } = {}) {
   // Storage is keyed by the CANONICAL single-cell address, so `A1` and the explicit `A1:A1` spelling are the
   // SAME cell. That is what the measured build answers, and keying by the literal address instead made the
   // very shape that settled the one-cell question untestable.
@@ -61,28 +61,67 @@ function sheetDouble(store, { noOp = false, values = new Map() } = {}) {
     return rows;
   }
   return {
+    // The sheet's OWN identity, which the body verifies against the request before it writes: `nameLies` and
+    // `indexLies` model a build whose lookup resolves a DIFFERENT sheet than the caller asked for.
+    GetName() { return nameLies ? 'КтоТоДругой' : name; },
+    GetIndex() { return indexLies ? 99 : index; },
+    // A WRITE MUST NEVER ACTIVATE ANYTHING, so the double records the attempt: without this method the mutant
+    // "activate the selected sheet first" would be silently equivalent, because the body's own guard would not
+    // find a method to call.
+    SetActive() { if (onSetActive !== null) onSetActive(); },
     GetRange(address) {
       const box = corners(address);
       const single = box.c1 === box.c2 && box.r1 === box.r2;
       const cell = columnName(box.c1) + String(box.r1);
       return {
-        SetValue(value) { if (!noOp) store.set(cell, value); },
+        SetValue(value) { if (onSetValue !== null) onSetValue(); if (!noOp) store.set(cell, value); },
         // MEASURED: one cell -> a scalar; a block -> a matrix.
         GetValue() { return single ? valueAt(cell) : matrix(box); },
         // MEASURED: a one-cell range answers the real source; a MULTI-CELL range answers the VALUES, so a
-        // block-level formula read can never prove a formula cell.
-        GetFormula() { return single ? (store.get(cell) === undefined ? '' : String(store.get(cell))) : matrix(box); }
+        // block-level formula read can never prove a formula cell. `formulas` overrides the SOURCE a single cell
+        // answers, which is how a build that stored text instead of a formula is modelled.
+        GetFormula() {
+          if (single && formulas.has(cell)) return formulas.get(cell);
+          return single ? (store.get(cell) === undefined ? '' : String(store.get(cell))) : matrix(box);
+        }
       };
     }
   };
 }
 
-function rig({ forge, noOp = false, editorType = 'cell', values } = {}) {
-  const store = new Map();
+function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheets = null, activeIndex = 0 } = {}) {
   const commands = [];
   const namespace = { scope: {} };
-  const sheet = sheetDouble(store, { noOp, values });
-  const api = { GetActiveSheet: () => sheet };
+  let setActiveAttempts = 0;
+  let setValueCalls = 0;
+  // ONE BOOK, possibly with SEVERAL sheets: the selector tests need the write to land in a DIFFERENT store than
+  // the active sheet's, which is the only way to tell a correct write from one that wrote to the active sheet.
+  const book = (sheets ?? [{ name: 'Sprint1', index: 0 }]).map((entry) => {
+    const entryStore = entry.store ?? new Map();
+    return {
+      name: entry.name,
+      index: entry.index,
+      store: entryStore,
+      sheet: sheetDouble(entryStore, {
+        noOp,
+        values: entry.values ?? values,
+        formulas: entry.formulas ?? formulas,
+        name: entry.name,
+        index: entry.index,
+        nameLies: entry.nameLies === true,
+        indexLies: entry.indexLies === true,
+        onSetValue: () => { setValueCalls += 1; },
+        onSetActive: () => { setActiveAttempts += 1; }
+      })
+    };
+  });
+  const api = {
+    GetActiveSheet: () => book[activeIndex].sheet,
+    GetSheets: () => book.map((entry) => entry.sheet),
+    GetSheet: (key) => (typeof key === 'number'
+      ? (book[key] === undefined ? null : book[key].sheet)
+      : (book.find((entry) => entry.name === key)?.sheet ?? null))
+  };
   const plugin = { info: { editorType },
     callCommand(body, close, recalculate, callback) {
       const source = Function.prototype.toString.call(body);
@@ -94,7 +133,8 @@ function rig({ forge, noOp = false, editorType = 'cell', values } = {}) {
     } };
   const bridge = createR7Bridge(plugin, { editorType, ascNamespace: namespace,
     clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
-  return { bridge, commands, store, sheet };
+  return { bridge, commands, store: book[activeIndex].store, book,
+    setActiveAttempts: () => setActiveAttempts, setValueCalls: () => setValueCalls };
 }
 
 test('a served block write is proved and releases the slot', async () => {
@@ -268,4 +308,213 @@ test('the BODY refuses an address that disagrees with the matrix, as a KNOWN pre
     assert.equal(f.store.size, 0, 'and the body refused before its first SetValue');
     assert.equal(f.bridge.getState().busy, false, 'a genuine pre-insert refusal releases the slot');
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE SHEET SELECTOR (T5.3b): write an addressed block into a NAMED or INDEXED sheet, through the measured
+// `Api.GetSheet`, and prove it with a readback OF THAT SHEET. A write is a MUTATION, so a refusal BEFORE the
+// first `SetValue` is a known class while any unproved outcome after it is the uncertain one.
+// ---------------------------------------------------------------------------------------------------------
+function twoSheetRig() {
+  return rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map([['A1', 'active-a1']]) },
+      { name: 'Данные', index: 1, store: new Map([['A1', 'data-a1']]) }
+    ]
+  });
+}
+
+test('a write into a NAMED sheet lands THERE and never switches the active sheet', async () => {
+  // MEASURED natively before this leg was written: writing through another sheet's own range object leaves the
+  // active sheet exactly where it was. This test pins that, so a future implementation that activates the target
+  // (or restores the previous sheet by hand) fails here.
+  const f = twoSheetRig();
+  const result = await f.bridge.writeRange({ address: 'B2', cells: [['written']], sheetName: 'Данные' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result, { ok: true, address: 'B2', rowCount: 1, columnCount: 1 });
+  assert.equal(f.book[1].store.get('B2'), 'written', 'the value is in the SELECTED sheet');
+  assert.equal(f.book[0].store.get('B2'), undefined, 'and NOT in the active one');
+  assert.equal(f.book[0].store.get('A1'), 'active-a1', 'whose own cells are untouched');
+  assert.equal(f.setActiveAttempts(), 0, 'nothing activated anything');
+  assert.equal(f.commands[0].scope.sheetName, 'Данные');
+  assert.equal(f.commands[0].scope.sheetIndex, null);
+});
+
+test('the write and ALL its proofs read the SELECTED sheet, not the active one', async () => {
+  // The selected sheet's A1 holds text while the active sheet's A1 holds DIFFERENT text: a readback that ran on
+  // the active sheet cannot satisfy the proof, so this single test kills a write-side and a proof-side mistake.
+  const f = rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map([['B2', 'from-active']]) },
+      { name: 'Данные', index: 1, store: new Map([['B2', 'from-selected']]) }
+    ]
+  });
+  const selected = await f.bridge.writeRange({ address: 'B2', cells: [['new']], sheetName: 'Данные' });
+  assert.equal(selected.ok, true);
+  assert.equal(f.book[1].store.get('B2'), 'new');
+  assert.equal(f.book[0].store.get('B2'), 'from-active', 'the active sheet still holds ITS value');
+  assert.equal(f.setActiveAttempts(), 0);
+  // A write to a sheet that does NOT exist cannot reach a cell at all, which is the other half of the same rule.
+  const missing = rig({ activeIndex: 0, sheets: [{ name: 'Sprint1', index: 0 }] });
+  const refused = await missing.bridge.writeRange({ address: 'B2', cells: [['new']], sheetName: 'Нет' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'TOOL_ERROR');
+  assert.equal(missing.setValueCalls(), 0, 'not one cell was written');
+});
+
+test('sheetIndex 0 writes into the FIRST sheet even when a DIFFERENT sheet is active', async () => {
+  const f = rig({
+    activeIndex: 1,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map() },
+      { name: 'Второй', index: 1, store: new Map() }
+    ]
+  });
+  const result = await f.bridge.writeRange({ address: 'C3', cells: [['first']], sheetIndex: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(f.book[0].store.get('C3'), 'first', 'index 0 is a REAL selector, not an absent one');
+  assert.equal(f.book[1].store.get('C3'), undefined, 'and the active sheet received nothing');
+  assert.equal(f.commands[0].scope.sheetIndex, 0, 'the zero crosses as 0, never as null');
+  assert.equal(f.setActiveAttempts(), 0);
+});
+
+test('an unknown sheet is a KNOWN refusal raised BEFORE the first mutation', async () => {
+  for (const selector of [{ sheetName: 'НетТакого' }, { sheetIndex: 7 }]) {
+    const f = twoSheetRig();
+    const result = await f.bridge.writeRange({ address: 'A1', cells: [['x']], ...selector });
+    assert.equal(result.ok, false, JSON.stringify(selector));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(selector));
+    assert.deepEqual(f.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'], 'a pre-mutation refusal');
+    assert.equal(f.setValueCalls(), 0, 'nothing was written');
+    assert.equal(f.book[1].store.get('A1'), 'data-a1', 'the target sheet still holds exactly its own value');
+    assert.equal(f.book[1].store.has('B2'), false, 'and the cell the request named is still absent');
+    // A refusal before the mutation releases the slot, so the next request really reaches the editor.
+    const second = await f.bridge.writeRange({ address: 'A1', cells: [['x']] });
+    assert.equal(second.ok, true, 'the slot was released');
+    assert.equal(f.commands.length, 2);
+  }
+});
+
+test('the selector is CLOSED before any dispatch, and the slot is not taken', async () => {
+  const cases = [
+    [{ sheetName: '' }, 'an empty name'],
+    [{ sheetName: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) }, 'a name above the byte bound'],
+    [{ sheetName: 42 }, 'a numeric name'],
+    [{ sheetIndex: -1 }, 'a negative index'],
+    [{ sheetIndex: 1.5 }, 'a fractional index'],
+    [{ sheetIndex: LIMITS.sheetListMax }, 'an index at the workbook bound'],
+    [{ sheetName: 'Sprint1', sheetIndex: 0 }, 'BOTH spellings at once'],
+    [{ sheetName: 'Sprint1', extra: 1 }, 'an unknown key']
+  ];
+  for (const [selector, why] of cases) {
+    const f = twoSheetRig();
+    const result = await f.bridge.writeRange({ address: 'A1', cells: [['x']], ...selector });
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.equal(f.commands.length, 0, `${why}: nothing may reach the editor`);
+    assert.equal(f.setActiveAttempts(), 0, why);
+  }
+});
+
+test('a FORMULA written into a selected sheet is proved against THAT sheet', async () => {
+  // The formula half of the proof runs its own addressal read, so it can silently run on the WRONG sheet: the
+  // active sheet's cell would hold no formula, the check would fail and a legitimate write would be reported
+  // UNCERTAIN. Only a test that writes a FORMULA through a selector reaches that code at all.
+  const f = rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map() },
+      { name: 'Данные', index: 1, store: new Map() }
+    ]
+  });
+  const result = await f.bridge.writeRange({ address: 'D5', cells: [['=1+2']], sheetName: 'Данные' });
+  assert.equal(result.ok, true, 'a formula write into a named sheet is PROVED, not merely performed');
+  assert.equal(f.book[1].store.get('D5'), '=1+2', 'the selected sheet holds the source');
+  assert.equal(f.book[0].store.get('D5'), undefined, 'and the active sheet holds nothing');
+  assert.equal(f.setActiveAttempts(), 0);
+  // The other side of the same rule: when the addressed cell did NOT end up holding a formula, the body's own
+  // flag must SAY so rather than pass. The flag is what the tool publishes and the tool is what refuses a zero.
+  const hostile = rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map() },
+      { name: 'Данные', index: 1, store: new Map(), formulas: new Map([['D5', 'stored-as-text']]) }
+    ]
+  });
+  const unproved = await hostile.bridge.writeRange({ address: 'D5', cells: [['=1+2']], sheetName: 'Данные' });
+  assert.deepEqual(hostile.commands[0].answered, ['POST_INSERT', 1, 1, 0],
+    'the flag reports that the cell does NOT hold a formula');
+  assert.equal(unproved.ok, false, 'and a zero flag can never pass the exact-proof rule');
+  assert.equal(unproved.code, 'APPLY_UNCERTAIN', 'which after the mutation is the uncertain class, not a known one');
+  assert.equal(hostile.bridge.getState().busy, true, 'and the slot stays held');
+  await checkpoint();
+});
+
+test('a write with NO selector goes to the ACTIVE sheet, whatever its index is', async () => {
+  // "No selector means the active sheet" has to hold for a book whose active sheet is NOT index 0: an
+  // implementation that fell back to `Api.GetSheet(0)` would be indistinguishable in a single-sheet book.
+  const f = rig({
+    activeIndex: 1,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map() },
+      { name: 'Второй', index: 1, store: new Map() }
+    ]
+  });
+  const result = await f.bridge.writeRange({ address: 'E5', cells: [['active-target']] });
+  assert.equal(result.ok, true);
+  assert.equal(f.book[1].store.get('E5'), 'active-target', 'the ACTIVE sheet received the write');
+  assert.equal(f.book[0].store.get('E5'), undefined, 'and index 0 received nothing');
+  assert.equal(f.commands[0].scope.sheetName, null);
+  assert.equal(f.commands[0].scope.sheetIndex, null);
+  assert.equal(f.setActiveAttempts(), 0);
+});
+
+test('the resolved sheet is TIED to the request before anything is written', async () => {
+  // THE GAP THIS CLOSES: the readback reads the same object it wrote, so it can never notice that the OBJECT was
+  // the wrong sheet. A build whose lookup resolves a different sheet (or clamps an index) must therefore be
+  // caught by comparing the sheet's OWN identity with the request — BEFORE the mutation.
+  for (const [knob, selector, why] of [
+    [{ nameLies: true }, { sheetName: 'Данные' }, 'a lookup that answered a SHEET WITH ANOTHER NAME'],
+    [{ indexLies: true }, { sheetIndex: 1 }, 'a lookup that answered a SHEET AT ANOTHER INDEX']
+  ]) {
+    const f = rig({
+      activeIndex: 0,
+      sheets: [
+        { name: 'Sprint1', index: 0, store: new Map() },
+        { name: 'Данные', index: 1, store: new Map(), ...knob }
+      ]
+    });
+    const result = await f.bridge.writeRange({ address: 'F6', cells: [['x']], ...selector });
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.deepEqual(f.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'], `${why}: refused before the mutation`);
+    assert.equal(f.setValueCalls(), 0, `${why}: NOT ONE cell was written`);
+    assert.equal(f.book[1].store.has('F6'), false, `${why}: the target sheet is untouched`);
+    assert.equal(f.book[0].store.has('F6'), false, `${why}: and so is the active one`);
+  }
+  // The honest case still writes, so the tie is not a blanket refusal.
+  const good = rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map() },
+      { name: 'Данные', index: 1, store: new Map() }
+    ]
+  });
+  assert.equal((await good.bridge.writeRange({ address: 'F6', cells: [['x']], sheetName: 'Данные' })).ok, true);
+  assert.equal(good.book[1].store.get('F6'), 'x');
+});
+
+test('the phase turns IMMEDIATELY before the first SetValue, and no activation is authored', async () => {
+  const f = twoSheetRig();
+  await f.bridge.writeRange({ address: 'A1', cells: [['x']], sheetName: 'Данные' });
+  const source = f.commands[0].source;
+  const phaseAt = source.indexOf("phase = 'POST_INSERT'");
+  const firstWrite = source.indexOf('SetValue(');
+  assert.ok(phaseAt > 0 && firstWrite > 0, 'both markers exist');
+  assert.ok(phaseAt < firstWrite, 'the phase turns before the first mutating call, never after it');
+  assert.match(source, /GetSheet\(/, 'the body resolves the selected sheet through Api.GetSheet');
+  assert.equal(source.includes('SetActive'), false, 'and never activates it');
+  await checkpoint();
 });
