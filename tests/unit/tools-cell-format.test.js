@@ -28,7 +28,10 @@ function shapeOf(address) {
 }
 // The properties the request actually asks for: every field except the address and the signal is one.
 function propertyCountOf(request) {
-  return Object.keys(request).filter(key => key !== 'address' && key !== 'signal').length;
+  // FORMATTING properties only, which is exactly what the real bridge counts: the sheet selector chooses the
+  // SUBJECT of the mutation and is not something to apply, so it must not inflate this number.
+  return Object.keys(request)
+    .filter((key) => key !== 'address' && key !== 'signal' && key !== 'sheetName' && key !== 'sheetIndex').length;
 }
 function served(request, overrides = {}) {
   const shape = shapeOf(request.address);
@@ -347,4 +350,81 @@ test('the published entry and the description stay inside their own byte bounds'
   assert.ok(tool.description.trim().length > 0);
   assert.equal(/[\u0000-\u001f\u007f]/.test(tool.description), false, 'one authored line, never a control character');
   assert.ok(utf8ByteLength(tool.description) <= 256, 'TOOL_DESCRIPTION_BYTES is 256');
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE SHEET SELECTOR on `format_cells` (T5.3c): the same two closed spellings, on the second mutation.
+// ---------------------------------------------------------------------------------------------------------
+test('format_cells offers the sheet selector as two optional, closed spellings', () => {
+  const tool = toolWith(bridgeWith({}));
+  assert.equal(tool.schema.additionalProperties, false);
+  for (const key of ['address', 'sheet', 'sheetIndex']) assert.ok(key in tool.schema.properties, key);
+  assert.deepEqual(tool.schema.required, ['address'], 'the address is still the only required argument');
+  assert.equal(tool.schema.properties.sheet.maxBytes, LIMITS.sheetListNameBytes);
+  assert.equal(tool.schema.properties.sheetIndex.maximum, LIMITS.sheetListMax - 1);
+  assert.equal(tool.schema.properties.sheetIndex.minimum, 0);
+});
+
+test('format_cells forwards the selector, and index ZERO is a selector rather than an absent one', async () => {
+  const plain = bridgeWith({});
+  await toolWith(plain).execute({ address: 'A1', bold: true }, cellCtx);
+  // A request that names no sheet must stay BYTE-IDENTICAL to what it always was: the selector keys are absent,
+  // not present-and-null, which is this leg's own convention for every other optional property.
+  assert.equal('sheetName' in plain.requests[0], false);
+  assert.equal('sheetIndex' in plain.requests[0], false);
+
+  const byName = bridgeWith({});
+  await toolWith(byName).execute({ address: 'A1', bold: true, sheet: 'Данные' }, cellCtx);
+  assert.equal(byName.requests[0].sheetName, 'Данные');
+  assert.equal('sheetIndex' in byName.requests[0], false);
+
+  const zero = bridgeWith({});
+  await toolWith(zero).execute({ address: 'A1', bold: true, sheetIndex: 0 }, cellCtx);
+  assert.equal(zero.requests[0].sheetIndex, 0, 'a zero index must cross as 0, never as null');
+  assert.equal('sheetName' in zero.requests[0], false);
+});
+
+test('format_cells refuses an ambiguous or out-of-contract selector BEFORE any dispatch', async () => {
+  const exact = 'я'.repeat(LIMITS.sheetListNameBytes / 2);
+  assert.equal(utf8ByteLength(exact), LIMITS.sheetListNameBytes);
+  const cases = [
+    [{ sheet: 'Sprint1', sheetIndex: 0 }, 'BOTH spellings'],
+    [{ sheet: '' }, 'an empty name'],
+    [{ sheet: exact + 'я' }, 'a name one byte above the bound'],
+    [{ sheet: 42 }, 'a numeric name'],
+    [{ sheetIndex: -1 }, 'a negative index'],
+    [{ sheetIndex: 1.5 }, 'a fractional index'],
+    [{ sheetIndex: LIMITS.sheetListMax }, 'an index at the workbook bound'],
+    [{ sheet: 'Sprint1', extra: 1 }, 'an unknown key']
+  ];
+  for (const [selector, why] of cases) {
+    const bridge = bridgeWith({});
+    const result = await toolWith(bridge).execute({ address: 'A1', bold: true, ...selector }, cellCtx);
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.equal(bridge.calls.formatCells, 0, `${why}: a mutation must not be dispatched`);
+  }
+  // A name exactly AT the bound is a valid selector, so the bound is not off by one.
+  const served = bridgeWith({});
+  assert.equal((await toolWith(served).execute({ address: 'A1', bold: true, sheet: exact }, cellCtx)).ok, true);
+  assert.equal(served.calls.formatCells, 1);
+});
+
+test('the SELECTOR alone is not a formatting property, and the T4 rule still holds', async () => {
+  // `format_cells` requires at least one FORMATTING property; naming a sheet is not one, so a request that only
+  // selects a sheet must still be refused with nothing dispatched — the T4 contract, unchanged.
+  const bridge = bridgeWith({});
+  const result = await toolWith(bridge).execute({ address: 'A1', sheet: 'Данные' }, cellCtx);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'TOOL_ERROR');
+  assert.equal(bridge.calls.formatCells, 0, 'a sheet-only request never reaches the editor');
+});
+
+test('the formatting DESCRIPTION names the sheet arguments the model reads', async () => {
+  // The description is the only MODEL-FACING field: the schema is validation-only and never rendered, so a
+  // selector it does not name is undiscoverable. This asserts CONTENT, not merely that a description exists.
+  const tool = toolWith(bridgeWith({}));
+  assert.match(tool.description, /sheet\s*—/, 'names the sheet argument');
+  assert.match(tool.description, /sheetIndex\s*—/, 'names the index argument');
+  assert.ok(utf8ByteLength(tool.description) <= 256, 'and stays inside the model-facing byte bound');
 });

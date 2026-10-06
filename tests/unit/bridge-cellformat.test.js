@@ -396,3 +396,284 @@ test('a whole formatting block is ONE dispatch, however many properties it prove
   assert.equal(f.widths.get(2), '18');
   assert.equal(f.heights.get(2), '22');
 });
+
+// ---------------------------------------------------------------------------------------------------------
+// THE SHEET SELECTOR on the FORMATTING leg (T5.3c).
+//
+// A NARROW, PURPOSE-BUILT double, deliberately SEPARATE from the rig above: that one carries the whole measured
+// T4 formatting contract, and T5.3c must not extend or weaken it. This one models only what the selector needs —
+// two sheets with their OWN number formats and bold flags, a lookup by name/index, and a counter for activation
+// attempts — while still running the REAL authored body through `callCommand`, so these are behaviour tests.
+// ---------------------------------------------------------------------------------------------------------
+function selectorRig({ activeIndex = 0, sheets = null } = {}) {
+  const commands = [];
+  const namespace = { scope: {} };
+  let setActiveAttempts = 0;
+  let setterCalls = 0;
+  const book = (sheets ?? [{ name: 'Sprint1', index: 0 }, { name: 'Данные', index: 1 }]).map((entry) => {
+    const formats = new Map();
+    const bolds = new Map();
+    const italics = new Map();
+    const names = new Map();
+    const sizes = new Map();
+    const fills = new Map();
+    const wraps = new Map();
+    const widths = new Map();
+    const heights = new Map();
+    for (const seed of entry.seed ?? []) seed({ formats, bolds, italics, names, sizes, fills, wraps, widths, heights });
+    const sheet = {
+      GetName: () => (entry.nameLies === true ? 'КтоТоДругой' : entry.name),
+      GetIndex: () => (entry.indexLies === true ? 99 : entry.index),
+      SetActive: () => { setActiveAttempts += 1; },
+      GetRange(address) {
+        const cell = address.split(':')[0];
+        const box = corners(address);
+        return {
+          // EVERY setter the leg authors, and every readback it verifies with: the "all setters work on the
+          // resolved sheet" promise covers nine of them, and the geometry pair uses a BLOCK range object, so a
+          // double that models only some of them leaves that promise half-proved.
+          SetNumberFormat(value) { setterCalls += 1; formats.set(cell, value); },
+          SetBold(value) { setterCalls += 1; bolds.set(cell, value === true); },
+          SetItalic(value) { setterCalls += 1; italics.set(cell, value === true); },
+          SetFontName(value) { setterCalls += 1; names.set(cell, value); },
+          SetFontSize(value) { setterCalls += 1; sizes.set(cell, String(value)); },
+          SetWrapText(value) { setterCalls += 1; wraps.set(cell, value === true); },
+          SetFillColor(value) {
+            setterCalls += 1;
+            if (value !== null && value !== undefined && value.__noFill === true) { fills.delete(cell); return; }
+            fills.set(cell, value.__rgb);
+          },
+          SetColumnWidth(value) {
+            setterCalls += 1;
+            for (let column = box.c1; column <= box.c2; column++) widths.set(column, String(value));
+          },
+          SetRowHeight(value) {
+            setterCalls += 1;
+            for (let row = box.r1; row <= box.r2; row++) heights.set(row, String(value));
+          },
+          GetNumberFormat() { return formats.has(cell) ? formats.get(cell) : 'General'; },
+          GetCharacters() {
+            return {
+              GetFont: () => ({
+                GetBold: () => (bolds.has(cell) ? bolds.get(cell) : false),
+                GetItalic: () => (italics.has(cell) ? italics.get(cell) : false),
+                GetName: () => (names.has(cell) ? names.get(cell) : 'Liberation Sans'),
+                GetSize: () => (sizes.has(cell) ? sizes.get(cell) : '11')
+              })
+            };
+          },
+          GetWrapText() { return wraps.has(cell) ? wraps.get(cell) : false; },
+          GetFillColor() {
+            if (!fills.has(cell)) return 'No Fill';
+            return { color: { getRgb: () => fills.get(cell) } };
+          },
+          GetColumnWidth() { return widths.has(box.c1) ? widths.get(box.c1) : '8.38'; },
+          GetRowHeight() { return heights.has(box.r1) ? heights.get(box.r1) : '14.25'; }
+        };
+      }
+    };
+    return { name: entry.name, index: entry.index, sheet, formats, bolds, italics, names, sizes, fills, wraps, widths, heights };
+  });
+  const api = {
+    CreateColorFromRGB: (red, green, blue) => ({ __rgb: red * 65536 + green * 256 + blue }),
+    CreateNoFill: () => ({ __noFill: true }),
+    GetActiveSheet: () => book[activeIndex].sheet,
+    GetSheets: () => book.map((entry) => entry.sheet),
+    GetSheet: (key) => (typeof key === 'number'
+      ? (book[key] === undefined ? null : book[key].sheet)
+      : (book.find((entry) => entry.name === key)?.sheet ?? null))
+  };
+  const plugin = { info: { editorType: 'cell' },
+    callCommand(body, close, recalculate, callback) {
+      const source = Function.prototype.toString.call(body);
+      const scope = namespace.scope;
+      const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
+      commands.push({ by: 'callCommand', source, scope, answered });
+      callback(answered);
+      return false;
+    } };
+  const bridge = createR7Bridge(plugin, { editorType: 'cell', ascNamespace: namespace,
+    clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
+  return { bridge, commands, book, setActiveAttempts: () => setActiveAttempts, setterCalls: () => setterCalls };
+}
+
+test('formatting a NAMED sheet lands THERE and never switches the active sheet', async () => {
+  // MEASURED natively before this leg was written: applying format setters through another sheet's range object
+  // leaves the active sheet exactly where it was. This pins that, including for the geometry setters.
+  const f = selectorRig();
+  const result = await f.bridge.formatCells({ address: 'A1', bold: true, sheetName: 'Данные' });
+  assert.equal(result.ok, true);
+  assert.equal(f.book[1].bolds.get('A1'), true, 'the selected sheet was formatted');
+  assert.equal(f.book[0].bolds.has('A1'), false, 'and the active sheet was NOT');
+  assert.equal(f.setActiveAttempts(), 0, 'nothing activated anything');
+  assert.equal(f.commands[0].scope.sheetName, 'Данные');
+  assert.equal(f.commands[0].scope.sheetIndex, null);
+});
+
+test('the FORMATTING and ALL its verification reads use the SELECTED sheet', async () => {
+  // The selected sheet starts at General and the ACTIVE one does NOT carry the format: this is what makes the
+  // flags discriminating. A verification pass that read the active sheet would find General there, answer flag 0,
+  // and the exact-proof rule would turn the whole request into a refusal — so `ok` AND the flags together are the
+  // assertion that the readback looked at the sheet the setters touched.
+  const f = selectorRig();
+  const result = await f.bridge.formatCells({ address: 'C3', numberFormat: { type: 'number' }, sheetName: 'Данные' });
+  assert.equal(result.ok, true, 'the request is SERVED, not refused');
+  assert.equal(result.properties, 1, 'and it reports exactly one formatting property');
+  assert.deepEqual(f.commands[0].answered, ['POST_INSERT', 1, 1, 1, 1],
+    'one proved property: the flag could only be 1 if the readback saw the SELECTED sheet');
+  const selected = f.book[1].formats.get('C3');
+  assert.equal(selected === undefined, false, 'the SELECTED sheet received a format code');
+  assert.equal(String(selected).includes('0'), true, `a number format was applied, got ${selected}`);
+  assert.equal(f.book[0].formats.has('C3'), false, 'the active sheet received nothing');
+  assert.equal(f.setActiveAttempts(), 0);
+});
+
+test('sheetIndex 0 formats the FIRST sheet even when a DIFFERENT sheet is active', async () => {
+  const f = selectorRig({ activeIndex: 1 });
+  const result = await f.bridge.formatCells({ address: 'D4', bold: true, sheetIndex: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(f.book[0].bolds.get('D4'), true, 'index 0 is a REAL selector, not an absent one');
+  assert.equal(f.book[1].bolds.has('D4'), false, 'and the active sheet was not formatted');
+  assert.equal(f.commands[0].scope.sheetIndex, 0, 'the zero crosses as 0, never as null');
+  assert.equal(f.setActiveAttempts(), 0);
+});
+
+test('a write with NO selector formats the ACTIVE sheet, whatever its index is', async () => {
+  const f = selectorRig({ activeIndex: 1 });
+  const result = await f.bridge.formatCells({ address: 'E5', bold: true });
+  assert.equal(result.ok, true);
+  assert.equal(f.book[1].bolds.get('E5'), true, 'the ACTIVE sheet was formatted');
+  assert.equal(f.book[0].bolds.has('E5'), false, 'and index 0 was not');
+  assert.equal(f.commands[0].scope.sheetName, null);
+  assert.equal(f.commands[0].scope.sheetIndex, null);
+});
+
+test('an unknown sheet is a KNOWN refusal raised BEFORE the first formatting setter', async () => {
+  for (const selector of [{ sheetName: 'НетТакого' }, { sheetIndex: 7 }]) {
+    const f = selectorRig();
+    const result = await f.bridge.formatCells({ address: 'A1', bold: true, ...selector });
+    assert.equal(result.ok, false, JSON.stringify(selector));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(selector));
+    assert.deepEqual(f.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'], 'a pre-mutation refusal');
+    assert.equal(f.setterCalls(), 0, 'not one formatting call was made');
+    // The refusal released the slot, so the next request really reaches the editor.
+    const second = await f.bridge.formatCells({ address: 'A1', bold: true });
+    assert.equal(second.ok, true);
+    assert.equal(f.commands.length, 2);
+  }
+});
+
+test('the resolved sheet is TIED to the request before anything is formatted', async () => {
+  // The verification reads the SAME object that was formatted, so it cannot notice that the OBJECT was the wrong
+  // sheet: the comparison of the sheet's own identity with the request is what closes that gap.
+  for (const [knob, selector, why] of [
+    [{ nameLies: true }, { sheetName: 'Данные' }, 'a lookup that answered a SHEET WITH ANOTHER NAME'],
+    [{ indexLies: true }, { sheetIndex: 1 }, 'a lookup that answered a SHEET AT ANOTHER INDEX']
+  ]) {
+    const f = selectorRig({ sheets: [{ name: 'Sprint1', index: 0 }, { name: 'Данные', index: 1, ...knob }] });
+    const result = await f.bridge.formatCells({ address: 'F6', bold: true, ...selector });
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.deepEqual(f.commands[0].answered, ['PRE_INSERT', 'TOOL_ERROR'], `${why}: refused before the mutation`);
+    assert.equal(f.setterCalls(), 0, `${why}: NOT ONE setter ran`);
+  }
+  const good = selectorRig();
+  assert.equal((await good.bridge.formatCells({ address: 'F6', bold: true, sheetName: 'Данные' })).ok, true);
+  assert.equal(good.book[1].bolds.get('F6'), true);
+});
+
+test('EVERY formatting setter works on the SELECTED sheet, and none of them touches the active one', async () => {
+  // ONE CASE PER SETTER, because "all setters work on the resolved sheet" is the promise a single shared
+  // resolution would otherwise only half-prove: the geometry pair runs through a BLOCK range object, the fill
+  // paths go through Api.CreateColorFromRGB/CreateNoFill, and the font group reads through GetCharacters(). The
+  // T4 rig cannot help here (it has no Api.GetSheet at all), which is exactly why each setter needs its own case.
+  const cases = [
+    ['numberFormat', { address: 'A1', numberFormat: { type: 'number' } }, (book) => book[1].formats.has('A1')],
+    ['bold', { address: 'A1', bold: true }, (book) => book[1].bolds.get('A1') === true],
+    ['italic', { address: 'A1', italic: true }, (book) => book[1].italics.get('A1') === true],
+    ['fontFamily', { address: 'A1', fontFamily: 'Arial' }, (book) => book[1].names.get('A1') === 'Arial'],
+    ['fontSize', { address: 'A1', fontSize: 14 }, (book) => book[1].sizes.get('A1') === '14'],
+    ['fill', { address: 'A1', fill: '#112233' }, (book) => book[1].fills.get('A1') === 0x112233],
+    ['clearFill', { address: 'A1', clearFill: true }, (book) => book[1].fills.has('A1') === false],
+    ['wrapText', { address: 'A1', wrapText: true }, (book) => book[1].wraps.get('A1') === true],
+    ['columnWidth', { address: 'A1:B1', columnWidth: 150 }, (book) => book[1].widths.get(1) === '150'],
+    ['rowHeight', { address: 'A1:A2', rowHeight: 30 }, (book) => book[1].heights.get(1) === '30']
+  ];
+  for (const [name, request, landed] of cases) {
+    const f = selectorRig();
+    // `clearFill` only means anything over a cell that HELD a fill, so this case starts from one.
+    if (name === 'clearFill') f.book[1].fills.set('A1', 0x445566);
+    const result = await f.bridge.formatCells({ ...request, sheetName: 'Данные' });
+    assert.equal(result.ok, true, `${name}: a selector request is served`);
+    assert.equal(landed(f.book), true, `${name}: the SELECTED sheet received the formatting`);
+    assert.equal(f.setActiveAttempts(), 0, `${name}: nothing was activated`);
+    const activeSheetTouched = f.book[0].formats.size + f.book[0].bolds.size + f.book[0].italics.size
+      + f.book[0].names.size + f.book[0].sizes.size + f.book[0].fills.size + f.book[0].wraps.size
+      + f.book[0].widths.size + f.book[0].heights.size;
+    assert.equal(activeSheetTouched, 0, `${name}: the ACTIVE sheet received nothing at all`);
+    assert.equal(f.commands[0].scope.sheetName, 'Данные', name);
+  }
+});
+
+test('the bridge counts FORMATTING properties, never the selector', async () => {
+  // THE COUNT IS PUBLISHED AND THE TOOL READS IT: if the selector inflated it, the tool would answer a known
+  // refusal AFTER the sheet had already been formatted. This asserts the number the BRIDGE publishes for a
+  // request that carries a selector, which no other test does.
+  const f = selectorRig();
+  const result = await f.bridge.formatCells({ address: 'A1', bold: true, sheetName: 'Данные' });
+  assert.equal(result.ok, true);
+  assert.equal(result.properties, 1, 'one formatting property, and the sheet is not one of them');
+  const two = await f.bridge.formatCells({ address: 'A1', bold: true, wrapText: true, sheetIndex: 1 });
+  assert.equal(two.properties, 2, 'and the count follows the formatting properties alone');
+});
+
+test('the GEOMETRY setters work on the SELECTED sheet too, and the selector itself is closed', async () => {
+  // Column width and row height are applied through a BLOCK range, i.e. a different range object than the cell
+  // setters use: this pins both halves, including the verification read of the row height.
+  const geometry = selectorRig();
+  const result = await geometry.bridge.formatCells({ address: 'B2:C5', columnWidth: 150, rowHeight: 30, sheetName: 'Данные' });
+  assert.equal(result.ok, true);
+  assert.equal(geometry.book[1].widths.get(2), '150', 'the selected sheet\'s column was widened');
+  assert.equal(geometry.book[1].heights.get(2), '30', 'and its row was heightened');
+  assert.equal(geometry.book[0].widths.size + geometry.book[0].heights.size, 0, 'the active sheet got neither');
+  assert.equal(geometry.setActiveAttempts(), 0);
+
+  // The bridge's OWN bounds, which the tool cannot be the only guard for.
+  const cases = [
+    [{ sheetName: '' }, 'an empty name'],
+    [{ sheetName: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) }, 'a name above the byte bound'],
+    [{ sheetIndex: -1 }, 'a negative index'],
+    [{ sheetIndex: LIMITS.sheetListMax }, 'an index at the workbook bound'],
+    [{ sheetName: 'Sprint1', sheetIndex: 0 }, 'BOTH spellings at once'],
+    [{ sheetName: 'Sprint1', extra: 1 }, 'an unknown key']
+  ];
+  for (const [selector, why] of cases) {
+    const f = selectorRig();
+    const refused = await f.bridge.formatCells({ address: 'A1', bold: true, ...selector });
+    assert.equal(refused.ok, false, why);
+    assert.equal(refused.code, 'TOOL_ERROR', why);
+    assert.equal(f.commands.length, 0, `${why}: nothing may reach the editor`);
+    assert.equal(f.setterCalls(), 0, why);
+  }
+});
+
+test('the phase turns IMMEDIATELY before the first formatting setter, and no activation is authored', async () => {
+  const f = selectorRig();
+  await f.bridge.formatCells({ address: 'A1', bold: true, sheetName: 'Данные' });
+  const source = f.commands[0].source;
+  const phaseAt = source.indexOf("phase = 'POST_INSERT'");
+  // THE FIRST MUTATING CALL, not one literal setter name and not a capability PROBE: the body legitimately asks
+  // `typeof geometryBlock.SetColumnWidth !== 'function'` BEFORE the phase turns, so the marker is the first
+  // `.Set…(` whose line is not a `typeof` test. A mutation inserted before the phase turn is caught whatever
+  // property it applies.
+  let firstSetter = -1;
+  for (const match of source.matchAll(/\.Set[A-Z][A-Za-z]*\(/g)) {
+    const lineStart = source.lastIndexOf('\n', match.index) + 1;
+    const line = source.slice(lineStart, source.indexOf('\n', match.index));
+    if (line.includes('typeof ') === false) { firstSetter = match.index; break; }
+  }
+  assert.ok(phaseAt > 0 && firstSetter > 0, 'both markers exist');
+  assert.ok(phaseAt < firstSetter, 'the phase turns before the first mutating call, never after it');
+  assert.match(source, /Api\.GetSheet\(/, 'the body resolves the selected sheet through Api.GetSheet');
+  assert.equal(source.includes('SetActive'), false, 'and never activates it');
+});

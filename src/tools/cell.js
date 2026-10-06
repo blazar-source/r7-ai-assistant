@@ -574,7 +574,7 @@ export function createCellTools(bridge) {
       // spreadsheet run exactly one formatting tool and none of the Cell reads. Renaming the CELL leg avoids
       // both without changing the shared registry, which this task must not touch.
       name: 'format_cells', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Форматирует блок ячеек: числовой формат, жирный/курсив, шрифт, заливку, ширину столбцов и высоту строк.',
+      description: 'Форматирует блок ячеек: числовой формат, жирный, курсив, шрифт, заливку, ширину и высоту. sheet — имя, sheetIndex — индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address'],
         properties: {
           address: { type: 'string', maxBytes: 24 },
@@ -591,7 +591,12 @@ export function createCellTools(bridge) {
           clearFill: { type: 'boolean' },
           columnWidth: { type: 'integer', minimum: 1, maximum: LIMITS.formatRangeColumnWidthMax },
           rowHeight: { type: 'integer', minimum: 1, maximum: LIMITS.formatRangeRowHeightMax },
-          wrapText: { type: 'boolean' } } },
+          wrapText: { type: 'boolean' },
+          // THE SAME TWO CLOSED SPELLINGS THE OTHER SHEET-AWARE LEGS PROVED: `sheet` is a name, `sheetIndex` is a
+          // 0-based index, naming BOTH is refused as ambiguous, and NO selector keeps the previous behaviour — the
+          // ACTIVE sheet. They select the SUBJECT and are not formatting properties.
+          sheet: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes },
+          sheetIndex: { type: 'integer', minimum: 0, maximum: LIMITS.sheetListMax - 1 } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async (args, ctx) => {
         const address = args?.address;
@@ -605,13 +610,23 @@ export function createCellTools(bridge) {
         const columnWidth = args?.columnWidth;
         const rowHeight = args?.rowHeight;
         const wrapText = args?.wrapText;
+        const sheet = args?.sheet;
+        const sheetIndex = args?.sheetIndex;
         // The closed key sets, checked here as well and at BOTH levels: an unknown property (`fontColor`, an
         // alignment, a border, `autofit`, or anything else) must be a known refusal with NOTHING dispatched,
         // never a partial apply — and the NESTED `numberFormat` object is closed too, because a `symbol` or any
         // other stray key inside it would otherwise be silently dropped and the request served as if it had
-        // been understood.
-        const allowed = new Set(['address', 'numberFormat', 'bold', 'italic', 'fontFamily', 'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText']);
+        // been understood. The two SHEET spellings belong to that closed set and are NOT formatting properties:
+        // they choose the SUBJECT of the mutation and never count as "something to apply".
+        const allowed = new Set(['address', 'numberFormat', 'bold', 'italic', 'fontFamily', 'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText', 'sheet', 'sheetIndex']);
         for (const key of Object.keys(args ?? {})) if (!allowed.has(key)) return known();
+        // A MUTATION MUST NOT DISPATCH WITH A SELECTOR IT CANNOT HONOUR, so the selector is closed here, BEFORE
+        // the formatting properties are inspected: naming BOTH spellings is ambiguous, and the index bound reuses
+        // `sheetListMax` — the only MEASURED sheet count — so the failure mode is fail-closed rather than a format
+        // applied to the wrong sheet.
+        if (sheet !== undefined && (typeof sheet !== 'string' || sheet === '' || utf8ByteLength(sheet) > LIMITS.sheetListNameBytes)) return known();
+        if (sheetIndex !== undefined && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) return known();
+        if (sheet !== undefined && sheetIndex !== undefined) return known();
         if (numberFormat !== undefined && numberFormat !== null && typeof numberFormat === 'object' && !Array.isArray(numberFormat)) {
           for (const key of Object.keys(numberFormat)) if (key !== 'type' && key !== 'decimals' && key !== 'currency') return known();
         }
@@ -674,6 +689,11 @@ export function createCellTools(bridge) {
             ...(columnWidth === undefined ? {} : { columnWidth }),
             ...(rowHeight === undefined ? {} : { rowHeight }),
             ...(wrapText === undefined ? {} : { wrapText }),
+            // THE SELECTOR CROSSES ONLY WHEN IT WAS GIVEN, following this leg's own convention for every other
+            // optional property: a request that names no sheet stays BYTE-IDENTICAL to what it always was, so the
+            // T4 request shape is untouched rather than widened with two nulls.
+            ...(sheet === undefined ? {} : { sheetName: sheet }),
+            ...(sheetIndex === undefined ? {} : { sheetIndex }),
             ...(ctx?.signal === undefined ? {} : { signal: ctx.signal })
           });
         } catch (error) {

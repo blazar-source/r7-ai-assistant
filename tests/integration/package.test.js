@@ -283,6 +283,16 @@ test('generated authored browser bundle passes audit with literal synchronous st
           assert.equal(code.includes(excluded), false, `${excluded} is excluded: no public readback proves it`);
         }
         assert.equal(code.includes('SetValue'), false, 'and it writes no CELL VALUE: this leg formats, never writes content');
+        // THESE PINS ARE EXACT EXPRESSIONS, not merely the presence of a call name: `/GetName\(\)/` would have been
+        // satisfied by the unrelated `font.GetName()`, and `/GetSheet\(/` cannot hold the claim that EVERY setter
+        // and readback uses the resolved sheet. The comparison against the request and the absence of a direct
+        // active-sheet range are what actually pin those two statements.
+        assert.match(code, /Api\.GetSheet\(formatSheetName\)/, 'resolves the NAMED sheet through the measured lookup');
+        assert.match(code, /Api\.GetSheet\(formatSheetIndex\)/, 'and the INDEXED one through the same lookup');
+        assert.match(code, /String\(sheet\.GetName\(\)\) !== formatSheetName/, 'and ties it to the request by its OWN name before formatting');
+        assert.match(code, /Number\(sheet\.GetIndex\(\)\) !== formatSheetIndex/, 'and by its own index');
+        assert.equal(code.includes('Api.GetActiveSheet().GetRange('), false, 'no setter or readback reaches the ACTIVE sheet by a direct range');
+        assert.equal(code.includes('SetActive'), false, 'while never activating a sheet: the formatting goes through a sheet object');
         assert.equal(code.includes('Push('), false, 'and pushes nothing into a document');
         legs.push('cellformat');
       } else if (code.includes('SetValue')) {

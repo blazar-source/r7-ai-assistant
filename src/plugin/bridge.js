@@ -1201,7 +1201,40 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var available = typeof Api !== 'undefined' && Api !== null;
             if (!available) return formatRefusal('CAPABILITY_UNAVAILABLE');
             if (typeof Api.GetActiveSheet !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
-            var sheet = Api.GetActiveSheet();
+            // WHICH SHEET IS FORMATTED: the caller's selector, or the ACTIVE sheet when the caller named none. The
+            // selector is resolved through the MEASURED lookup `Api.GetSheet(name | index)`, and BOTH the setters
+            // and every verification read below use THAT sheet's own ranges, so the active sheet is neither
+            // formatted nor switched: the body authors no activation. (MEASURED before this leg existed: applying
+            // format setters through another sheet's range object leaves the active sheet exactly where it was,
+            // for cells and for the block geometry setters alike.) A selector that names nothing is a KNOWN
+            // refusal raised HERE, before the phase turns, so not one formatting call is made.
+            // A malformed selector answers the ARGUMENT class on purpose — the same class the bridge answers
+            // above — so ONE argument does not have two failure classes depending on which layer noticed it.
+            var formatSheetName = request.sheetName === undefined ? null : request.sheetName;
+            var formatSheetIndex = request.sheetIndex === undefined ? null : request.sheetIndex;
+            if (formatSheetName !== null && typeof formatSheetName !== 'string') return formatRefusal('TOOL_ERROR');
+            if (formatSheetName !== null && formatSheetName === '') return formatRefusal('TOOL_ERROR');
+            if (formatSheetIndex !== null && (typeof formatSheetIndex !== 'number' || formatSheetIndex < 0 || formatSheetIndex % 1 !== 0)) return formatRefusal('TOOL_ERROR');
+            var sheet = null;
+            if (formatSheetName !== null || formatSheetIndex !== null) {
+              if (typeof Api.GetSheet !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              sheet = formatSheetName !== null ? Api.GetSheet(formatSheetName) : Api.GetSheet(formatSheetIndex);
+              if (sheet === null || sheet === undefined) return formatRefusal('TOOL_ERROR');
+              // THE RESOLVED SHEET IS TIED TO THE REQUEST BEFORE ANYTHING IS FORMATTED, and this is what makes the
+              // selector's promise checkable rather than assumed: the verification below reads the SAME object the
+              // setters touched, so by construction it cannot notice that the OBJECT was the wrong sheet (a build
+              // that resolved another sheet, or clamped an index, would format elsewhere and still prove itself
+              // property by property). The sheet's own name/index must therefore AGREE with the request.
+              if (formatSheetName !== null) {
+                if (typeof sheet.GetName !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (String(sheet.GetName()) !== formatSheetName) return formatRefusal('TOOL_ERROR');
+              } else {
+                if (typeof sheet.GetIndex !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (Number(sheet.GetIndex()) !== formatSheetIndex) return formatRefusal('TOOL_ERROR');
+              }
+            } else {
+              sheet = Api.GetActiveSheet();
+            }
             if (sheet === null || sheet === undefined || typeof sheet.GetRange !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
             // THE ADDRESS IS PARSED, and the rectangle it names must BE the rectangle the request declared:
             // a body and a bridge that disagree about the addressed block would format cells the caller
@@ -3958,7 +3991,7 @@ const CELL_FORMAT_CURRENCIES = Object.freeze({ RUB: '\u20BD', USD: '$', EUR: '\u
 // BOTH spellings of the clearing request, and the signal. A key outside it refuses the whole request, which is
 // what makes "nothing is ever applied partially" true at the layer that promises it.
 const CELL_FORMAT_KEYS = Object.freeze(new Set(['address', 'numberFormat', 'bold', 'italic', 'fontFamily',
-  'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText', 'signal']));
+  'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText', 'sheetName', 'sheetIndex', 'signal']));
 function cellFormatCode(numberFormat) {
   const type = numberFormat.type;
   const decimals = numberFormat.decimals === undefined ? 2 : numberFormat.decimals;
@@ -6694,6 +6727,23 @@ export function createR7Bridge(plugin, {
       // clearing request, and the signal. A key outside it refuses the WHOLE request.
       if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
       for (const key of Object.keys(raw)) if (!CELL_FORMAT_KEYS.has(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      // THE SHEET SELECTOR, closed BEFORE any formatting property is inspected and before any dispatch: a
+      // mutation that cannot say which sheet it means must not reach the editor at all. A name is a bounded
+      // non-empty string, an index is a non-negative safe integer inside the workbook bound (reusing the only
+      // MEASURED sheet count, so the failure mode is fail-closed), and asking for BOTH is ambiguous.
+      const sheetName = raw?.sheetName;
+      const sheetIndex = raw?.sheetIndex;
+      if (sheetName !== undefined && sheetName !== null
+        && (typeof sheetName !== 'string' || sheetName === '' || utf8ByteLength(sheetName) > LIMITS.sheetListNameBytes)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sheetIndex !== undefined && sheetIndex !== null
+        && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sheetName !== undefined && sheetName !== null && sheetIndex !== undefined && sheetIndex !== null) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
       const address = raw?.address;
       const numberFormat = raw?.numberFormat;
       const bold = raw?.bold;
@@ -6789,6 +6839,8 @@ export function createR7Bridge(plugin, {
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         const outcome = await start('cellformat', signal, {}, Object.freeze({
           address,
+          sheetName: sheetName === undefined ? null : sheetName,
+          sheetIndex: sheetIndex === undefined ? null : sheetIndex,
           rows: shape.rows,
           columns: shape.columns,
           checks,
