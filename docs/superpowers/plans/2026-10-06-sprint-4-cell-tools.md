@@ -58,7 +58,7 @@
 | T1 | Native Cell API measurement | — (измерения, пробники) | **DONE** (ретроспективно) |
 | T2 | Bounded Cell reads | `read_sheet`, `read_range` | **DONE** (ретроспективно), **с KNOWN DEFECT** |
 | T3 | `write_range` | `write_range` | **DONE** (ретроспективно) |
-| T4 | Cell formatting | `format_cells` (план: `format_range`) | T4.0 **DONE** (матрица и контракт измерены — см. [T4.0 evidence](<../../evidence/sprint-4/t4.0-format-range-evidence.md>)); T4.1 реализация NOT STARTED |
+| T4 | Cell formatting | `format_cells` (план: `format_range`) | T4.0 **DONE**, T4.1 реализация **DONE** (коммит `7b0480b`), T4.2 native proof **DONE** на Windows и на целевом Astra/R7 2026.1.2.1942 — см. [T4.0 evidence](<../../evidence/sprint-4/t4.0-format-range-evidence.md>) и её §13 |
 | T5 | Workbook / worksheet operations | `list_sheets`, `add_sheet`, адресация листа; `rename_sheet` — условно | PLANNED, NOT STARTED |
 
 ## 4. T1 — Native Cell API measurement — DONE
@@ -122,6 +122,23 @@
 откалиброван; полная матрица «свойство → сеттер → readback → Windows → Astra surface → supported»,
 закрытый контракт number-format, границы значений, семантика `fill`/очистки и калибровка производительности
 1..400 ячеек — в [T4.0 evidence](<../../evidence/sprint-4/t4.0-format-range-evidence.md>).
+
+**Статус T4.2 — DONE.** Реализация закрыта коммитом `7b0480b` (docs-правка — `6108cd9`), нативное
+доказательство снято **из поставочного артефакта**: тело `cellformat` извлекается из собранного `panel.js` и
+исполняется на живом редакторе штатным каналом `Asc.plugin.callCommand`.
+
+* **Windows/R7 2026.3.1** — сценарии формата числа (₽), bold, заливки (set + clear), wrap, ширины/высоты,
+  курсива/шрифта/размера: все проверки 1, независимый readback подтверждает состояние листа; опровергающий
+  контроль `rowHeight 500` даёт флаги 0 (клэмп движка ловится доказательством).
+* **Astra/R7 2026.1.2.1942 — runtime VERIFIED (scoped)**: поставочный пакет установлен на целевой стенд
+  (SHA-256 `panel.js` `ff682765…`), плагин открыт **штатным** путём (`close(guid)` → `run(guid, 0, '')`),
+  и на достижимых слоях пройдены все сценарии: формат (₽) 2/2, bold+italic+family+size 8/8, заливка 2/2,
+  очистка 2/2, ширина+высота 4/4, перенос 2/2, смешанный запрос **32/32**, отказ до мутации
+  (`PRE_INSERT CAPABILITY_UNAVAILABLE`, в лист ничего не записано). **Cap 400 подтверждён на таргете**:
+  худший случай (шрифт по каждой ячейке) — 400/400 за **14.8 мс**, составной запрос из 1601 проверки — 1601/1601
+  за **54.6 мс**.
+* Границы: внутренний слой рантайма плагина (реестр/дескриптор/мост) бандл наружу не экспонирует, поэтому сквозной
+  путь «модель → инструмент → мост → тело» остаётся предметом exit-gate P&L (задача E) и здесь не заявляется.
 
 **Результат T4.0, который обязателен для реализации:**
 
