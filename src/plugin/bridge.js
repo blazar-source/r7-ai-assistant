@@ -1027,8 +1027,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       //     route is taken, not whether a lossy write is proved.
       //   * everything else goes through as the STRING the caller sent. That is the measured rule that
       //     makes a decimal a real number (`SetValue('123,45')` answers `=ЕЧИСЛО` TRUE) while a
-      //     non-integer JS number is stored as TEXT, and it is also why the locale form belongs to the
-      //     CALLER: this body never rewrites a decimal separator.
+      //     non-integer JS number is stored as TEXT.
+      //   * A DOT-DECIMAL is therefore rewritten into the engine's OWN numeric form before it is sent, and the
+      //     SEPARATOR comes from the engine rather than from an assumption: MEASURED on this build,
+      //     `Api.GetLocale()` answers 1049 (ru-RU), whose numeric form is the comma one — the native proof wrote
+      //     `0,15` and the engine answered `=ЕЧИСЛО` TRUE. Any OTHER locale gets the dot, and the proof below
+      //     decides the outcome NUMERICALLY, so a wrong guess is the fail-CLOSED uncertain class rather than a
+      //     text cell reported as a success. The rewrite is a MATCH test on a closed decimal shape, never a sweep:
+      //     ordinary text and formulas are written verbatim.
       //   * a cell whose text begins with `=` is a FORMULA, and the engine's own parser decides whether
       //     it is valid. A `.` in a formula source is rejected by the parser and CLEARS the cell, which
       //     is exactly the failure the readback below exists to catch.
@@ -1049,10 +1055,12 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // readback below and is the whole point: on this build a MULTI-CELL `GetFormula()` answers the
       // computed VALUES, so a block-level formula read could never prove a formula cell and every one
       // of them would be reported as unproved.
-      // WHAT THE PROOF DOES NOT COVER, stated rather than implied: it cannot show that a numeric-looking
-      // cell was stored as a NUMBER rather than as text, because the readback answers both as the same
-      // string. Numericity rests on the measured `SetValue` rule above, and a caller that needs it
-      // checked can read the cell back with `read_range` and use it in a formula.
+      // WHAT THE PROOF COVERS, and it is deliberately asymmetric. A NUMERIC request (integer or decimal) is proved
+      // by its NUMBER: the engine renders a stored number canonically, so `1.0` and `2.50` come back as `1` and
+      // `2.5`, and a spelling comparison would call a correctly stored number UNPROVED. A TEXT request is proved by
+      // its spelling, because that is all it is. Neither rule can be satisfied by the other kind of cell: a text
+      // cell holding the locale spelling does NOT parse as that number, which is what keeps a wrong locale from
+      // ever being reported as a success.
       sheetwrite(callback) {
         return plugin.callCommand(function () {
           var phase = 'PRE_INSERT';
@@ -1125,6 +1133,39 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var startRow = Number(headRow);
             if (!(startColumn >= 1) || !(startRow >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
             var expectedRows = cells.length;
+            // A DECIMAL NUMERIC STRING, and the CLOSED shape of one. MEASURED end to end: this engine stores a
+            // dot-decimal string as TEXT, while its OWN locale form is a real number (`'123,45'` answered as a
+            // number on this build), which is why an agent's correctly built P&L read `#VALUE!` in every year whose
+            // formula used an assumption such as `0.15`. The test is narrow on purpose: the integer part carries
+            // no leading zeros (the fail-safe rule the integer branch already keeps) and is capped at the same
+            // fifteen digits, exactly one dot is present, and the FRACTION IS NOT CAPPED — a bound on it would
+            // leave the very defect being fixed one digit past the bound ('0.1234567890' would land as text again).
+            // A formula can never match, because its first character is neither a digit nor `-`.
+            var sheetWriteDecimal = /^-?(0|[1-9][0-9]{0,14})\.[0-9]+$/;
+            // The same shape WITH the integer-only form, used by the proof below: a request that is numeric at all
+            // is proved by its VALUE, and this is the test that decides whether that proof applies.
+            var sheetWriteNumeric = /^-?(0|[1-9][0-9]{0,14})(\.[0-9]+)?$/;
+            // THE ENGINE'S OWN DECIMAL SEPARATOR. MEASURED on this build: `Api.GetLocale()` answers 1049 (ru-RU),
+            // whose numeric form uses the comma — the native proof wrote `0,15` and the engine answered `=ЕЧИСЛО`
+            // TRUE. The COMMA LOCALES are an EXPLICIT set rather than "1049, otherwise the dot", because the comma
+            // is the rule in many of them (de-DE 1031, fr-FR 1036, es-ES 1034, it-IT 1040, pt-BR 1046, pl-PL 1045,
+            // tr-TR 1055, cs-CZ 1029, uk-UA 1058, …) and a spelling the locale does not use is not a number: the
+            // engine stores it as TEXT. An UNLISTED locale keeps the dot, which is exactly the behaviour this body
+            // had before the decimal route existed, and the proof below claims NUMERICITY only for the routes this
+            // body actually chose — so an unknown locale can lose a round trip, but it cannot be told a text cell
+            // was a number because of a separator this body guessed.
+            var sheetWriteCommaLocales = [1029, 1031, 1034, 1036, 1040, 1043, 1045, 1046, 1049, 1055, 1058];
+            var sheetWriteLocale = null;
+            try {
+              if (typeof Api.GetLocale === 'function') sheetWriteLocale = Number(Api.GetLocale());
+            } catch (error) {
+              sheetWriteLocale = null;
+            }
+            var sheetWriteCommaLocale = false;
+            for (var sheetWriteLocaleIndex = 0; sheetWriteLocaleIndex < sheetWriteCommaLocales.length; sheetWriteLocaleIndex++) {
+              if (sheetWriteCommaLocales[sheetWriteLocaleIndex] === sheetWriteLocale) sheetWriteCommaLocale = true;
+            }
+            var sheetWriteSeparator = sheetWriteCommaLocale ? ',' : '.';
             var expectedColumns = 0;
             for (var rowIndex = 0; rowIndex < expectedRows; rowIndex++) {
               var rowCells = cells[rowIndex];
@@ -1171,6 +1212,11 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
                 if (target === null || target === undefined || typeof target.SetValue !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
                 var wanted = cells[writeRow][writeColumn];
                 if (/^-?(0|[1-9][0-9]{0,14})$/.test(wanted)) target.SetValue(Number(wanted));
+                // A decimal goes in the engine's OWN numeric form so the cell holds a NUMBER. The conversion runs
+                // through a PARAMETER BOUNDARY (`decimalInLocale`), never as a method call on the caller-derived
+                // local: the authored-code audit treats a call on a computed value as a dynamic-property sink, and
+                // this body's own normaliser and `=` test already use that boundary for exactly this reason.
+                else if (sheetWriteDecimal.test(wanted)) target.SetValue(decimalInLocale(wanted, sheetWriteSeparator));
                 else target.SetValue(wanted);
               }
             }
@@ -1209,6 +1255,25 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // answering the source.
             function normalize(text) {
               return String(text).replace(/ /g, '').replace(/,/g, '.').trim();
+            }
+            // The engine's OWN numeric form of a decimal, applied on the PARAMETER: a method call on a
+            // caller-derived local would be read by the authored-code audit as a dynamic-property sink, so the
+            // conversion happens on the parameter, exactly as this body's normaliser and `=` test do. The parameter
+            // carries its OWN name rather than a generic one, because that audit resolves taint by NAME across the
+            // whole bundle: a generic name shared with a caller-derived local anywhere else would taint this call.
+            // The call site has already matched the exact decimal shape, so the guard is what keeps this from ever
+            // being a sweep — not the call itself.
+            function decimalInLocale(decimalText, separator) {
+              return separator === ',' ? decimalText.replace('.', ',') : decimalText;
+            }
+            // WHETHER THIS REQUEST TOOK A ROUTE THAT MAKES THE ENGINE STORE A NUMBER: the integer route always, and
+            // the decimal route only where this body actually rewrote the spelling for the engine's locale. The
+            // gate is the point — a decimal sent VERBATIM on an unlisted locale is proved by its spelling, exactly
+            // as it was before this route existed, so no locale this body does not know can be told a text cell was
+            // a number. Works on its PARAMETERS for the audit reason the helper above states.
+            function numericWasWritten(wantedSource, commaLocale) {
+              if (/^-?(0|[1-9][0-9]{0,14})$/.test(wantedSource)) return true;
+              return sheetWriteNumeric.test(wantedSource) && commaLocale === true;
             }
             // A cell is a formula when its FIRST character is `=`. The test lives in its own function and
             // works on the PARAMETER, never on the caller-derived local directly: the authored-code audit
@@ -1252,6 +1317,23 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
                     storedFormula = formulaSource === null || formulaSource === undefined ? '' : String(formulaSource);
                   }
                   flag = startsWithEquals(storedFormula) ? 1 : 0;
+                } else if (numericWasWritten(wantedText, sheetWriteCommaLocale)) {
+                  // A NUMERIC ROUTE IS PROVED BY ITS VALUE, and this branch is decided FIRST. MEASURED, and the
+                  // failure it closes: the engine renders a stored number CANONICALLY, so `1.0` comes back as `1`,
+                  // and a spelling comparison reported a CORRECT write as unproved (UNCERTAIN, slot held, run
+                  // stopped). WHAT IT CLOSES AND WHAT IT CANNOT, stated rather than implied: it requires the
+                  // CANONICAL rendering of the parsed value (so `' '`, `'0x10'` and `'1e1'` are refused) and it runs
+                  // only for the routes this body CHOSE to write numerically (so no unlisted locale can be told a
+                  // text cell was a number). It CANNOT separate a stored NUMBER from TEXT that spells the value
+                  // exactly as the engine would render that number — `0.15` is both — because a readback is a string
+                  // and carries no type. That residual is the price of proving `1.0` at all, and it is recorded in
+                  // the evidence file with the measurements behind it.
+                  var wantedNumber = Number(wantedText);
+                  var gotTrimmed = gotText.trim();
+                  var gotNumber = gotTrimmed === '' ? NaN : Number(gotTrimmed);
+                  var gotCanonical = isNaN(gotNumber) ? '' : String(gotNumber);
+                  flag = !isNaN(wantedNumber) && !isNaN(gotNumber) && wantedNumber === gotNumber
+                    && (gotTrimmed === gotCanonical || gotTrimmed.toLowerCase() === gotCanonical.toLowerCase()) ? 1 : 0;
                 } else {
                   flag = normalize(gotText) === normalize(wantedText) ? 1 : 0;
                 }

@@ -41,7 +41,28 @@ function corners(address) {
 // `store` holds what was really written; `noOp` makes every `SetValue` a no-op so a test can prove the
 // readback cannot be satisfied by a cell the write never touched; `values` overrides what `GetValue()`
 // answers for an address, which is how a hostile or differently-behaving build is modelled.
-function sheetDouble(store, { noOp = false, values = new Map(), formulas = new Map(), name = 'Sprint1', index = 0, nameLies = false, indexLies = false, onSetValue = null, onSetActive = null } = {}) {
+// What the MEASURED engine does with a value the body hands it: a real number is rendered canonically, and the
+// locale numeric string this build accepts as a number is stored as one — DOT form on the way back. Everything else
+// (plain text, a formula source, the dot form of a decimal on THIS locale) is stored as the text it was given.
+function canonicalStored(value, locale) {
+  if (typeof value === 'number') return String(value);
+  if (typeof value !== 'string') return value;
+  // MEASURED: a LEADING-ZERO integer is coerced to a number anyway ('007' -> 7, '00' -> 0, '-012' -> -12).
+  if (/^-?0[0-9]+$/.test(value)) return String(Number(value));
+  // MEASURED: an integer past fifteen digits is coerced too, and LOSES precision doing it
+  // ('12345678901234567890' reads back as '12345678901234567000').
+  if (/^-?[0-9]{16,}$/.test(value)) return String(Number(value));
+  // MEASURED, and locale-dependent by the engine's own rule: the separator its locale uses makes a numeric string a
+  // real NUMBER (which then reads back in canonical dot form), while the OTHER separator's form stays TEXT.
+  const usesComma = locale === 1049;
+  const numeric = usesComma
+    ? /^-?(0|[1-9][0-9]*)(,[0-9]+)?$/.test(value)
+    : /^-?(0|[1-9][0-9]*)(\.[0-9]+)?$/.test(value);
+  if (numeric && (usesComma ? value.includes(',') : value.includes('.'))) return String(Number(value.replace(',', '.')));
+  // Everything else — plain text, a formula source, and the non-locale separator form — is stored verbatim as TEXT.
+  return value;
+}
+function sheetDouble(store, { noOp = false, values = new Map(), formulas = new Map(), name = 'Sprint1', index = 0, nameLies = false, indexLies = false, onSetValue = null, onSetActive = null, canonicalNumbers = false, locale = 1049 } = {}) {
   // Storage is keyed by the CANONICAL single-cell address, so `A1` and the explicit `A1:A1` spelling are the
   // SAME cell. That is what the measured build answers, and keying by the literal address instead made the
   // very shape that settled the one-cell question untestable.
@@ -74,7 +95,17 @@ function sheetDouble(store, { noOp = false, values = new Map(), formulas = new M
       const single = box.c1 === box.c2 && box.r1 === box.r2;
       const cell = columnName(box.c1) + String(box.r1);
       return {
-        SetValue(value) { if (onSetValue !== null) onSetValue(); if (!noOp) store.set(cell, value); },
+        SetValue(value) {
+          if (onSetValue !== null) onSetValue();
+          if (noOp) return;
+          // THE ENGINE'S OWN STORAGE RULE, modelled instead of assumed. The default echoes the argument verbatim,
+          // which is enough to pin what the body SENDS — and the review proved exactly what that blindness costs:
+          // every trailing-zero decimal could flip from a proved write to UNCERTAIN without a single test noticing.
+          // With `canonicalNumbers` the double behaves as the MEASURED engine does: the locale numeric string is a
+          // real NUMBER, and the readback is that number rendered canonically (`1.0` -> `1`), which is the shape
+          // the proof's numeric rule exists for.
+          store.set(cell, canonicalNumbers ? canonicalStored(value, locale) : value);
+        },
         // MEASURED: one cell -> a scalar; a block -> a matrix.
         GetValue() { return single ? valueAt(cell) : matrix(box); },
         // MEASURED: a one-cell range answers the real source; a MULTI-CELL range answers the VALUES, so a
@@ -89,7 +120,7 @@ function sheetDouble(store, { noOp = false, values = new Map(), formulas = new M
   };
 }
 
-function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheets = null, activeIndex = 0 } = {}) {
+function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheets = null, canonicalNumbers = false, locale = 1049, activeIndex = 0 } = {}) {
   const commands = [];
   const namespace = { scope: {} };
   let setActiveAttempts = 0;
@@ -110,12 +141,17 @@ function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheet
         index: entry.index,
         nameLies: entry.nameLies === true,
         indexLies: entry.indexLies === true,
+        canonicalNumbers,
+        locale,
         onSetValue: () => { setValueCalls += 1; },
         onSetActive: () => { setActiveAttempts += 1; }
       })
     };
   });
   const api = {
+    // MEASURED on the target build: this primitive answers 1049 (ru-RU). The body reads it instead of assuming a
+    // separator, and a rig that did not offer it would silently test the OTHER locale's route.
+    GetLocale: () => locale,
     GetActiveSheet: () => book[activeIndex].sheet,
     GetSheets: () => book.map((entry) => entry.sheet),
     GetSheet: (key) => (typeof key === 'number'
@@ -517,4 +553,191 @@ test('the phase turns IMMEDIATELY before the first SetValue, and no activation i
   assert.match(source, /GetSheet\(/, 'the body resolves the selected sheet through Api.GetSheet');
   assert.equal(source.includes('SetActive'), false, 'and never activates it');
   await checkpoint();
+});
+
+// --- Exit gate: a DECIMAL numeric string must become a NUMBER, not text -----------------------------
+// MEASURED end to end on a real workbook: an agent built the P&L structure correctly and every year read
+// `#VALUE!`, because the assumptions held `0.15` and `0.6` as TEXT. The body now rewrites a closed decimal shape
+// into the separator the ENGINE reports (`Api.GetLocale()`), which is the only reason a comma is ever produced.
+//
+// WHAT THIS RIG CAN AND CANNOT SEE, stated because a review caught the difference: the double observes the STRING
+// HANDED TO THE PRIMITIVE, so the locale cases below are plumbing pins. Storage is modelled only where a case
+// turns `canonicalNumbers` on, and that is where the PROOF's numeric rule is exercised — the class a spelling
+// comparison silently broke (`1.0` came back as `1`, so a correct write was reported UNCERTAIN and the run
+// stopped with the slot held).
+
+test('the SEPARATOR comes from the engine locale, and a build that stores TEXT is refused', async () => {
+  // This rig echoes the argument verbatim, so it observes exactly ONE thing: the separator the body chose. Both
+  // halves matter — the comma is what the measured locale wants, and the dot is what any other locale wants — and
+  // because the echo models a build that stores the value as TEXT, the outcome must be the fail-CLOSED uncertain
+  // class rather than a text cell published as a success.
+  const comma = rig();
+  const commaResult = await comma.bridge.writeRange({ address: 'A1:D1', cells: [['0.15', '0.6', '123.45', '-0.25']] });
+  assert.equal(comma.store.get('A1'), '0,15', 'the measured locale (1049) gets the comma form');
+  assert.equal(comma.store.get('B1'), '0,6');
+  assert.equal(comma.store.get('C1'), '123,45');
+  assert.equal(comma.store.get('D1'), '-0,25', 'a negative decimal keeps its sign');
+  assert.equal(commaResult.ok, false);
+  assert.equal(commaResult.code, 'APPLY_UNCERTAIN', 'text where a number was asked for is never blessed');
+
+  const dot = rig({ locale: 1033 });
+  await dot.bridge.writeRange({ address: 'A1', cells: [['0.15']] });
+  assert.equal(dot.store.get('A1'), '0.15', 'a dot locale gets the dot it reports, never a comma');
+});
+
+test('on the MEASURED locale the decimal is a real NUMBER and the write is PROVED', async () => {
+  // Storage modelled as the engine behaves: the locale form becomes a real number and reads back in canonical dot
+  // form. This is the half the shipped double cannot see, and the half the P&L needs.
+  const f = rig({ canonicalNumbers: true });
+  const result = await f.bridge.writeRange({ address: 'A1:D1', cells: [['0.15', '0.6', '123.45', '-0.25']] });
+  assert.deepEqual(result, { ok: true, address: 'A1:D1', rowCount: 1, columnCount: 4 });
+  assert.equal(f.store.get('A1'), '0.15', 'the stored number, rendered canonically');
+  assert.equal(f.store.get('D1'), '-0.25');
+  assert.equal(f.bridge.getState().busy, false, 'and the proof releases the slot');
+
+  const dot = rig({ locale: 1033, canonicalNumbers: true });
+  const dotResult = await dot.bridge.writeRange({ address: 'A1', cells: [['0.15']] });
+  assert.equal(dotResult.ok, true, 'a dot locale stores its own form as a number too');
+});
+
+test('the INTEGER branch is unchanged: an integer string is still sent as a real number', async () => {
+  const f = rig();
+  await f.bridge.writeRange({ address: 'A1:C1', cells: [['1000', '0', '-5']] });
+  assert.equal(f.store.get('A1'), 1000);
+  assert.equal(typeof f.store.get('A1'), 'number');
+  assert.equal(f.store.get('B1'), 0);
+  assert.equal(f.store.get('C1'), -5);
+});
+
+test('a TRAILING-ZERO decimal is PROVED against the canonical number the engine stores', async () => {
+  // THE REGRESSION A REVIEW FOUND: with a spelling comparison, `1.0` / `2.50` / `100.00` — ordinary financial
+  // inputs — were written correctly and then reported UNPROVED, settling APPLY_UNCERTAIN with the slot HELD and
+  // stopping the run. With storage modelled the way the engine behaves, only the numeric proof can pass this test.
+  const f = rig({ canonicalNumbers: true });
+  const result = await f.bridge.writeRange({ address: 'A1:E1', cells: [['1.0', '0.10', '2.50', '100.00', '0.0000001']] });
+  assert.deepEqual(result, { ok: true, address: 'A1:E1', rowCount: 1, columnCount: 5 });
+  assert.equal(f.store.get('A1'), '1', 'the engine renders the stored number canonically');
+  assert.equal(f.store.get('C1'), '2.5');
+  assert.equal(f.bridge.getState().busy, false, 'and the proof releases the slot');
+});
+
+test('a decimal whose VALUE cannot be read back is never blessed as a proof', async () => {
+  // A build that stored the text (the dot on a comma locale, or the comma on a dot locale) must NOT be reported as
+  // a stored number: the numeric proof parses the RAW readback, so text that only looks like the number is refused
+  // — fail-CLOSED, the uncertain class, rather than a text cell published as a success.
+  const f = rig({ values: new Map([['A1', '0,15']]), noOp: true });
+  const result = await f.bridge.writeRange({ address: 'A1', cells: [['0.15']] });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, 'APPLY_UNCERTAIN', 'an unparsable readback is the uncertain class, never a proof');
+  assert.equal(f.bridge.getState().busy, true, 'and the slot stays HELD');
+});
+
+test('ORDINARY TEXT is sent verbatim — and the labels below record what the ENGINE then does with it', async () => {
+  // The rig sees the ARGUMENT, so these cases pin the body's classification, not storage. The engine's own measured
+  // outcomes are recorded because three of them are NOT "it stays text", and a test that claimed otherwise would be
+  // asserting a falsehood about the target build:
+  //   * '007'  — the engine COERCES a leading-zero integer to a number and reads back '7', so the write is refused
+  //              by the proof (UNCERTAIN, slot held): a deliberately unsupported class, not a text success;
+  //   * '1,5'  — a locale numeric string IS a real number on this build, so it is numeric by the engine's rule even
+  //              though this body never rewrites a comma;
+  //   * '=0.15*2' — a formula source with a dot is rejected by the parser and CLEARS the cell, which is why the
+  //              proof reads the formula back on its own single-cell range.
+  const f = rig({ canonicalNumbers: true });
+  const cells = [['Москва', 'Допущение', 'v1.2', '1.2.3', '.5', '1,5', '00.15', '1e3', '+0.15', '1.']];
+  const result = await f.bridge.writeRange({ address: 'A1:J1', cells });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  for (let index = 0; index < cells[0].length; index += 1) {
+    const column = String.fromCharCode(65 + index);
+    const value = cells[0][index];
+    const stored = f.store.get(column + '1');
+    if (value === '1,5') assert.equal(stored, '1.5', 'the engine treats a locale numeric string as a number');
+    else assert.equal(stored, value, `${column}1 is passed through unchanged`);
+  }
+});
+
+test("a leading-zero integer is passed through, and the engine's coercion is what refuses it", async () => {
+  // The body hands '007' over verbatim — the rig proves that much — and the ENGINE then stores 7, so the proof
+  // refutes the mismatch and the outcome is the fail-safe uncertain class. Recorded in the plan and in the body's
+  // own measurement notes; this test pins the one half the rig can see.
+  const f = rig();
+  await f.bridge.writeRange({ address: 'A1', cells: [['007']] });
+  assert.equal(f.store.get('A1'), '007', 'the body does not renumber it');
+  const coerced = rig({ canonicalNumbers: true });
+  const result = await coerced.bridge.writeRange({ address: 'A1', cells: [['007']] });
+  assert.equal(result.ok, false, 'a build that coerces it cannot prove the write');
+  assert.equal(result.code, 'APPLY_UNCERTAIN');
+});
+
+test('the fraction has NO cap, and an over-long integer part is deliberately left as text', async () => {
+  const f = rig({ canonicalNumbers: true });
+  const long = await f.bridge.writeRange({ address: 'A1', cells: [['0.1234567890123456789']] });
+  assert.equal(long.ok, true, 'a long fraction is numeric, not text one digit past a bound');
+  const wide = rig({ canonicalNumbers: true });
+  const wideResult = await wide.bridge.writeRange({ address: 'A1', cells: [['1234567890123456.5']] });
+  assert.equal(wideResult.ok, true, 'a 16-digit integer part is passed verbatim and proved as the text it is');
+  assert.equal(wide.store.get('A1'), '1234567890123456.5', 'the body never sends it as a lossy number');
+});
+
+test('a FORMULA stays on the formula path and is never rewritten as a number', async () => {
+  const f = rig();
+  await f.bridge.writeRange({ address: 'A1:C1', cells: [['= B2-B3', '=0.15*2', '=Допущения!B2']] });
+  assert.equal(f.store.get('A1'), '= B2-B3');
+  assert.equal(f.store.get('B1'), '=0.15*2', 'a decimal INSIDE a formula is not touched by the value route');
+  assert.equal(f.store.get('C1'), '=Допущения!B2');
+});
+
+// --- The holes a SECOND review demonstrated, pinned so they cannot reopen ---------------------------
+
+test('a comma locale OTHER than the measured one also gets the locale form', async () => {
+  // The body carries an EXPLICIT set of comma-decimal locales, so this catches a rule that treated 1049 as the
+  // only comma locale and sent the dot everywhere else — which the engine there stores as TEXT.
+  for (const locale of [1031, 1036, 1034, 1040, 1046, 1045, 1055, 1029, 1058]) {
+    const f = rig({ locale });
+    await f.bridge.writeRange({ address: 'A1', cells: [['0.15']] });
+    assert.equal(f.store.get('A1'), '0,15', `locale ${locale} is a comma locale`);
+  }
+});
+
+test('a UNLISTED locale is not told a text cell was a number', async () => {
+  // The separator defaults to the dot (the pre-existing behaviour) and the numeric claim is NOT made, so a decimal
+  // there is proved by its spelling: the body never asserts numericity for a locale it does not know.
+  const f = rig({ locale: 9999 });
+  await f.bridge.writeRange({ address: 'A1', cells: [['0.15']] });
+  assert.equal(f.store.get('A1'), '0.15', 'the dot form, as before the decimal route existed');
+});
+
+test('a BLANK or non-canonical readback never proves a number', async () => {
+  // A readback is a string, so a value-equality test alone blesses far too much: whitespace parses as 0, '0x10' as
+  // 16 and '1e1' as 10. The proof requires the CANONICAL rendering of the parsed value.
+  const cases = [['0', ' '], ['0', '\t'], ['16', '0x10'], ['10', '1e1']];
+  for (const [request, readback] of cases) {
+    const f = rig({ noOp: true, values: new Map([['A1', readback]]) });
+    const result = await f.bridge.writeRange({ address: 'A1', cells: [[request]] });
+    assert.equal(result.ok, false, `a readback of ${JSON.stringify(readback)} must not prove ${request}`);
+    assert.equal(result.code, 'APPLY_UNCERTAIN', JSON.stringify(readback));
+  }
+  // and the canonical rendering of the SAME value is a proof, so the rule is not simply "refuse everything"
+  const ok = rig({ noOp: true, values: new Map([['A1', '16']]) });
+  assert.equal((await ok.bridge.writeRange({ address: 'A1', cells: [['16']] })).ok, true);
+});
+
+test('a LONG fraction is really sent in the locale form, not merely reported ok', async () => {
+  // The earlier version of this case asserted only `ok:true`, which the verbatim TEXT path also satisfies — so a
+  // fraction cap re-opened the very defect one digit past the bound without failing anything. This asserts what the
+  // body SENDS, and the stored value beside it.
+  const sent = rig();
+  await sent.bridge.writeRange({ address: 'A1', cells: [['0.1234567890123456789']] });
+  assert.equal(sent.store.get('A1'), '0,1234567890123456789', 'every digit is converted, not the first nine');
+  const stored = rig({ canonicalNumbers: true });
+  await stored.bridge.writeRange({ address: 'A1', cells: [['0.1234567890123456789']] });
+  assert.equal(stored.store.get('A1'), '0.12345678901234568', 'and the engine holds the double');
+});
+
+test("an integer past the fifteen-digit cap is REFUSED, not blessed as a lossy number", async () => {
+  // MEASURED: the engine coerces a twenty-digit integer and loses precision ('…7890' reads back '…67000'). The body
+  // deliberately does not send it as a number, and the spelling proof refutes the coercion: the fail-safe class.
+  const f = rig({ canonicalNumbers: true });
+  const result = await f.bridge.writeRange({ address: 'A1', cells: [['12345678901234567890']] });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, 'APPLY_UNCERTAIN', 'a lossy coercion is never reported as a success');
 });

@@ -210,7 +210,7 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // the Word fallback. `SetValue` is what identifies it: the Cell READ beside it authors none, and no
       // Word body reaches a spreadsheet primitive. These are BUNDLE-CONTENT pins and not behavioural ones,
       // so what they hold is the SHAPE of the shipped body: its parameter channel (`scope`), its explicit
-      // phase slot in BOTH directions, the ONE write primitive authored exactly twice (the integer route and
+      // phase slot in BOTH directions, the ONE write primitive (the integer route, the DECIMAL locale route and the
       // the string route), the two reads its proof is built from, and the absence of the legacy whole-array
       // primitive and of any document push. What is NOT pinned here is what the body DECIDES — the phase/flag
       // classification and the bound arithmetic are covered through the real bridge by
@@ -329,8 +329,15 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /\bscope\b/, 'the sheet-write body takes its address and matrix from the injected command scope');
         assert.match(code, /POST_INSERT/, 'and marks the moment the sheet may already have been touched');
         assert.match(code, /PRE_INSERT/, 'and its pre-write refusals with the explicit phase');
-        assert.equal((code.match(/SetValue\s*\(/g) ?? []).length, 2,
-          'the ONE write primitive is authored exactly twice: the integer route and the string route');
+        assert.equal((code.match(/SetValue\s*\(/g) ?? []).length, 3,
+          'the ONE write primitive is authored exactly three times: the integer route as a real number, the DECIMAL route in the engine locale numeric form, and the verbatim route for text and formulas — and nowhere else');
+        // A COUNT alone cannot tell three real routes from a swap, so the DECIMAL route is also pinned by its own
+        // exact expression: its closed pattern, the locale primitive it reads, and the parameter-boundary helper it
+        // sends through. Deleting it and adding another route keeps the count and fails here.
+        assert.match(code, /sheetWriteDecimal\s*=\s*\/\^-\?\(0\|\[1-9\]/, 'the decimal route keeps its CLOSED pattern');
+        assert.match(code, /decimalInLocale\(\s*\w+\s*,\s*sheetWriteSeparator\)/, 'and sends it through the parameter-boundary helper with the engine separator');
+        assert.match(code, /Api\.GetLocale/, 'and reads the separator from the engine instead of assuming one');
+        assert.match(code, /decimalInLocale\(/, 'and converts on the parameter boundary the audit requires');
         assert.match(code, /GetValue\(\)/, 'and proves itself by reading the block back');
         assert.match(code, /GetFormula\(\)/, 'and by requiring a written formula to HOLD a formula');
         assert.match(code, /GetSheet\(/, 'and resolves a caller-NAMED sheet through the measured lookup, for the write AND its readback');
