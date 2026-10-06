@@ -299,6 +299,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       } else if (code.includes('GetActiveSheet')) {
         assert.match(code, /\bscope\b/, 'the sheet-read body takes its address and cap from the injected command scope');
         assert.match(code, /GetActiveSheet\(\)/, 'and reads the active sheet through the measured primitive');
+        assert.match(code, /GetSheet\(/, 'and resolves a CALLER-NAMED sheet through the measured lookup, never by switching the active one');
+        assert.equal(code.includes('SetActive'), false, 'a read never activates a sheet');
         assert.match(code, /GetUsedRange\(\)/, 'and discovers the used range through the only measured route');
         assert.match(code, /GetSheets\(\)/, 'and reads the workbook listing for the sheet count');
         // THE ADDRESSAL PASS IS PINNED BY A COUNT, not by presence: both the old and the fixed body author

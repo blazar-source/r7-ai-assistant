@@ -38,10 +38,12 @@ function envelope(overrides = {}) {
 // NOTHING.
 function bridgeWith(sheet, range) {
   const calls = { readSheet: 0, readRange: 0 };
+  const requests = { readSheet: [], readRange: [] };
   return {
     calls,
-    async readSheet() { calls.readSheet += 1; return sheet; },
-    async readRange() { calls.readRange += 1; return range; }
+    requests,
+    async readSheet(request) { calls.readSheet += 1; requests.readSheet.push(request); return sheet; },
+    async readRange(request) { calls.readRange += 1; requests.readRange.push(request); return range; }
   };
 }
 function toolNamed(bridge, name) {
@@ -243,4 +245,95 @@ test('both Cell descriptors carry a one-line authored description inside the byt
     assert.deepEqual(entry.requires, [entry.kind === 'mutate' ? 'document.write' : 'document.read']);
     assert.equal(entry.policy, 'auto');
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE SHEET SELECTOR on `read_range` (T5.3a). The schema has TWO closed spellings because the measured lookup
+// takes a name or an index and this schema language has no union; the handler refuses both at once as ambiguous,
+// and NO selector keeps the previous active-sheet behaviour byte for byte.
+// ---------------------------------------------------------------------------------------------------------
+test('read_range offers the sheet selector as two optional, closed spellings', () => {
+  const tool = toolNamed(bridgeWith(envelope(), envelope()), 'read_range');
+  assert.equal(tool.schema.additionalProperties, false);
+  assert.deepEqual(Object.keys(tool.schema.properties).sort(), ['address', 'sheet', 'sheetIndex']);
+  assert.deepEqual(tool.schema.required, ['address'], 'the address is still the only required argument');
+  assert.equal(tool.schema.properties.sheet.maxBytes, LIMITS.sheetListNameBytes);
+  assert.equal(tool.schema.properties.sheetIndex.maximum, LIMITS.sheetListMax - 1);
+  assert.equal(tool.schema.properties.sheetIndex.minimum, 0);
+});
+
+test('read_range forwards the selector, and no selector forwards NULL rather than a guess', async () => {
+  const cap = LIMITS.sheetReadCellsMax;
+  const plain = bridgeWith(envelope(), envelope());
+  await toolNamed(plain, 'read_range').execute({ address: 'A1:B2' }, cellCtx);
+  assert.deepEqual(plain.requests.readRange[0], { maxCells: cap, address: 'A1:B2', sheetName: null, sheetIndex: null });
+
+  const byName = bridgeWith(envelope(), envelope());
+  await toolNamed(byName, 'read_range').execute({ address: 'A1:B2', sheet: 'Данные' }, cellCtx);
+  assert.deepEqual(byName.requests.readRange[0], { maxCells: cap, address: 'A1:B2', sheetName: 'Данные', sheetIndex: null });
+
+  const byIndex = bridgeWith(envelope(), envelope());
+  await toolNamed(byIndex, 'read_range').execute({ address: 'A1:B2', sheetIndex: 1 }, cellCtx);
+  assert.deepEqual(byIndex.requests.readRange[0], { maxCells: cap, address: 'A1:B2', sheetName: null, sheetIndex: 1 });
+
+  // INDEX ZERO IS A SELECTOR, NOT AN ABSENT ONE: a handler that wrote `sheetIndex || null` would send `null`
+  // here and silently read the active sheet, which only a zero case can distinguish.
+  const zero = bridgeWith(envelope(), envelope());
+  await toolNamed(zero, 'read_range').execute({ address: 'A1:B2', sheetIndex: 0 }, cellCtx);
+  assert.deepEqual(zero.requests.readRange[0], { maxCells: cap, address: 'A1:B2', sheetName: null, sheetIndex: 0 });
+});
+
+test('read_range accepts a name exactly at the byte bound and refuses one byte more', async () => {
+  const exact = 'я'.repeat(LIMITS.sheetListNameBytes / 2);
+  assert.equal(utf8ByteLength(exact), LIMITS.sheetListNameBytes);
+  const served = bridgeWith(envelope(), envelope());
+  const result = await toolNamed(served, 'read_range').execute({ address: 'A1', sheet: exact }, cellCtx);
+  assert.equal(result.ok, true, 'a name at exactly the bound is a valid selector');
+  assert.equal(served.calls.readRange, 1);
+  const refused = bridgeWith(envelope(), envelope());
+  const over = await toolNamed(refused, 'read_range').execute({ address: 'A1', sheet: exact + 'я' }, cellCtx);
+  assert.equal(over.code, 'TOOL_ERROR');
+  assert.equal(refused.calls.readRange, 0);
+});
+
+test('read_range refuses an ambiguous or out-of-contract selector BEFORE any dispatch', async () => {
+  const cases = [
+    [{ address: 'A1', sheet: 'Sprint1', sheetIndex: 0 }, 'BOTH spellings'],
+    [{ address: 'A1', sheet: '' }, 'an empty name'],
+    [{ address: 'A1', sheet: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) }, 'a name above the byte bound'],
+    [{ address: 'A1', sheet: 42 }, 'a numeric name'],
+    [{ address: 'A1', sheetIndex: -1 }, 'a negative index'],
+    [{ address: 'A1', sheetIndex: 1.5 }, 'a fractional index'],
+    [{ address: 'A1', sheetIndex: LIMITS.sheetListMax }, 'an index at the workbook bound'],
+    [{ address: 'A1', sheet: 'Sprint1', extra: 1 }, 'an unknown key']
+  ];
+  for (const [args, why] of cases) {
+    const bridge = bridgeWith(envelope(), envelope());
+    const result = await toolNamed(bridge, 'read_range').execute(args, cellCtx);
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.equal(bridge.calls.readRange, 0, `${why}: nothing may be dispatched`);
+  }
+});
+
+test('read_range republishes the narrower refusal a missing sheet answers', async () => {
+  // The body answers its own ONE-slot `TOOL_ERROR` when the selector named nothing, because that is an argument
+  // the caller can fix and a read changed nothing; this pins that the class crosses the tool unchanged.
+  const bridge = bridgeWith(envelope(), { ok: false, code: 'TOOL_ERROR' });
+  const result = await toolNamed(bridge, 'read_range').execute({ address: 'A1', sheet: 'НетТакого' }, cellCtx);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'TOOL_ERROR');
+  assert.equal(bridge.calls.readRange, 1);
+});
+
+test('a selected read publishes the IDENTITY of what it read', async () => {
+  // The result shape is unchanged on purpose: `sheetName`/`sheetIndex` already describe the sheet that was read,
+  // and with a selector they describe the SELECTED one — which is what lets a caller holding several reads tell
+  // them apart without a new field.
+  const bridge = bridgeWith(envelope(), envelope({ sheetName: 'Данные', sheetIndex: 1, values: [['x', 'y'], ['z', 'w']] }));
+  const result = await toolNamed(bridge, 'read_range').execute({ address: 'A1:B2', sheet: 'Данные' }, cellCtx);
+  assert.equal(result.ok, true);
+  assert.equal(result.data.sheetName, 'Данные');
+  assert.equal(result.data.sheetIndex, 1);
+  assert.deepEqual(result.data.values, [['x', 'y'], ['z', 'w']]);
 });

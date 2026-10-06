@@ -23,6 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createR7Bridge } from '../../src/plugin/bridge.js';
 import { LIMITS } from '../../src/shared/limits.js';
+import { utf8ByteLength } from '../../src/shared/bytes.js';
 
 const checkpoint = () => new Promise(resolve => setImmediate(resolve));
 
@@ -48,7 +49,7 @@ function corners(address) {
 // with `=` is a formula SOURCE. `computed` is what a formula's own `GetValue()` answers, because that is
 // a different question from what the cell holds. `failAt` makes the Nth `GetRange` call answer `null`,
 // which models a capability that disappears part-way through an addressal read.
-function readSheetDouble(store, { computed = new Map(), usedAddress = null, noGetFormula = false, failAt = 0, flatArrayAt = null, noNormalise = false, shiftAddress = false, noColonAddress = false, absoluteAddress = false, growAddress = false, raggedAt = -1, singleOverrides = new Map(), noGetValueOnCell = false } = {}) {
+function readSheetDouble(store, { computed = new Map(), usedAddress = null, noGetFormula = false, failAt = 0, flatArrayAt = null, noNormalise = false, shiftAddress = false, noColonAddress = false, absoluteAddress = false, growAddress = false, raggedAt = -1, singleOverrides = new Map(), noGetValueOnCell = false, name = 'Sprint1', index = 0, onSetActive = null } = {}) {
   let rangeCalls = 0;
   function held(cell) { const value = store.get(cell); return value === undefined ? '' : String(value); }
   function valueAt(cell) {
@@ -118,8 +119,11 @@ function readSheetDouble(store, { computed = new Map(), usedAddress = null, noGe
     return range;
   }
   return {
-    GetName() { return 'Sprint1'; },
-    GetIndex() { return 0; },
+    GetName() { return name; },
+    GetIndex() { return index; },
+    // A READ MUST NEVER SWITCH THE ACTIVE SHEET, so the double records any attempt: the selector path reads the
+    // sheet OBJECT and must not reach for activation at all.
+    SetActive() { if (onSetActive !== null) onSetActive(); },
     GetRange(address) {
       rangeCalls += 1;
       if (failAt > 0 && rangeCalls === failAt) return null;
@@ -129,11 +133,23 @@ function readSheetDouble(store, { computed = new Map(), usedAddress = null, noGe
   };
 }
 
-function rig({ store = new Map(), computed, usedAddress = null, noGetFormula = false, failAt = 0, flatArrayAt = null, noNormalise = false, shiftAddress = false, noColonAddress = false, absoluteAddress = false, growAddress = false, raggedAt = -1, singleOverrides, noGetValueOnCell = false, editorType = 'cell' } = {}) {
+function rig({ store = new Map(), computed, usedAddress = null, noGetFormula = false, failAt = 0, flatArrayAt = null, noNormalise = false, shiftAddress = false, noColonAddress = false, absoluteAddress = false, growAddress = false, raggedAt = -1, singleOverrides, noGetValueOnCell = false, editorType = 'cell', sheets = null, activeIndex = 0 } = {}) {
   const commands = [];
   const namespace = { scope: {} };
-  const sheet = readSheetDouble(store, { computed, usedAddress, noGetFormula, failAt, flatArrayAt, noNormalise, shiftAddress, noColonAddress, absoluteAddress, growAddress, raggedAt, singleOverrides, noGetValueOnCell });
-  const api = { GetActiveSheet: () => sheet, GetSheets: () => [sheet] };
+  let setActiveAttempts = 0;
+  const shared = { computed, usedAddress, noGetFormula, failAt, flatArrayAt, noNormalise, shiftAddress, noColonAddress, absoluteAddress, growAddress, raggedAt, singleOverrides, noGetValueOnCell };
+  // ONE BOOK, possibly with SEVERAL sheets: the selector tests need two sheets whose cells differ, and they need
+  // the collection and the lookup to answer the SAME sheet objects so "the active sheet never moved" is provable.
+  // A per-sheet entry may override any shared double option, which is what lets two sheets differ in their FORMULA
+  // SOURCES while agreeing on their computed values.
+  const book = (sheets ?? [{ name: 'Sprint1', index: 0, store }]).map((entry) => readSheetDouble(entry.store ?? new Map(), {
+    ...shared, ...entry, name: entry.name, index: entry.index, onSetActive: () => { setActiveAttempts += 1; }
+  }));
+  const api = {
+    GetActiveSheet: () => book[activeIndex],
+    GetSheets: () => book.slice(),
+    GetSheet: (key) => (typeof key === 'number' ? (book[key] ?? null) : (book.find((candidate) => candidate.GetName() === key) ?? null))
+  };
   const plugin = { info: { editorType },
     callCommand(body, close, recalculate, callback) {
       const source = Function.prototype.toString.call(body);
@@ -145,7 +161,7 @@ function rig({ store = new Map(), computed, usedAddress = null, noGetFormula = f
     } };
   const bridge = createR7Bridge(plugin, { editorType, ascNamespace: namespace,
     clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
-  return { bridge, commands, sheet };
+  return { bridge, commands, sheet: book[activeIndex], book, setActiveAttempts: () => setActiveAttempts };
 }
 
 const CAP = LIMITS.sheetReadCellsMax;
@@ -419,4 +435,177 @@ test('the read is still a read: neither call reaches a mutation primitive', asyn
     assert.equal(command.source.includes('Push('), false);
   }
   await checkpoint();
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE SHEET SELECTOR (T5.3a): read a range of a NAMED or INDEXED sheet, through the measured `Api.GetSheet`,
+// without switching the active sheet. With no selector the leg keeps reading the active sheet exactly as before.
+// ---------------------------------------------------------------------------------------------------------
+function twoSheetRig() {
+  return rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map([['A1', 'active-a1'], ['B1', 'active-b1']]) },
+      { name: 'Данные', index: 1, store: new Map([['A1', 'data-a1'], ['B1', 'data-b1']]) }
+    ]
+  });
+}
+
+test('a read WITHOUT a selector still reads the ACTIVE sheet and publishes its identity', async () => {
+  const f = twoSheetRig();
+  const result = await f.bridge.readRange({ address: 'A1:B1', maxCells: CAP });
+  assert.equal(result.ok, true);
+  assert.equal(result.sheetName, 'Sprint1');
+  assert.equal(result.sheetIndex, 0);
+  assert.deepEqual(result.values, [['active-a1', 'active-b1']]);
+  assert.equal(f.commands[0].scope.sheetName, null, 'no selector crosses as null, never as a guessed name');
+  assert.equal(f.commands[0].scope.sheetIndex, null);
+  assert.equal(f.setActiveAttempts(), 0);
+});
+
+test('a read BY NAME reads THAT sheet and never switches the active one', async () => {
+  const f = twoSheetRig();
+  const result = await f.bridge.readRange({ address: 'A1:B1', maxCells: CAP, sheetName: 'Данные' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.values, [['data-a1', 'data-b1']], 'the values are the SELECTED sheet own cells');
+  // The published identity describes WHAT WAS READ, which is what lets a caller holding several reads tell them
+  // apart; the ACTIVE sheet is untouched and no activation was even attempted.
+  assert.equal(result.sheetName, 'Данные');
+  assert.equal(result.sheetIndex, 1);
+  assert.equal(f.setActiveAttempts(), 0, 'a read never activates anything');
+  assert.equal(f.commands[0].scope.sheetName, 'Данные');
+  assert.equal(f.commands[0].scope.sheetIndex, null);
+});
+
+test('a read BY INDEX reads that sheet, and the answer carries its identity', async () => {
+  const f = twoSheetRig();
+  const result = await f.bridge.readRange({ address: 'A1', maxCells: CAP, sheetIndex: 1 });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.values, [['data-a1']]);
+  assert.equal(result.sheetName, 'Данные');
+  assert.equal(result.sheetIndex, 1);
+  assert.equal(f.setActiveAttempts(), 0);
+  assert.equal(f.commands[0].scope.sheetIndex, 1);
+});
+
+test('a selector that names NOTHING is a KNOWN argument refusal, not a capability one', async () => {
+  for (const selector of [{ sheetName: 'НетТакогоЛиста' }, { sheetIndex: 7 }]) {
+    const f = twoSheetRig();
+    const result = await f.bridge.readRange({ address: 'A1', maxCells: CAP, ...selector });
+    assert.equal(result.ok, false, JSON.stringify(selector));
+    assert.equal(result.code, 'TOOL_ERROR', JSON.stringify(selector));
+    assert.deepEqual(f.commands[0].answered, ['TOOL_ERROR'], 'the narrower one-slot refusal reaches the bridge');
+    // A read changed nothing, so the slot is released and the next request really reaches the editor again.
+    const second = await f.bridge.readRange({ address: 'A1', maxCells: CAP });
+    assert.equal(second.ok, true);
+    assert.equal(f.commands.length, 2, 'the refusal released the slot');
+  }
+});
+
+test('the selector is CLOSED before any dispatch, and an ambiguous one is refused', async () => {
+  const cases = [
+    [{ sheetName: '' }, 'an empty name'],
+    [{ sheetName: 'я'.repeat(LIMITS.sheetListNameBytes / 2 + 1) }, 'a name above the byte bound'],
+    [{ sheetName: 42 }, 'a numeric name'],
+    [{ sheetIndex: -1 }, 'a negative index'],
+    [{ sheetIndex: 1.5 }, 'a fractional index'],
+    [{ sheetIndex: LIMITS.sheetListMax }, 'an index at the workbook bound'],
+    [{ sheetName: 'Sprint1', sheetIndex: 0 }, 'BOTH spellings at once'],
+    [{ sheetName: 'Sprint1', extra: 1 }, 'an unknown key']
+  ];
+  for (const [selector, why] of cases) {
+    const f = twoSheetRig();
+    const result = await f.bridge.readRange({ address: 'A1', maxCells: CAP, ...selector });
+    assert.equal(result.ok, false, why);
+    assert.equal(result.code, 'TOOL_ERROR', why);
+    assert.equal(f.commands.length, 0, `${why}: nothing may reach the editor`);
+  }
+});
+
+test('the selector path authored in the body uses the measured lookup, not the active sheet', async () => {
+  const f = twoSheetRig();
+  await f.bridge.readRange({ address: 'A1', maxCells: CAP, sheetName: 'Данные' });
+  const source = f.commands[0].source;
+  assert.match(source, /GetSheet\(/, 'the body resolves the selected sheet through Api.GetSheet');
+  assert.equal(source.includes('SetActive'), false, 'and never activates it');
+  await checkpoint();
+});
+
+test('sheetIndex 0 selects the FIRST sheet even when a DIFFERENT sheet is active', async () => {
+  // THE INDEX-ZERO TRAP: an implementation that treats 0 as "no selector" (`sheetIndex || null`, or a truthiness
+  // test in the body) reads the ACTIVE sheet and is invisible unless the active sheet is NOT index 0.
+  const f = rig({
+    activeIndex: 1,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map([['A1', 'first-a1']]) },
+      { name: 'Второй', index: 1, store: new Map([['A1', 'second-a1']]) }
+    ]
+  });
+  const result = await f.bridge.readRange({ address: 'A1', maxCells: CAP, sheetIndex: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(result.sheetName, 'Sprint1', 'index 0 is a REAL selector, not an absent one');
+  assert.equal(result.sheetIndex, 0);
+  assert.deepEqual(result.values, [['first-a1']], 'and the values are that sheet own cell');
+  assert.equal(f.commands[0].scope.sheetIndex, 0, 'the zero crosses as 0, never as null');
+  assert.equal(f.setActiveAttempts(), 0);
+});
+
+test('the FORMULAS a selected read publishes are the SELECTED sheet own sources', async () => {
+  // Two sheets whose B2 answers the SAME computed value from a DIFFERENT source: the values agree, so the values
+  // alone cannot tell a correct read from one whose formula pass ran on the ACTIVE sheet — only the sources can,
+  // and attributing another sheet's source to this sheet's cell is exactly the class the read leg exists to avoid.
+  const f = rig({
+    activeIndex: 0,
+    sheets: [
+      { name: 'Sprint1', index: 0, store: new Map([['A2', 'Выручка'], ['B2', '=1+2']]), computed: new Map([['B2', '3']]) },
+      { name: 'Данные', index: 1, store: new Map([['A2', 'Выручка'], ['B2', '=9+9']]), computed: new Map([['B2', '3']]) }
+    ]
+  });
+  const selected = await f.bridge.readRange({ address: 'A2:B2', maxCells: CAP, sheetName: 'Данные' });
+  assert.equal(selected.ok, true);
+  assert.equal(selected.sheetName, 'Данные');
+  assert.deepEqual(selected.values, [['Выручка', '3']], 'both sheets compute the same value');
+  assert.deepEqual(selected.formulas, [['', '=9+9']], 'but the SOURCE must be the selected sheet own formula');
+  // And the ACTIVE sheet's own read still answers ITS source, so the pass is not simply returning one of them.
+  const active = await f.bridge.readRange({ address: 'A2:B2', maxCells: CAP });
+  assert.deepEqual(active.formulas, [['', '=1+2']]);
+  assert.equal(f.setActiveAttempts(), 0);
+  await checkpoint();
+});
+
+test('a name exactly AT the byte bound is served, so the bound is not off by one', async () => {
+  const exact = 'я'.repeat(LIMITS.sheetListNameBytes / 2);
+  assert.equal(utf8ByteLength(exact), LIMITS.sheetListNameBytes);
+  const f = rig({ sheets: [{ name: exact, index: 0, store: new Map([['A1', 'ok']]) }] });
+  const result = await f.bridge.readRange({ address: 'A1', maxCells: CAP, sheetName: exact });
+  assert.equal(result.ok, true, 'a name at exactly the bound is a valid selector');
+  assert.equal(result.sheetName, exact);
+  // One byte MORE is refused, before any dispatch.
+  const over = rig({ sheets: [{ name: exact, index: 0, store: new Map([['A1', 'ok']]) }] });
+  const refused = await over.bridge.readRange({ address: 'A1', maxCells: CAP, sheetName: exact + 'я' });
+  assert.equal(refused.code, 'TOOL_ERROR');
+  assert.equal(over.commands.length, 0);
+});
+
+test('readSheet REFUSES a selector rather than silently serving the active sheet', async () => {
+  // This leg reads the active sheet and exposes no selector: a raw caller that passes one must be told, because the
+  // shared body below WOULD happily honour it.
+  const f = twoSheetRig();
+  const result = await f.bridge.readSheet({ maxCells: CAP, sheetName: 'Данные' });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'TOOL_ERROR');
+  assert.equal(f.commands.length, 0, 'nothing was dispatched');
+  // The leg itself still works: a rig whose sheet HAS a used range answers it.
+  const used = rig({ store: new Map([['A1', 'a']]), usedAddress: 'A1:A1' });
+  assert.equal((await used.bridge.readSheet({ maxCells: CAP })).ok, true);
+});
+
+test('a read request that is not an object is refused as a bad request', async () => {
+  for (const raw of [undefined, null, [], 'A1']) {
+    const f = twoSheetRig();
+    const result = await f.bridge.readRange(raw);
+    assert.equal(result.ok, false, String(raw));
+    assert.equal(result.code, 'TOOL_ERROR', String(raw));
+    assert.equal(f.commands.length, 0, String(raw));
+  }
 });

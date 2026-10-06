@@ -538,6 +538,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             refusal.push('CAPABILITY_UNAVAILABLE');
             return refusal;
           }
+          // A SECOND, NARROWER REFUSAL: the caller named a sheet that is not in this book. That is an ARGUMENT
+          // the caller can fix by naming another sheet and the read has changed nothing, so it is a known tool
+          // error rather than "this leg cannot read".
+          function selectorRefusal() {
+            var refusal = [];
+            refusal.push('TOOL_ERROR');
+            return refusal;
+          }
           try {
             var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
             if (request === null) return readRefusal();
@@ -556,7 +564,30 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // bodies: an editor that does not expose one of them answers this body's own refusal rather
             // than a read of invented values.
             if (typeof Api.GetActiveSheet !== 'function' || typeof Api.GetSheets !== 'function') return readRefusal();
-            var sheet = Api.GetActiveSheet();
+            // WHICH SHEET IS READ: the caller's selector, or the ACTIVE sheet when the caller named none. The
+            // selector is resolved through the MEASURED lookup `Api.GetSheet(name | index)` — the one form that
+            // addresses a sheet — and that sheet OBJECT is then read directly, so the active sheet is never
+            // switched for a read (measured: reading another sheet leaves the active one exactly where it was).
+            var selectorName = request.sheetName === undefined ? null : request.sheetName;
+            var selectorIndex = request.sheetIndex === undefined ? null : request.sheetIndex;
+            // A MALFORMED SELECTOR ANSWERS THE SAME ARGUMENT CLASS THE BRIDGE ANSWERS ABOVE, not the capability
+            // class: this body is shared with `read_sheet`, and ONE argument must not have two failure classes
+            // depending on which layer noticed. (Today the bridge validates first, so these are defence in depth.)
+            // THEY ARE DELIBERATELY UNREACHABLE THROUGH BOTH BRIDGE METHODS, stated because a mutant campaign
+            // proved it: putting the capability class back here leaves every test green. They stay because
+            // `Api.GetSheet` with a non-string or a negative key is NOT measured, and a build that THREW there
+            // would otherwise be reported as "this leg cannot read" instead of "your selector is wrong".
+            if (selectorName !== null && typeof selectorName !== 'string') return selectorRefusal();
+            if (selectorName !== null && selectorName === '') return selectorRefusal();
+            if (selectorIndex !== null && (typeof selectorIndex !== 'number' || selectorIndex < 0 || selectorIndex % 1 !== 0)) return selectorRefusal();
+            var sheet = null;
+            if (selectorName !== null || selectorIndex !== null) {
+              if (typeof Api.GetSheet !== 'function') return readRefusal();
+              sheet = selectorName !== null ? Api.GetSheet(selectorName) : Api.GetSheet(selectorIndex);
+              if (sheet === null || sheet === undefined) return selectorRefusal();
+            } else {
+              sheet = Api.GetActiveSheet();
+            }
             if (sheet === null || sheet === undefined) return readRefusal();
             if (typeof sheet.GetName !== 'function' || typeof sheet.GetRange !== 'function') return readRefusal();
             var sheetName = sheet.GetName();
@@ -3951,6 +3982,9 @@ function decodeSheetRead(value, maxCells) {
     members.push(descriptor.value);
   }
   if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  // THE NARROWER ONE-SLOT REFUSAL this leg answers when a SHEET SELECTOR named nothing that exists: a known
+  // argument error the caller can fix, and a read that changed nothing.
+  if (size === 1 && members[0] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
   if (size < SHEET_READ_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const sheetName = members[0];
   const sheetIndex = members[1];
@@ -6464,21 +6498,71 @@ export function createR7Bridge(plugin, {
     // exception — and the caller's `signal` cancels both legs exactly as it does in `readStructure`.
     async readSheet(raw) {
       const maxCells = raw?.maxCells, signal = raw?.signal;
+      // THE KEY SET IS CLOSED HERE TOO, and that is deliberate rather than symmetry: this leg reads the ACTIVE
+      // sheet and exposes no selector, so a caller that passes `sheetName`/`sheetIndex` must be TOLD rather than
+      // silently served the active sheet. The tool never does (its schema has no such key); the read leg's shared
+      // body accepts a selector, which is exactly why this boundary has to refuse one.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      for (const key of Object.keys(raw)) {
+        if (key !== 'maxCells' && key !== 'signal') {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
       if (!Number.isSafeInteger(maxCells) || maxCells < 1 || maxCells > LIMITS.sheetReadCellsMax) {
         return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
       }
       return sheetRead(signal, Object.freeze({ address: null, maxCells }));
     },
-    // The same leg with a caller-named address, closed to `SHEET_ADDRESS` before anything is dispatched.
+    // The same leg with a caller-named address, closed to `SHEET_ADDRESS` before anything is dispatched, and with
+    // an OPTIONAL SHEET SELECTOR — a sheet NAME or a sheet INDEX, resolved inside the body through the measured
+    // `Api.GetSheet(...)`. With no selector this reads the ACTIVE sheet exactly as before, which is what keeps
+    // every existing caller working unchanged; with one it reads THAT sheet's range and never switches the active
+    // sheet. A selector that names nothing is a known refusal answered by the body.
     async readRange(raw) {
       const address = raw?.address, maxCells = raw?.maxCells, signal = raw?.signal;
+      const sheetName = raw?.sheetName, sheetIndex = raw?.sheetIndex;
+      // THE REQUEST KEY SET IS CLOSED, like the newer Cell legs: an unknown key would otherwise be silently
+      // ignored and the request served as if it had been understood.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      for (const key of Object.keys(raw)) {
+        if (key !== 'address' && key !== 'maxCells' && key !== 'sheetName' && key !== 'sheetIndex' && key !== 'signal') {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
       if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) {
         return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
       }
       if (!Number.isSafeInteger(maxCells) || maxCells < 1 || maxCells > LIMITS.sheetReadCellsMax) {
         return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
       }
-      return sheetRead(signal, Object.freeze({ address, maxCells }));
+      // The selector is closed HERE, before any dispatch: a name is a bounded non-empty string, an index is a
+      // non-negative safe integer inside the workbook bound, and asking for BOTH is refused because the request
+      // would not say which sheet it means.
+      // THE INDEX BOUND REUSES `sheetListMax` ON PURPOSE: that is the only MEASURED number for how many sheets
+      // this repo supports, so a book past it is already outside the supported envelope and an index beyond it is
+      // refused rather than attempted. The failure mode is fail-CLOSED (a sheet with index 64+ cannot be addressed
+      // by index), and it is stated here rather than hidden.
+      if (sheetName !== undefined && sheetName !== null
+        && (typeof sheetName !== 'string' || sheetName === '' || utf8ByteLength(sheetName) > LIMITS.sheetListNameBytes)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetIndex !== undefined && sheetIndex !== null
+        && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetName !== undefined && sheetName !== null && sheetIndex !== undefined && sheetIndex !== null) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      return sheetRead(signal, Object.freeze({
+        address,
+        maxCells,
+        sheetName: sheetName === undefined ? null : sheetName,
+        sheetIndex: sheetIndex === undefined ? null : sheetIndex
+      }));
     },
     // The bounded SPREADSHEET write behind `write_range` — the first Cell MUTATION in this repo. It takes
     // the leg shape every other dispatched write takes: the request is a CLOSED precondition checked

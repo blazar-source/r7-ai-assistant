@@ -253,9 +253,16 @@ export function createCellTools(bridge) {
       // so the tool reports BOTH ranges instead of pretending they are the same one: `requestAddress` is
       // what the caller asked for, and `readAddress` is the range the editor actually answered.
       name: 'read_range', kind: 'read', editors: ['cell'], policy: 'auto', requires: ['document.read'],
-      description: 'Читает диапазон активного листа (A1 или A1:C10): значения и формулы ячеек.',
+      description: 'Читает диапазон листа (A1 или A1:C10): значения и формулы. sheet — имя листа, sheetIndex — индекс; без них активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address'],
-        properties: { address: { type: 'string', maxBytes: 24 } } },
+        properties: {
+          address: { type: 'string', maxBytes: 24 },
+          // THE SHEET SELECTOR HAS TWO CLOSED SPELLINGS, because the measured lookup `Api.GetSheet` accepts a
+          // NAME or an INDEX and this schema language has no union type: `sheet` is the name, `sheetIndex` is the
+          // 0-based index, and naming BOTH is refused in the handler as ambiguous. No selector keeps exactly the
+          // previous behaviour — the ACTIVE sheet — so every existing caller is unaffected.
+          sheet: { type: 'string', minBytes: 1, maxBytes: LIMITS.sheetListNameBytes },
+          sheetIndex: { type: 'integer', minimum: 0, maximum: LIMITS.sheetListMax - 1 } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async (args, ctx) => {
         // Every argument rule is re-checked HERE and not only by the schema: a descriptor is also
@@ -263,10 +270,23 @@ export function createCellTools(bridge) {
         // closed refusal with NOTHING dispatched. A non-string or an over-bound address is the module's
         // argument class; an address outside the closed shape is the same class, never a dispatch.
         const address = args?.address;
+        const sheet = args?.sheet;
+        const sheetIndex = args?.sheetIndex;
+        for (const key of Object.keys(args ?? {})) if (key !== 'address' && key !== 'sheet' && key !== 'sheetIndex') return known();
         if (typeof address !== 'string' || address === '' || !ADDRESS.test(address)) return known();
         if (utf8ByteLength(address) > 24) return known();
+        if (sheet !== undefined && (typeof sheet !== 'string' || sheet === '' || utf8ByteLength(sheet) > LIMITS.sheetListNameBytes)) return known();
+        // The index bound is `sheetListMax` ON PURPOSE: it is the only MEASURED number for how many sheets this
+        // repo supports, so a book past it is outside the supported envelope and an index beyond it is refused
+        // (fail-CLOSED, stated rather than hidden) instead of being attempted.
+        if (sheetIndex !== undefined && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) return known();
+        if (sheet !== undefined && sheetIndex !== undefined) return known();
         if (missingBridgeMethod(bridge, 'readRange')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-        const request = readRequest(LIMITS.sheetReadCellsMax, ctx?.signal, { address });
+        const request = readRequest(LIMITS.sheetReadCellsMax, ctx?.signal, {
+          address,
+          sheetName: sheet === undefined ? null : sheet,
+          sheetIndex: sheetIndex === undefined ? null : sheetIndex
+        });
         let response;
         try { response = await bridge.readRange(request); }
         catch (error) {
