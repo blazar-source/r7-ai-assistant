@@ -308,7 +308,7 @@ Sprint 4. Ни одна задача не начинается до закрыт
 | --- | --- |
 | План Sprint 5 | **утверждён владельцем** (2026-10-07) с тремя уточнениями: контракт верификации (§6.0), partial editing не обязателен, усиленный exit gate по layout/theme |
 | T1 — bounded native Slide API measurement | **DONE (measurement/evidence)** — `docs/evidence/sprint-5/t1-slide-api-measurement.md`; Astra SE 1.7.9.41 + R7 2026.1.2.1942 и Windows R7 2026.3.1 совпали по всем измеренным пунктам |
-| T2 — чтение структуры | NOT STARTED |
+| T2 — чтение структуры | **design DONE** (§12: контракт read_presentation + read_slide, адресация с доказательством цели, caps и целочисленное усечение, решение не делать read_slide_objects) — реализация NOT STARTED |
 | T3 — создание слайдов + текст | NOT STARTED (предусловие: узкий probe native Undo route, §12.7) |
 | T4 — formatting + простые объекты | NOT STARTED |
 | T5 — редактирование/перестройка | NOT STARTED |
