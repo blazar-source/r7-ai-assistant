@@ -1217,6 +1217,16 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
                 // local: the authored-code audit treats a call on a computed value as a dynamic-property sink, and
                 // this body's own normaliser and `=` test already use that boundary for exactly this reason.
                 else if (sheetWriteDecimal.test(wanted)) target.SetValue(decimalInLocale(wanted, sheetWriteSeparator));
+                // AN EMPTY REQUEST CLEARS THE CELL, and the primitive is chosen by MEASUREMENT because the two builds
+                // disagree about the obvious one. On the development build `SetValue('')` reads back as `''`; on the
+                // TARGET build (R7 2026.1.2.1942 on Astra SE) the SAME call leaves a cell that answers `'0'` — so the
+                // proof correctly refused to call it empty and a batch carrying one blank cell settled UNCERTAIN,
+                // blocking the whole write. `Clear()` was measured producing an EMPTY cell on both builds, which is
+                // what an empty request means; a build without it falls back to the old call.
+                else if (wanted === '') {
+                  if (typeof target.Clear === 'function') target.Clear();
+                  else target.SetValue('');
+                }
                 else target.SetValue(wanted);
               }
             }

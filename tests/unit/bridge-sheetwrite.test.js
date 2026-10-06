@@ -62,7 +62,7 @@ function canonicalStored(value, locale) {
   // Everything else — plain text, a formula source, and the non-locale separator form — is stored verbatim as TEXT.
   return value;
 }
-function sheetDouble(store, { noOp = false, values = new Map(), formulas = new Map(), name = 'Sprint1', index = 0, nameLies = false, indexLies = false, onSetValue = null, onSetActive = null, canonicalNumbers = false, locale = 1049 } = {}) {
+function sheetDouble(store, { noOp = false, values = new Map(), formulas = new Map(), name = 'Sprint1', index = 0, nameLies = false, indexLies = false, onSetValue = null, onSetActive = null, canonicalNumbers = false, locale = 1049, emptyWriteStoresZero = false } = {}) {
   // Storage is keyed by the CANONICAL single-cell address, so `A1` and the explicit `A1:A1` spelling are the
   // SAME cell. That is what the measured build answers, and keying by the literal address instead made the
   // very shape that settled the one-cell question untestable.
@@ -71,6 +71,12 @@ function sheetDouble(store, { noOp = false, values = new Map(), formulas = new M
     const stored = store.get(cell);
     if (stored === undefined) return '';
     return String(stored).charAt(0) === '=' ? '' : stored;
+  }
+  // The EMPTY-WRITE behaviour of the build under test is a knob: the development build reads back '' and the
+  // TARGET build (R7 2026.1.2.1942 on Astra SE) reads back '0' for the same SetValue(''). The body is expected to
+  // clear instead, so this knob is what makes the difference observable in a unit test at all.
+  function clearRange(box) {
+    for (let row = box.r1; row <= box.r2; row++) for (let column = box.c1; column <= box.c2; column++) store.delete(columnName(column) + String(row));
   }
   function matrix(box) {
     const rows = [];
@@ -104,8 +110,12 @@ function sheetDouble(store, { noOp = false, values = new Map(), formulas = new M
           // With `canonicalNumbers` the double behaves as the MEASURED engine does: the locale numeric string is a
           // real NUMBER, and the readback is that number rendered canonically (`1.0` -> `1`), which is the shape
           // the proof's numeric rule exists for.
+          // MEASURED on the TARGET build: SetValue('') leaves a cell that answers '0'. The body must not rely on
+          // this call for an empty request, which is exactly what the fix asserts.
+          if (emptyWriteStoresZero && value === '') { store.set(cell, '0'); return; }
           store.set(cell, canonicalNumbers ? canonicalStored(value, locale) : value);
         },
+        Clear() { if (onSetValue !== null) onSetValue(); if (!noOp) clearRange(box); },
         // MEASURED: one cell -> a scalar; a block -> a matrix.
         GetValue() { return single ? valueAt(cell) : matrix(box); },
         // MEASURED: a one-cell range answers the real source; a MULTI-CELL range answers the VALUES, so a
@@ -120,7 +130,7 @@ function sheetDouble(store, { noOp = false, values = new Map(), formulas = new M
   };
 }
 
-function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheets = null, canonicalNumbers = false, locale = 1049, activeIndex = 0 } = {}) {
+function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheets = null, canonicalNumbers = false, locale = 1049, emptyWriteStoresZero = false, activeIndex = 0 } = {}) {
   const commands = [];
   const namespace = { scope: {} };
   let setActiveAttempts = 0;
@@ -143,6 +153,7 @@ function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheet
         indexLies: entry.indexLies === true,
         canonicalNumbers,
         locale,
+        emptyWriteStoresZero,
         onSetValue: () => { setValueCalls += 1; },
         onSetActive: () => { setActiveAttempts += 1; }
       })
@@ -740,4 +751,33 @@ test("an integer past the fifteen-digit cap is REFUSED, not blessed as a lossy n
   const result = await f.bridge.writeRange({ address: 'A1', cells: [['12345678901234567890']] });
   assert.equal(result.ok, false, JSON.stringify(result));
   assert.equal(result.code, 'APPLY_UNCERTAIN', 'a lossy coercion is never reported as a success');
+});
+
+// --- Astra SE compatibility: an EMPTY cell in a batch -------------------------------------------------
+
+test('an EMPTY request clears the cell on a build whose SetValue(\'\') reads back as ZERO', async () => {
+  // MEASURED on the target (R7 2026.1.2.1942, Astra SE 1.7.9.41): the shipped body wrote a P&L whose header row began
+  // with an empty cell, and the ONLY failing proof flag was that cell — because there SetValue('') leaves a cell that
+  // answers '0', so the batch settled APPLY_UNCERTAIN and the write was not proved. The fix clears instead, and this
+  // test fails if the body ever goes back to SetValue('') for an empty request.
+  const f = rig({ emptyWriteStoresZero: true });
+  const result = await f.bridge.writeRange({ address: 'A1:B1', cells: [['', 'Год 1']] });
+  assert.deepEqual(result, { ok: true, address: 'A1:B1', rowCount: 1, columnCount: 2 });
+  assert.equal(f.store.has('A1'), false, 'the cell was CLEARED, not filled with the build\'s "0"');
+  assert.equal(f.store.get('B1'), 'Год 1');
+  assert.equal(f.bridge.getState().busy, false, 'and the batch is proved');
+});
+
+test('the same empty request is proved on the DEVELOPMENT build too', async () => {
+  const f = rig();
+  const result = await f.bridge.writeRange({ address: 'A1:B1', cells: [['', 'x']] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(f.store.has('A1'), false, 'cleared here as well, so one route serves both builds');
+});
+
+test('a batch whose ONLY content is empty still proves every cell', async () => {
+  const f = rig({ emptyWriteStoresZero: true });
+  const result = await f.bridge.writeRange({ address: 'A1:C1', cells: [['', '', '']] });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  for (const cell of ['A1', 'B1', 'C1']) assert.equal(f.store.has(cell), false, cell);
 });

@@ -329,8 +329,15 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /\bscope\b/, 'the sheet-write body takes its address and matrix from the injected command scope');
         assert.match(code, /POST_INSERT/, 'and marks the moment the sheet may already have been touched');
         assert.match(code, /PRE_INSERT/, 'and its pre-write refusals with the explicit phase');
-        assert.equal((code.match(/SetValue\s*\(/g) ?? []).length, 3,
-          'the ONE write primitive is authored exactly three times: the integer route as a real number, the DECIMAL route in the engine locale numeric form, and the verbatim route for text and formulas — and nowhere else');
+        assert.equal((code.match(/SetValue\s*\(/g) ?? []).length, 4,
+          'the write primitive is authored exactly four times: the integer route as a real number, the DECIMAL route in the engine locale numeric form, the verbatim route for text and formulas, and the FALLBACK for an empty request on a build whose range has no Clear() — and nowhere else');
+        // The EMPTY request has its OWN primitive on purpose, and it is pinned here because the two builds disagree
+        // about the obvious one: MEASURED on the target (R7 2026.1.2.1942), SetValue('') leaves a cell that answers
+        // '0', so a batch carrying a blank cell could not be proved until the body cleared instead.
+        // QUOTE-AGNOSTIC on purpose: esbuild re-prints string literals with double quotes, so a pin carrying single
+        // quotes is absent from the artifact while the source has it.
+        assert.match(code, /wanted === ["']{2}/, 'an empty request is recognised as its own case');
+        assert.match(code, /typeof target\.Clear === ["']function["']\) target\.Clear\(\)/, 'and CLEARS the cell where the build offers it');
         // A COUNT alone cannot tell three real routes from a swap, so the DECIMAL route is also pinned by its own
         // exact expression: its closed pattern, the locale primitive it reads, and the parameter-boundary helper it
         // sends through. Deleting it and adding another route keeps the count and fails here.
