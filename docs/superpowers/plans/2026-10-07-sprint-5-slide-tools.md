@@ -119,8 +119,14 @@ Sprint 4. Ни одна задача не начинается до закрыт
 * **надёжный readback**, которым исход мутации доказывается;
 * если readback не различает состояния — это фиксируется как «недоказуемо», и такой инструмент не включается.
 
-**Deliverable T1:** один evidence-файл `docs/evidence/sprint-5/t1-slide-api-measurement.md` с таблицей по каждому
-пункту выше (включая случаи «отсутствует»), с указанием стенда и ревизии, без выводов «по аналогии с Word/Cell».
+**Deliverable T1 — ВЫПОЛНЕН:** `docs/evidence/sprint-5/t1-slide-api-measurement.md` с матрицей
+`primitive → signature → Windows → Astra → readback/outcome proof → supported → proposed future tool`, с указанием
+стендов и ревизии. Ключевые результаты: `Api.GetPresentation()`, `GetSlidesCount`, `GetSlideByIndex`,
+`GetCurrentSlide`/`GetCurSlideIndex`, `AddSlide(layout)` (новый слайд наследует **тот же** layout — доказано по
+`layout.id`), текст — через content → абзац (`paragraph.AddText` → `paragraph.GetText()`), замена текста **целого**
+объекта подтверждена, `CreateTable` + `AddObject`, `Duplicate`, `MoveTo`; форматирование имеет **только сеттеры**
+(readback — `GetTextPr().ToJSON()`), а `Api.Undo()` мутации плагина **не откатывает** (открытый вопрос native Undo).
+Никаких выводов «по аналогии с Word/Cell».
 
 ## 6. Правила для каждого будущего mutate-tool
 
@@ -221,8 +227,8 @@ Sprint 4. Ни одна задача не начинается до закрыт
 
 | Задача | Статус |
 | --- | --- |
-| План Sprint 5 | **создан, ожидает утверждения владельцем** |
-| T1 — bounded native Slide API measurement | NOT STARTED (код не пишется до утверждения) |
+| План Sprint 5 | **утверждён владельцем** (2026-10-07) с тремя уточнениями: контракт верификации (§6.0), partial editing не обязателен, усиленный exit gate по layout/theme |
+| T1 — bounded native Slide API measurement | **DONE (measurement/evidence)** — `docs/evidence/sprint-5/t1-slide-api-measurement.md`; Astra SE 1.7.9.41 + R7 2026.1.2.1942 и Windows R7 2026.3.1 совпали по всем измеренным пунктам |
 | T2 — чтение структуры | NOT STARTED |
 | T3 — создание слайдов + текст | NOT STARTED |
 | T4 — formatting + простые объекты | NOT STARTED |
