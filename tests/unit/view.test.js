@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mountPanel, statusText, orchestrationText } from '../../src/ui/view.js';
+import { mountPanel, statusText, orchestrationText, progressStageText } from '../../src/ui/view.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { SafeError } from '../../src/shared/errors.js';
@@ -47,7 +47,7 @@ test('marked content container holds every content block while composer remains 
   assert.equal(content.children.includes(composer), false);
   assert.equal(content.getAttribute('data-scroll-container'), 'content');
   assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
-  assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'status', 'content', 'composer']);
+  assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'status', 'progress-stage', 'content', 'composer']);
   assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
     ['history', 'preview', 'diagnostics']);
   for (const section of ['history', 'preview', 'diagnostics']) {
@@ -204,6 +204,85 @@ test('view uses same complete edited settings for connection action and displays
 });
 
 // --- Task 9: live step status and the actions summary ------------------------------------------
+
+test('progress stages derive the five closed human phrases from published state', () => {
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: null }), 'подготовка запроса');
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 0, toolCalls: 0 } }), 'запрос к модели');
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 3, toolCalls: 2 } }), 'выполнение шага 3');
+  assert.equal(progressStageText({ active: true, status: 'ORCH_EXECUTING', orchestration: { status: 'ORCH_EXECUTING', plan: { sections: ['A', 'B', 'C', 'D'] } }, agent: { status: 'RUNNING', steps: 3, toolCalls: 2 } }), 'шаг 3 из 4');
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 4, toolCalls: 0 } }), 'сборка результата');
+  assert.equal(progressStageText({ active: true, status: 'ORCH_VERIFYING', orchestration: { status: 'ORCH_VERIFYING' }, agent: { status: 'FINAL', steps: 4, toolCalls: 2 } }), 'проверка результата');
+});
+
+test('progress stage is editor-agnostic for Word, Cell and Slide', () => {
+  for (const editorType of ['word', 'cell', 'slide']) {
+    assert.equal(progressStageText({ active: true, editorType, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 2, toolCalls: 1 } }), 'выполнение шага 2', editorType);
+  }
+});
+
+test('every terminal outcome removes the progress stage and keeps compact terminal status', () => {
+  const terminal = {
+    COMPLETE: 'Готово', STOPPED: 'Готово', CANCELLED: 'Готово', TIMEOUT: 'Ошибка', AGENT_LIMIT: 'Ошибка',
+    APPLY_UNCERTAIN: 'Ошибка', ORCH_INCOMPLETE: 'Ошибка', ORCH_UNCERTAIN: 'Ошибка', ORCH_BLOCKED: 'Ошибка',
+    INTERNAL_ERROR: 'Ошибка', PROTOCOL_ERROR: 'Ошибка', HTTP_UNAUTHORIZED: 'Ошибка', HTTP_FORBIDDEN: 'Ошибка',
+    HTTP_RATE_LIMIT: 'Ошибка', HTTP_SERVER_ERROR: 'Ошибка', HTTP_ERROR: 'Ошибка', NETWORK_ERROR: 'Ошибка', OFFLINE: 'Ошибка',
+    INVALID_SETTINGS: 'Ошибка', INVALID_ENDPOINT: 'Ошибка', INVALID_KEY: 'Ошибка', INVALID_DATA: 'Ошибка', BYTE_LIMIT: 'Ошибка',
+    STORAGE_UNAVAILABLE: 'Ошибка', STORAGE_CORRUPT: 'Ошибка', CAPABILITY_UNAVAILABLE: 'Ошибка', EDITOR_BUSY: 'Ошибка', EDITOR_ERROR: 'Ошибка'
+  };
+  for (const [status, compact] of Object.entries(terminal)) {
+    assert.equal(progressStageText({ active: false, status, agent: { status: 'FINAL', steps: 7, toolCalls: 4 } }), '', status);
+    assert.equal(statusText(status, true), compact, status);
+  }
+});
+
+test('every terminal publication makes the progress element inert with or without a preserved active orchestration record', () => {
+  const tree = dom(); let publish;
+  const state = { active: true, status: 'ANALYZING', editorType: 'word', agent: null, mode: 'ASK', includeContext: false,
+    context: { kind: 'UNKNOWN', text: '', bytes: 0 }, chat: { history: [] }, settings: {}, writeLocked: false,
+    canApply: false, preview: null, orchestration: null, capabilityCount: null };
+  const controller = { subscribe(listener) { publish = listener; listener(state); return () => {}; }, getState() { return state; },
+    saveSettings() { return false; }, setMode() {}, setIncludeContext() {}, stop() {}, newChat() {}, checkR7() {}, refreshContext() {},
+    settingsChanged() {}, testConnection() {}, reset() {}, analyze() {}, apply() {}, cancelPreview() {} };
+  const panel = mountPanel(tree.root, controller);
+  const progress = tree.id('progress-stage');
+  const compact = tree.id('status');
+  assert.equal(progress.hidden, false); assert.equal(progress.textContent, 'подготовка запроса');
+  const terminal = {
+    COMPLETE: ['Готово', 'FINAL'], STOPPED: ['Готово', 'CANCELLED'], CANCELLED: ['Готово', 'CANCELLED'], TIMEOUT: ['Ошибка', 'CANCELLED'],
+    HTTP_ERROR: ['Ошибка', 'ERROR'], NETWORK_ERROR: ['Ошибка', 'ERROR'], OFFLINE: ['Ошибка', 'ERROR'], PROTOCOL_ERROR: ['Ошибка', 'PROTOCOL_ERROR'],
+    CAPABILITY_UNAVAILABLE: ['Ошибка', 'ERROR'], EDITOR_ERROR: ['Ошибка', 'ERROR'], AGENT_LIMIT: ['Ошибка', 'LIMIT'],
+    ORCH_INCOMPLETE: ['Ошибка', 'FINAL'], ORCH_UNCERTAIN: ['Ошибка', 'UNCERTAIN'], ORCH_BLOCKED: ['Ошибка', 'ERROR'], ORCH_COMPLETE: ['Готово', 'FINAL']
+  };
+  const preserved = { status: 'ORCH_VERIFYING', pass: 1, maxPasses: 12, targetChars: 18000,
+    plan: { sections: ['A', 'B', 'C'], targetChars: 18000, required: { tables: false, lists: false, conclusions: false } },
+    missing: [], missingTools: [] };
+  for (const [status, [expectedCompact, agentStatus]] of Object.entries(terminal)) {
+    for (const orchestration of [preserved, null]) {
+      publish({ ...state, active: false, status, orchestration, agent: { status: agentStatus, steps: 7, toolCalls: 4 } });
+      const label = `${status}/${orchestration === null ? 'null' : 'preserved'}`;
+      assert.equal(progress.textContent, '', label);
+      assert.equal(progress.hidden, true, label);
+      assert.equal(progress.getAttribute('aria-busy'), 'false', label);
+      assert.equal(compact.textContent, expectedCompact, label);
+    }
+  }
+  panel.dispose();
+});
+
+test('stage text is authored human language, never a raw status or internal event', () => {
+  const states = [
+    { active: true, status: 'ANALYZING', agent: null },
+    { active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 0, toolCalls: 0 } },
+    { active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 1, toolCalls: 1 } },
+    { active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 2, toolCalls: 0 } },
+    { active: true, status: 'ORCH_VERIFYING', orchestration: { status: 'ORCH_VERIFYING' }, agent: { status: 'FINAL', steps: 2, toolCalls: 1 } }
+  ];
+  for (const state of states) {
+    const text = progressStageText(state);
+    assert.match(text, /^[а-яё0-9 ]+$/u);
+    assert.equal(/ANALYZING|ORCH_|RUNNING|tool|event/i.test(text), false, text);
+  }
+});
 
 test('the live step status and the actions summary are rendered as text, never as raw JSON', async () => {
   const f = fixture([

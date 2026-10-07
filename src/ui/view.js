@@ -66,6 +66,21 @@ export function statusText(code, compact = false) {
   if (compact) return compactStatuses[code] ?? 'Готово';
   return statuses[code] ?? statuses.INTERNAL_ERROR;
 }
+export function progressStageText(state) {
+  if (state?.active !== true) return '';
+  const orchestrating = state.orchestration?.status;
+  if (state.status === 'ORCH_VERIFYING' || orchestrating === 'ORCH_VERIFYING' || state.status === 'CHECKING_SELECTION') return 'проверка результата';
+  const record = state.agent;
+  if (!record) return 'подготовка запроса';
+  const steps = Number.isInteger(record.steps) && record.steps > 0 ? record.steps : 0;
+  const toolCalls = Number.isInteger(record.toolCalls) && record.toolCalls > 0 ? record.toolCalls : 0;
+  if (steps === 0) return 'запрос к модели';
+  if (toolCalls > 0 && record.status === 'RUNNING') {
+    const total = Array.isArray(state.orchestration?.plan?.sections) ? state.orchestration.plan.sections.length : 0;
+    return total > 0 ? `шаг ${steps} из ${total}` : `выполнение шага ${steps}`;
+  }
+  return 'сборка результата';
+}
 // The orchestration report, in the same authored, closed coding the status captions use: the panel's own
 // numbers and the plan's own text, never a model envelope. Every line is authored text rendered with
 // textContent, so no plan or document text can become markup.
@@ -152,6 +167,7 @@ export function mountPanel(root, controller) {
   const detailedStatus = node('p', '', 'status-details'); detailedStatus.className = 'muted';
   diagnostics.append(diagnosticsSummary, badge, detailedStatus);
   const status = node('p', '', 'status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
+  const progressStage = node('p', '', 'progress-stage'); progressStage.setAttribute('role', 'status'); progressStage.setAttribute('aria-live', 'polite'); progressStage.setAttribute('aria-atomic', 'true'); progressStage.setAttribute('aria-busy', 'false'); progressStage.hidden = true;
   const lifecycleWarning = node('p', 'Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.'); lifecycleWarning.className = 'notice';
   const toolbar = node('section'); toolbar.setAttribute('aria-label', 'Режим и контекст');
   const modeLabel = node('label', 'Режим'); modeLabel.htmlFor = 'mode';
@@ -226,13 +242,17 @@ export function mountPanel(root, controller) {
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
   diagnostics.append(lifecycleWarning, toolbar, orchestration, journal, settings);
   content.append(history, preview, diagnostics);
-  root.replaceChildren(header, status, content, composer);
+  root.replaceChildren(header, status, progressStage, content, composer);
   let lastSettings = null;
   let lastHistory = null;
   let lastAgentActions = null;
   const unsubscribe = controller.subscribe(function (state) {
     const record = state.agent ?? null;
     status.textContent = statusText(state.status, true);
+    const stage = progressStageText(state);
+    progressStage.textContent = stage;
+    progressStage.hidden = stage === '';
+    progressStage.setAttribute('aria-busy', stage === '' ? 'false' : 'true');
     detailedStatus.textContent = state.status === 'ANALYZING' && record?.status === 'RUNNING' && record.steps > 0 ?
       `${statusText(state.status)} · шаг ${record.steps}` : statusText(state.status);
     badge.textContent = `Stage B · редактор: ${state.editorType} · runtimeVerified: false`;
