@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mountPanel, statusText, orchestrationText, progressStageText } from '../../src/ui/view.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
@@ -59,6 +60,37 @@ test('marked content container holds every content block while composer remains 
   assert.equal(diagnostics.children.some(child => child.children.includes(id('settings-form'))), true, 'settings belong to diagnostics');
   assert.equal(root.children.at(-1), composer);
   panel.dispose(); controller.dispose();
+});
+
+test('compact status announces each transition while progress stays visual and non-live', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const f = fixture(pending); const status = f.id('status'); const progress = f.id('progress-stage');
+  assert.equal(status.getAttribute('role'), 'status'); assert.equal(status.getAttribute('aria-live'), 'polite');
+  assert.equal(progress.getAttribute('role'), null); assert.equal(progress.getAttribute('aria-live'), 'off');
+  const seen = []; const unsubscribe = f.controller.subscribe(() => seen.push(status.textContent));
+  const running = f.controller.analyze('question'); await Promise.resolve();
+  assert.equal(progress.hidden, false); assert.ok(['подготовка запроса', 'запрос к модели'].includes(progress.textContent));
+  release(injected(final('answer'))); await running;
+  assert.deepEqual(seen.filter((value, index) => value !== seen[index - 1]), ['Готово', 'Анализирую', 'Готово']);
+  assert.equal(progress.textContent, ''); assert.equal(progress.hidden, true);
+  unsubscribe(); f.panel.dispose(); f.controller.dispose();
+});
+
+test('actual colour tokens meet text, boundary and layered focus contrast thresholds', () => {
+  const css = readFileSync(new URL('../../src/ui/styles.css', import.meta.url), 'utf8');
+  const token = name => css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
+  const luminance = hex => {
+    const channels = hex.slice(1).match(/.{2}/g).map(part => parseInt(part, 16) / 255)
+      .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const contrast = (a, b) => { const values = [luminance(a), luminance(b)].sort((x, y) => y - x); return (values[0] + 0.05) / (values[1] + 0.05); };
+  for (const [name, foreground, background, threshold] of [
+    ['body text/background', token('text'), token('background'), 4.5], ['muted/surface', token('muted'), token('surface'), 4.5],
+    ['button text/accent', '#ffffff', token('accent'), 4.5], ['line/surface', token('line'), token('surface'), 3],
+    ['focus/surface', token('focus'), token('surface'), 3], ['submit focus halo/accent', token('surface'), token('accent'), 3]
+  ]) assert.ok(contrast(foreground, background) >= threshold, `${name}: ${contrast(foreground, background).toFixed(2)} < ${threshold}`);
+  assert.match(css, /button\[type="submit"\]:focus-visible \{ box-shadow: 0 0 0 5px var\(--surface\), 0 0 0 8px var\(--focus\); \}/);
 });
 
 test('main panel keeps diagnostics collapsed and composer compact at rest', () => {
@@ -172,6 +204,56 @@ test('settings edits invalidate immediately without overwriting focused drafts o
   assert.equal(controller.getState().settings.model, 'draft');
   controller.dispose();
 });
+test('draft survives EDIT to ASK mode change exactly', () => {
+  const f = fixture(); f.controller.setMode('EDIT');
+  f.id('prompt').value = 'черновик EDIT→ASK — точно';
+  f.id('mode').value = 'ASK'; f.id('mode').dispatch('change');
+  assert.equal(f.controller.getState().mode, 'ASK');
+  assert.equal(f.id('prompt').value, 'черновик EDIT→ASK — точно');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('keyboard path covers visible controls in DOM order and activates named actions without a mouse', async () => {
+  const focusable = f => f.all().filter(node => ['BUTTON', 'TEXTAREA', 'SELECT', 'INPUT', 'SUMMARY'].includes(node.tagName) && !node.disabled && !node.hidden);
+  const activateButton = button => { button.focus(); button.dispatch('keydown', { key: 'Enter' }); button.dispatch('click'); };
+  // This fixture dispatches the events each control handles; real browser Tab traversal and native <summary>
+  // toggling are confirmed in T6, as explicitly split by the owner.
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const active = fixture(pending); const running = active.controller.analyze('q'); await Promise.resolve();
+  const activeOrder = focusable(active).map(node => node.id || node.textContent);
+  activateButton(active.id('stop'));
+  assert.deepEqual(activeOrder,
+    ['new-chat', 'Диагностика', 'include-context', 'mode', 'Прочитанный текст', 'Настройки соединения', 'endpoint', 'model', 'apiKey', 'httpTimeoutSeconds', 'maxTokens', 'temperature', 'rememberKey', 'save-settings', 'reset', 'prompt', 'stop']); release(injected(final('late'))); await running;
+  assert.equal(active.controller.getState().status, 'STOPPED'); active.panel.dispose(); active.controller.dispose();
+
+  let checked = 0;
+  const f = fixture(toolCalls(['replace_selection', { text: 'proposal' }]), { bridge: {
+    async probeCapabilities() { checked += 1; return { editorType: 'word', methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true } }; },
+    async replaceSelection() { return { acknowledged: true }; }
+  } });
+  f.id('mode').value = 'EDIT'; f.id('mode').dispatch('change');
+  assert.equal(f.controller.getState().mode, 'EDIT');
+  f.id('prompt').value = 'edit'; f.id('composer').dispatch('submit'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.getState().status, 'PREVIEW_READY', 'Send submits the message through the form');
+  assert.deepEqual(focusable(f).map(node => node.id || node.textContent),
+    ['new-chat', 'apply', 'cancel-preview', 'Диагностика', 'include-context', 'mode', 'read-context', 'check-r7', 'Прочитанный текст', 'Настройки соединения', 'endpoint', 'model', 'apiKey', 'httpTimeoutSeconds', 'maxTokens', 'temperature', 'rememberKey', 'save-settings', 'test-connection', 'reset', 'prompt', 'send']);
+  const summary = f.id('diagnostics').children[0];
+  summary.focus(); summary.dispatch('keydown', { key: 'Enter' });
+  assert.equal(f.id('diagnostics').getAttribute('open'), '');
+  summary.dispatch('keydown', { key: ' ' });
+  assert.equal(f.id('diagnostics').getAttribute('open'), null);
+  activateButton(f.id('check-r7')); await new Promise(resolve => setImmediate(resolve)); assert.equal(checked, 1);
+  f.controller.setMode('EDIT'); await f.controller.analyze('apply proposal');
+  assert.equal(f.id('apply').disabled, false);
+  activateButton(f.id('apply')); await new Promise(resolve => setImmediate(resolve));
+  assert.notEqual(f.controller.getState().status, 'PREVIEW_READY');
+  const cancelFixture = fixture(toolCalls(['replace_selection', { text: 'proposal' }]));
+  cancelFixture.controller.setMode('EDIT'); await cancelFixture.controller.analyze('edit again');
+  activateButton(cancelFixture.id('cancel-preview')); assert.equal(cancelFixture.controller.getState().preview, null);
+  cancelFixture.panel.dispose(); cancelFixture.controller.dispose();
+  f.panel.dispose(); f.controller.dispose();
+});
+
 test('keyboard submit reaches controller and preview cancellation restores composer focus', async () => {
   const { id, controller, document } = fixture(toolCalls(['replace_selection', { text: 'proposal' }]));
   id('mode').value = 'EDIT'; id('mode').dispatch('change');
@@ -319,10 +401,12 @@ test('the live step status and the actions summary are rendered as text, never a
     assert.equal(rendered.includes(forbidden), false, forbidden);
   }
   assert.equal(f.id('actions').textContent.includes('insert_paragraph'), true);
-  assert.equal(f.id('status').getAttribute('role'), 'status');
+  // Deliberately replaces the old per-region live assertions: the compact status must remain the
+  // panel's single live status region, so any future live region fails this whole-panel invariant.
+  const liveStatuses = f.all().filter(node => node.getAttribute('role') === 'status' || ['polite', 'assertive'].includes(node.getAttribute('aria-live')));
+  assert.deepEqual(liveStatuses.map(node => node.id), ['status']);
   assert.equal(f.id('status').getAttribute('aria-live'), 'polite');
   assert.equal(f.id('status').getAttribute('aria-atomic'), 'true');
-  assert.equal(f.id('actions').getAttribute('aria-live'), 'polite');
   f.panel.dispose(); f.controller.dispose();
 });
 

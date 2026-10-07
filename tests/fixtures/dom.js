@@ -6,6 +6,7 @@ export class Element {
   set innerHTML(_) { throw Error('HTML must never be used'); }
   setAttribute(key,value) { this.attributes[key] = String(value); }
   getAttribute(key) { return this.attributes[key] ?? null; }
+  removeAttribute(key) { delete this.attributes[key]; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.text = ''; this.children = children; }
   addEventListener(name,callback) { (this.listeners[name] ??= []).push(callback); }

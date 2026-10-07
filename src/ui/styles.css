@@ -24,7 +24,8 @@ button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 4px; c
 button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #ffffff; }
 button:hover:not(:disabled) { filter: brightness(0.94); }
 button:disabled { color: var(--muted); background: var(--background); cursor: not-allowed; }
-:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; box-shadow: 0 0 0 5px var(--surface); }
+button[type="submit"]:focus-visible { box-shadow: 0 0 0 5px var(--surface), 0 0 0 8px var(--focus); }
 summary { cursor: pointer; padding: 4px; }
 pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; max-width: 100%; }
 .message { max-width: 90%; margin: 6px 0; padding: 6px 8px; border-radius: 8px; }

@@ -163,11 +163,17 @@ export function mountPanel(root, controller) {
   header.append(title, fresh);
   const diagnostics = node('details', '', 'diagnostics');
   const diagnosticsSummary = node('summary', 'Диагностика');
+  on(diagnosticsSummary, 'keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (diagnostics.getAttribute('open') === null) diagnostics.setAttribute('open', '');
+    else diagnostics.removeAttribute('open');
+  });
   const badge = node('p', 'Stage B · только предложение', 'editor'); badge.className = 'muted';
-  const detailedStatus = node('p', '', 'status-details'); detailedStatus.className = 'muted';
+  const detailedStatus = node('p', '', 'status-details'); detailedStatus.setAttribute('aria-live', 'off'); detailedStatus.className = 'muted';
   diagnostics.append(diagnosticsSummary, badge, detailedStatus);
   const status = node('p', '', 'status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
-  const progressStage = node('p', '', 'progress-stage'); progressStage.setAttribute('role', 'status'); progressStage.setAttribute('aria-live', 'polite'); progressStage.setAttribute('aria-atomic', 'true'); progressStage.setAttribute('aria-busy', 'false'); progressStage.hidden = true;
+  const progressStage = node('p', '', 'progress-stage'); progressStage.setAttribute('aria-live', 'off'); progressStage.setAttribute('aria-busy', 'false'); progressStage.hidden = true;
   const lifecycleWarning = node('p', 'Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.'); lifecycleWarning.className = 'notice';
   const toolbar = node('section'); toolbar.setAttribute('aria-label', 'Режим и контекст');
   const modeLabel = node('label', 'Режим'); modeLabel.htmlFor = 'mode';
@@ -177,10 +183,10 @@ export function mountPanel(root, controller) {
   const include = field(toolbar, 'include-context', 'Передавать только выделенный текст', 'checkbox');
   on(include, 'change', function () { controller.setIncludeContext(include.checked); });
   const checkR7 = button('Проверить Р7', 'check-r7', function () { controller.checkR7(); });
-  const capabilitySummary = node('p', '', 'r7-capabilities'); capabilitySummary.setAttribute('aria-live', 'polite');
-  const capabilityState = node('p', '', 'capability-state'); capabilityState.setAttribute('aria-live', 'polite');
+  const capabilitySummary = node('p', '', 'r7-capabilities'); capabilitySummary.setAttribute('aria-live', 'off');
+  const capabilityState = node('p', '', 'capability-state'); capabilityState.setAttribute('aria-live', 'off');
   const refresh = button('Прочитать выделение', 'read-context', function () { controller.refreshContext(); });
-  const context = node('p', '', 'context'); context.setAttribute('aria-live', 'polite');
+  const context = node('p', '', 'context'); context.setAttribute('aria-live', 'off');
   const selected = node('pre', '', 'selected-text');
   const contextDetails = node('details'); contextDetails.append(node('summary', 'Прочитанный текст'), selected);
   const capabilityPointer = node('p', 'Недоступное действие объяснено ниже.', 'capability-pointer'); capabilityPointer.className = 'muted';
@@ -192,11 +198,11 @@ export function mountPanel(root, controller) {
   // tool argument or document text can ever reach the DOM. The element is named `journal` rather than
   // `actions` because the authored-code audit tracks an identifier by NAME across the whole bundle and
   // the `actions` name is shared with unrelated modules; the ELEMENT ID stays `actions`.
-  const journal = node('section', '', 'actions'); journal.setAttribute('aria-live', 'polite'); journal.setAttribute('aria-label', 'Журнал действий');
+  const journal = node('section', '', 'actions'); journal.setAttribute('aria-live', 'off'); journal.setAttribute('aria-label', 'Журнал действий');
   // The orchestration report: the plan, the pass count, the VERIFIED numbers and what is still missing.
   // It is rendered with textContent only, so the plan text a model authored stays literal text and can
   // never become an element or an attribute.
-  const orchestration = node('pre', '', 'orchestration'); orchestration.setAttribute('aria-live', 'polite'); orchestration.hidden = true;
+  const orchestration = node('pre', '', 'orchestration'); orchestration.setAttribute('aria-live', 'off'); orchestration.hidden = true;
   const composer = node('form', '', 'composer');
   const prompt = node('textarea', '', 'prompt'); prompt.rows = 3; prompt.setAttribute('aria-label', 'Запрос'); prompt.setAttribute('aria-describedby', 'input-budget');
   const budget = node('p', '', 'input-budget'); budget.className = 'muted'; budget.hidden = true;
@@ -224,7 +230,7 @@ export function mountPanel(root, controller) {
   const temperature = field(form, 'temperature', 'temperature (0–2)', 'number'); temperature.min = '0'; temperature.max = '2'; temperature.step = 'any';
   field(form, 'rememberKey', 'Запомнить ключ в незашифрованном хранилище', 'checkbox').setAttribute('aria-describedby', 'plaintext-warning persistence-warning');
   const plaintext = node('p', 'По умолчанию ключ только в памяти. Опция «Запомнить» сохраняет ключ открытым текстом. Это не защищённое хранилище.', 'plaintext-warning'); plaintext.className = 'notice';
-  const persistence = node('p', 'Ключ может оставаться в открытом хранилище. Ошибка удаления не означает, что ключ стёрт.', 'persistence-warning'); persistence.setAttribute('role', 'status'); persistence.className = 'notice';
+  const persistence = node('p', 'Ключ может оставаться в открытом хранилище. Ошибка удаления не означает, что ключ стёрт.', 'persistence-warning'); persistence.setAttribute('aria-live', 'off'); persistence.className = 'notice';
   const storage = node('p', '', 'storage-status');
   const save = node('button', 'Применить настройки', 'save-settings'); save.type = 'submit';
   function draft() {
@@ -236,7 +242,12 @@ export function mountPanel(root, controller) {
   const reset = button('Сбросить настройки', 'reset', function () { controller.reset(); controls.endpoint.focus(); });
   for (const el of Object.values(controls).filter(el => el !== include)) on(el, 'input', function () { controller.settingsChanged(); });
   on(form, 'submit', function (event) { event.preventDefault(); saveDraft(); });
-  function submit() { if (controller.getState().active) return; if (saveDraft()) controller.analyze(prompt.value); }
+  function submit() {
+    if (controller.getState().active) return;
+    if (saveDraft()) Promise.resolve(controller.analyze(prompt.value)).then(function () {
+      if (controller.getState().status === 'COMPLETE') prompt.focus();
+    });
+  }
   on(composer, 'submit', function (event) { event.preventDefault(); submit(); });
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
