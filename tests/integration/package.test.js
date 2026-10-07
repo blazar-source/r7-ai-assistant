@@ -494,6 +494,11 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /\bscope\b/, 'the search body takes its needle from the injected command scope');
         assert.match(code, /GetText/, 'and reads each match through the measured primitive');
         legs.push('search');
+      } else if (code.includes('t4FormatRPr')) {
+        assert.match(code, /\.ToJSON\(\)/, 'the slide format body proves properties through measured content JSON');
+        for (const setter of ['SetBold', 'SetItalic', 'SetUnderline', 'SetFontSize', 'SetFontFamily', 'SetColor']) assert.match(code, new RegExp(`${setter}\\s*\\(`), `the measured ${setter} setter is authored`);
+        assert.equal(/GetBold|GetItalic|GetUnderline|GetFontSize|GetFontFamily|GetColor/.test(code), false, 'no absent per-property getter is authored');
+        legs.push('slideformat');
       } else if (code.includes('Api.AddSlide') && code.includes('RemoveAllElements')) {
         // The new slidemutate leg that was added in T3.
         // It is recognized by the presence of Api.AddSlide and RemoveAllElements
@@ -514,8 +519,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 20, 'the adapter dispatches exactly the twenty authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slidemutate', 'structure', 'table'],
+  assert.equal(commands, 21, 'the adapter dispatches exactly the twenty-one authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

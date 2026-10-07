@@ -23,6 +23,8 @@ export const LIMITS = Object.freeze({
   slideReadObjectsMax: 40,
   slideReadTextBytes: 2048,
   slideReadResultBytes: 32768,
+  // Sprint 5 (T4a) SANITY bound, not a measured engine limit: accepted font sizes are whole points 1..96.
+  slideFormatFontSizeMax: 96,
   // The whole-document HTML export the insert confirmation counts occurrences in (`GetFileHTML`).
   // It is deliberately larger than `editorResultBytes`, because it bounds a DOCUMENT read rather than
   // a scoped one: the 64 KiB window that bounds a selection or paragraph read would refuse the export

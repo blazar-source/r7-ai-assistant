@@ -47,6 +47,7 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // a single flag per cell could hide one unproven property behind the proven ones.
 const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd', 'sheetrename']));
 WRITE_KINDS.add('slideadd'); WRITE_KINDS.add('slidetext');
+WRITE_KINDS.add('slideformat');
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -751,6 +752,59 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (!t3MutationProof || typeof t3MutationProof.GetText !== 'function' || t3MutationProof.GetText() !== t3MutationRequest.text || t3MutationContent.GetElementsCount() !== 1) return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
             var t3MutationTextAnswer = []; t3MutationTextAnswer.push(2); t3MutationTextAnswer.push(t3MutationTargetIndex); t3MutationTextAnswer.push(t3MutationRequest.objectOrdinal); t3MutationTextAnswer.push(t3MutationRequest.text.length); t3MutationTextAnswer.push(t3MutationTextBytes(t3MutationRequest.text)); return t3MutationTextAnswer;
           } catch (t3MutationCommandError) { return t3MutationRefusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, false, callback);
+      },
+      slideformat(callback) {
+        return plugin.callCommand(function () {
+          function t4FormatRefusal(t4FormatPhase, t4FormatCode) { var t4FormatOut = []; t4FormatOut.push(t4FormatPhase); t4FormatOut.push(t4FormatCode); return t4FormatOut; }
+          function t4FormatRPr(t4FormatContent) { var t4FormatRaw = t4FormatContent.ToJSON(); if (typeof t4FormatRaw !== 'string') return null; var t4FormatParsed = JSON.parse(t4FormatRaw); function t4FormatFind(t4FormatNode) { if (!t4FormatNode || typeof t4FormatNode !== 'object') return null; if (t4FormatNode.rPr && typeof t4FormatNode.rPr === 'object') return t4FormatNode.rPr; var t4FormatKeys = Object.keys(t4FormatNode); for (var t4FormatKeyIndex = 0; t4FormatKeyIndex < t4FormatKeys.length; t4FormatKeyIndex += 1) { var t4FormatChild = t4FormatNode[t4FormatKeys[t4FormatKeyIndex]]; var t4FormatFound = t4FormatFind(t4FormatChild); if (t4FormatFound !== null) return t4FormatFound; } return null; } return t4FormatFind(t4FormatParsed); }
+          function t4FormatValue(t4FormatRPrValue, t4FormatName) { if (t4FormatName === 'bold') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'b') ? t4FormatRPrValue.b : undefined; if (t4FormatName === 'italic') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'i') ? t4FormatRPrValue.i : undefined; if (t4FormatName === 'underline') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'u') ? t4FormatRPrValue.u : undefined; if (t4FormatName === 'fontSize') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'sz') ? t4FormatRPrValue.sz : undefined; if (t4FormatName === 'fontFamily') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'latin') ? t4FormatRPrValue.latin : undefined; var t4FormatFill = t4FormatRPrValue.uniFill; return t4FormatFill && t4FormatFill.fill && t4FormatFill.fill.color && t4FormatFill.fill.color.color ? t4FormatFill.fill.color.color.rgba : undefined; }
+          function t4FormatSame(t4FormatLeft, t4FormatRight) { return JSON.stringify(t4FormatLeft) === JSON.stringify(t4FormatRight); }
+          try {
+            var t4FormatRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t4FormatRequest || !(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatAllowedKeys = { slideIndex: true, objectOrdinal: true, bold: true, italic: true, underline: true, fontSize: true, fontFamily: true, color: true, maxFontSize: true, maxResultBytes: true }; var t4FormatRequestKeys = Object.keys(t4FormatRequest);
+            for (var t4FormatRequestKeyIndex = 0; t4FormatRequestKeyIndex < t4FormatRequestKeys.length; t4FormatRequestKeyIndex += 1) { if (!Object.prototype.hasOwnProperty.call(t4FormatAllowedKeys, t4FormatRequestKeys[t4FormatRequestKeyIndex])) return t4FormatRefusal(0, 'TOOL_ERROR'); }
+            var t4FormatHasProperty = t4FormatRequest.bold !== undefined || t4FormatRequest.italic !== undefined || t4FormatRequest.underline !== undefined || t4FormatRequest.fontSize !== undefined || t4FormatRequest.fontFamily !== undefined || t4FormatRequest.color !== undefined;
+            if (!t4FormatHasProperty || !(t4FormatRequest.slideIndex === null || (Number.isSafeInteger(t4FormatRequest.slideIndex) && t4FormatRequest.slideIndex >= 0)) || !Number.isSafeInteger(t4FormatRequest.objectOrdinal) || t4FormatRequest.objectOrdinal < 0) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if ((t4FormatRequest.bold !== undefined && typeof t4FormatRequest.bold !== 'boolean') || (t4FormatRequest.italic !== undefined && typeof t4FormatRequest.italic !== 'boolean') || (t4FormatRequest.underline !== undefined && typeof t4FormatRequest.underline !== 'boolean')) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (typeof t4FormatRequest.maxFontSize !== 'number' || !Number.isSafeInteger(t4FormatRequest.maxFontSize) || t4FormatRequest.maxFontSize < 1) return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.fontSize !== undefined && (!Number.isSafeInteger(t4FormatRequest.fontSize) || t4FormatRequest.fontSize < 1 || t4FormatRequest.fontSize > t4FormatRequest.maxFontSize)) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (t4FormatRequest.fontFamily !== undefined && (typeof t4FormatRequest.fontFamily !== 'string' || t4FormatRequest.fontFamily.length < 1)) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (t4FormatRequest.color !== undefined && (t4FormatRequest.color === null || typeof t4FormatRequest.color !== 'object' || Array.isArray(t4FormatRequest.color) || Object.keys(t4FormatRequest.color).length !== 3 || !Number.isSafeInteger(t4FormatRequest.color.r) || t4FormatRequest.color.r < 0 || t4FormatRequest.color.r > 255 || !Number.isSafeInteger(t4FormatRequest.color.g) || t4FormatRequest.color.g < 0 || t4FormatRequest.color.g > 255 || !Number.isSafeInteger(t4FormatRequest.color.b) || t4FormatRequest.color.b < 0 || t4FormatRequest.color.b > 255)) return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatPresentation = Api.GetPresentation();
+            if (!t4FormatPresentation || typeof t4FormatPresentation.GetCurSlideIndex !== 'function' || typeof t4FormatPresentation.GetCurrentSlide !== 'function' || typeof t4FormatPresentation.GetSlideByIndex !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatWanted = t4FormatRequest.slideIndex;
+            var t4FormatIndex = t4FormatWanted === null ? t4FormatPresentation.GetCurSlideIndex() : t4FormatWanted;
+            var t4FormatSlide = t4FormatWanted === null ? t4FormatPresentation.GetCurrentSlide() : t4FormatPresentation.GetSlideByIndex(t4FormatWanted);
+            if (!t4FormatSlide || typeof t4FormatSlide.GetClassType !== 'function' || t4FormatSlide.GetClassType() !== 'slide' || (t4FormatWanted !== null && (typeof t4FormatSlide.GetSlideIndex !== 'function' || t4FormatSlide.GetSlideIndex() !== t4FormatWanted))) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (typeof t4FormatSlide.GetAllShapes !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatObjects = t4FormatSlide.GetAllShapes();
+            if (!Array.isArray(t4FormatObjects) || t4FormatRequest.objectOrdinal >= t4FormatObjects.length) return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatObject = null; t4FormatObjects.forEach(function (t4FormatCandidate, t4FormatOrdinal) { if (t4FormatOrdinal === t4FormatRequest.objectOrdinal) t4FormatObject = t4FormatCandidate; });
+            if (!t4FormatObject || typeof t4FormatObject.GetContent !== 'function') return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatContent = t4FormatObject.GetContent();
+            if (!t4FormatContent || typeof t4FormatContent.GetElementsCount !== 'function' || typeof t4FormatContent.GetElement !== 'function' || typeof t4FormatContent.ToJSON !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatContent.GetElementsCount() < 1) return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatBeforeElement = t4FormatContent.GetElement(0);
+            if (!t4FormatBeforeElement || typeof t4FormatBeforeElement.GetText !== 'function') return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatBeforeText = t4FormatBeforeElement.GetText();
+            var t4FormatBefore = t4FormatRPr(t4FormatContent);
+            if (typeof t4FormatBeforeText !== 'string' || t4FormatBefore === null) return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatElement = t4FormatContent.GetElement(0);
+            if (!t4FormatElement) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (t4FormatRequest.bold !== undefined) { if (typeof t4FormatElement.SetBold !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetBold(t4FormatRequest.bold); }
+            if (t4FormatRequest.italic !== undefined) { if (typeof t4FormatElement.SetItalic !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetItalic(t4FormatRequest.italic); }
+            if (t4FormatRequest.underline !== undefined) { if (typeof t4FormatElement.SetUnderline !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetUnderline(t4FormatRequest.underline); }
+            if (t4FormatRequest.fontSize !== undefined) { if (typeof t4FormatElement.SetFontSize !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetFontSize(t4FormatRequest.fontSize * 2); }
+            if (t4FormatRequest.fontFamily !== undefined) { if (typeof t4FormatElement.SetFontFamily !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetFontFamily(t4FormatRequest.fontFamily); }
+            if (t4FormatRequest.color !== undefined) { if (typeof t4FormatElement.SetColor !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetColor(t4FormatRequest.color.r, t4FormatRequest.color.g, t4FormatRequest.color.b); }
+            var t4FormatProofElement = t4FormatContent.GetElement(0); var t4FormatAfter = t4FormatRPr(t4FormatContent);
+            if (!t4FormatProofElement || typeof t4FormatProofElement.GetText !== 'function' || t4FormatProofElement.GetText() !== t4FormatBeforeText || t4FormatAfter === null) return t4FormatRefusal(1, 'APPLY_UNCERTAIN');
+            var t4FormatNames = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color']; var t4FormatApplied = [];
+            for (var t4FormatNameIndex = 0; t4FormatNameIndex < t4FormatNames.length; t4FormatNameIndex += 1) { var t4FormatName = t4FormatNames[t4FormatNameIndex]; var t4FormatRequested = t4FormatRequest[t4FormatName] !== undefined; var t4FormatActual = t4FormatValue(t4FormatAfter, t4FormatName); if (t4FormatRequested) { var t4FormatExpected = t4FormatRequest[t4FormatName]; if (t4FormatName === 'underline') t4FormatExpected = t4FormatExpected ? 'sng' : 'none'; if (t4FormatName === 'fontSize') t4FormatExpected *= 100; if (t4FormatName === 'color') t4FormatExpected = { red: t4FormatRequest.color.r, green: t4FormatRequest.color.g, blue: t4FormatRequest.color.b, alpha: 255 }; if (!t4FormatSame(t4FormatActual, t4FormatExpected)) return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); t4FormatApplied.push(t4FormatName); } else if (!t4FormatSame(t4FormatValue(t4FormatBefore, t4FormatName), t4FormatActual)) return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); }
+            var t4FormatAnswer = [3, t4FormatIndex, t4FormatRequest.objectOrdinal, t4FormatBeforeText.length]; for (var t4FormatAppliedIndex = 0; t4FormatAppliedIndex < t4FormatApplied.length; t4FormatAppliedIndex += 1) t4FormatAnswer.push(t4FormatApplied[t4FormatAppliedIndex]); return t4FormatAnswer;
+          } catch (t4FormatError) { return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); }
         }, false, false, callback);
       },
       sheet(callback) {
@@ -4546,6 +4600,17 @@ function decodeSlideMutation(value, mode) {
   if (![slideIndex, objectOrdinal, textLength, textBytes].every(number => Number.isSafeInteger(number) && number >= 0)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   return Object.freeze({ slideIndex, objectOrdinal, textLength, textBytes });
 }
+function decodeSlideFormat(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length < 5 || value.length > 10 || value[0] !== 3) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const [_, slideIndex, objectOrdinal, textLength, ...applied] = value;
+  const names = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color'];
+  if (![slideIndex, objectOrdinal, textLength].every(number => Number.isSafeInteger(number) && number >= 0) || applied.length < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  for (const name of applied) if (!names.includes(name)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ slideIndex, objectOrdinal, applied: Object.freeze(applied), textLength });
+}
 function decodeStructure(value, maxHeadings) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -6200,6 +6265,7 @@ export function createR7Bridge(plugin, {
           else if (kind === 'slideread') result = decodeSlideRead(value, 'slide');
           else if (kind === 'slideadd') result = decodeSlideMutation(value, 'add');
           else if (kind === 'slidetext') result = decodeSlideMutation(value, 'text');
+          else if (kind === 'slideformat') result = decodeSlideFormat(value);
           // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
           // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
           // and the exact-proof rule decides the ticket HERE, while it still owns the slot: a single flag
@@ -6370,6 +6436,10 @@ export function createR7Bridge(plugin, {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
+          if (kind === 'slideformat' && owned.dispatched && !preInsertRefusal(error, kind)) {
+            settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
+            return;
+          }
           slot = null;
           // A callback that actually ARRIVED for an already-dispatched insert can still leave the effect
           // unproven (its deadline expired just before the callback was delivered, so the ticket's own
@@ -6526,6 +6596,14 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.slidemutate(callback); }
           finally { clearScope(previousSlideMutation); }
+        } else if (kind === 'slideformat') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideFormat;
+          try { previousSlideFormat = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slideformat(callback); }
+          finally { clearScope(previousSlideFormat); }
         } else if (kind === 'sheetrename') {
           // THE RENAME: ONE command, and the SAME parameter channel the other Cell legs use — the bound, the source
           // selector and the requested name written into the page's `Asc.scope`, never composed into command source.
@@ -7072,6 +7150,24 @@ export function createR7Bridge(plugin, {
         ensureIdle();
         if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         const outcome = await start('slidetext', signal, {}, Object.freeze({ mode: 'text', slideIndex, objectOrdinal, text, maxTextBytes, maxResultBytes }));
+        return Object.freeze({ ok: true, ...outcome });
+      } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async formatSlideText(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const keys = ['slideIndex', 'objectOrdinal', 'bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color', 'maxFontSize', 'maxResultBytes', 'signal'];
+      for (const key of Object.keys(raw)) if (!keys.includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, objectOrdinal, bold, italic, underline, fontSize, fontFamily, color, maxFontSize, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(objectOrdinal) || objectOrdinal < 0) return refuse(ERROR_CODES.TOOL_ERROR);
+      const names = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color'];
+      if (!names.some(name => raw[name] !== undefined) || (bold !== undefined && typeof bold !== 'boolean') || (italic !== undefined && typeof italic !== 'boolean') || (underline !== undefined && typeof underline !== 'boolean') || (fontSize !== undefined && (!Number.isSafeInteger(fontSize) || fontSize < 1 || fontSize > LIMITS.slideFormatFontSizeMax)) || (fontFamily !== undefined && typeof fontFamily !== 'string')) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (color !== undefined && (color === null || typeof color !== 'object' || Array.isArray(color) || Object.keys(color).length !== 3 || !['r', 'g', 'b'].every(key => Number.isSafeInteger(color[key]) && color[key] >= 0 && color[key] <= 255))) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (maxFontSize !== LIMITS.slideFormatFontSizeMax || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try {
+        ensureIdle();
+        if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('slideformat', signal, {}, Object.freeze({ slideIndex, objectOrdinal, bold, italic, underline, fontSize, fontFamily, color, maxFontSize, maxResultBytes }));
         return Object.freeze({ ok: true, ...outcome });
       } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
     },
