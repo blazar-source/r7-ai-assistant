@@ -49,15 +49,70 @@ test('marked content container holds every content block while composer remains 
   assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
   assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'status', 'content', 'composer']);
   assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
-    ['p', 'section', 'history', 'preview', 'orchestration', 'actions', 'details']);
-  for (const section of ['history', 'preview', 'orchestration', 'actions']) {
+    ['history', 'preview', 'diagnostics']);
+  for (const section of ['history', 'preview', 'diagnostics']) {
     assert.equal(content.children.includes(id(section)), true, `${section} belongs to the content container`);
   }
-  assert.equal(content.children.some(child => child.tagName === 'P' && child.className === 'notice'), true, 'lifecycle warning belongs to the content container');
-  assert.equal(content.children.some(child => child.tagName === 'SECTION' && child.getAttribute('aria-label') === 'Режим и контекст'), true, 'toolbar belongs to the content container');
-  assert.equal(content.children.some(child => child.children.includes(id('settings-form'))), true, 'settings belong to the content container');
+  const diagnostics = id('diagnostics');
+  assert.equal(diagnostics.children.some(child => child.tagName === 'P' && child.className === 'notice'), true, 'lifecycle warning belongs to diagnostics');
+  assert.equal(diagnostics.children.some(child => child.tagName === 'SECTION' && child.getAttribute('aria-label') === 'Режим и контекст'), true, 'toolbar belongs to diagnostics');
+  assert.equal(diagnostics.children.some(child => child.children.includes(id('settings-form'))), true, 'settings belong to diagnostics');
   assert.equal(root.children.at(-1), composer);
   panel.dispose(); controller.dispose();
+});
+
+test('main panel keeps diagnostics collapsed and composer compact at rest', () => {
+  const { all, id, panel, controller } = fixture();
+  const diagnostics = id('diagnostics');
+  assert.ok(diagnostics);
+  assert.equal(diagnostics.tagName, 'DETAILS');
+  assert.equal(diagnostics.getAttribute('open'), null);
+  assert.equal(diagnostics.children.includes(id('editor')), true);
+  assert.match(id('editor').textContent, /Stage B/);
+  assert.equal(all().some(item => item.tagName === 'LABEL' && item.htmlFor === 'prompt'), false);
+  assert.equal(id('prompt').rows, 3);
+  assert.equal(id('input-budget').hidden, true);
+  assert.equal(id('stop').hidden, true);
+  panel.dispose(); controller.dispose();
+});
+
+test('byte counter appears only in the final quarter of the 8192-byte input budget', () => {
+  const { id, panel, controller } = fixture();
+  id('prompt').value = 'a'.repeat(6143); id('prompt').dispatch('input');
+  assert.equal(id('input-budget').hidden, true);
+  id('prompt').value += 'a'; id('prompt').dispatch('input');
+  assert.equal(id('input-budget').hidden, false);
+  assert.match(id('input-budget').textContent, /^6144 \/ 8192 байт UTF-8/);
+  panel.dispose(); controller.dispose();
+});
+
+test('compact status maps every detailed state to the honest closed visible set', () => {
+  // The owner fixed the compact set to five words (contract §7.7), so the classification IS the
+  // contract: ACTIVE names the stage, CLEAN ended with nothing needing attention, ATTENTION is a real
+  // failure or an incomplete/unproven outcome. A non-error terminal state must never be called an error.
+  const clean = ['READY', 'COMPLETE', 'CONTEXT_READY', 'CONNECTION_OK', 'SETTINGS_SAVED', 'SETTINGS_CHANGED', 'R7_PRESENCE_READY', 'PREVIEW_READY', 'PREVIEW_EXPIRED', 'PREVIEW_CANCELLED', 'CONTEXT_CHANGED', 'STOPPED', 'CANCELLED', 'APPLY_ACKNOWLEDGED', 'ORCH_COMPLETE'];
+  const attention = ['AGENT_LIMIT', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN', 'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR', 'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT', 'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR', 'HTTP_UNAUTHORIZED', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR', 'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT'];
+  const active = { CHECKING_R7: 'Проверяю', CONNECTING: 'Проверяю', CHECKING_SELECTION: 'Проверяю', ORCH_VERIFYING: 'Проверяю', ANALYZING: 'Анализирую', ORCH_PLANNING: 'Анализирую', READING_CONTEXT: 'Выполняю', APPLYING: 'Выполняю', ORCH_EXECUTING: 'Выполняю', ORCH_CONTINUING: 'Выполняю' };
+  const classified = [...clean, ...attention, ...Object.keys(active)].sort();
+  // The key list is taken from the module's own status map (no helper): the assertion fails if a status is
+  // added without being classified, which is what keeps this mapping honest.
+  const allStatusCodes = ['AGENT_LIMIT', 'ANALYZING', 'APPLYING', 'APPLY_ACKNOWLEDGED', 'APPLY_UNCERTAIN', 'BYTE_LIMIT', 'CANCELLED', 'CAPABILITY_UNAVAILABLE', 'CHECKING_R7', 'CHECKING_SELECTION', 'COMPLETE', 'CONNECTING', 'CONNECTION_OK', 'CONTEXT_CHANGED', 'CONTEXT_READY', 'EDITOR_BUSY', 'EDITOR_ERROR', 'HTTP_ERROR', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_UNAUTHORIZED', 'INTERNAL_ERROR', 'INVALID_DATA', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_SETTINGS', 'NETWORK_ERROR', 'OFFLINE', 'ORCH_BLOCKED', 'ORCH_COMPLETE', 'ORCH_CONTINUING', 'ORCH_EXECUTING', 'ORCH_INCOMPLETE', 'ORCH_PLANNING', 'ORCH_UNCERTAIN', 'ORCH_VERIFYING', 'PREVIEW_CANCELLED', 'PREVIEW_EXPIRED', 'PREVIEW_READY', 'PROTOCOL_ERROR', 'R7_CHECK_UNAVAILABLE', 'R7_PRESENCE_READY', 'READING_CONTEXT', 'READY', 'SELECTION_CHANGED', 'SETTINGS_CHANGED', 'SETTINGS_SAVED', 'STOPPED', 'STORAGE_CORRUPT', 'STORAGE_UNAVAILABLE', 'TIMEOUT'];
+  assert.deepEqual(classified, [...allStatusCodes].sort(), 'every status in the map is classified');
+  for (const code of clean) assert.equal(statusText(code, true), 'Готово', code);
+  for (const code of attention) assert.equal(statusText(code, true), 'Ошибка', code);
+  for (const [code, caption] of Object.entries(active)) assert.equal(statusText(code, true), caption, code);
+  assert.equal(statusText('FUTURE_TERMINAL', true), 'Готово', 'an unknown non-error status must not silently become an error');
+});
+
+test('user and assistant messages have distinct semantic roles and visual classes', async () => {
+  const f = fixture(final('answer')); await f.controller.analyze('question');
+  const [user, assistant] = f.id('history').children;
+  assert.equal(user.className, 'message message-user');
+  assert.equal(user.getAttribute('data-role'), 'user');
+  assert.equal(assistant.className, 'message message-assistant');
+  assert.equal(assistant.getAttribute('data-role'), 'assistant');
+  assert.notEqual(user.className, assistant.className);
+  f.panel.dispose(); f.controller.dispose();
 });
 
 test('composer stays mounted and prompt-enabled across idle, active, error and preview states', async () => {
@@ -67,7 +122,9 @@ test('composer stays mounted and prompt-enabled across idle, active, error and p
   const operation = active.controller.analyze('question'); await Promise.resolve();
   assert.equal(active.controller.getState().active, true);
   assert.equal(active.id('prompt').disabled, false); assert.ok(active.id('composer'));
+  assert.equal(active.id('stop').hidden, false);
   release(injected(final('answer'))); await operation;
+  assert.equal(active.id('stop').hidden, true);
   active.panel.dispose(); active.controller.dispose();
 
   const error = fixture(async () => { throw new SafeError('NETWORK_ERROR'); }, { transport: async () => { throw new SafeError('NETWORK_ERROR'); } });
@@ -169,12 +226,13 @@ test('the live step status and the actions summary are rendered as text, never a
   const running = snapshots.filter(entry => entry.state.agent?.status === 'RUNNING' && entry.state.agent.steps > 0);
   assert.ok(running.length >= 1);
   // The live counter reached the DOM during the run: the last running emit was rendered as `шаг 1`.
-  assert.equal(liveStatus, 'Анализ… · шаг 1');
-  assert.equal(snapshots.at(-1).status, 'Ответ получен');
+  assert.equal(liveStatus, 'Анализирую');
+  assert.equal(snapshots.at(-1).status, 'Готово');
   assert.equal(snapshots.at(-1).actions, 'insert_paragraph: ok');
   assert.match(running.at(-1).state.status, /ANALYZING/);
   assert.equal(snapshots.at(-1).actions, 'insert_paragraph: ok');
-  assert.match(f.id('status').textContent, /Ответ получен/);
+  assert.equal(f.id('status').textContent, 'Готово');
+  assert.match(f.id('status-details').textContent, /Ответ получен/);
   assert.match(f.id('actions').textContent, /insert_paragraph: ok/);
   // The raw model JSON, its arguments and the document text never appear in the rendered panel.
   const rendered = f.root.textContent;

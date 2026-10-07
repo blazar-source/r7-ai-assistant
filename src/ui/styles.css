@@ -2,23 +2,23 @@
 html, body { width: 100%; height: 100%; overflow: hidden; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--background); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { display: flex; flex-direction: column; gap: 12px; padding: 12px; width: 100%; height: 100%; min-width: 0; overflow: hidden; }
+main { display: flex; flex-direction: column; gap: 6px; padding: 8px; width: 100%; height: 100%; min-width: 0; overflow: hidden; }
 header, section, form, details { min-width: 0; }
 header, #status, #composer { flex: 0 0 auto; }
-#content { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
-#history { margin: 0; overflow: visible; }
-#composer { margin: 0; }
-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-h1 { font-size: 18px; margin: 0; flex-basis: 100%; }
+#content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+#history { flex: 1 0 auto; margin: 0; overflow: visible; }
+#composer { margin: 0; padding-top: 2px; align-items: stretch; }
+header { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 6px; }
+h1 { font-size: 16px; margin: 0; }
 h2 { font-size: 14px; margin: 8px 0 4px; }
 p { margin: 8px 0; overflow-wrap: anywhere; }
-section, details { margin: 12px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+section, details { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+form { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
 label, textarea, .field, #input-budget { flex-basis: 100%; }
 .field { display: grid; gap: 4px; }
 input, select, textarea, button { max-width: 100%; min-width: 0; font: inherit; }
 input:not([type="checkbox"]), select, textarea { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--surface); }
-textarea { resize: vertical; min-height: 96px; max-height: 25vh; }
+textarea { resize: vertical; min-height: 60px; max-height: 25vh; }
 input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
 button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--surface); cursor: pointer; overflow-wrap: anywhere; }
 button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #ffffff; }
@@ -27,10 +27,14 @@ button:disabled { color: var(--muted); background: var(--background); cursor: no
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 summary { cursor: pointer; padding: 4px; }
 pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; max-width: 100%; }
-article + article { border-top: 1px solid var(--line); padding-top: 8px; }
+.message { max-width: 90%; margin: 6px 0; padding: 6px 8px; border-radius: 8px; }
+.message h2, .message pre { margin: 0; }
+.message-user { align-self: flex-end; margin-left: auto; background: #dceaff; }
+.message-assistant { align-self: flex-start; margin-right: auto; background: var(--surface); border: 1px solid var(--line); }
 .muted { color: var(--muted); font-size: 12px; }
 .notice { background: var(--notice); padding: 8px; border-left: 3px solid #896019; }
-#status { padding: 8px; border-left: 3px solid var(--accent); background: var(--surface); }
+#status { margin: 0; padding: 4px 8px; border-left: 3px solid var(--accent); background: var(--surface); }
+#diagnostics { flex: 0 0 auto; }
 [hidden] { display: none !important; }
-@media (max-width: 300px) { main { padding: 8px; } section, details { padding: 8px; } button { width: 100%; } }
+@media (max-width: 300px) { main { padding: 6px; } section, details { padding: 6px; } #composer button { width: auto; flex: 1 1 0; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }

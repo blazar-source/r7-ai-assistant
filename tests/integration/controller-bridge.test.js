@@ -74,7 +74,8 @@ for (const editor of ['unknown', null]) test(`UI probe reports unsupported ${edi
   assert.equal(await f.controller.checkR7(), false);
   assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
   assert.equal(f.controller.getState().capabilityCount, null); assert.equal(f.callbacks.length, 0);
-  assert.match(f.id('status').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
+  assert.equal(f.id('status').textContent, 'Ошибка');
+  assert.match(f.id('status-details').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
   f.panel.dispose(); f.controller.dispose();
 });
 test('UI probe reports a PRESENTATION ready from its own adapter, still without SDK guesses', async () => {
@@ -292,7 +293,8 @@ test('an insert whose native PasteText callback never arrives stops the run as u
   assert.equal(state.status, 'APPLY_UNCERTAIN');
   assert.notEqual(state.status, 'COMPLETE');
   assert.equal(state.agent.status, 'UNCERTAIN');
-  assert.match(tree.id('status').textContent, /Исход команды неизвестен/);
+  assert.equal(tree.id('status').textContent, 'Ошибка');
+  assert.match(tree.id('status-details').textContent, /Исход команды неизвестен/);
   // (b) no second mutation was dispatched, and the loop spent no further step producing refusals.
   assert.equal(calls, 1, 'the run stops on the uncertain action; the second envelope is never requested');
   assert.equal(inserts.length, 1, 'a second native mutation is never dispatched');

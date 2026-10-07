@@ -27,7 +27,45 @@ const statuses = Object.freeze({
   SELECTION_CHANGED: 'Выделение изменилось. Повторите команду',
   EDITOR_BUSY: 'Редактор занят / исход предыдущего вызова неизвестен. Дождитесь его завершения; новый мост не создаётся.', EDITOR_ERROR: 'Не удалось получить результат редактора'
 });
-export function statusText(code) { return statuses[code] ?? statuses.INTERNAL_ERROR; }
+// The owner fixed the compact set to five words (contract §7.7): Готово / Анализирую / Выполняю / Проверяю /
+// Ошибка. A review of T3 caught the first version of this map labelling EVERY known-but-unlisted status as
+// `Ошибка`, which made cancellations, an expired preview and a settings change look like failures. The three
+// groups below are therefore EXHAUSTIVE over `statuses`, and the rule is honest:
+//   * ACTIVE - the operation is in flight, so the label names the stage;
+//   * CLEAN  - it ended and nothing needs the user's attention, so it is `Готово` (the detailed line says what
+//              exactly happened: "предложение отменено", "операция отменена", "настройки изменены");
+//   * ATTENTION - a genuine failure OR an outcome that is incomplete/unproven (a limit hit, an uncertain apply,
+//              a blocked orchestration). `Ошибка` is the only one of the five words that does not claim success,
+//              and the detailed line still explains the real state, so an unproven result is never dressed up as
+//              `Готово`.
+// An unknown status key deliberately falls back to `Готово` rather than to `Ошибка`: a state this UI has not
+// classified must not be reported to the user as a failure. The exhaustive test in tests/unit/view.test.js walks
+// every key of `statuses` and fails if any of them is unclassified, so the map cannot drift silently.
+const compactActive = Object.freeze({
+  ANALYZING: 'Анализирую', ORCH_PLANNING: 'Анализирую',
+  READING_CONTEXT: 'Выполняю', APPLYING: 'Выполняю', ORCH_EXECUTING: 'Выполняю', ORCH_CONTINUING: 'Выполняю',
+  CHECKING_R7: 'Проверяю', CONNECTING: 'Проверяю', CHECKING_SELECTION: 'Проверяю', ORCH_VERIFYING: 'Проверяю'
+});
+const compactClean = Object.freeze([
+  'READY', 'COMPLETE', 'CONTEXT_READY', 'CONNECTION_OK', 'SETTINGS_SAVED', 'SETTINGS_CHANGED', 'R7_PRESENCE_READY',
+  'PREVIEW_READY', 'PREVIEW_EXPIRED', 'PREVIEW_CANCELLED', 'CONTEXT_CHANGED', 'STOPPED', 'CANCELLED',
+  'APPLY_ACKNOWLEDGED', 'ORCH_COMPLETE'
+]);
+const compactAttention = Object.freeze([
+  'AGENT_LIMIT', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN',
+  'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR',
+  'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT',
+  'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR',
+  'HTTP_UNAUTHORIZED', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR',
+  'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT'
+]);
+const compactStatuses = Object.freeze(Object.assign(Object.create(null), compactActive,
+  Object.fromEntries(compactClean.map((code) => [code, 'Готово'])),
+  Object.fromEntries(compactAttention.map((code) => [code, 'Ошибка']))));
+export function statusText(code, compact = false) {
+  if (compact) return compactStatuses[code] ?? 'Готово';
+  return statuses[code] ?? statuses.INTERNAL_ERROR;
+}
 // The orchestration report, in the same authored, closed coding the status captions use: the panel's own
 // numbers and the plan's own text, never a model envelope. Every line is authored text rendered with
 // textContent, so no plan or document text can become markup.
@@ -84,9 +122,13 @@ export function mountPanel(root, controller) {
   }
   const header = node('header');
   const title = node('h1', 'R7 AI Assistant');
-  const badge = node('p', 'Stage B · только предложение', 'editor'); badge.className = 'muted';
   const fresh = button('Новый чат', 'new-chat', function () { controller.newChat(); prompt.focus(); });
-  header.append(title, badge, fresh);
+  header.append(title, fresh);
+  const diagnostics = node('details', '', 'diagnostics');
+  const diagnosticsSummary = node('summary', 'Диагностика');
+  const badge = node('p', 'Stage B · только предложение', 'editor'); badge.className = 'muted';
+  const detailedStatus = node('p', '', 'status-details'); detailedStatus.className = 'muted';
+  diagnostics.append(diagnosticsSummary, badge, detailedStatus);
   const status = node('p', '', 'status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
   const lifecycleWarning = node('p', 'Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.'); lifecycleWarning.className = 'notice';
   const toolbar = node('section'); toolbar.setAttribute('aria-label', 'Режим и контекст');
@@ -116,13 +158,16 @@ export function mountPanel(root, controller) {
   // never become an element or an attribute.
   const orchestration = node('pre', '', 'orchestration'); orchestration.setAttribute('aria-live', 'polite'); orchestration.hidden = true;
   const composer = node('form', '', 'composer');
-  const promptLabel = node('label', 'Запрос'); promptLabel.htmlFor = 'prompt';
-  const prompt = node('textarea', '', 'prompt'); prompt.rows = 4; prompt.setAttribute('aria-describedby', 'input-budget');
-  const budget = node('p', '0 / 8192 байт UTF-8 · Ctrl+Enter — отправить', 'input-budget'); budget.className = 'muted';
-  on(prompt, 'input', function () { budget.textContent = `${utf8ByteLength(prompt.value)} / 8192 байт UTF-8 · Ctrl+Enter — отправить`; });
+  const prompt = node('textarea', '', 'prompt'); prompt.rows = 3; prompt.setAttribute('aria-label', 'Запрос'); prompt.setAttribute('aria-describedby', 'input-budget');
+  const budget = node('p', '', 'input-budget'); budget.className = 'muted'; budget.hidden = true;
+  on(prompt, 'input', function () {
+    const bytes = utf8ByteLength(prompt.value);
+    budget.textContent = `${bytes} / 8192 байт UTF-8 · Ctrl+Enter — отправить`;
+    budget.hidden = bytes < 6144;
+  });
   const send = node('button', 'Отправить', 'send'); send.type = 'submit';
-  const stop = button('Стоп', 'stop', function () { controller.stop(); prompt.focus(); });
-  composer.append(promptLabel, prompt, budget, send, stop);
+  const stop = button('Стоп', 'stop', function () { controller.stop(); prompt.focus(); }); stop.hidden = true;
+  composer.append(prompt, budget, send, stop);
   const preview = node('section', '', 'preview'); preview.setAttribute('aria-label', 'Предложение замены');
   const replacement = node('pre', '', 'replacement');
   const reason = node('p', 'Только явное Применить: текущее непустое выделение должно точно совпадать с исходным текстом. Перевыделение такого же текста разрешено. Срок предложения — 120 секунд. Штатный Undo выполняется вручную.', 'apply-reason');
@@ -155,19 +200,22 @@ export function mountPanel(root, controller) {
   on(composer, 'submit', function (event) { event.preventDefault(); submit(); });
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
-  content.append(lifecycleWarning, toolbar, history, preview, orchestration, journal, settings);
+  diagnostics.append(lifecycleWarning, toolbar, orchestration, journal, settings);
+  content.append(history, preview, diagnostics);
   root.replaceChildren(header, status, content, composer);
   let lastSettings = null;
   let lastHistory = null;
   let lastAgentActions = null;
   const unsubscribe = controller.subscribe(function (state) {
     const record = state.agent ?? null;
-    status.textContent = state.status === 'ANALYZING' && record?.status === 'RUNNING' && record.steps > 0 ?
+    status.textContent = statusText(state.status, true);
+    detailedStatus.textContent = state.status === 'ANALYZING' && record?.status === 'RUNNING' && record.steps > 0 ?
       `${statusText(state.status)} · шаг ${record.steps}` : statusText(state.status);
     badge.textContent = `Stage B · редактор: ${state.editorType} · runtimeVerified: false`;
     mode.value = state.mode; include.checked = state.includeContext;
     const locked = state.writeLocked === true;
-    stop.disabled = !state.active || locked;
+    stop.hidden = !state.active;
+    stop.disabled = locked;
     send.disabled = state.active || locked; test.disabled = state.active || locked; refresh.disabled = state.active || locked; checkR7.disabled = state.active || locked;
     fresh.disabled = locked; reset.disabled = locked; save.disabled = locked; mode.disabled = locked;
     for (const control of Object.values(controls)) control.disabled = locked;
@@ -185,7 +233,14 @@ export function mountPanel(root, controller) {
     selected.textContent = state.context.text;
     if (lastHistory !== state.chat.history) {
       lastHistory = state.chat.history;
-      const entries = state.chat.history.map(function (entry) { const article = node('article'); article.append(node('h2', entry.role === 'user' ? 'Вы' : 'Ассистент / предложение'), node('pre', entry.content)); return article; });
+      const entries = state.chat.history.map(function (entry) {
+        const article = node('article');
+        const role = entry.role === 'user' ? 'user' : 'assistant';
+        article.className = `message message-${role}`;
+        article.setAttribute('data-role', role);
+        article.append(node('h2', role === 'user' ? 'Вы' : 'Ассистент / предложение'), node('pre', entry.content));
+        return article;
+      });
       history.replaceChildren(...entries);
     }
     preview.hidden = !state.preview;

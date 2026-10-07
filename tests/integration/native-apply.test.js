@@ -15,7 +15,8 @@ for (const replacement of ['short', 'long '.repeat(200), 'x', 'line1\nline2\t<sc
   assert.deepEqual(f.calls.map(call => call.name), ['GetSelectedText', 'context', 'context', 'GetSelectedText', 'context', 'ReplaceTextSmart']);
   assert.equal(f.controller.getState().status, 'APPLY_ACKNOWLEDGED');
   assert.equal(f.controller.getState().preview, null); assert.equal(f.controller.getState().chat, history);
-  assert.match(f.id('status').textContent, /не подтверждает|не доказан/); assert.doesNotMatch(f.id('status').textContent, /Документ изменён/);
+  assert.equal(f.id('status').textContent, 'Готово');
+  assert.match(f.id('status-details').textContent, /не подтверждает|не доказан/); assert.doesNotMatch(f.id('status-details').textContent, /Документ изменён/);
   assert.equal(await f.controller.apply(), false); assert.equal(f.writes().length, 1); f.close();
 });
 
@@ -46,7 +47,8 @@ for (const [label, change] of [
   const f = nativeRig(); await f.preview(); change(f);
   assert.equal(await f.controller.apply(), false); assert.equal(f.writes().length, 0);
   assert.equal(f.controller.getState().status, 'SELECTION_CHANGED');
-  assert.equal(f.id('status').textContent, 'Выделение изменилось. Повторите команду');
+  assert.equal(f.id('status').textContent, 'Ошибка');
+  assert.equal(f.id('status-details').textContent, 'Выделение изменилось. Повторите команду');
   assert.equal(f.controller.getState().preview, null); f.close();
 });
 for (const tracking of [true, null, undefined, 'false']) test(`fresh read refuses tracking=${String(tracking)} without model/preview`, async () => {
