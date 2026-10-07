@@ -398,6 +398,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
           'the by-id reader is authored nowhere: the proof reads the collection the write really changed');
         assert.equal(code.includes('GetCommentsReport'), false, 'and the report reader is authored nowhere too');
         legs.push('comment');
+      } else if (code.includes('t4ObjectRefusal')) {
+        assert.match(code, /CreateTable\s*\(/, 'the slide object body carries the measured table factory');
+        assert.match(code, /CreateImage\s*\(/, 'the slide object body carries the measured image factory');
+        assert.match(code, /GetWidth\s*\(/, 'image width is proved through the measured getter');
+        assert.match(code, /GetHeight\s*\(/, 'image height is proved through the measured getter');
+        legs.push('slideobject');
       } else if (code.includes('CreateImage')) {
         assert.match(code, /\bscope\b/, 'the image body takes its data URL, dimensions and address from the injected command scope');
         assert.match(code, /CreateImage\(/, 'and creates the picture through the measured factory');
@@ -519,8 +525,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 21, 'the adapter dispatches exactly the twenty-one authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'structure', 'table'],
+  assert.equal(commands, 22, 'the adapter dispatches exactly the twenty-two authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'slideobject', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

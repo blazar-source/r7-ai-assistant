@@ -47,7 +47,7 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // a single flag per cell could hide one unproven property behind the proven ones.
 const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd', 'sheetrename']));
 WRITE_KINDS.add('slideadd'); WRITE_KINDS.add('slidetext');
-WRITE_KINDS.add('slideformat');
+WRITE_KINDS.add('slideformat'); WRITE_KINDS.add('slideobject');
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -805,6 +805,37 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             for (var t4FormatNameIndex = 0; t4FormatNameIndex < t4FormatNames.length; t4FormatNameIndex += 1) { var t4FormatName = t4FormatNames[t4FormatNameIndex]; var t4FormatRequested = t4FormatRequest[t4FormatName] !== undefined; var t4FormatActual = t4FormatValue(t4FormatAfter, t4FormatName); if (t4FormatRequested) { var t4FormatExpected = t4FormatRequest[t4FormatName]; if (t4FormatName === 'underline') t4FormatExpected = t4FormatExpected ? 'sng' : 'none'; if (t4FormatName === 'fontSize') t4FormatExpected *= 100; if (t4FormatName === 'color') t4FormatExpected = { red: t4FormatRequest.color.r, green: t4FormatRequest.color.g, blue: t4FormatRequest.color.b, alpha: 255 }; if (!t4FormatSame(t4FormatActual, t4FormatExpected)) return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); t4FormatApplied.push(t4FormatName); } else if (!t4FormatSame(t4FormatValue(t4FormatBefore, t4FormatName), t4FormatActual)) return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); }
             var t4FormatAnswer = [3, t4FormatIndex, t4FormatRequest.objectOrdinal, t4FormatBeforeText.length]; for (var t4FormatAppliedIndex = 0; t4FormatAppliedIndex < t4FormatApplied.length; t4FormatAppliedIndex += 1) t4FormatAnswer.push(t4FormatApplied[t4FormatAppliedIndex]); return t4FormatAnswer;
           } catch (t4FormatError) { return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, false, callback);
+      },
+      slideobject(callback) {
+        return plugin.callCommand(function () {
+          function t4ObjectRefusal(t4ObjectPhase, t4ObjectCode) { var t4ObjectOut = []; t4ObjectOut.push(t4ObjectPhase); t4ObjectOut.push(t4ObjectCode); return t4ObjectOut; }
+          function t4ObjectCount(t4ObjectNode, t4ObjectKey) { if (!t4ObjectNode || typeof t4ObjectNode !== 'object') return 0; var t4ObjectTotal = Object.prototype.hasOwnProperty.call(t4ObjectNode, t4ObjectKey) ? 1 : 0; var t4ObjectKeys = Object.keys(t4ObjectNode); for (var t4ObjectKeyIndex = 0; t4ObjectKeyIndex < t4ObjectKeys.length; t4ObjectKeyIndex += 1) t4ObjectTotal += t4ObjectCount(t4ObjectNode[t4ObjectKeys[t4ObjectKeyIndex]], t4ObjectKey); return t4ObjectTotal; }
+          try {
+            var t4ObjectRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t4ObjectRequest || !(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectAllowedKeys = { mode: true, slideIndex: true, columns: true, rows: true, imageDataUrl: true, widthEmu: true, heightEmu: true, maxColumns: true, maxRows: true, maxImageBytes: true, maxImageEmu: true, maxResultBytes: true }; var t4ObjectRequestKeys = Object.keys(t4ObjectRequest);
+            for (var t4ObjectRequestKeyIndex = 0; t4ObjectRequestKeyIndex < t4ObjectRequestKeys.length; t4ObjectRequestKeyIndex += 1) if (!Object.prototype.hasOwnProperty.call(t4ObjectAllowedKeys, t4ObjectRequestKeys[t4ObjectRequestKeyIndex])) return t4ObjectRefusal(0, 'TOOL_ERROR');
+            if ((t4ObjectRequest.mode !== 'table' && t4ObjectRequest.mode !== 'image') || !(t4ObjectRequest.slideIndex === null || (Number.isSafeInteger(t4ObjectRequest.slideIndex) && t4ObjectRequest.slideIndex >= 0))) return t4ObjectRefusal(0, 'TOOL_ERROR');
+            if (!Number.isSafeInteger(t4ObjectRequest.maxResultBytes) || t4ObjectRequest.maxResultBytes < 1) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4ObjectRequest.mode === 'table') { if (!Number.isSafeInteger(t4ObjectRequest.maxColumns) || t4ObjectRequest.maxColumns < 1 || !Number.isSafeInteger(t4ObjectRequest.maxRows) || t4ObjectRequest.maxRows < 1) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); if (!Number.isSafeInteger(t4ObjectRequest.columns) || t4ObjectRequest.columns < 1 || t4ObjectRequest.columns > t4ObjectRequest.maxColumns || !Number.isSafeInteger(t4ObjectRequest.rows) || t4ObjectRequest.rows < 1 || t4ObjectRequest.rows > t4ObjectRequest.maxRows) return t4ObjectRefusal(0, 'TOOL_ERROR'); }
+            if (t4ObjectRequest.mode === 'image') { if (!Number.isSafeInteger(t4ObjectRequest.maxImageBytes) || t4ObjectRequest.maxImageBytes < 1 || !Number.isSafeInteger(t4ObjectRequest.maxImageEmu) || t4ObjectRequest.maxImageEmu < 1) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); if (typeof t4ObjectRequest.imageDataUrl !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(t4ObjectRequest.imageDataUrl) || t4ObjectRequest.imageDataUrl.length < 24 || t4ObjectRequest.imageDataUrl.length > t4ObjectRequest.maxImageBytes || !Number.isSafeInteger(t4ObjectRequest.widthEmu) || t4ObjectRequest.widthEmu < 1 || t4ObjectRequest.widthEmu > t4ObjectRequest.maxImageEmu || !Number.isSafeInteger(t4ObjectRequest.heightEmu) || t4ObjectRequest.heightEmu < 1 || t4ObjectRequest.heightEmu > t4ObjectRequest.maxImageEmu) return t4ObjectRefusal(0, 'TOOL_ERROR'); }
+            var t4ObjectPresentation = Api.GetPresentation();
+            if (!t4ObjectPresentation || typeof t4ObjectPresentation.GetCurSlideIndex !== 'function' || typeof t4ObjectPresentation.GetCurrentSlide !== 'function' || typeof t4ObjectPresentation.GetSlideByIndex !== 'function' || typeof t4ObjectPresentation.GetSlidesCount !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectWanted = t4ObjectRequest.slideIndex; var t4ObjectIndex = t4ObjectWanted === null ? t4ObjectPresentation.GetCurSlideIndex() : t4ObjectWanted; var t4ObjectSlide = t4ObjectWanted === null ? t4ObjectPresentation.GetCurrentSlide() : t4ObjectPresentation.GetSlideByIndex(t4ObjectWanted);
+            if (!t4ObjectSlide || typeof t4ObjectSlide.GetClassType !== 'function' || t4ObjectSlide.GetClassType() !== 'slide' || (t4ObjectWanted !== null && (typeof t4ObjectSlide.GetSlideIndex !== 'function' || t4ObjectSlide.GetSlideIndex() !== t4ObjectWanted))) return t4ObjectRefusal(0, 'TOOL_ERROR');
+            if (typeof t4ObjectSlide.GetAllDrawings !== 'function' || typeof t4ObjectSlide.GetAllShapes !== 'function' || typeof t4ObjectSlide.GetAllImages !== 'function' || typeof t4ObjectSlide.GetAllCharts !== 'function' || typeof t4ObjectSlide.GetAllOleObjects !== 'function' || typeof t4ObjectSlide.AddObject !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectBeforeDrawings = t4ObjectSlide.GetAllDrawings(); var t4ObjectBeforeShapes = t4ObjectSlide.GetAllShapes(); var t4ObjectBeforeImages = t4ObjectSlide.GetAllImages(); var t4ObjectBeforeCharts = t4ObjectSlide.GetAllCharts(); var t4ObjectBeforeOle = t4ObjectSlide.GetAllOleObjects(); var t4ObjectBeforeSlides = t4ObjectPresentation.GetSlidesCount();
+            if (![t4ObjectBeforeDrawings, t4ObjectBeforeShapes, t4ObjectBeforeImages, t4ObjectBeforeCharts, t4ObjectBeforeOle].every(Array.isArray) || !Number.isSafeInteger(t4ObjectBeforeSlides)) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectCreated; if (t4ObjectRequest.mode === 'table') { if (typeof Api.CreateTable !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4ObjectCreated = Api.CreateTable(t4ObjectRequest.columns, t4ObjectRequest.rows); } else { if (typeof Api.CreateImage !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4ObjectCreated = Api.CreateImage(t4ObjectRequest.imageDataUrl, t4ObjectRequest.widthEmu, t4ObjectRequest.heightEmu); }
+            t4ObjectSlide.AddObject(t4ObjectCreated);
+            var t4ObjectAfterDrawings = t4ObjectSlide.GetAllDrawings(); var t4ObjectAfterShapes = t4ObjectSlide.GetAllShapes(); var t4ObjectAfterImages = t4ObjectSlide.GetAllImages(); var t4ObjectAfterCharts = t4ObjectSlide.GetAllCharts(); var t4ObjectAfterOle = t4ObjectSlide.GetAllOleObjects();
+            if (![t4ObjectAfterDrawings, t4ObjectAfterShapes, t4ObjectAfterImages, t4ObjectAfterCharts, t4ObjectAfterOle].every(Array.isArray) || t4ObjectAfterDrawings.length !== t4ObjectBeforeDrawings.length + 1 || t4ObjectAfterShapes.length !== t4ObjectBeforeShapes.length || t4ObjectAfterCharts.length !== t4ObjectBeforeCharts.length || t4ObjectAfterOle.length !== t4ObjectBeforeOle.length || t4ObjectPresentation.GetSlidesCount() !== t4ObjectBeforeSlides) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN');
+            var t4ObjectStored = null; t4ObjectAfterDrawings.forEach(function (t4ObjectCandidate, t4ObjectOrdinal) { if (t4ObjectOrdinal === t4ObjectAfterDrawings.length - 1) t4ObjectStored = t4ObjectCandidate; }); if (!t4ObjectStored || typeof t4ObjectStored.ToJSON !== 'function') return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); var t4ObjectRaw = t4ObjectStored.ToJSON(); if (typeof t4ObjectRaw !== 'string') return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); var t4ObjectJson = JSON.parse(t4ObjectRaw);
+            if (t4ObjectRequest.mode === 'table') { if (!t4ObjectJson || !t4ObjectJson.graphic || typeof t4ObjectJson.graphic !== 'object' || !Array.isArray(t4ObjectJson.graphic.tblGrid) || t4ObjectJson.graphic.tblGrid.length !== t4ObjectRequest.columns || t4ObjectCount(t4ObjectJson, 'tcPr') !== t4ObjectRequest.columns * t4ObjectRequest.rows || t4ObjectAfterImages.length !== t4ObjectBeforeImages.length) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); var t4ObjectTableAnswer = [4, t4ObjectIndex, t4ObjectRequest.columns, t4ObjectRequest.rows, t4ObjectAfterDrawings.length, t4ObjectRequest.columns * t4ObjectRequest.rows]; return t4ObjectTableAnswer; }
+            if (t4ObjectAfterImages.length !== t4ObjectBeforeImages.length + 1 || t4ObjectCount(t4ObjectJson, 'rasterImageId') !== 1 || typeof t4ObjectJson.blipFill !== 'object' || t4ObjectJson.blipFill.rasterImageId !== t4ObjectRequest.imageDataUrl || typeof t4ObjectStored.GetWidth !== 'function' || typeof t4ObjectStored.GetHeight !== 'function' || t4ObjectStored.GetWidth() !== t4ObjectRequest.widthEmu || t4ObjectStored.GetHeight() !== t4ObjectRequest.heightEmu) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN');
+            var t4ObjectImageAnswer = [5, t4ObjectIndex, t4ObjectAfterImages.length, t4ObjectRequest.widthEmu, t4ObjectRequest.heightEmu, t4ObjectRequest.imageDataUrl.length]; return t4ObjectImageAnswer;
+          } catch (t4ObjectError) { return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); }
         }, false, false, callback);
       },
       sheet(callback) {
@@ -4611,6 +4642,15 @@ function decodeSlideFormat(value) {
   for (const name of applied) if (!names.includes(name)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   return Object.freeze({ slideIndex, objectOrdinal, applied: Object.freeze(applied), textLength });
 }
+function decodeSlideObject(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length !== 6 || value[0] !== (mode === 'table' ? 4 : 5)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = value.slice(1); for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (mode === 'table') return Object.freeze({ slideIndex: value[1], columns: value[2], rows: value[3], drawings: value[4], cells: value[5] });
+  return Object.freeze({ slideIndex: value[1], images: value[2], widthEmu: value[3], heightEmu: value[4], sourceBytes: value[5] });
+}
 function decodeStructure(value, maxHeadings) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -6266,6 +6306,7 @@ export function createR7Bridge(plugin, {
           else if (kind === 'slideadd') result = decodeSlideMutation(value, 'add');
           else if (kind === 'slidetext') result = decodeSlideMutation(value, 'text');
           else if (kind === 'slideformat') result = decodeSlideFormat(value);
+          else if (kind === 'slideobject') result = decodeSlideObject(value, params.mode);
           // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
           // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
           // and the exact-proof rule decides the ticket HERE, while it still owns the slot: a single flag
@@ -6436,7 +6477,7 @@ export function createR7Bridge(plugin, {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
-          if (kind === 'slideformat' && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'slideformat' || kind === 'slideobject') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -6604,6 +6645,14 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.slideformat(callback); }
           finally { clearScope(previousSlideFormat); }
+        } else if (kind === 'slideobject') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideObject;
+          try { previousSlideObject = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slideobject(callback); }
+          finally { clearScope(previousSlideObject); }
         } else if (kind === 'sheetrename') {
           // THE RENAME: ONE command, and the SAME parameter channel the other Cell legs use — the bound, the source
           // selector and the requested name written into the page's `Asc.scope`, never composed into command source.
@@ -7170,6 +7219,25 @@ export function createR7Bridge(plugin, {
         const outcome = await start('slideformat', signal, {}, Object.freeze({ slideIndex, objectOrdinal, bold, italic, underline, fontSize, fontFamily, color, maxFontSize, maxResultBytes }));
         return Object.freeze({ ok: true, ...outcome });
       } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async addSlideTable(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const keys = ['slideIndex', 'columns', 'rows', 'maxColumns', 'maxRows', 'maxResultBytes', 'signal']; for (const key of Object.keys(raw)) if (!keys.includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, columns, rows, maxColumns, maxRows, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(columns) || columns < 1 || columns > LIMITS.slideTableColumnsMax || !Number.isSafeInteger(rows) || rows < 1 || rows > LIMITS.slideTableRowsMax) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (maxColumns !== LIMITS.slideTableColumnsMax || maxRows !== LIMITS.slideTableRowsMax || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('slideobject', signal, {}, Object.freeze({ mode: 'table', slideIndex, columns, rows, maxColumns, maxRows, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async addSlideImage(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const keys = ['slideIndex', 'imageDataUrl', 'widthEmu', 'heightEmu', 'maxImageBytes', 'maxImageEmu', 'maxResultBytes', 'signal']; for (const key of Object.keys(raw)) if (!keys.includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, imageDataUrl, widthEmu, heightEmu, maxImageBytes, maxImageEmu, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || typeof imageDataUrl !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(imageDataUrl) || imageDataUrl.length < 24 || !Number.isSafeInteger(widthEmu) || widthEmu < 1 || widthEmu > LIMITS.slideImageEmuMax || !Number.isSafeInteger(heightEmu) || heightEmu < 1 || heightEmu > LIMITS.slideImageEmuMax) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (utf8ByteLength(imageDataUrl) > LIMITS.slideImageBytesMax) return refuse(ERROR_CODES.BYTE_LIMIT);
+      if (maxImageBytes !== LIMITS.slideImageBytesMax || maxImageEmu !== LIMITS.slideImageEmuMax || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('slideobject', signal, {}, Object.freeze({ mode: 'image', slideIndex, imageDataUrl, widthEmu, heightEmu, maxImageBytes, maxImageEmu, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
     },
     async readSheet(raw) {
       const maxCells = raw?.maxCells, signal = raw?.signal;
