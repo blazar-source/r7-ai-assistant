@@ -357,6 +357,71 @@ test('the ordinary single run shows no orchestration report', async () => {
   f.panel.dispose(); f.controller.dispose();
 });
 
+test('every capability, readiness and context element stays inside collapsed diagnostics', () => {
+  const f = fixture();
+  const diagnostics = f.id('diagnostics');
+  for (const technical of ['editor', 'status-details', 'r7-capabilities', 'capability-state', 'capability-pointer', 'context', 'selected-text']) {
+    const item = f.id(technical);
+    assert.ok(item, technical);
+    const contains = (parent, target) => parent.children.includes(target) || parent.children.some(child => contains(child, target));
+    assert.equal(contains(diagnostics, item), true, `${technical} belongs to diagnostics`);
+    assert.equal(f.root.children.includes(item), false, `${technical} is not a top-level element of #panel`);
+  }
+  assert.equal(diagnostics.getAttribute('open'), null);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('each closed capability state renders the complete contract in diagnostics', async () => {
+  const ready = fixture(final('ok'), { bridge: { async probeCapabilities() { return { editorType: 'word', adapter: { commandDispatch: true }, methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true } }; } } });
+  await ready.controller.checkR7();
+  assert.equal(ready.id('capability-state').textContent, 'Редактор: Word. Доступно: шесть из шести — проверены шесть API-примитивов документа. Что сделать: можно отправлять запрос.');
+
+  const partial = fixture(final('ok'), { bridge: { async probeCapabilities() { return { editorType: 'word', adapter: { commandDispatch: true }, methodPresence: { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: false } }; } } });
+  await partial.controller.checkR7();
+  assert.equal(partial.id('capability-state').textContent, 'Редактор: Word. Доступно: три из шести — проверены шесть API-примитивов документа. Недоступно: три возможности, потому что проверка редактора их не подтвердила. Что сделать: откройте диагностику редактора и повторите проверку после восстановления адаптера.');
+
+  const unavailableEditor = fixture(final('ok'), { bridge: { getState() { return { editorType: 'unknown', busy: false, uncertain: false }; } } });
+  await unavailableEditor.controller.checkR7();
+  assert.equal(unavailableEditor.id('capability-state').textContent, 'Доступно: запросы после подключения поддерживаемого редактора. Этот редактор не поддерживается. Что сделать: откройте документ, таблицу или презентацию, откройте панель через меню „Плагины“ и повторите проверку.');
+
+  const unavailableCapability = fixture(final('ok'), { bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true }, selectionRead: { available: false }, mutation: { available: true } }; }
+  } });
+  await unavailableCapability.controller.checkR7();
+  assert.equal(unavailableCapability.id('include-context').disabled, true);
+  assert.equal(unavailableCapability.id('include-context').getAttribute('aria-describedby'), 'capability-state');
+  assert.equal(unavailableCapability.id('capability-state').textContent, 'Проверено: чтение выделения и изменение через адаптер. Доступно: одна из двух возможностей — изменение через адаптер. Недоступно: одна возможность, потому что проверка редактора её не подтвердила. Что сделать: оставьте передачу выделения выключенной и отправьте запрос без неё либо восстановите адаптер и повторите проверку.');
+
+  let release; const capabilityPending = new Promise(resolve => { release = resolve; });
+  const checking = fixture(final('ok'), { bridge: { async probeCapabilities() { return capabilityPending; } } });
+  const operation = checking.controller.checkR7();
+  assert.equal(checking.id('check-r7').disabled, true);
+  assert.equal(checking.id('capability-state').textContent, 'Проверяю возможности редактора… Доступность ещё не определена, потому что проверка не завершена. Что сделать: дождитесь завершения проверки и повторите действие.');
+  release({ editorType: 'word', methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true } });
+  await operation;
+
+  const writePending = fixture(final('ok'), { bridge: { getState() { return { editorType: 'word', busy: false, uncertain: false, writePending: true }; } } });
+  assert.equal(writePending.id('capability-state').textContent, 'Изменение подготовлено и ждёт подтверждения. Отправка и повторное изменение недоступны, потому что редактор ещё не подтвердил предыдущую запись. Что сделать: подтвердите изменение в редакторе или дождитесь завершения операции.');
+
+  for (const f of [ready, partial, unavailableEditor, unavailableCapability, checking, writePending]) { f.panel.dispose(); f.controller.dispose(); }
+});
+
+test('Cell defaults selection context off before any model request and links its disabled control to diagnostics', async () => {
+  const cell = fixture(final('ok'), { bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true }, selectionRead: { available: true }, mutation: { available: true } }; }
+  } });
+  assert.equal(cell.controller.getState().includeContext, false);
+  await cell.controller.checkR7();
+  assert.equal(cell.id('include-context').checked, false);
+  assert.equal(cell.id('include-context').disabled, true);
+  assert.equal(cell.id('include-context').getAttribute('aria-describedby'), 'capability-state');
+  assert.equal(cell.id('capability-state').textContent, 'Редактор: Cell. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.');
+  assert.equal(cell.replies.length, 0);
+  cell.panel.dispose(); cell.controller.dispose();
+});
+
 test('the readiness summary names the denominator of the EDITOR it describes', async () => {
   // MEASURED on the target: a spreadsheet readiness printed "Наличие API: 0 / 6", a Word-shaped denominator for a
   // count that is two booleans. The sentence after the count differs too, because for a spreadsheet the check is

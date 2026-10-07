@@ -78,7 +78,9 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let stored = store.load();
   let chat = createChatSession(crypto);
   let mode = 'ASK';
-  let includeContext = true;
+  // Cell cannot provide the Word selection context this toggle requests. Defaulting it off prevents
+  // a guaranteed local refusal before the model is contacted; the view also disables and explains it.
+  let includeContext = bridge?.getState().editorType !== 'cell';
   let context = noContext();
   let status = 'READY';
   let generation = 0;

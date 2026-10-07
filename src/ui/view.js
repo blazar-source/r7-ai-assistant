@@ -105,6 +105,28 @@ function contextText(value) {
   if (value.kind === 'EXACT') return `Прочитано точно: ${value.bytes} байт UTF-8 (не подтверждение цели)`;
   return 'Выделение неизвестно';
 }
+const editorNames = Object.freeze({ word: 'Word', cell: 'Cell', slide: 'Slide' });
+const numberWords = Object.freeze(['ноль', 'одна', 'две', 'три', 'четыре', 'пять', 'шесть']);
+const denominatorWords = Object.freeze({ 2: 'двух', 6: 'шести' });
+function capabilityText(state) {
+  if (state.writeLocked === true) return 'Изменение подготовлено и ждёт подтверждения. Отправка и повторное изменение недоступны, потому что редактор ещё не подтвердил предыдущую запись. Что сделать: подтвердите изменение в редакторе или дождитесь завершения операции.';
+  if (state.status === 'CHECKING_R7') return 'Проверяю возможности редактора… Доступность ещё не определена, потому что проверка не завершена. Что сделать: дождитесь завершения проверки и повторите действие.';
+  if (!Object.hasOwn(editorNames, state.editorType) || state.status === 'R7_CHECK_UNAVAILABLE') {
+    return 'Доступно: запросы после подключения поддерживаемого редактора. Этот редактор не поддерживается. Что сделать: откройте документ, таблицу или презентацию, откройте панель через меню „Плагины“ и повторите проверку.';
+  }
+  if (Number.isInteger(state.capabilityCount)) {
+    const ceiling = state.editorType === 'word' ? 6 : 2;
+    const checked = state.editorType === 'word' ? 'шесть API-примитивов документа' : 'чтение выделения и изменение через адаптер';
+    const available = `${numberWords[state.capabilityCount]} из ${denominatorWords[ceiling]}`;
+    if (state.capabilityCount === ceiling) return `Редактор: ${editorNames[state.editorType]}. Доступно: ${available} — проверены ${checked}. Что сделать: можно отправлять запрос.`;
+    const missing = ceiling - state.capabilityCount;
+    if (state.editorType === 'cell' && state.capabilityCount === 1) {
+      return `Проверено: ${checked}. Доступно: ${available} возможностей — изменение через адаптер. Недоступно: одна возможность, потому что проверка редактора её не подтвердила. Что сделать: оставьте передачу выделения выключенной и отправьте запрос без неё либо восстановите адаптер и повторите проверку.`;
+    }
+    return `Редактор: ${editorNames[state.editorType]}. Доступно: ${available} — проверены ${checked}. Недоступно: ${numberWords[missing]} возможности, потому что проверка редактора их не подтвердила. Что сделать: откройте диагностику редактора и повторите проверку после восстановления адаптера.`;
+  }
+  return 'Возможности редактора ещё не проверены. Откройте панель через меню „Плагины“, затем нажмите «Проверить Р7».';
+}
 
 // Build controls once. Status rendering must not replace a focused form or draft.
 export function mountPanel(root, controller) {
@@ -140,11 +162,13 @@ export function mountPanel(root, controller) {
   on(include, 'change', function () { controller.setIncludeContext(include.checked); });
   const checkR7 = button('Проверить Р7', 'check-r7', function () { controller.checkR7(); });
   const capabilitySummary = node('p', '', 'r7-capabilities'); capabilitySummary.setAttribute('aria-live', 'polite');
+  const capabilityState = node('p', '', 'capability-state'); capabilityState.setAttribute('aria-live', 'polite');
   const refresh = button('Прочитать выделение', 'read-context', function () { controller.refreshContext(); });
   const context = node('p', '', 'context'); context.setAttribute('aria-live', 'polite');
   const selected = node('pre', '', 'selected-text');
   const contextDetails = node('details'); contextDetails.append(node('summary', 'Прочитанный текст'), selected);
-  toolbar.append(modeLabel, mode, refresh, checkR7, capabilitySummary, context, contextDetails);
+  const capabilityPointer = node('p', 'Недоступное действие объяснено ниже.', 'capability-pointer'); capabilityPointer.className = 'muted';
+  toolbar.append(modeLabel, mode, refresh, checkR7, capabilitySummary, capabilityPointer, capabilityState, context, contextDetails);
   const content = node('div', '', 'content'); content.setAttribute('data-scroll-container', 'content');
   const history = node('section', '', 'history'); history.setAttribute('aria-label', 'История чата');
   // The actions summary is a technical, content-free record: the tool name, the closed outcome and,
@@ -214,11 +238,16 @@ export function mountPanel(root, controller) {
     badge.textContent = `Stage B · редактор: ${state.editorType} · runtimeVerified: false`;
     mode.value = state.mode; include.checked = state.includeContext;
     const locked = state.writeLocked === true;
+    const selectionUnavailable = state.editorType === 'cell';
+    include.setAttribute('aria-describedby', 'capability-state');
+    capabilityPointer.hidden = !selectionUnavailable;
+    capabilityState.textContent = capabilityText(state);
     stop.hidden = !state.active;
     stop.disabled = locked;
     send.disabled = state.active || locked; test.disabled = state.active || locked; refresh.disabled = state.active || locked; checkR7.disabled = state.active || locked;
     fresh.disabled = locked; reset.disabled = locked; save.disabled = locked; mode.disabled = locked;
     for (const control of Object.values(controls)) control.disabled = locked;
+    include.disabled = locked || selectionUnavailable;
     apply.disabled = state.canApply !== true; cancel.disabled = state.active || locked;
     // THE DENOMINATOR BELONGS TO THE EDITOR. A spreadsheet readiness counts TWO booleans — the bridge's own adapter
     // flags — while a document counts SIX Word primitives, and printing "N / 6" for a spreadsheet told the user a

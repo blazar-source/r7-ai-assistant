@@ -233,8 +233,13 @@ test('unknown/unavailable/empty/exact context is explicit; no cell/slide specula
   const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, readSelection() { throw Error('must not call'); } } });
   assert.equal(c.getState().context.kind, 'UNKNOWN'); await c.refreshContext();
   assert.equal(c.getState().context.kind, 'UNAVAILABLE');
-  assert.equal(await c.analyze('q'), false);
-  c.setIncludeContext(false); assert.equal(await c.analyze('q'), true);
+  // UX-B2 (owner decision): for a worksheet the selection context defaults OFF, so a Cell run is NOT refused
+  // before the model is ever asked. The previous expectation - analyze() === false until the caller cleared the
+  // toggle by hand - was exactly that guaranteed pre-model refusal, so it is replaced rather than preserved.
+  // `readSelection` must still never be called: the bridge in this fixture throws if it is.
+  assert.equal(c.getState().includeContext, false, 'a cell editor defaults to no selection context');
+  assert.equal(await c.analyze('q'), true, 'the run proceeds without attaching a selection');
+  assert.equal(c.getState().context.kind, 'UNAVAILABLE', 'and the context stays explicitly UNAVAILABLE');
   const empty = setup({ bridge: { async readSelection() { return { text: '', editorType: 'word', eligible: false, target: null }; } } }).controller;
   await empty.refreshContext(); assert.equal(empty.getState().context.kind, 'EMPTY');
 });
