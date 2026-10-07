@@ -494,6 +494,13 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /\bscope\b/, 'the search body takes its needle from the injected command scope');
         assert.match(code, /GetText/, 'and reads each match through the measured primitive');
         legs.push('search');
+      } else if (code.includes('Api.AddSlide') && code.includes('RemoveAllElements')) {
+        // The new slidemutate leg that was added in T3.
+        // It is recognized by the presence of Api.AddSlide and RemoveAllElements
+        // but does NOT carry GetRangeBySelect
+        assert.equal(code.includes('GetRangeBySelect'), false,
+          'the slidemutate body authors no Word-only selection-range probe');
+        legs.push('slidemutate');
       } else if (code.includes('Api.GetPresentation')) {
         assert.match(code, /Api\.GetPresentation\(\)/,
           'the slide-read body carries the explicit presentation route');
@@ -507,8 +514,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 19, 'the adapter dispatches exactly the nineteen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'structure', 'table'],
+  assert.equal(commands, 20, 'the adapter dispatches exactly the twenty authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slidemutate', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

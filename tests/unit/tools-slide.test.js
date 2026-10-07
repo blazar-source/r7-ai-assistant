@@ -20,10 +20,11 @@ const slide = { ok: true, slideIndex: 1, layoutId: 304, objectCount: 2, objectsR
   objects: [{ ordinal: 0, classType: 'drawing', placeholder: true, category: 'shape', text: 'Title', textOmitted: false },
     { ordinal: 1, classType: 'drawing', placeholder: false, category: 'unknown', text: null, textOmitted: false }] };
 
-test('slide reads are the only presentation tools and are offered in ASK and EDIT', () => {
+test('slide reads remain offered in ASK while EDIT also offers mutations', () => {
   const bridge = bridgeWith(presentation, slide);
   const registry = createRegistry(createSlideTools(bridge));
-  for (const mode of ['ASK', 'EDIT']) assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode }).map(entry => entry.name), ['read_presentation', 'read_slide']);
+  assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'ASK' }).map(entry => entry.name), ['read_presentation', 'read_slide']);
+  assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'EDIT' }).map(entry => entry.name), ['read_presentation', 'read_slide', 'add_slide', 'set_slide_text']);
   assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'ASK' }).length, 0);
 });
 
