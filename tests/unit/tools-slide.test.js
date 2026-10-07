@@ -24,7 +24,7 @@ test('slide reads remain offered in ASK while EDIT also offers mutations', () =>
   const bridge = bridgeWith(presentation, slide);
   const registry = createRegistry(createSlideTools(bridge));
   assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'ASK' }).map(entry => entry.name), ['read_presentation', 'read_slide']);
-  assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'EDIT' }).map(entry => entry.name), ['read_presentation', 'read_slide', 'add_slide', 'set_slide_text', 'add_table', 'add_image', 'format_slide_text']);
+  assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'EDIT' }).map(entry => entry.name), ['read_presentation', 'read_slide', 'add_slide', 'set_slide_text', 'add_table', 'add_image', 'duplicate_slide', 'move_slide', 'format_slide_text']);
   assert.equal(registry.catalogue({ editor: 'word', capabilities: ['document.read'], mode: 'ASK' }).length, 0);
 });
 

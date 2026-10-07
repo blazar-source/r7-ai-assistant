@@ -47,7 +47,7 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // a single flag per cell could hide one unproven property behind the proven ones.
 const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd', 'sheetrename']));
 WRITE_KINDS.add('slideadd'); WRITE_KINDS.add('slidetext');
-WRITE_KINDS.add('slideformat'); WRITE_KINDS.add('slideobject');
+WRITE_KINDS.add('slideformat'); WRITE_KINDS.add('slideobject'); WRITE_KINDS.add('sliderestructure');
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -836,6 +836,33 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (t4ObjectAfterImages.length !== t4ObjectBeforeImages.length + 1 || t4ObjectCount(t4ObjectJson, 'rasterImageId') !== 1 || typeof t4ObjectJson.blipFill !== 'object' || t4ObjectJson.blipFill.rasterImageId !== t4ObjectRequest.imageDataUrl || typeof t4ObjectStored.GetWidth !== 'function' || typeof t4ObjectStored.GetHeight !== 'function' || t4ObjectStored.GetWidth() !== t4ObjectRequest.widthEmu || t4ObjectStored.GetHeight() !== t4ObjectRequest.heightEmu) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN');
             var t4ObjectImageAnswer = [5, t4ObjectIndex, t4ObjectAfterImages.length, t4ObjectRequest.widthEmu, t4ObjectRequest.heightEmu, t4ObjectRequest.imageDataUrl.length]; return t4ObjectImageAnswer;
           } catch (t4ObjectError) { return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, false, callback);
+      },
+      sliderestructure(callback) {
+        return plugin.callCommand(function () {
+          function t5Refusal(t5Phase, t5Code) { var t5Out = []; t5Out.push(t5Phase); t5Out.push(t5Code); return t5Out; }
+          function t5Count(t5Value) { return Number.isSafeInteger(t5Value) && t5Value >= 0; }
+          function t5At(t5List, t5Index) { return t5Index >= 0 && t5Index < t5List.length ? t5List[t5Index] : null; }
+          function t5Text(t5Object) { try { if (!t5Object || typeof t5Object.GetContent !== 'function') return null; var t5Content = t5Object.GetContent(); if (!t5Content || typeof t5Content.GetElementsCount !== 'function' || typeof t5Content.GetElement !== 'function') return null; var t5Parts = [], t5Elements = t5Content.GetElementsCount(); if (!t5Count(t5Elements)) return null; for (var t5I = 0; t5I < t5Elements; t5I += 1) { var t5Paragraph = t5Content.GetElement(t5I); if (!t5Paragraph || typeof t5Paragraph.GetText !== 'function') return null; var t5Part = t5Paragraph.GetText(); if (typeof t5Part !== 'string') return null; t5Parts.push(t5Part); } return t5Parts.join('\n'); } catch (t5Error) { return null; } }
+          function t5Fingerprint(t5Slide, t5Index) { try { if (!t5Slide || typeof t5Slide.GetClassType !== 'function' || t5Slide.GetClassType() !== 'slide' || typeof t5Slide.GetSlideIndex !== 'function' || t5Slide.GetSlideIndex() !== t5Index || typeof t5Slide.GetLayout !== 'function' || typeof t5Slide.GetAllShapes !== 'function' || typeof t5Slide.ToJSON !== 'function') return null; var t5Layout = t5Slide.GetLayout(); var t5LayoutJson = t5Layout && typeof t5Layout.ToJSON === 'function' ? t5Layout.ToJSON() : null; var t5Json = t5Slide.ToJSON(); var t5Shapes = t5Slide.GetAllShapes(); if (typeof t5LayoutJson !== 'string' || typeof t5Json !== 'string' || !Array.isArray(t5Shapes)) return null; var t5Texts = []; for (var t5O = 0; t5O < t5Shapes.length; t5O += 1) { var t5Value = t5Text(t5At(t5Shapes, t5O)); if (typeof t5Value !== 'string') return null; t5Texts.push(t5Value); } return JSON.stringify({ layoutLength: t5LayoutJson.length, layoutHead: t5LayoutJson.slice(0, 128), shapes: t5Shapes.length, texts: t5Texts, jsonLength: t5Json.length, jsonHead: t5Json.slice(0, 128) }); } catch (t5Error) { return null; } }
+          function t5Snapshot(t5Presentation, t5Size) { var t5Values = []; for (var t5Index = 0; t5Index < t5Size; t5Index += 1) { var t5Value = t5Fingerprint(t5Presentation.GetSlideByIndex(t5Index), t5Index); if (t5Value === null) return null; t5Values.push(t5Value); } return t5Values; }
+          function t5Signature(t5FingerprintValue) { var t5Parsed = JSON.parse(t5FingerprintValue); delete t5Parsed.index; return JSON.stringify(t5Parsed); }
+          try {
+            var t5Request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t5Request || !(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5Allowed = { mode: true, slideIndex: true, fromIndex: true, toIndex: true, maxResultBytes: true }; var t5Keys = Object.keys(t5Request); for (var t5K = 0; t5K < t5Keys.length; t5K += 1) if (!Object.prototype.hasOwnProperty.call(t5Allowed, t5Keys[t5K])) return t5Refusal(0, 'TOOL_ERROR');
+            if ((t5Request.mode !== 'duplicate' && t5Request.mode !== 'move') || !t5Count(t5Request.maxResultBytes)) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5Presentation = Api.GetPresentation(); if (!t5Presentation || typeof t5Presentation.GetSlidesCount !== 'function' || typeof t5Presentation.GetSlideByIndex !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5BeforeCount = t5Presentation.GetSlidesCount(); if (!t5Count(t5BeforeCount)) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5From = t5Request.mode === 'duplicate' ? t5Request.slideIndex : t5Request.fromIndex; var t5To = t5Request.toIndex;
+            if (!t5Count(t5From) || t5From >= t5BeforeCount || (t5Request.mode === 'move' && (!t5Count(t5To) || t5To >= t5BeforeCount))) return t5Refusal(0, 'TOOL_ERROR');
+            var t5Source = t5Presentation.GetSlideByIndex(t5From); if (!t5Source || typeof t5Source.GetClassType !== 'function' || t5Source.GetClassType() !== 'slide' || typeof t5Source.GetSlideIndex !== 'function' || t5Source.GetSlideIndex() !== t5From) return t5Refusal(0, 'TOOL_ERROR');
+            var t5Before = t5Snapshot(t5Presentation, t5BeforeCount); if (t5Before === null) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5SourceFingerprint = t5At(t5Before, t5From); var t5SourceParsed = JSON.parse(t5SourceFingerprint);
+            if (t5Request.mode === 'duplicate') { if (typeof t5Source.Duplicate !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); t5Source.Duplicate(); } else { if (typeof t5Source.MoveTo !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5Moved = t5Source.MoveTo(t5To); if (t5Moved === false) return t5Refusal(0, 'TOOL_ERROR'); if (t5Moved !== true) return t5Refusal(1, 'APPLY_UNCERTAIN'); }
+            var t5AfterCount = t5Presentation.GetSlidesCount(); var t5ExpectedCount = t5Request.mode === 'duplicate' ? t5BeforeCount + 1 : t5BeforeCount; if (t5AfterCount !== t5ExpectedCount) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5After = t5Snapshot(t5Presentation, t5AfterCount); if (t5After === null) return t5Refusal(1, 'APPLY_UNCERTAIN');
+            if (t5Request.mode === 'duplicate') { var t5Copy = JSON.parse(t5At(t5After, t5BeforeCount)); if (t5Copy.layoutLength !== t5SourceParsed.layoutLength || t5Copy.layoutHead !== t5SourceParsed.layoutHead || t5Copy.shapes !== t5SourceParsed.shapes || JSON.stringify(t5Copy.texts) !== JSON.stringify(t5SourceParsed.texts)) return t5Refusal(1, 'APPLY_UNCERTAIN'); for (var t5D = 0; t5D < t5BeforeCount; t5D += 1) if (t5At(t5Before, t5D) !== t5At(t5After, t5D)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5DuplicateAnswer = [6, t5AfterCount, t5BeforeCount, t5From, t5Copy.layoutLength, t5Copy.shapes]; return t5DuplicateAnswer; }
+            if (t5Signature(t5At(t5After, t5To)) !== t5Signature(t5SourceFingerprint)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5Remaining = []; for (var t5B = 0; t5B < t5BeforeCount; t5B += 1) if (t5B !== t5From) t5Remaining.push(t5Signature(t5At(t5Before, t5B))); for (var t5A = 0; t5A < t5AfterCount; t5A += 1) if (t5A !== t5To) { var t5Candidate = t5Signature(t5At(t5After, t5A)); var t5Found = t5Remaining.indexOf(t5Candidate); if (t5Found < 0) return t5Refusal(1, 'APPLY_UNCERTAIN'); t5Remaining.splice(t5Found, 1); } if (t5Remaining.length !== 0) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5MoveAnswer = [7, t5AfterCount, t5From, t5To, t5SourceParsed.layoutLength, t5SourceParsed.shapes]; return t5MoveAnswer;
+          } catch (t5Error) { return t5Refusal(1, 'APPLY_UNCERTAIN'); }
         }, false, false, callback);
       },
       sheet(callback) {
@@ -4642,6 +4669,15 @@ function decodeSlideFormat(value) {
   for (const name of applied) if (!names.includes(name)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   return Object.freeze({ slideIndex, objectOrdinal, applied: Object.freeze(applied), textLength });
 }
+function decodeSlideRestructure(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length !== 6 || value[0] !== (mode === 'duplicate' ? 6 : 7)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = value.slice(1); for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (mode === 'duplicate') return Object.freeze({ slidesCount: value[1], slideIndex: value[2], duplicatedFrom: value[3], layoutLength: value[4], shapes: value[5] });
+  return Object.freeze({ slidesCount: value[1], fromIndex: value[2], toIndex: value[3], layoutLength: value[4], shapes: value[5] });
+}
 function decodeSlideObject(value, mode) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
@@ -6307,6 +6343,7 @@ export function createR7Bridge(plugin, {
           else if (kind === 'slidetext') result = decodeSlideMutation(value, 'text');
           else if (kind === 'slideformat') result = decodeSlideFormat(value);
           else if (kind === 'slideobject') result = decodeSlideObject(value, params.mode);
+          else if (kind === 'sliderestructure') result = decodeSlideRestructure(value, params.mode);
           // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
           // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
           // and the exact-proof rule decides the ticket HERE, while it still owns the slot: a single flag
@@ -6653,6 +6690,14 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.slideobject(callback); }
           finally { clearScope(previousSlideObject); }
+        } else if (kind === 'sliderestructure') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousT5Restructure;
+          try { previousT5Restructure = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sliderestructure(callback); }
+          finally { clearScope(previousT5Restructure); }
         } else if (kind === 'sheetrename') {
           // THE RENAME: ONE command, and the SAME parameter channel the other Cell legs use — the bound, the source
           // selector and the requested name written into the page's `Asc.scope`, never composed into command source.
@@ -7201,6 +7246,24 @@ export function createR7Bridge(plugin, {
         const outcome = await start('slidetext', signal, {}, Object.freeze({ mode: 'text', slideIndex, objectOrdinal, text, maxTextBytes, maxResultBytes }));
         return Object.freeze({ ok: true, ...outcome });
       } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async duplicateSlide(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!['slideIndex', 'maxResultBytes', 'signal'].includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, maxResultBytes, signal } = raw;
+      if (!Number.isSafeInteger(slideIndex) || slideIndex < 0) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (!Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('sliderestructure', signal, {}, Object.freeze({ mode: 'duplicate', slideIndex, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async moveSlide(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!['fromIndex', 'toIndex', 'maxResultBytes', 'signal'].includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { fromIndex, toIndex, maxResultBytes, signal } = raw;
+      if (!Number.isSafeInteger(fromIndex) || fromIndex < 0 || !Number.isSafeInteger(toIndex) || toIndex < 0) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (!Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('sliderestructure', signal, {}, Object.freeze({ mode: 'move', fromIndex, toIndex, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
     },
     async formatSlideText(raw) {
       const refuse = code => Object.freeze({ ok: false, code });

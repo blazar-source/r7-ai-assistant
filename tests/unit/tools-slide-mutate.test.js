@@ -20,7 +20,7 @@ const ctx = { editor: 'slide' };
 test('slide mutations are EDIT-only auto-policy tools with named arguments', () => {
   const tools = createSlideTools(bridge()); const registry = createRegistry(tools);
   assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'ASK' }).map(x => x.name), ['read_presentation', 'read_slide']);
-  assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'EDIT' }).map(x => x.name), ['read_presentation', 'read_slide', 'add_slide', 'set_slide_text', 'add_table', 'add_image', 'format_slide_text']);
+  assert.deepEqual(registry.catalogue({ editor: 'slide', capabilities: ['document.read', 'document.write'], mode: 'EDIT' }).map(x => x.name), ['read_presentation', 'read_slide', 'add_slide', 'set_slide_text', 'add_table', 'add_image', 'duplicate_slide', 'move_slide', 'format_slide_text']);
   for (const name of ['add_slide', 'set_slide_text', 'format_slide_text', 'add_table', 'add_image']) { const item = tool(bridge(), name); assert.equal(item.policy, 'auto'); }
   assert.match(tool(bridge(), 'add_slide').description, /layoutFromSlideIndex/);
   assert.match(tool(bridge(), 'set_slide_text').description, /slideIndex/); assert.match(tool(bridge(), 'set_slide_text').description, /objectOrdinal/); assert.match(tool(bridge(), 'set_slide_text').description, /text/);
