@@ -675,6 +675,24 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
           }
         }, false, false, callback);
       },
+      slide(callback) {
+        return plugin.callCommand(function () {
+          function t2SlideRefusal() { var t2SlideRefusalOut = []; t2SlideRefusalOut.push('CAPABILITY_UNAVAILABLE'); return t2SlideRefusalOut; }
+          function t2SlideTextBytes(t2SlideChars) { var t2SlideBytes = 0; for (var t2SlideCharPosition = 0; t2SlideCharPosition < t2SlideChars.length; t2SlideCharPosition += 1) { var t2SlideCode = t2SlideChars.charCodeAt(t2SlideCharPosition); if (t2SlideCode < 128) t2SlideBytes += 1; else if (t2SlideCode < 2048) t2SlideBytes += 2; else if (t2SlideCode >= 55296 && t2SlideCode <= 56319 && t2SlideCharPosition + 1 < t2SlideChars.length && t2SlideChars.charCodeAt(t2SlideCharPosition + 1) >= 56320 && t2SlideChars.charCodeAt(t2SlideCharPosition + 1) <= 57343) { t2SlideBytes += 4; t2SlideCharPosition += 1; } else t2SlideBytes += 3; } return t2SlideBytes; }
+          function t2SlideLayout(t2SlideLayoutOwner) { try { var t2SlideLayoutValue = t2SlideLayoutOwner.GetLayout(); var t2SlideLayoutJson = t2SlideLayoutValue && typeof t2SlideLayoutValue.ToJSON === 'function' ? t2SlideLayoutValue.ToJSON() : null; return t2SlideLayoutJson && typeof t2SlideLayoutJson.id === 'number' ? t2SlideLayoutJson.id : null; } catch (t2SlideLayoutError) { return null; } }
+          function t2SlideObjectText(t2SlideTextObject, t2SlideTextCap) { try { if (!t2SlideTextObject || typeof t2SlideTextObject.GetContent !== 'function') return { text: null, omitted: 0 }; var t2SlideContent = t2SlideTextObject.GetContent(); if (!t2SlideContent || typeof t2SlideContent.GetElementsCount !== 'function' || typeof t2SlideContent.GetElement !== 'function') return { text: null, omitted: 0 }; var t2SlideParagraphCount = t2SlideContent.GetElementsCount(); if (typeof t2SlideParagraphCount !== 'number' || t2SlideParagraphCount < 0 || t2SlideParagraphCount % 1 !== 0) return { text: null, omitted: 0 }; var t2SlideCombinedText = ''; for (var t2SlideParagraphPosition = 0; t2SlideParagraphPosition < t2SlideParagraphCount; t2SlideParagraphPosition += 1) { var t2SlideParagraph = t2SlideContent.GetElement(t2SlideParagraphPosition); if (!t2SlideParagraph || typeof t2SlideParagraph.GetText !== 'function') return { text: null, omitted: 0 }; var t2SlidePart = t2SlideParagraph.GetText(); if (typeof t2SlidePart !== 'string') return { text: null, omitted: 0 }; t2SlideCombinedText += (t2SlideParagraphPosition === 0 ? '' : '\n') + t2SlidePart; } return t2SlideTextBytes(t2SlideCombinedText) > t2SlideTextCap ? { text: null, omitted: 1 } : { text: t2SlideCombinedText, omitted: 0 }; } catch (t2SlideTextError) { return { text: null, omitted: 0 }; } }
+          function t2SlideCollections(t2SlideCollectionOwner) { try { var t2SlideShapes = t2SlideCollectionOwner.GetAllShapes(); var t2SlideDrawings = t2SlideCollectionOwner.GetAllDrawings(); var t2SlideImages = t2SlideCollectionOwner.GetAllImages(); var t2SlideCharts = t2SlideCollectionOwner.GetAllCharts(); var t2SlideOle = t2SlideCollectionOwner.GetAllOleObjects(); if (!Array.isArray(t2SlideShapes) || !Array.isArray(t2SlideDrawings) || !Array.isArray(t2SlideImages) || !Array.isArray(t2SlideCharts) || !Array.isArray(t2SlideOle)) return null; return { shapes: t2SlideShapes, drawings: t2SlideDrawings, images: t2SlideImages, charts: t2SlideCharts, ole: t2SlideOle }; } catch (t2SlideCollectionsError) { return null; } }
+          try {
+            var t2SlideRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t2SlideRequest || typeof t2SlideRequest.mode !== 'string' || typeof t2SlideRequest.maxTextBytes !== 'number' || (t2SlideRequest.mode === 'slide' && typeof t2SlideRequest.maxObjects !== 'number')) return t2SlideRefusal();
+            if (!(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t2SlideRefusal();
+            var t2SlidePresentation = Api.GetPresentation(); if (!t2SlidePresentation || typeof t2SlidePresentation.GetSlidesCount !== 'function' || typeof t2SlidePresentation.GetCurrentSlide !== 'function' || typeof t2SlidePresentation.GetCurSlideIndex !== 'function' || typeof t2SlidePresentation.GetSlideByIndex !== 'function') return t2SlideRefusal();
+            var t2SlideTotal = t2SlidePresentation.GetSlidesCount(), t2SlideCurrent = t2SlidePresentation.GetCurSlideIndex(); if (typeof t2SlideTotal !== 'number' || t2SlideTotal < 0 || t2SlideTotal % 1 !== 0 || typeof t2SlideCurrent !== 'number' || t2SlideCurrent < 0 || t2SlideCurrent % 1 !== 0) return t2SlideRefusal();
+            if (t2SlideRequest.mode === 'presentation') { var t2SlideMaxSlides = t2SlideRequest.maxSlides; if (typeof t2SlideMaxSlides !== 'number' || t2SlideMaxSlides < 1 || t2SlideMaxSlides % 1 !== 0) return t2SlideRefusal(); var t2SlideReadCount = t2SlideTotal < t2SlideMaxSlides ? t2SlideTotal : t2SlideMaxSlides; var t2SlidePresentationAnswer = []; t2SlidePresentationAnswer.push(0); t2SlidePresentationAnswer.push(t2SlideTotal); t2SlidePresentationAnswer.push(t2SlideCurrent); t2SlidePresentationAnswer.push(t2SlideReadCount); t2SlidePresentationAnswer.push(t2SlideTotal); t2SlidePresentationAnswer.push(t2SlideReadCount < t2SlideTotal ? 1 : 0); for (var t2SlideIndex = 0; t2SlideIndex < t2SlideReadCount; t2SlideIndex += 1) { var t2SlideEntry = t2SlidePresentation.GetSlideByIndex(t2SlideIndex); if (!t2SlideEntry || typeof t2SlideEntry.GetClassType !== 'function' || typeof t2SlideEntry.GetSlideIndex !== 'function' || t2SlideEntry.GetClassType() !== 'slide' || t2SlideEntry.GetSlideIndex() !== t2SlideIndex) return t2SlideRefusal(); var t2SlideEntryCollections = t2SlideCollections(t2SlideEntry); if (t2SlideEntryCollections === null) return t2SlideRefusal(); var t2SlideHasText = 0; t2SlideEntryCollections.shapes.forEach(function (t2SlideSummaryShape) { var t2SlideSummaryText = t2SlideObjectText(t2SlideSummaryShape, t2SlideRequest.maxTextBytes); if (t2SlideSummaryText.text !== null && t2SlideSummaryText.text !== '') t2SlideHasText = 1; }); t2SlidePresentationAnswer.push(t2SlideIndex); t2SlidePresentationAnswer.push(t2SlideLayout(t2SlideEntry)); t2SlidePresentationAnswer.push(t2SlideEntryCollections.shapes.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.drawings.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.images.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.charts.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.ole.length); t2SlidePresentationAnswer.push(t2SlideHasText); } return t2SlidePresentationAnswer; }
+            if (t2SlideRequest.mode !== 'slide') return t2SlideRefusal(); var t2SlideWanted = t2SlideRequest.slideIndex === null ? t2SlideCurrent : t2SlideRequest.slideIndex; if (typeof t2SlideWanted !== 'number' || t2SlideWanted < 0 || t2SlideWanted % 1 !== 0) return t2SlideRefusal(); var t2SlideTarget = t2SlideRequest.slideIndex === null ? t2SlidePresentation.GetCurrentSlide() : t2SlidePresentation.GetSlideByIndex(t2SlideWanted); if (!t2SlideTarget || typeof t2SlideTarget.GetClassType !== 'function' || t2SlideTarget.GetClassType() !== 'slide' || (t2SlideRequest.slideIndex !== null && (typeof t2SlideTarget.GetSlideIndex !== 'function' || t2SlideTarget.GetSlideIndex() !== t2SlideWanted))) { var t2SlideSelectorFailure = []; t2SlideSelectorFailure.push('TOOL_ERROR'); return t2SlideSelectorFailure; } var t2SlideTargetCollections = t2SlideCollections(t2SlideTarget); if (t2SlideTargetCollections === null) return t2SlideRefusal(); var t2SlideObjectCount = t2SlideTargetCollections.shapes.length, t2SlideObjectsRead = t2SlideObjectCount < t2SlideRequest.maxObjects ? t2SlideObjectCount : t2SlideRequest.maxObjects; var t2SlideAnswer = []; t2SlideAnswer.push(1); t2SlideAnswer.push(t2SlideWanted); t2SlideAnswer.push(t2SlideLayout(t2SlideTarget)); t2SlideAnswer.push(t2SlideObjectCount); t2SlideAnswer.push(t2SlideObjectsRead); t2SlideAnswer.push(t2SlideObjectsRead < t2SlideObjectCount ? 1 : 0); t2SlideAnswer.push(t2SlideTargetCollections.shapes.length); t2SlideAnswer.push(t2SlideTargetCollections.drawings.length); t2SlideAnswer.push(t2SlideTargetCollections.images.length); t2SlideAnswer.push(t2SlideTargetCollections.charts.length); t2SlideAnswer.push(t2SlideTargetCollections.ole.length); var t2SlideOrdinal = 0; t2SlideTargetCollections.shapes.forEach(function (t2SlideObject) { if (t2SlideOrdinal < t2SlideObjectsRead) { if (!t2SlideObject || typeof t2SlideObject.GetClassType !== 'function' || typeof t2SlideObject.GetPlaceholder !== 'function') { t2SlideOrdinal = -1; return; } var t2SlideObjectTextValue = t2SlideObjectText(t2SlideObject, t2SlideRequest.maxTextBytes); t2SlideAnswer.push(t2SlideOrdinal); t2SlideAnswer.push(String(t2SlideObject.GetClassType())); t2SlideAnswer.push(t2SlideObject.GetPlaceholder() === null || t2SlideObject.GetPlaceholder() === undefined ? 0 : 1); t2SlideAnswer.push('shape'); t2SlideAnswer.push(t2SlideObjectTextValue.text); t2SlideAnswer.push(t2SlideObjectTextValue.omitted); t2SlideOrdinal += 1; } }); if (t2SlideOrdinal !== t2SlideObjectsRead) return t2SlideRefusal(); return t2SlideAnswer;
+          } catch (t2SlideCommandError) { return t2SlideRefusal(); }
+        }, false, false, callback);
+      },
       sheet(callback) {
         return plugin.callCommand(function () {
           // The refusal is a ONE-slot array, and it is built by APPENDING to a literal for the same
@@ -4433,6 +4451,26 @@ function decodeSheetRead(value, maxCells) {
     formulas: formulasMatch === 1 ? Object.freeze(formulaRows) : null
   });
 }
+function decodeSlideRead(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (value.length === 1 && value[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  if (value.length === 1 && value[0] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+  const count = value.length;
+  if (mode === 'presentation') {
+    if (count < 6 || value[0] !== 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const [_, slidesCount, currentSlideIndex, slidesRead, slidesTotal, truncated] = value;
+    if (![slidesCount, currentSlideIndex, slidesRead, slidesTotal].every(number => Number.isSafeInteger(number) && number >= 0) || slidesCount !== slidesTotal || slidesRead > slidesTotal || slidesRead > LIMITS.slideReadSlidesMax || truncated !== (slidesRead < slidesTotal ? 1 : 0) || count !== 6 + slidesRead * 8) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const slides = [];
+    for (let offset = 6, index = 0; index < slidesRead; index += 1, offset += 8) { const [slideIndex, layoutId, shapes, drawings, images, charts, oleObjects, hasText] = value.slice(offset, offset + 8); if (slideIndex !== index || !(layoutId === null || Number.isSafeInteger(layoutId)) || ![shapes, drawings, images, charts, oleObjects].every(number => Number.isSafeInteger(number) && number >= 0) || (hasText !== 0 && hasText !== 1)) throw new SafeError(ERROR_CODES.INVALID_DATA); slides.push(Object.freeze({ index: slideIndex, layoutId, shapes, drawings, images, charts, oleObjects, hasText: hasText === 1 })); }
+    return Object.freeze({ slidesCount, currentSlideIndex, slidesRead, slidesTotal, truncated: truncated === 1, slides: Object.freeze(slides) });
+  }
+  if (count < 11 || value[0] !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const [_, slideIndex, layoutId, objectCount, objectsRead, truncated, shapes, drawings, images, charts, oleObjects] = value;
+  if (![slideIndex, objectCount, objectsRead, shapes, drawings, images, charts, oleObjects].every(number => Number.isSafeInteger(number) && number >= 0) || !(layoutId === null || Number.isSafeInteger(layoutId)) || objectsRead > objectCount || objectsRead > LIMITS.slideReadObjectsMax || truncated !== (objectsRead < objectCount ? 1 : 0) || count !== 11 + objectsRead * 6) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const objects = [];
+  for (let offset = 11, ordinal = 0; ordinal < objectsRead; ordinal += 1, offset += 6) { const [publishedOrdinal, classType, placeholder, category, text, textOmitted] = value.slice(offset, offset + 6); if (publishedOrdinal !== ordinal || typeof classType !== 'string' || (placeholder !== 0 && placeholder !== 1) || category !== 'shape' || !(text === null || typeof text === 'string') || (textOmitted !== 0 && textOmitted !== 1) || (textOmitted === 1 && text !== null) || (typeof text === 'string' && utf8ByteLength(text) > LIMITS.slideReadTextBytes)) throw new SafeError(ERROR_CODES.INVALID_DATA); objects.push(Object.freeze({ ordinal, classType, placeholder: placeholder === 1, category, text, textOmitted: textOmitted === 1 })); }
+  return Object.freeze({ slideIndex, layoutId, objectCount, objectsRead, truncated: truncated === 1, counts: Object.freeze({ shapes, drawings, images, charts, oleObjects }), objects: Object.freeze(objects) });
+}
 function decodeStructure(value, maxHeadings) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -5753,6 +5791,14 @@ export function createR7Bridge(plugin, {
   // caller has already validated `maxCells` and closed the address — what it owns is the ORDER every
   // other read leg uses: idle, editor identity, the parameter channel checked BEFORE the ticket exists
   // so a refusal carries no slot at all, then ONE dispatch on the one owned callback slot.
+  async function presentationRead(signal, params) {
+    try {
+      ensureIdle();
+      if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const read = await start(params.mode === 'presentation' ? 'presread' : 'slideread', signal, {}, params);
+      return Object.freeze({ ok: true, ...read });
+    } catch (error) { return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR }); }
+  }
   async function sheetRead(signal, params) {
     try {
       ensureIdle();
@@ -6075,6 +6121,8 @@ export function createR7Bridge(plugin, {
           else if (kind === 'sheetadd') result = decodeSheetAdd(value, params.requestedName, params.maxSheets);
           else if (kind === 'sheetlist') result = decodeSheetList(value, params.maxSheets);
           else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
+          else if (kind === 'presread') result = decodeSlideRead(value, 'presentation');
+          else if (kind === 'slideread') result = decodeSlideRead(value, 'slide');
           // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
           // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
           // and the exact-proof rule decides the ticket HERE, while it still owns the slot: a single flag
@@ -6385,6 +6433,14 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.sheet(callback); }
           finally { clearScope(previousSheetRead); }
+        } else if (kind === 'presread' || kind === 'slideread') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideRead;
+          try { previousSlideRead = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slide(callback); }
+          finally { clearScope(previousSlideRead); }
         } else if (kind === 'sheetrename') {
           // THE RENAME: ONE command, and the SAME parameter channel the other Cell legs use — the bound, the source
           // selector and the requested name written into the page's `Asc.scope`, never composed into command source.
@@ -6887,6 +6943,24 @@ export function createR7Bridge(plugin, {
     // call decoded under a window it never asked for. Every outcome is classified — an unavailable
     // channel, a malformed native answer and an oversized answer are closed classes, never a raw
     // exception — and the caller's `signal` cancels both legs exactly as it does in `readStructure`.
+    // The bounded PRESENTATION reads behind `read_presentation` and `read_slide` - the first Slide legs
+    // in this repo's bridge, and the only ones that do not perform a document read, but read the active
+    // presentation instead. `read_presentation` reads the ACTIVE presentation and returns a bounded
+    // summary of its slides; `read_slide` reads one addressed slide, or the CURRENT slide when no index
+    // was named, and proves the target class before reading. Both close their caps (slides/objects/text/
+    // result bytes) at this boundary as a precondition, so a caller that names no bound or a bound this
+    // bridge never advertised is refused instead of causing an SDK read under a window it never asked for.
+    // Both are READ-ONLY and are served by the ONE authored `slide` command body.
+    async readPresentation(raw) {
+      const { maxSlides, maxTextBytes, maxResultBytes, signal } = raw ?? {};
+      if (!Number.isSafeInteger(maxSlides) || maxSlides < 1 || maxSlides > LIMITS.slideReadSlidesMax || !Number.isSafeInteger(maxTextBytes) || maxTextBytes < 1 || maxTextBytes > LIMITS.slideReadTextBytes || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      return presentationRead(signal, Object.freeze({ mode: 'presentation', maxSlides, maxTextBytes, maxResultBytes }));
+    },
+    async readSlide(raw) {
+      const { slideIndex, maxObjects, maxTextBytes, maxResultBytes, signal } = raw ?? {};
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(maxObjects) || maxObjects < 1 || maxObjects > LIMITS.slideReadObjectsMax || !Number.isSafeInteger(maxTextBytes) || maxTextBytes < 1 || maxTextBytes > LIMITS.slideReadTextBytes || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      return presentationRead(signal, Object.freeze({ mode: 'slide', slideIndex, maxObjects, maxTextBytes, maxResultBytes }));
+    },
     async readSheet(raw) {
       const maxCells = raw?.maxCells, signal = raw?.signal;
       // THE KEY SET IS CLOSED HERE TOO, and that is deliberate rather than symmetry: this leg reads the ACTIVE

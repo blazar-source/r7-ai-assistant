@@ -9,6 +9,7 @@ import { runAgent } from '../agent/runtime.js';
 import { createRegistry } from '../tools/registry.js';
 import { createWordTools } from '../tools/word.js';
 import { createCellTools } from '../tools/cell.js';
+import { createSlideTools } from '../tools/slide.js';
 import { createOrchestrator, createDocumentReader, isLongGenerationRequest, ORCHESTRATION_TARGET_CHARS,
   ORCHESTRATION_MAX_EXECUTE_PASSES, ORCHESTRATION_MAX_HEADINGS } from './orchestrator.js';
 
@@ -110,7 +111,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       // `editors`, so a Word descriptor is never offered in a spreadsheet and a Cell descriptor is never
       // offered in a document. The agent path below (`runAgent` with `editor: owned.editorType`) was
       // already editor-agnostic and needed no change.
-      try { registry = createRegistry([...createWordTools(bridge), ...createCellTools(bridge)]); } catch { registry = null; }
+      try { registry = createRegistry([...createWordTools(bridge), ...createCellTools(bridge), ...createSlideTools(bridge)]); } catch { registry = null; }
     }
     return registry;
   }

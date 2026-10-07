@@ -494,14 +494,21 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.match(code, /\bscope\b/, 'the search body takes its needle from the injected command scope');
         assert.match(code, /GetText/, 'and reads each match through the measured primitive');
         legs.push('search');
+      } else if (code.includes('Api.GetPresentation')) {
+        assert.match(code, /Api\.GetPresentation\(\)/,
+          'the slide-read body carries the explicit presentation route');
+        assert.equal(code.includes('GetRangeBySelect'), false,
+          'the slide-read body authors no Word-only selection-range probe');
+        legs.push('slide');
       } else {
-        assert.match(code, /GetRangeBySelect/, 'and carries the authored document probe');
+        assert.match(code, /GetRangeBySelect/,
+          'every remaining Word command body carries the authored document selection-range probe');
         legs.push(code.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
       }
     }
   });
-  assert.equal(commands, 18, 'the adapter dispatches exactly the eighteen authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'structure', 'table'],
+  assert.equal(commands, 19, 'the adapter dispatches exactly the nineteen authored command legs');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

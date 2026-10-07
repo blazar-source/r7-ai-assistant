@@ -62,6 +62,18 @@ test('R7 check timer acquisition failure cannot reach SDK or strand active owner
   assert.equal(f.controller.getState().status, 'INTERNAL_ERROR'); assert.equal(f.controller.getState().active, false);
 });
 
+test('presentation reads dispatch through the same registry when context is explicitly disabled', async () => {
+  let reads = 0;
+  const f = setup({ response: [toolCalls(['read_presentation', {}]), final()], bridge: {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    async readPresentation() { reads++; return { ok: true, slidesCount: 0, currentSlideIndex: 0, slidesRead: 0, slidesTotal: 0, truncated: false, slides: [] }; }
+  } });
+  f.controller.setIncludeContext(false);
+  assert.equal(await f.controller.analyze('структура презентации'), true);
+  assert.equal(reads, 1);
+  assert.deepEqual(f.controller.getState().agent.actions.map(action => [action.tool, action.outcome]), [['read_presentation', 'ok']]);
+});
+
 test('ASK uses fresh bounded selection as untrusted user context and appends a complete pair', async () => {
   const { controller: c, replies } = setup();
   assert.equal(await c.analyze('вопрос'), true);
