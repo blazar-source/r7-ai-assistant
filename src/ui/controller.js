@@ -444,7 +444,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         emit();
         const platform = bridge?.getState();
         if (platform?.busy) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
-        if (platform?.editorType !== 'word' && platform?.editorType !== 'cell') {
+        if (platform?.editorType !== 'word' && platform?.editorType !== 'cell' && platform?.editorType !== 'slide') {
           finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
         }
         if (typeof bridge?.probeCapabilities !== 'function') {
@@ -472,6 +472,26 @@ export function createController({ bridge, store = new SettingsStore(), transpor
           if (cellAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
           const cellCount = cellAvailability.filter(value => value === true).length;
           return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = cellCount; });
+        }
+        // THE PRESENTATION PATH. The exit gate found this branch MISSING: a slide editor fell through to the Word
+        // decode below, whose `methodPresence` schema no presentation reports, so a perfectly usable deck answered
+        // `R7_CHECK_UNAVAILABLE` and the panel showed the editor as unavailable. The bridge publishes the slide
+        // capability report LOCALLY for this editor, exactly as it does for a spreadsheet, so readiness is judged
+        // the same way: the adapter must name a usable command entry point and the two availability flags must be
+        // real booleans. `mutation.available` is false by design here — a presentation mutation is authorised by the
+        // panel's own owned preview, whose reason the report carries — so it counts as unavailable rather than
+        // making the whole editor unusable.
+        if (platform?.editorType === 'slide') {
+          const slideAdapter = capabilities?.adapter;
+          const slideAdapterUsable = slideAdapter !== null && typeof slideAdapter === 'object'
+            && (slideAdapter.commandDispatch === true || slideAdapter.executeMethod === true);
+          if (capabilities?.editorType !== 'slide' || slideAdapterUsable !== true) {
+            finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+          }
+          const slideAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
+          if (slideAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
+          const slideCount = slideAvailability.filter(value => value === true).length;
+          return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = slideCount; });
         }
         const flags = capabilities?.methodPresence;
         if (!flags) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }

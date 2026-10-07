@@ -797,6 +797,91 @@ test('a CELL bridge reports presence for a spreadsheet instead of R7_CHECK_UNAVA
   assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
 });
 
+test('a SLIDE bridge reports presence for a healthy presentation', async () => {
+  const readings = [];
+  const slideBridge = {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    invalidate() {},
+    async probeCapabilities() {
+      readings.push('probed');
+      return Object.freeze({
+        editorType: 'slide',
+        adapter: Object.freeze({ executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' }),
+        methodPresence: null,
+        runtimeVerified: false,
+        selectionRead: Object.freeze({ available: true, runtimeVerified: false, reason: null }),
+        mutation: Object.freeze({ available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' })
+      });
+    }
+  };
+  const f = setup({ dependencies: { bridge: slideBridge } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), true, 'a presentation with a usable adapter is READY, not unavailable');
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().capabilityCount, 1, 'count only the true reported availability flags');
+  assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
+});
+
+test('a SLIDE bridge with executeMethod alone reports presentation presence', async () => {
+  const readings = [];
+  const slideBridge = {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    invalidate() {},
+    async probeCapabilities() {
+      readings.push('probed');
+      return Object.freeze({
+        editorType: 'slide',
+        adapter: Object.freeze({ executeMethod: true, commandDispatch: false, commandMethod: null }),
+        methodPresence: null,
+        runtimeVerified: false,
+        selectionRead: Object.freeze({ available: true, runtimeVerified: false, reason: null }),
+        mutation: Object.freeze({ available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' })
+      });
+    }
+  };
+  const f = setup({ dependencies: { bridge: slideBridge } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), true);
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().capabilityCount, 1);
+  assert.deepEqual(readings, ['probed']);
+});
+
+for (const [name, editorType, adapter] of [
+  ['mismatched editor type', 'word', { executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' }],
+  ['NO usable adapter primitive', 'slide', { executeMethod: false, commandDispatch: false, commandMethod: null }]
+]) {
+  test(`a SLIDE bridge with ${name} is refused`, async () => {
+    const readings = [];
+    const unavailable = { getState() { return { editorType: 'slide', busy: false }; }, invalidate() {},
+      async probeCapabilities() { readings.push('probed'); return { editorType, methodPresence: null,
+        adapter: Object.freeze(adapter),
+        selectionRead: { available: true, runtimeVerified: false, reason: null },
+        mutation: { available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } }; } };
+    const f = setup({ dependencies: { bridge: unavailable } });
+    f.controller.reset();
+    assert.equal(await f.controller.checkR7(), false);
+    assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+    assert.equal(f.controller.getState().capabilityCount, null);
+    assert.deepEqual(readings, ['probed']);
+  });
+}
+
+for (const flag of ['selectionRead', 'mutation']) {
+  test(`a SLIDE bridge with non-boolean ${flag} availability reports invalid data`, async () => {
+    const malformed = { getState() { return { editorType: 'slide', busy: false }; }, invalidate() {},
+      async probeCapabilities() { return { editorType: 'slide', methodPresence: null,
+        adapter: Object.freeze({ executeMethod: true, commandDispatch: false, commandMethod: null }),
+        selectionRead: { available: flag === 'selectionRead' ? 'true' : true, runtimeVerified: false, reason: null },
+        mutation: { available: flag === 'mutation' ? 0 : false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } }; } };
+    const f = setup({ dependencies: { bridge: malformed } });
+    f.controller.reset();
+    assert.equal(await f.controller.checkR7(), false);
+    assert.equal(f.controller.getState().status, 'INVALID_DATA');
+    assert.equal(f.controller.getState().capabilityCount, null);
+  });
+}
+
 test('a CELL bridge with NO usable adapter primitive is refused', async () => {
   // Readiness is that ONE of the named primitives is available: an object naming two unavailable ones is not an
   // adapter, and the panel must say so rather than offer a run that cannot dispatch anything.

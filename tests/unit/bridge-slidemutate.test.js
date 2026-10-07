@@ -6,12 +6,15 @@ import { LIMITS } from '../../src/shared/limits.js';
 function layout(serialized = '{"id":"306","master":"101"}') {
   return { ToJSON() { return serialized; } };
 }
-function content(initialText = '', { readBackText, countAfter = 1 } = {}) {
-  let stored = [initialText];
+// MEASURED: LF/CRLF writes read back as CR in one paragraph; bare CR writes drop breaks.
+const engineText = text => String(text).replace(/\r\n/g, '\n').replace(/\r/g, '').replace(/\n/g, '\r');
+function content(initialText = '', { readBackText, countAfter = 1, normalize = true } = {}) {
+  const storeText = text => normalize ? engineText(text) : text;
+  let stored = [storeText(initialText)];
   return {
     RemoveAllElements() { stored = []; },
-    AddElement(paragraph) { stored.push(paragraph._text); },
-    GetElement(index) { return { AddText(text) { stored[index] = text; }, GetText() { return readBackText === undefined ? stored[index] : readBackText; } }; },
+    AddElement(paragraph) { stored.push(storeText(paragraph._text)); },
+    GetElement(index) { return { AddText(text) { stored[index] = storeText(text); }, GetText() { return readBackText === undefined ? stored[index] : readBackText; } }; },
     GetElementsCount() { return countAfter; }
   };
 }
@@ -70,6 +73,66 @@ test('set_slide_text re-fetches the attached wrapper and proves the round trip',
   const target = shape('Old'); const { bridge } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
   assert.deepEqual(await bridge.setSlideText(textRequest({ text: 'Привет' })), { ok: true, slideIndex: 0, objectOrdinal: 0, textLength: 6, textBytes: 12 });
   assert.equal(target.value.GetElement(0).GetText(), 'Привет');
+});
+
+test('paragraph rig stores LF and CRLF as measured CR line breaks', () => {
+  const value = content();
+  const paragraph = value.GetElement(0);
+  paragraph.AddText('A\nB\r\nC');
+  assert.equal(paragraph.GetText(), 'A\rB\rC');
+  paragraph.AddText('A\rB\rC');
+  assert.equal(paragraph.GetText(), 'ABC');
+  assert.equal(value.GetElementsCount(), 1);
+});
+
+test('set_slide_text normalizes LF and reports the stored CR length and bytes', async () => {
+  const target = shape('Old'); const { bridge, dispatches } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
+  assert.deepEqual(await bridge.setSlideText(textRequest({ text: 'A\nB\nC' })), { ok: true, slideIndex: 0, objectOrdinal: 0, textLength: 5, textBytes: 5 });
+  assert.equal(target.value.GetElement(0).GetText(), 'A\rB\rC');
+  assert.equal(target.value.GetElementsCount(), 1);
+  assert.equal(dispatches(), 1);
+});
+
+test('set_slide_text normalizes CRLF and counts normalized multibyte text', async () => {
+  const target = shape('Old'); const { bridge } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
+  assert.deepEqual(await bridge.setSlideText(textRequest({ text: 'Ж\r\nБ\r\nC' })), { ok: true, slideIndex: 0, objectOrdinal: 0, textLength: 5, textBytes: 7 });
+  assert.equal(target.value.GetElement(0).GetText(), 'Ж\rБ\rC');
+  assert.equal(target.value.GetElementsCount(), 1);
+});
+
+test('set_slide_text refuses raw LF readback from a non-normalizing paragraph', async () => {
+  // The body writes CRLF and expects measured CR readback.
+  // Force raw LF readback with the existing proof seam to exercise another differing engine result.
+  const target = shape('Old', { normalize: false, readBackText: 'A\nB\nC' });
+  const { bridge, dispatches } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
+  assert.deepEqual(await bridge.setSlideText(textRequest({ text: 'A\nB\nC' })), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(target.value.GetElement(0).GetText(), 'A\nB\nC');
+  assert.equal(dispatches(), 1);
+});
+
+test('set_slide_text writes CRLF but refuses a CRLF-verbatim store', async () => {
+  for (const text of ['A\nB\nC', 'A\r\nB\r\nC']) {
+    const target = shape('Old', { normalize: false });
+    const { bridge, dispatches } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
+    assert.deepEqual(await bridge.setSlideText(textRequest({ text })), { ok: false, code: 'APPLY_UNCERTAIN' });
+    assert.equal(target.value.GetElement(0).GetText(), 'A\r\nB\r\nC');
+    assert.equal(target.value.GetElementsCount(), 1);
+    assert.equal(dispatches(), 1);
+  }
+});
+
+test('set_slide_text raw LF readback seam bypasses the measured normalizing store', async () => {
+  const target = shape('Old', { readBackText: 'A\nB\nC' });
+  const { bridge, dispatches } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
+  assert.deepEqual(await bridge.setSlideText(textRequest({ text: 'A\nB\nC' })), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.equal(target.value.GetElement(0).GetText(), 'A\nB\nC');
+  assert.equal(dispatches(), 1);
+});
+
+test('set_slide_text leaves text without line breaks unchanged', async () => {
+  const target = shape('Old'); const { bridge } = rig({ slides: [slide(0, '{"id":"306"}', [target])] });
+  assert.deepEqual(await bridge.setSlideText(textRequest()), { ok: true, slideIndex: 0, objectOrdinal: 0, textLength: 5, textBytes: 5 });
+  assert.equal(target.value.GetElement(0).GetText(), 'Hello');
 });
 
 test('set_slide_text supports named and current addressing plus idempotent write', async () => {

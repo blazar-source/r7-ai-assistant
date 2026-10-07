@@ -747,10 +747,12 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             t3MutationContent.AddElement(Api.CreateParagraph());
             var t3MutationAttached = t3MutationContent.GetElement(0);
             if (!t3MutationAttached || typeof t3MutationAttached.AddText !== 'function') return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
-            t3MutationAttached.AddText(t3MutationRequest.text);
+            var t3MutationLf = String(t3MutationRequest.text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            var t3MutationStored = t3MutationLf.replace(/\n/g, '\r');
+            t3MutationAttached.AddText(t3MutationLf.replace(/\n/g, '\r\n'));
             var t3MutationProof = t3MutationContent.GetElement(0);
-            if (!t3MutationProof || typeof t3MutationProof.GetText !== 'function' || t3MutationProof.GetText() !== t3MutationRequest.text || t3MutationContent.GetElementsCount() !== 1) return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
-            var t3MutationTextAnswer = []; t3MutationTextAnswer.push(2); t3MutationTextAnswer.push(t3MutationTargetIndex); t3MutationTextAnswer.push(t3MutationRequest.objectOrdinal); t3MutationTextAnswer.push(t3MutationRequest.text.length); t3MutationTextAnswer.push(t3MutationTextBytes(t3MutationRequest.text)); return t3MutationTextAnswer;
+            if (!t3MutationProof || typeof t3MutationProof.GetText !== 'function' || t3MutationProof.GetText() !== t3MutationStored || t3MutationContent.GetElementsCount() !== 1) return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
+            var t3MutationTextAnswer = []; t3MutationTextAnswer.push(2); t3MutationTextAnswer.push(t3MutationTargetIndex); t3MutationTextAnswer.push(t3MutationRequest.objectOrdinal); t3MutationTextAnswer.push(t3MutationStored.length); t3MutationTextAnswer.push(t3MutationTextBytes(t3MutationStored)); return t3MutationTextAnswer;
           } catch (t3MutationCommandError) { return t3MutationRefusal(1, 'APPLY_UNCERTAIN'); }
         }, false, false, callback);
       },

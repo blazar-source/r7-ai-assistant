@@ -69,12 +69,27 @@ test('UI capability action reaches native owned bridge without credentials, HTTP
   f.panel.dispose(); f.controller.dispose();
 });
 
-for (const editor of ['slide', 'unknown', null]) test(`UI probe reports unsupported ${editor} locally without SDK guesses`, async () => {
+for (const editor of ['unknown', null]) test(`UI probe reports unsupported ${editor} locally without SDK guesses`, async () => {
   const f = probeFixture(editor); f.checkAction();
   assert.equal(await f.controller.checkR7(), false);
   assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
   assert.equal(f.controller.getState().capabilityCount, null); assert.equal(f.callbacks.length, 0);
   assert.match(f.id('status').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
+  f.panel.dispose(); f.controller.dispose();
+});
+test('UI probe reports a PRESENTATION ready from its own adapter, still without SDK guesses', async () => {
+  // The Sprint 5 exit gate found that a slide editor fell through to the Word decode, so a perfectly usable deck
+  // answered R7_CHECK_UNAVAILABLE. Like a Cell book, a presentation has no Word method to probe: it answers
+  // LOCALLY, and readiness is what the bridge reports about itself. The properties the old expectation protected
+  // are asserted HERE rather than dropped — nothing is read through the SDK, nothing is dispatched to the editor,
+  // and adapter metadata is explicitly NOT runtime proof.
+  const f = probeFixture('slide'); f.checkAction();
+  assert.equal(await f.controller.checkR7(), true, 'a deck whose adapter can dispatch is READY');
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().runtimeVerified, false, 'adapter metadata is still NOT runtime proof');
+  assert.equal(f.counters().reads, 0, 'and nothing was read through the SDK');
+  assert.equal(f.callbacks.length, 0, 'nor was anything dispatched to the editor');
+  assert.equal(f.counters().httpCalls, 0);
   f.panel.dispose(); f.controller.dispose();
 });
 test('UI probe reports a SPREADSHEET ready from its own adapter, still without SDK guesses', async () => {
