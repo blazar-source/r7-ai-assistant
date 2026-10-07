@@ -103,6 +103,7 @@ export function mountPanel(root, controller) {
   const selected = node('pre', '', 'selected-text');
   const contextDetails = node('details'); contextDetails.append(node('summary', 'Прочитанный текст'), selected);
   toolbar.append(modeLabel, mode, refresh, checkR7, capabilitySummary, context, contextDetails);
+  const content = node('div', '', 'content'); content.setAttribute('data-scroll-container', 'content');
   const history = node('section', '', 'history'); history.setAttribute('aria-label', 'История чата');
   // The actions summary is a technical, content-free record: the tool name, the closed outcome and,
   // for a failed action, its closed code. It is rendered with textContent only, so no raw model JSON,
@@ -154,7 +155,8 @@ export function mountPanel(root, controller) {
   on(composer, 'submit', function (event) { event.preventDefault(); submit(); });
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
-  root.replaceChildren(header, status, lifecycleWarning, toolbar, history, composer, preview, orchestration, journal, settings);
+  content.append(lifecycleWarning, toolbar, history, preview, orchestration, journal, settings);
+  root.replaceChildren(header, status, content, composer);
   let lastSettings = null;
   let lastHistory = null;
   let lastAgentActions = null;

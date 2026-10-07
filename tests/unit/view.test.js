@@ -38,6 +38,51 @@ test('LIMIT status caption states the run ceiling without claiming the task comp
   assert.match(statusText('AGENT_LIMIT'), /предел/);
   assert.match(statusText('AGENT_LIMIT'), /неполный/);
 });
+test('marked content container holds every content block while composer remains outside it and last', () => {
+  const { root, all, id, panel, controller } = fixture();
+  const content = id('content'); const composer = id('composer');
+  // Computed scrolling is proven by the live geometry measurement, not this DOM harness.
+  assert.equal(root.children.includes(content), true);
+  assert.equal(root.children.includes(composer), true);
+  assert.equal(content.children.includes(composer), false);
+  assert.equal(content.getAttribute('data-scroll-container'), 'content');
+  assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
+  assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'status', 'content', 'composer']);
+  assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
+    ['p', 'section', 'history', 'preview', 'orchestration', 'actions', 'details']);
+  for (const section of ['history', 'preview', 'orchestration', 'actions']) {
+    assert.equal(content.children.includes(id(section)), true, `${section} belongs to the content container`);
+  }
+  assert.equal(content.children.some(child => child.tagName === 'P' && child.className === 'notice'), true, 'lifecycle warning belongs to the content container');
+  assert.equal(content.children.some(child => child.tagName === 'SECTION' && child.getAttribute('aria-label') === 'Режим и контекст'), true, 'toolbar belongs to the content container');
+  assert.equal(content.children.some(child => child.children.includes(id('settings-form'))), true, 'settings belong to the content container');
+  assert.equal(root.children.at(-1), composer);
+  panel.dispose(); controller.dispose();
+});
+
+test('composer stays mounted and prompt-enabled across idle, active, error and preview states', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const active = fixture(pending);
+  assert.equal(active.id('prompt').disabled, false); assert.ok(active.id('composer'));
+  const operation = active.controller.analyze('question'); await Promise.resolve();
+  assert.equal(active.controller.getState().active, true);
+  assert.equal(active.id('prompt').disabled, false); assert.ok(active.id('composer'));
+  release(injected(final('answer'))); await operation;
+  active.panel.dispose(); active.controller.dispose();
+
+  const error = fixture(async () => { throw new SafeError('NETWORK_ERROR'); }, { transport: async () => { throw new SafeError('NETWORK_ERROR'); } });
+  await error.controller.analyze('question');
+  assert.equal(error.controller.getState().status, 'NETWORK_ERROR');
+  assert.equal(error.id('prompt').disabled, false); assert.ok(error.id('composer'));
+  error.panel.dispose(); error.controller.dispose();
+
+  const preview = fixture(toolCalls(['replace_selection', { text: 'proposal' }]));
+  preview.controller.setMode('EDIT'); await preview.controller.analyze('edit');
+  assert.equal(preview.controller.getState().status, 'PREVIEW_READY');
+  assert.equal(preview.id('prompt').disabled, false); assert.ok(preview.id('composer'));
+  preview.panel.dispose(); preview.controller.dispose();
+});
+
 test('view supplies semantic labeled editable connection controls and masked key', () => {
   const { all, id, controller } = fixture();
   for (const name of ['endpoint','model','apiKey','httpTimeoutSeconds','maxTokens','temperature','rememberKey']) {
