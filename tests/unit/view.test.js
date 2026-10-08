@@ -228,7 +228,8 @@ test('keyboard path covers visible controls in DOM order and activates named act
 
   let checked = 0;
   const f = fixture(toolCalls(['replace_selection', { text: 'proposal' }]), { bridge: {
-    async probeCapabilities() { checked += 1; return { editorType: 'word', methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true } }; },
+    async probeCapabilities() { checked += 1; return { editorType: 'word', methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true },
+      selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' }, mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; },
     async replaceSelection() { return { acknowledged: true }; }
   } });
   f.id('mode').value = 'EDIT'; f.id('mode').dispatch('change');
@@ -593,16 +594,16 @@ test('the readiness summary names the denominator of the EDITOR it describes', a
     getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, invalidate() {},
     async probeCapabilities() {
       return { editorType: 'cell', adapter: { executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' },
-        methodPresence: null, selectionRead: { available: false, runtimeVerified: false, reason: 'READ_UNAVAILABLE' },
-        mutation: { available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } };
+        methodPresence: { api: false, getDocument: false, getDocumentId: false, replaceTextSmart: false, getRangeBySelect: false, isTrackRevisions: false },
+        selectionRead: { available: false, runtimeVerified: false, reason: 'NATIVE_PROBE_UNAVAILABLE' },
+        mutation: { available: false, runtimeVerified: false, reason: 'NATIVE_PROBE_UNAVAILABLE' } };
     }
   };
   const cell = fixture(final('ok'), { bridge: cellBridge });
   await cell.controller.checkR7();
   const cellSummary = cell.id('r7-capabilities').textContent;
-  assert.match(cellSummary, /0 \/ 2/, 'a spreadsheet counts its own two flags: ' + cellSummary);
-  assert.match(cellSummary, /готовность адаптера/, 'and says what the check was about');
-  assert.equal(cellSummary.includes('/ 6'), false, 'never with a document denominator');
+  assert.equal(cell.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(cellSummary, '', 'zero observed capabilities fail closed instead of publishing readiness');
 
   const word = fixture(final('ok'), { bridge: {
     async probeCapabilities() {

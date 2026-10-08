@@ -78,32 +78,33 @@ for (const editor of ['unknown', null]) test(`UI probe reports unsupported ${edi
   assert.match(f.id('status-details').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
   f.panel.dispose(); f.controller.dispose();
 });
-test('UI probe reports a PRESENTATION ready from its own adapter, still without SDK guesses', async () => {
-  // The Sprint 5 exit gate found that a slide editor fell through to the Word decode, so a perfectly usable deck
-  // answered R7_CHECK_UNAVAILABLE. Like a Cell book, a presentation has no Word method to probe: it answers
-  // LOCALLY, and readiness is what the bridge reports about itself. The properties the old expectation protected
-  // are asserted HERE rather than dropped — nothing is read through the SDK, nothing is dispatched to the editor,
-  // and adapter metadata is explicitly NOT runtime proof.
+for (const [editor, label] of [['slide', 'PRESENTATION'], ['cell', 'SPREADSHEET']]) {
+  test(`UI probe reports a ${label} ready only after its native check answers`, async () => {
+    const f = probeFixture(editor); f.checkAction();
+    const operation = f.controller.checkR7();
+    assert.equal(f.callbacks.length, 1, `${editor} dispatches one real native probe`);
+    assert.equal(f.controller.getState().active, true);
+    f.callbacks[0](presence);
+    assert.equal(await operation, true);
+    assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+    assert.equal(f.controller.getState().capabilityCount, 2, 'availability comes from the observed Api/document pair');
+    assert.equal(f.controller.getState().runtimeVerified, false, 'presence is not runtime mutation proof');
+    assert.equal(f.counters().reads, 0, 'the probe never reads selection');
+    assert.equal(f.counters().httpCalls, 0);
+    f.panel.dispose(); f.controller.dispose();
+  });
+}
+
+test('an unanswered PRESENTATION native probe fails closed on its bounded callback deadline', async () => {
   const f = probeFixture('slide'); f.checkAction();
-  assert.equal(await f.controller.checkR7(), true, 'a deck whose adapter can dispatch is READY');
-  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
-  assert.equal(f.controller.getState().runtimeVerified, false, 'adapter metadata is still NOT runtime proof');
-  assert.equal(f.counters().reads, 0, 'and nothing was read through the SDK');
-  assert.equal(f.callbacks.length, 0, 'nor was anything dispatched to the editor');
-  assert.equal(f.counters().httpCalls, 0);
-  f.panel.dispose(); f.controller.dispose();
-});
-test('UI probe reports a SPREADSHEET ready from its own adapter, still without SDK guesses', async () => {
-  // A Cell bridge has no Word method to probe, so it answers LOCALLY and readiness is what it reports about itself.
-  // The properties the old expectation protected are asserted HERE rather than dropped: nothing is read through the
-  // SDK, nothing is dispatched to the editor, and adapter metadata is explicitly NOT runtime proof.
-  const f = probeFixture('cell'); f.checkAction();
-  assert.equal(await f.controller.checkR7(), true, 'a workbook whose adapter can dispatch is READY');
-  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
-  assert.equal(f.controller.getState().capabilityCount, 0, 'the count is the availability flags it reported');
-  assert.equal(f.controller.getState().runtimeVerified, false, 'adapter metadata is still NOT runtime proof');
-  assert.equal(f.counters().reads, 0, 'and nothing was read through the SDK');
-  assert.equal(f.callbacks.length, 0, 'nor was anything dispatched to the editor');
+  const operation = f.controller.checkR7();
+  assert.equal(f.callbacks.length, 1, 'the native probe was dispatched');
+  f.advance(5000);
+  assert.equal(await operation, false);
+  assert.equal(f.controller.getState().status, 'TIMEOUT');
+  assert.equal(f.controller.getState().active, false);
+  assert.equal(f.controller.getState().capabilityCount, null);
+  assert.equal(f.controller.getState().mutationReason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
   assert.equal(f.counters().httpCalls, 0);
   f.panel.dispose(); f.controller.dispose();
 });

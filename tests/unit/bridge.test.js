@@ -211,7 +211,13 @@ test('selection is typed UTF-8 bounded, immutable, never truncated or eligibilit
 });
 
 test('missing adapters and unknown editor never dispatch', async () => {
-  for (const editorType of ['cell', 'slide', 'unknown', undefined]) {
+  for (const editorType of ['cell', 'slide']) {
+    const r = rig(editorType, { callCommand: null, executeCommand: null });
+    await assert.rejects(r.bridge.readSelection(), code('CAPABILITY_UNAVAILABLE'));
+    const capabilities = await r.bridge.probeCapabilities();
+    assert.equal(capabilities.selectionRead.available, false); assert.equal(capabilities.mutation.available, false); assert.equal(r.calls.length, 0);
+  }
+  for (const editorType of ['unknown', undefined]) {
     const r = rig(editorType === undefined ? null : editorType);
     await assert.rejects(r.bridge.readSelection(), code('CAPABILITY_UNAVAILABLE'));
     const capabilities = await r.bridge.probeCapabilities();
@@ -222,7 +228,20 @@ test('missing adapters and unknown editor never dispatch', async () => {
   const capabilities = await r.bridge.probeCapabilities(); assert.equal(capabilities.adapter.executeMethod, false); assert.equal(capabilities.methodPresence, null);
 });
 
-test('capability callback exposes presence, never promotes host/mock positives to runtime proof', async () => {
+test('cell and slide capability probes dispatch the native check and derive available capabilities', async () => {
+  for (const editorType of ['cell', 'slide']) {
+    const r = rig(editorType);
+    const pending = r.bridge.probeCapabilities();
+    assert.equal(r.calls.length, 1, `${editorType} dispatched one native probe`);
+    r.calls[0].callback(probe);
+    const result = await pending;
+    assert.equal(result.editorType, editorType);
+    assert.equal(result.selectionRead.available, true);
+    assert.equal(result.mutation.available, true);
+  }
+});
+
+test('capability callback derives read and mutation availability from the observed native result', async () => {
   const r = rig(); let settled = false;
   const promise = r.bridge.probeCapabilities().then(value => { settled = true; return value; });
   await Promise.resolve(); assert.equal(settled, false);
@@ -230,7 +249,8 @@ test('capability callback exposes presence, never promotes host/mock positives t
   r.calls[0].callback(probe); const result = await promise;
   assert.deepEqual(result.methodPresence, namedPresence); assert.ok(Object.isFrozen(result.methodPresence));
   assert.equal(result.runtimeVerified, false); assert.equal(result.selectionRead.runtimeVerified, false);
-  assert.equal(result.mutation.available, false); assert.equal(result.mutation.reason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
+  assert.equal(result.selectionRead.available, true); assert.equal(result.mutation.available, true);
+  assert.notEqual(result.mutation.reason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
   assert.ok(Object.isFrozen(result)); assert.ok(Object.isFrozen(result.mutation));
 });
 
@@ -245,7 +265,8 @@ test('capability tuple maps every distinct boolean pattern to frozen named prese
     const result = await promise;
     assert.deepEqual(result.methodPresence, { api, getDocument: doc, getDocumentId: id, replaceTextSmart: replace, getRangeBySelect: range, isTrackRevisions: revisions });
     assert.ok(Object.isFrozen(result.methodPresence)); assert.ok(Object.isFrozen(result));
-    assert.equal(result.runtimeVerified, false); assert.equal(result.mutation.available, false);
+    const expectedAvailable = api && doc;
+    assert.equal(result.runtimeVerified, false); assert.equal(result.selectionRead.available, expectedAvailable); assert.equal(result.mutation.available, expectedAvailable);
     assert.deepEqual(Object.getOwnPropertyDescriptors(input), before);
   }
 });

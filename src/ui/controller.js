@@ -10,6 +10,7 @@ import { createRegistry } from '../tools/registry.js';
 import { createWordTools } from '../tools/word.js';
 import { createCellTools } from '../tools/cell.js';
 import { createSlideTools } from '../tools/slide.js';
+import { OWNED_PREVIEW_REASON } from '../plugin/bridge.js';
 import { createOrchestrator, createDocumentReader, isLongGenerationRequest, ORCHESTRATION_TARGET_CHARS,
   ORCHESTRATION_MAX_EXECUTE_PASSES, ORCHESTRATION_MAX_HEADINGS } from './orchestrator.js';
 
@@ -24,7 +25,6 @@ function safeCode(error) { return error instanceof SafeError ? closedCode(error.
 // state without guessing about the installed SDK is what §6/§9 make structural: a Word editor the
 // controller already reads and (under its own owned-target proof) applies to. Every action is still
 // refused at dispatch by the bridge's own owned-target check, which is the authority.
-const CAPABILITIES = Object.freeze(['document.read', 'document.write']);
 // The Agent Runtime's terminal vocabulary mapped onto the controller's existing status codes (§8).
 const RUN_STATUS = Object.freeze({ FINAL: 'COMPLETE', PREVIEW_READY: 'PREVIEW_READY', UNCERTAIN: 'APPLY_UNCERTAIN',
   LIMIT: 'AGENT_LIMIT', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
@@ -90,6 +90,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let previewOwner = null;
   let previewTimer = null;
   let capabilityCount = null;
+  let probedCapabilities = null;
   let agent = null;
   // The last PLAN -> EXECUTE -> VERIFY -> CONTINUE summary the panel published, or null while no
   // orchestration is in flight. It is a closed, content-free record built from measurements and closed
@@ -141,7 +142,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     return Object.freeze({ status, active: active !== null, mode, includeContext, context, chat,
       settings: stored.settings, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
       preview, capabilityCount, agent, orchestration, canApply: canApply(), writeLocked: writeLocked(), generation, editorType: bridge?.getState().editorType ?? 'unknown',
-      mutationReason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED', runtimeVerified: false, lifecycleEventsVerified: false });
+      mutationReason: probedCapabilities?.mutation?.reason ?? OWNED_PREVIEW_REASON, runtimeVerified: false, lifecycleEventsVerified: false });
   }
   function emit() { if (disposed) return; const state = snapshot(); for (const listener of listeners) listener(state); }
   // Late real callback settlement may unlock controls, never publish late content,
@@ -301,7 +302,13 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       owned.agent = { status: 'RUNNING', steps: 0, toolCalls: 0, actions: [] };
       if (owns(owned)) agent = owned.agent;
       emit();
-      const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities: CAPABILITIES,
+      const capabilities = owned.editorType === 'word' && probedCapabilities === null
+        ? ['document.read', 'document.write']
+        : [];
+      if (probedCapabilities?.selectionRead?.available === true) capabilities.push('document.read');
+      if (probedCapabilities?.mutation?.available === true) capabilities.push('document.write');
+      if (kind === 'analysis' && capabilities.length === 0) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities,
         mode: owned.mode, settings, uuid, request: kind === 'connection' ? CONNECTION_REQUEST : user,
         profile,
         // The panel's agent runs carry the named pilot guardrails IN THE REQUEST: the runtime validates
@@ -454,6 +461,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         }
         const capabilities = await bridge.probeCapabilities({ signal: owned.abort.signal });
         if (!valid(owned)) return false;
+        probedCapabilities = capabilities;
         // THE SPREADSHEET PATH. A Cell bridge has no Word method to probe, so it reports its capabilities LOCALLY
         // and `methodPresence` is null by construction — readiness is what the bridge says about ITSELF. The Word
         // decode below used to run for every editor, so a HEALTHY workbook was answered with
@@ -473,6 +481,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
           const cellAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
           if (cellAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
           const cellCount = cellAvailability.filter(value => value === true).length;
+          if (cellCount === 0) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
           return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = cellCount; });
         }
         // THE PRESENTATION PATH. The exit gate found this branch MISSING: a slide editor fell through to the Word
@@ -493,6 +502,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
           const slideAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
           if (slideAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
           const slideCount = slideAvailability.filter(value => value === true).length;
+          if (slideCount === 0) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
           return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = slideCount; });
         }
         const flags = capabilities?.methodPresence;

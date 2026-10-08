@@ -110,7 +110,7 @@ test('a plugin exposing only executeCommand verifies the runtime through its own
   assertComposedSource(r.commands[0].source);
   assert.deepEqual(capabilities.methodPresence, presence(true), 'the build native presence signal is decoded, not fabricated');
   assert.equal(capabilities.runtimeVerified, false, 'presence is never promoted to runtime proof');
-  assert.equal(capabilities.mutation.available, false);
+  assert.equal(capabilities.mutation.available, true, 'availability is derived from the observed native Api/document pair');
   assert.equal(capabilities.adapter.executeMethod, true);
   assert.equal(capabilities.adapter.commandDispatch, true);
   assert.equal(capabilities.adapter.commandMethod, 'executeCommand');

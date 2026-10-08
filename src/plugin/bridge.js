@@ -6,7 +6,7 @@ import { ERROR_CODES, SafeError } from '../shared/errors.js';
 // that queued SDK work was retracted. Only a genuinely new initialized plugin
 // object may start a new lifecycle. Never call SDK outside this sole bridge.
 const pluginOwners = new WeakSet();
-const MUTATION_REASON = 'EXPLICIT_OWNED_PREVIEW_REQUIRED';
+export const OWNED_PREVIEW_REASON = 'EXPLICIT_OWNED_PREVIEW_REQUIRED';
 const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'replaceTextSmart', 'getRangeBySelect', 'isTrackRevisions']);
 // THE CLOSED SET OF TICKET KINDS WHOSE WORK WRITES THE DOCUMENT, in ONE place. Every one of these
 // questions is asked about more than one leg and the answers must not drift apart: does a ticket whose
@@ -6037,11 +6037,13 @@ export function createR7Bridge(plugin, {
   }
 
   function capabilities(methodPresence = null) {
-    const available = !disposed && editor === 'word' && adapter.executeMethod;
+    const probed = methodPresence !== null;
+    const available = !disposed && probed && methodPresence.api === true && methodPresence.getDocument === true;
+    const reason = available ? 'NATIVE_PROBE_AVAILABLE' : probed ? 'NATIVE_PROBE_UNAVAILABLE' : 'NATIVE_PROBE_NOT_PERFORMED';
     return Object.freeze({
       editorType: editor, adapter, methodPresence, runtimeVerified: false,
-      selectionRead: Object.freeze({ available, runtimeVerified: false, reason: available ? 'ADAPTER_PRESENT_RUNTIME_UNVERIFIED' : 'READ_UNAVAILABLE' }),
-      mutation: Object.freeze({ available: false, runtimeVerified: false, reason: MUTATION_REASON })
+      selectionRead: Object.freeze({ available, runtimeVerified: false, reason }),
+      mutation: Object.freeze({ available, runtimeVerified: false, reason })
     });
   }
   function ensureIdle() {
@@ -8289,7 +8291,7 @@ export function createR7Bridge(plugin, {
       if (disposed) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
       if (slot !== null) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
       if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
-      if (editor !== 'word' || !adapter.commandDispatch) return capabilities();
+      if (editor === 'unknown' || !adapter.commandDispatch) return capabilities();
       return start('probe', signal);
     },
     canApply(target) { try { return slot === null && ownedTarget(target) !== null; } catch { return false; } },

@@ -62,16 +62,39 @@ test('R7 check timer acquisition failure cannot reach SDK or strand active owner
   assert.equal(f.controller.getState().status, 'INTERNAL_ERROR'); assert.equal(f.controller.getState().active, false);
 });
 
-test('presentation reads dispatch through the same registry when context is explicitly disabled', async () => {
+for (const [editorType, tool, bridgeMethod, result] of [
+  ['slide', 'read_presentation', 'readPresentation', { ok: true, slidesCount: 0, currentSlideIndex: 0, slidesRead: 0, slidesTotal: 0, truncated: false, slides: [] }],
+  ['cell', 'list_sheets', 'listSheets', { ok: true, count: 1, activeIndex: 0, activeName: 'Лист1', sheets: [{ name: 'Лист1', index: 0, active: true, hidden: false }] }]
+]) test(`${editorType} request proceeds when its native probe reports availability`, async () => {
   let reads = 0;
-  const f = setup({ response: [toolCalls(['read_presentation', {}]), final()], bridge: {
-    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
-    async readPresentation() { reads++; return { ok: true, slidesCount: 0, currentSlideIndex: 0, slidesRead: 0, slidesTotal: 0, truncated: false, slides: [] }; }
+  const f = setup({ response: [toolCalls([tool, {}]), final()], bridge: {
+    getState() { return { editorType, busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType, adapter: { commandDispatch: true, executeMethod: true },
+      methodPresence: namedPresence, selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' },
+      mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; },
+    async [bridgeMethod]() { reads++; return result; }
   } });
+  assert.equal(await f.controller.checkR7(), true);
   f.controller.setIncludeContext(false);
-  assert.equal(await f.controller.analyze('структура презентации'), true);
+  assert.equal(await f.controller.analyze(`${editorType} read`), true);
   assert.equal(reads, 1);
-  assert.deepEqual(f.controller.getState().agent.actions.map(action => [action.tool, action.outcome]), [['read_presentation', 'ok']]);
+  assert.deepEqual(f.controller.getState().agent.actions.map(action => [action.tool, action.outcome]), [[tool, 'ok']]);
+});
+
+const namedPresence = { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true };
+
+test('a failed probe refuses the request with the real probe reason, never the owned-preview reason', async () => {
+  const bridge = { getState() { return { editorType: 'slide', busy: false, uncertain: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'slide', adapter: { commandDispatch: false, executeMethod: true }, methodPresence: null,
+      selectionRead: { available: false, reason: 'NATIVE_PROBE_NOT_PERFORMED' }, mutation: { available: false, reason: 'NATIVE_PROBE_NOT_PERFORMED' } }; } };
+  const f = setup({ dependencies: { bridge } });
+  assert.equal(await f.controller.checkR7(), false);
+  const state = f.controller.getState();
+  assert.equal(state.status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(state.mutationReason, 'NATIVE_PROBE_NOT_PERFORMED');
+  assert.notEqual(state.mutationReason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
+  assert.equal(await f.controller.analyze('add a slide'), false);
+  assert.equal(f.replies.length, 0);
 });
 
 test('ASK uses fresh bounded selection as untrusted user context and appends a complete pair', async () => {
@@ -230,7 +253,9 @@ test('transport receives original operation deadline after time spent reading co
   assert.ok(Object.isFrozen(replies[0][0]) && Object.isFrozen(replies[0][1]));
 });
 test('unknown/unavailable/empty/exact context is explicit; no cell/slide speculative read', async () => {
-  const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, readSelection() { throw Error('must not call'); } } });
+  const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, readSelection() { throw Error('must not call'); },
+    async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true, executeMethod: true }, methodPresence: namedPresence,
+      selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' }, mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; } } });
   assert.equal(c.getState().context.kind, 'UNKNOWN'); await c.refreshContext();
   assert.equal(c.getState().context.kind, 'UNAVAILABLE');
   // UX-B2 (owner decision): for a worksheet the selection context defaults OFF, so a Cell run is NOT refused
@@ -238,6 +263,7 @@ test('unknown/unavailable/empty/exact context is explicit; no cell/slide specula
   // toggle by hand - was exactly that guaranteed pre-model refusal, so it is replaced rather than preserved.
   // `readSelection` must still never be called: the bridge in this fixture throws if it is.
   assert.equal(c.getState().includeContext, false, 'a cell editor defaults to no selection context');
+  assert.equal(await c.checkR7(), true, 'the native probe authorises the declared capabilities');
   assert.equal(await c.analyze('q'), true, 'the run proceeds without attaching a selection');
   assert.equal(c.getState().context.kind, 'UNAVAILABLE', 'and the context stays explicitly UNAVAILABLE');
   const empty = setup({ bridge: { async readSelection() { return { text: '', editorType: 'word', eligible: false, target: null }; } } }).controller;
@@ -774,7 +800,7 @@ test('the ordinary single-run path is unchanged: only a long-generation EDIT req
 // reports its capabilities LOCALLY, with `methodPresence` null by construction — and the exit-gate run reads and
 // mutates sheets through exactly that adapter. The Word path is untouched: these tests pin BOTH sides.
 
-test('a CELL bridge reports presence for a spreadsheet instead of R7_CHECK_UNAVAILABLE', async () => {
+test('a CELL bridge with no observed capability is fail-closed instead of claiming readiness', async () => {
   const readings = [];
   const cellBridge = {
     getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
@@ -796,9 +822,9 @@ test('a CELL bridge reports presence for a spreadsheet instead of R7_CHECK_UNAVA
   };
   const f = setup({ dependencies: { bridge: cellBridge } });
   f.controller.reset();
-  assert.equal(await f.controller.checkR7(), true, 'a workbook with a usable adapter is READY, not unavailable');
-  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
-  assert.equal(f.controller.getState().capabilityCount, 0, 'the count is the reported availability flags, not a Word list');
+  assert.equal(await f.controller.checkR7(), false, 'an adapter alone is not observed capability evidence');
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(f.controller.getState().capabilityCount, null, 'no capability count is published without an observed success');
   assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
 });
 
