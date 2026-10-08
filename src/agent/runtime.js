@@ -9,6 +9,8 @@ import { requestCompletion } from '../ai/transport.js';
 // A refusal payload is trusted, model-facing text: it names the class of the refusal, never the
 // document, the arguments or any raw error.
 const BATCH_REFUSAL = 'one action per batch for a confirm tool; unknown tool name or invalid arguments';
+const SLIDE_STRUCTURAL_TOOLS = Object.freeze(['add_slide', 'move_slide', 'duplicate_slide']);
+const SLIDE_DEPENDENCY_RULE = 'Структурное действие add_slide, move_slide или duplicate_slide должно быть единственным вызовом в пакете. Оно сдвигает индексы других слайдов. После него перечитай структуру и нужные слайды, определи актуальные индексы следующего действия; не переноси несколько слайдов по индексам из состояния до первого переноса.';
 const UNSERIALIZABLE_REFUSAL = 'the tool result could not be serialized';
 const SLIDE_COMPLETION_REVIEW = 'Перед завершением сверь ВСЕ требования исходного запроса с результатом, а не только успех отдельных инструментов. Сейчас заново прочитай read_presentation (количество и порядок) и read_slide для изменённых слайдов (текст). Проверь требуемую позицию, точный текст и сохранность прежних слайдов. add_slide вставляет после текущего: если требовался конец и новый слайд не последний, выполни move_slide с fromIndex и toIndex, затем повтори оба чтения по актуальным индексам. Не создавай уже созданные слайды повторно. Используй только известные результаты, не угадывай индексы зависимых действий заранее. Верни final лишь после этой проверки; явно сообщи о невыполненных требованиях, если исправить их нельзя.';
 // §12.1/§8.3: the tool-result mapping runs OUTSIDE the per-action guard, so a result that cannot be
@@ -177,7 +179,7 @@ export async function runAgent(options) {
           if (!reviewingCompletion) {
             reviewingCompletion = true;
             // Do not append candidate prose: it can evict the evidence needed for review.
-            context.append({ role: 'user', content: SLIDE_COMPLETION_REVIEW });
+            context.append({ role: 'user', content: SLIDE_COMPLETION_REVIEW + '\n' + SLIDE_DEPENDENCY_RULE });
             continue;
           }
           if (structureRevision !== mutationRevision || textRevision !== mutationRevision) return finish('INCOMPLETE');
@@ -185,8 +187,13 @@ export async function runAgent(options) {
         return finish('FINAL', envelope.message);
       }
       let batch;
+      let batchRefusal = BATCH_REFUSAL;
       try {
         batch = validateBatch(catalogue, envelope.calls);
+        if (reviewSlideCompletion && batch.length > 1 && batch.some(entry => SLIDE_STRUCTURAL_TOOLS.includes(entry.descriptor.name))) {
+          batchRefusal = SLIDE_DEPENDENCY_RULE;
+          throw new SafeError(ERROR_CODES.TOOL_ERROR);
+        }
       } catch (error) {
         if (!(error instanceof SafeError)) return finish('ERROR', null, null, ERROR_CODES.INTERNAL_ERROR);
         // Design §6.2: an unknown tool, an invalid action shape or a confirm action sharing a batch
@@ -195,7 +202,7 @@ export async function runAgent(options) {
         // protocol repair, so this path must not touch the repair counter.
         if (error.code === ERROR_CODES.TOOL_ERROR) {
           context.append({ role: 'assistant', content: JSON.stringify(envelope) });
-          const refusal = [{ tool: 'batch', result: { ok: false, code: ERROR_CODES.TOOL_ERROR, message: BATCH_REFUSAL } }];
+          const refusal = [{ tool: 'batch', result: { ok: false, code: ERROR_CODES.TOOL_ERROR, message: batchRefusal } }];
           appendToolResults(context, refusal);
           continue;
         }
@@ -281,6 +288,7 @@ function systemRules(catalogue, mode, instruction = null, reviewSlideCompletion 
   // long document-generation run needs and the loop itself deliberately does not carry.
   if (typeof instruction === 'string' && instruction !== '') rules.push(instruction);
   if (reviewSlideCompletion) rules.push('В составной задаче выполни каждое требование исходного запроса, включая позицию и порядок слайдов. Зависимые вызовы отправляй после получения нужных индексов. После изменений первый final запускает проверку результата: выполни запрошенные контрольные чтения до окончательного final.');
+  if (reviewSlideCompletion) rules.push(SLIDE_DEPENDENCY_RULE);
   rules.push('Отвечай ровно одним JSON-объектом: {"type":"tool_calls","calls":[{"tool":"…","arguments":{…}}]} или {"type":"final","message":"…"}.',
     // THE BATCH CEILING, stated in the SAME model-facing text, and read from the SAME constant the envelope
     // validator enforces (`validateBatch` against `AGENT_CEILINGS.actionsPerStep`) rather than written as a second,

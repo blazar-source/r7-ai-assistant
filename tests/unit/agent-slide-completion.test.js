@@ -29,19 +29,19 @@ async function run(f,sequence,extra={}) {
   return {result,sent};
 }
 test('candidate Slide final is reviewed, repairs placement, then verifies structure and text without creating twice',async()=>{
-  const f=fixture();const {result,sent}=await run(f,[calls('add_slide','read_slide'),final('premature'),calls('read_presentation'),calls('move_slide','read_presentation','read_slide'),final('verified')]);
+  const f=fixture();const {result,sent}=await run(f,[calls('add_slide'),calls('read_slide'),final('premature'),calls('read_presentation'),calls('move_slide'),calls('read_presentation','read_slide'),final('verified')]);
   assert.equal(result.message,'verified');assert.equal(result.status,'FINAL');
   assert.deepEqual(f.deck,['old0','old1','old2','old3','old4','new']);
   assert.equal(f.executed.filter(x=>x==='add_slide').length,1);
-  assert.match(sent[2].at(-1).content,/исходного запроса/);
-  assert.ok(!sent[2].some(x=>x.content.includes('premature')),'candidate prose does not evict tool evidence');
+  assert.match(sent[3].at(-1).content,/исходного запроса/);
+  assert.ok(!sent[3].some(x=>x.content.includes('premature')),'candidate prose does not evict tool evidence');
 });
 test('reads before the review cannot justify an immediate repeated final',async()=>{
-  const f=fixture();const {result}=await run(f,[calls('add_slide','read_presentation','read_slide'),final('premature'),final('still premature')]);
+  const f=fixture();const {result}=await run(f,[calls('add_slide'),calls('read_presentation','read_slide'),final('premature'),final('still premature')]);
   assert.equal(result.status,'INCOMPLETE');assert.equal(result.message,null);assert.equal(result.toolCalls,3);
 });
 test('a corrective mutation invalidates review readbacks until both are refreshed',async()=>{
-  const f=fixture();const {result}=await run(f,[calls('add_slide'),final('candidate'),calls('read_presentation','read_slide','move_slide'),final('stale')]);
+  const f=fixture();const {result}=await run(f,[calls('add_slide'),final('candidate'),calls('read_presentation','read_slide'),calls('move_slide'),final('stale')]);
   assert.equal(result.status,'INCOMPLETE');assert.equal(result.toolCalls,4);
 });
 for(const [name,value] of [['failed',{ok:false,code:'TOOL_ERROR'}],['unserializable',{ok:true,data:1n}]]) {
@@ -80,3 +80,19 @@ for(const type of ['cancel','deadline']) {
     assert.equal(result.status,type==='cancel'?'CANCELLED':'LIMIT');assert.equal(result.message,null);
   });
 }
+
+for (const names of [['move_slide','move_slide'],['add_slide','read_slide'],['read_presentation','add_slide'],['read_presentation','move_slide','read_slide']]) {
+  test(`structural Slide batch ${names.join('+')} is refused before any action`,async()=>{
+    const f=fixture();const {result,sent}=await run(f,[calls(...names),final('cannot proceed')]);
+    assert.equal(result.toolCalls,0);assert.deepEqual(f.executed,[]);
+    const refusal=JSON.parse(sent[1].at(-1).content);
+    assert.equal(refusal.results[0].code,'TOOL_ERROR');
+    assert.match(refusal.results[0].message,/индекс/);
+    assert.equal(result.repairs,0,'dependency refusal does not consume protocol repair');
+  });
+}
+
+test('multiple ordinary Slide reads retain batching',async()=>{
+  const f=fixture();const {result}=await run(f,[calls('read_presentation','read_slide'),final('answer')]);
+  assert.equal(result.status,'FINAL');assert.equal(result.toolCalls,2);
+});
