@@ -1,6 +1,21 @@
 # Sprint 8 T7 — `0.9.0-pilot-rc` artifact freeze
 
-## Re-freeze after native activation defect
+## Current re-freeze — commit `2e64c0ef019b3ef985163a4eb9434ea298265cee`
+
+**Result: PASS for artifact identity and reproducibility.** `git status --porcelain` was empty immediately before the repository-tooling build at branch `stage-b`, HEAD `2e64c0ef019b3ef985163a4eb9434ea298265cee`, and remained empty after the build and both repeat builds. Packaged `provenance.json` names that full commit, product version `0.9.0-pilot-rc`, Node `v24.21.0`, and esbuild `0.25.10`.
+
+| Current frozen artifact | SHA-256 |
+| --- | --- |
+| Plugin ZIP `dist/plugin/r7-ai-assistant.zip` | `5c6edba48421229dc2012ce170aaf2e48a887a19e2957de6d79e566d16ce0f79` |
+| DEB `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb` | `4b54302a747fac03c0af1c39099ca7791357f6fe2a5d56e940c1fb5f69e9122a` |
+| SPDX 2.3 SBOM `dist/r7-ai-assistant.spdx.json` | `93f034aa511f6ed01a95823bdb6d6a80598e1a8fc8a77e440a749c03ed4badbd` |
+| Packaged/built `panel.js` | `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f` |
+
+`npm run reproducible` produced the same ZIP twice at this commit. Two builds after independently removing `dist/deb` produced the same DEB hash. The DEB hash is unchanged from the previous corrected set (`4b54302a...`) because the DEB deliberately excludes plugin `provenance.json`; the ZIP embeds `sourceCommit`, so the ZIP and the ZIP-derived SBOM changed. The regenerated SPDX 2.3 SBOM was checked against all nine real ZIP entries: no missing, extra, or mismatched entry. All eight plugin files carried by the DEB matched their corresponding ZIP entries byte-for-byte. Genuine target-side `dpkg-deb -c` shows `panel.js` directly at `./usr/share/r7-ai-assistant/plugin/panel.js`, not below a GUID directory.
+
+Raw receipts are under `.local/sprint8/`: `refreeze-build.log`, `reproducibility.log`, `sbom-archive-verify.json`, `deb-zip-identity.txt`, and `dpkg-archive-current.txt`.
+
+## Earlier corrected re-freeze — superseded history
 
 **Result: PASS for the corrected artifact-identity and reproducibility boundary.** Native acceptance proved that the original DEB installed its eight payload files under `/usr/share/r7-ai-assistant/plugin/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/`. The documented activation destination is already the brace-GUID directory, so that package shape could produce a nested brace-GUID directory rather than `panel.js` at the path R7 loads. The package was the wrong side of the contract: the corrected DEB places the eight files directly under `/usr/share/r7-ai-assistant/plugin/`, and the documented `cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"` now lands them directly in the verified destination. A packaging regression test pins this source-to-destination result.
 
