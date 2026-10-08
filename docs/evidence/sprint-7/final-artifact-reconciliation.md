@@ -82,7 +82,7 @@ The old upgrade fixture `0.9.0-pilot-dev.1` remains explicitly test-only and is 
 
 ## 2026-10-08 stderr parsing repair and real-stand final rerun
 
-**Status: final working-tree DEB install, supported acceptance, refusal, activation and real R7 load VERIFIED; bumped-version upgrade remains NOT VERIFIED; committed provenance/reproducibility pending controller commit.** This section supersedes the supported-target blocker above for DEB `f280af10...`; the earlier record remains valid for superseded DEB `cddf8367...`.
+**Status at this rerun: final working-tree DEB install, supported acceptance, refusal, activation and real R7 load VERIFIED; bumped-version upgrade then NOT VERIFIED; committed provenance/reproducibility pending controller commit.** The later clean-commit inventory and closure section supersede those two pending conditions for DEB `f280af10...`; the earlier record remains valid for superseded DEB `cddf8367...`.
 
 The preflight now captures both stdout and stderr from `DesktopEditors --version`, selects the first matching version-bearing line, and emits a specific fail-closed diagnostic only if neither stream contains a parseable version. A regression fixture writes the real version to stderr after a non-version stdout line; it failed before the repair with exit 42 and passed afterward.
 
@@ -96,6 +96,14 @@ R7 was raised with the required user `systemd-run` recipe. The vendor host repor
 
 Archive and installed inventories showed only the 11 declared files; dpkg info contained only `.list` and `.md5sums`. No package daemon, service, listener, Node, MCP/bridge, key, token or endpoint was found. This equality proves the installed payload files and the file loaded from the measured activation path were the bytes in this exact package. It does not prove semantic correctness beyond the observed R7 frame, other platforms/tuples, ZPS behavior, or reproducibility after a future commit.
 
-A same-version `dpkg -i` reinstall preserved every LevelDB file hash (`SETTINGS_IDENTICAL`), but the requested **bumped development fixture upgrade is NOT VERIFIED** in this rerun: no safely rebuilt `.1` package was produced. Historical bumped-fixture evidence for DEB `7f2235ca...` remains artifact-specific and cannot close this final-DEB condition.
+A same-version `dpkg -i` reinstall preserved every LevelDB file hash (`SETTINGS_IDENTICAL`). At this rerun date no safely rebuilt `.1` package had been produced, so the bumped development fixture upgrade was then **NOT VERIFIED**; the closure measurement below supersedes that condition for exact DEB `f280af10...`.
 
 `dpkg -r` removed every product-owned system file; the activated copy was removed and the prior plugin restored byte-for-byte from `/tmp/r7-ai-final-backup-20261008T140309/plugin-before`. The package is absent and `/usr/share/r7-ai-assistant`, `/usr/share/doc/r7-ai-assistant`, and `/usr/bin/r7-ai-assistant-preflight` do not exist. The preserved snapshot was untouched. The R7 document is running under user unit `r7-final`; this is the prior relevant interactive state with the backed-up plugin restored.
+
+## 2026-10-08 closure: bumped-version upgrade on exact final bytes
+
+Exact base DEB `f280af10e20314a96651b79734093bbd9684634890e6677f3b08ec85e6adaae1` was transferred, installed, accepted by the shipped preflight, activated, and observed in the existing R7 CDP contexts at its per-user plugin URL with `hasStatus:true` and `hasPrompt:true`. Installed and activated `panel.js` both hashed `bacb2938...`.
+
+The base package was then upgraded by genuine `dpkg -i` to the clearly test-only, unshipped `0.9.0-pilot-dev.1` fixture (`ee26ff9b3a6b41cca0d4f52329cc2d7ea73e07557255b204ea8acc1a3c5ae567`). `dpkg-query` confirmed the bumped version. Complete LevelDB content hashes at `$HOME/.local/share/r7-office/editors/data/cache/Local Storage/leveldb/` were identical before and after; both manifest files hash `57cc0e6424a5f67c69640ccf74f78dc085cb19f95f623430bf0b671f48e0fd94`. The complete product-owned system-file manifest was also identical before/after and contained 11 files, proving no product-owned file was lost.
+
+After `dpkg -r`, all product-owned system paths were absent, the backed-up prior per-user plugin compared equal after restoration, and the post-uninstall LevelDB manifest still hashed `57cc0e6424a5f67c69640ccf74f78dc085cb19f95f623430bf0b671f48e0fd94`. Backup: `/tmp/r7-ai-closure-backup-20261008T141713`. The stand is package-absent in its prior relevant interactive state; snapshot `02-astra-r7-clean` was never restored or modified. This closes the exact-final-DEB bumped-upgrade condition; it does not promote the `.1` fixture to a shipped artifact or prove arbitrary future upgrade bytes.

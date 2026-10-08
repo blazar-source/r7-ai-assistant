@@ -1,6 +1,6 @@
 # Sprint 7 — Packaging, Astra and ZPS compatibility: plan (T1–T8)
 
-**Status: AUTHORIZED FOR PLANNING (2026-10-08).** The plan below is fixed; implementation starts after this fixation
+**Status: CLOSED - ACCEPTED WITH RECORDED LIMITATIONS (2026-10-08).** The plan below is fixed; implementation starts after this fixation
 and proceeds task by task. Authoritative upstream scope: [product roadmap to 0.9.0-pilot-rc](../product-roadmap-to-0.9.0-pilot-rc.md)
 (SPRINT 7) and [roadmap](../../roadmap.md) row 7.
 
@@ -77,3 +77,29 @@ never overstates what was measured.
 Sprint 6 closed as ACCEPTED WITH PLATFORM-EVIDENCE LIMITATIONS; its four unproven native items
 (Windows Cell journey, Astra Word/Cell pixel screenshot, Astra focus-ring pixels, rendered UX-B5 stages) are recorded
 in [the T6 evidence](../../evidence/sprint-6/t6-native-ux-acceptance.md) and are not reopened by this stage.
+
+## Closure (2026-10-08)
+
+**Sprint 7 is closed as ACCEPTED WITH RECORDED LIMITATIONS.** T1-T8 are committed and the full repository gate is
+green on the final bytes. The exit gate is met for the package the stage actually ships, and the items that are not
+proven are listed below rather than implied.
+
+Met, with the artifact that settles it: the plugin ZIP and the DEB are built from one commit and recorded together
+with the SBOM, provenance and toolchain in `docs/evidence/sprint-7/final-artifact-inventory.md`; BOTH artifacts
+reproduce from clean repeat builds; the SBOM matches the real payload and the zero-runtime-dependency claim is
+checked; the DEB installs with genuine `dpkg` and is proven BYTE-IDENTICAL to the package the lifecycle was measured
+on, so tested equals shipped for it; the installed state carries no daemon, listener, Node, MCP, bridge, key or
+endpoint; the shipped preflight enforces the whole declared tuple (Astra version and build, architecture, R7 values
+and executable version) and now ACCEPTS the supported target while refusing a mismatch safely; on the exact final
+bytes a genuine bumped-version upgrade preserved user settings (identical LevelDB manifest
+`57cc0e6424a5f67c69640ccf74f78dc085cb19f95f623430bf0b671f48e0fd94` before and after) with all eleven product-owned
+files retained, and uninstall removed every product path while restoring the prior plugin byte-for-byte.
+
+NOT VERIFIED, recorded rather than smoothed over: ZPS state and operation under it (the privileged query required
+superuser and the alternatives did not prove the state; nothing was disabled to obtain a result); unsupported R7
+tuples, which are refused until their own lifecycle is measured; a system-wide plugin install path, which is not
+claimed and must not be used; the stand lifecycle of the separately distributed plugin ZIP, since only the DEB was
+exercised on the target; and arbitrary future upgrade bytes beyond the measured pair.
+
+The DEB hash is stable across later documentation commits because it does not embed the plugin provenance, while the
+ZIP hash moves with the recorded commit - stated in the inventory so "shipped" cannot drift silently.

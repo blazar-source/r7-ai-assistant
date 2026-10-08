@@ -55,7 +55,7 @@ R7 stores the plugin's browser localStorage in its user CEF LevelDB at:
 
 Within that storage, the product keys are `r7-ai-assistant:v1:settings` and, only after explicit plaintext-persistence opt-in, `r7-ai-assistant:v1:apiKey`. The entire R7 profile root `$HOME/.local/share/r7-office/editors/data/` is user/vendor data and is not package-owned.
 
-The T6 upgrade measurement compared the LevelDB inventory and every file hash immediately before and after `dpkg -i`; they were byte-identical. Upgrade preserves these settings. Uninstall does not touch them, including a remembered opt-in key; removal of the product namespace is the user's explicit **Reset** action in the plugin.
+For exact final DEB `f280af10...`, both a same-version reinstall and a measured upgrade to an explicitly unshipped `0.9.0-pilot-dev.1` fixture compared every LevelDB file hash immediately before and after `dpkg -i`; the complete manifests were byte-identical (`57cc0e6424a5f67c69640ccf74f78dc085cb19f95f623430bf0b671f48e0fd94`). This proves settings preservation for those measured package transitions, not for arbitrary future packages. Uninstall left that manifest unchanged and does not intentionally touch these settings, including a remembered opt-in key; removal of the product namespace is the user's explicit **Reset** action in the plugin.
 
 ## Upgrade
 
@@ -71,7 +71,7 @@ install -d -m 0755 "$TARGET"
 cp -a "/usr/share/r7-ai-assistant/plugin/$GUID/." "$TARGET/"
 ```
 
-T6 exercised this lifecycle with test-only version `0.9.0-pilot-dev.1`. That `.1` package was a lifecycle-test fixture, is not shipped or published, and must not be used as an operator upgrade path. A real upgrade replaces it with an actually built-and-measured package supplied to the operator. Do not activate an upgrade when preflight refuses it. The package has no maintainer scripts and does not edit the R7 profile or vendor installation files.
+The final closure measurement installed exact shipped DEB `f280af10...` as the base, then upgraded it to test-only version `0.9.0-pilot-dev.1`; the `.1` fixture SHA-256 was `ee26ff9b3a6b41cca0d4f52329cc2d7ea73e07557255b204ea8acc1a3c5ae567`. That fixture is unshipped, unpublished, and must not be used as an operator upgrade path. A real upgrade must use an actually built-and-measured package supplied to the operator; the fixture result must not be generalized to unmeasured future bytes. Do not activate an upgrade when preflight refuses it. The package has no maintainer scripts and does not edit the R7 profile or vendor installation files.
 
 ## Uninstall and deactivate
 

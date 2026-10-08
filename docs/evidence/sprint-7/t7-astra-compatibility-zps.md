@@ -6,7 +6,7 @@
 
 | Target | Result | Evidence / promotion rule |
 | --- | --- | --- |
-| Astra Linux SE 1.7.9 build 1.7.9.41, amd64; R7 deb `r7-office 2026.1.2-1942~astra-signed`; executable `2026.1.2.1942` | **SUPPORTED / PASS** | T6 measured install, activation, real plugin load, upgrade with settings preserved, uninstall, and restored prior state. T7 re-read the exact OS/package/product tuple and exercised the shipped fail-closed preflight. |
+| Astra Linux SE 1.7.9 build 1.7.9.41, amd64; R7 deb `r7-office 2026.1.2-1942~astra-signed`; executable `2026.1.2.1942` | **SUPPORTED / PASS** | Exact final DEB `f280af10...` measured install, compatibility acceptance, activation and real plugin load, same-version reinstall with settings preserved, upgrade to explicitly unshipped `0.9.0-pilot-dev.1` with settings and all product files preserved, uninstall/product-only cleanup, and restored prior state. T7 exercised shipped fail-closed mismatch refusal. Earlier T6 artifact-specific records remain historical. |
 | Any different Astra version/build, architecture, R7 package form/version/build, including separately observed R7 2026.3.1 | **NOT VERIFIED / refused** | Promotion requires its own target identity capture plus the complete T6 lifecycle: install, activation and byte-confirmed load, upgrade/settings preservation, uninstall/product-only cleanup, and this shipped incompatible-target gate. Observation or historical use alone is insufficient. |
 | System-wide product plugin path | **NOT VERIFIED** | Promotion requires separate behavior proof that R7 loads the product there without modifying vendor-owned files. The supported path remains the measured per-user brace-GUID directory. |
 
