@@ -351,3 +351,65 @@ Therefore the only observed live sequence remains the previous controller sequen
 * The Astra prompt was genuinely active and had measured focus CSS, but neither available OS window capture composited the focused plugin pixels. The saved image is a symptom artifact, not a valid focus-ring screenshot.
 * No rendered mounted-panel UX-B5 stage sequence or during-run panel screenshot exists. Controller-only `... → COMPLETE` remains insufficient.
 * No new model credits were spent in this final attempt; exact currency for the two earlier bounded runs remains unavailable.
+
+## 12. Remaining native-proof closure attempt (2026-10-08, ordered A–D)
+
+This append records measured results only. No product/test file, commit, push, or full-suite command was used.
+
+### A. Astra focus-ring pixel proof — NOT VALID
+
+Commands:
+
+```sh
+loginctl unlock-session 3
+DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority xwininfo -root -tree
+DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority import -window 0xf7ab4d throwaway-unlocked.png
+# CDP in plugin context 4: Page.bringToFront; window.focus(); prompt.focus(); verify activeElement
+DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority import -window 0xf7ab4d t6-astra-prompt-focus-full.png
+convert <2x source> -crop 518x998+80+336 +repage t6-astra-prompt-focus.png
+```
+
+The throwaway capture `.local/sprint6/astra/throwaway-unlocked.png` is 6,663 bytes and shows the spreadsheet editor rather than the lock screen, so unlock was confirmed. Immediately before capture the plugin DOM reported `active:"prompt"`, `outline: rgb(9, 92, 204) solid 3px`, `boxShadow: rgb(255,255,255) 0 0 0 5px`, and border `rgb(120,133,150) 1px solid`. Nevertheless, the desktop/compositor window available in the current 1024×720 session did not composite the plugin panel. `.local/sprint6/astra/t6-astra-prompt-focus.png` is only 5,264 bytes on disk and shows the spreadsheet grid, unlike the known-good 26,342-byte panel crop. Therefore DOM focus is valid but the requested pixel proof is not.
+
+Windows comparison: Windows has valid prompt/Send focus captures; Astra does not yet have a valid focused-panel crop.
+
+### B. Astra Word and Cell capability proofs — NOT CLOSED
+
+The exact panel-DOM text successfully read in the preceding native editor launches was:
+
+* Word: compact `Готово`; identity `Stage B · редактор: word · runtimeVerified: false`; visible panel body `R7 AI Assistant / Новый чат / Готово / Диагностика / Отправить`.
+* Cell: compact `Готово`; identity `Stage B · редактор: cell · runtimeVerified: false`; visible panel body `R7 AI Assistant / Новый чат / Готово / Диагностика / Отправить`.
+
+The detailed per-editor capability paragraph was not present in either captured panel DOM. The only detailed action explanation previously observed was shared rather than editor-specific: `Кнопка станет доступна: сначала отправьте запрос в режиме правки. Необработанный ответ не будет применён. Срок предложения — 120 секунд. Команда Undo выполняется вручную.` The current Word relaunch command reached a process with the requested DOCX path but did not expose a `documenteditor/main` target within 120 s, so no stronger text or screenshot was fabricated. Existing screenshot paths `.local/sprint6/astra/t6-astra-word-capability.png` and `.local/sprint6/astra/t6-astra-cell-capability.png` remain invalid lock-screen captures from the earlier attempt.
+
+Windows comparison: Word remains valid on Windows with its detailed paragraph; Windows Cell and both detailed Astra paragraphs remain absent.
+
+### C. UX-B5 rendered progress-stage sequence — NOT RUN; spend 0
+
+Required prerequisite order was checked first: editor → panel mounted and visible in the desktop capture → bounded product-path run. The Astra desktop capture still omitted the mounted plugin panel even while plugin context 4 and `activeElement=prompt` were live. Starting another paid request would therefore have repeated the known failure mode without satisfying the decisive during-run screenshot requirement. No additional request was made.
+
+Observed sequence remains controller-only from the prior bounded runs: `R7_PRESENCE_READY → ANALYZING → ANALYZING → ANALYZING → ANALYZING → COMPLETE`; terminal controller status `COMPLETE`. No mounted `#progress-stage` / compact `#status` sequence exists. Spend added here: **0**. Cumulative documented spend remains two bounded `deepseek-chat` request families (`maxTokens=256` and `128`); exact currency was not returned.
+
+Windows comparison: the prior Windows during-run image was the shell, not a mounted panel; neither stand closes UX-B5.
+
+### D. Windows Cell — one bounded attempt, measured platform symptom
+
+Exact command shape:
+
+```powershell
+Get-Process | ? { $_.Name -match '^(DesktopEditors|editors|editors_helper)$' -or $_.Path -like '*R7-Office*' } | Stop-Process -Force
+Get-ChildItem "$env:LOCALAPPDATA\R7-Office" -Recurse -Force -Filter 'Singleton*' | Remove-Item -Force -Recurse
+Start-Process 'C:\Program Files\R7-Office\Editors-2026.3.1\DesktopEditors.exe' -ArgumentList @('--ascdesktop-support-debug-info','<real disposable-cell-inventory.xlsx>')
+# poll http://127.0.0.1:8080/json/list for 120 s
+```
+
+Raw result: `spreadsheetEditor:false`. The target list contained only `apps/api/documents/index.html?placement=desktop&doctype=spreadsheet&...title=disposable-cell-inventory.xlsx` plus `index.html?waitingloader=yes`; no `spreadsheeteditor/main` page appeared. The inner process command line did contain the exact real XLSX path. Per instruction, attempts stopped here. This is the Windows-specific native-shell symptom; Astra had previously reached a real `spreadsheeteditor/main` page.
+
+## WHAT THIS STILL DOES NOT SHOW
+
+* A valid Astra pixel capture of the focused prompt: the prompt was active with the expected computed focus ring, but the current desktop capture contained only the editor grid, not the panel.
+* Detailed per-editor Astra Word/Cell capability paragraphs and valid panel screenshots; only compact Ready, identity badges, and the shared disabled-Apply explanation were observed.
+* A rendered mounted-panel UX-B5 sequence or during-run panel screenshot on either stand; controller-only states are insufficient.
+* A Windows `spreadsheeteditor/main` page or Cell panel; the single bounded clean launch remained on the documents/recent shell.
+* A successful model-driven document mutation. No new spend occurred in this closure attempt.
+
