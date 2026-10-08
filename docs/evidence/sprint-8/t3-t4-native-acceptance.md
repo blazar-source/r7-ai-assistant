@@ -1,5 +1,59 @@
 # Sprint 8 T3/T4 — native acceptance
 
+## Vendor-API modal bypass attempt — frozen `0.9.0-pilot-rc`, branch `stage-b`, HEAD `cd319a3`
+
+**Status: PARTIAL / LEGITIMATE MOUNT BYPASS PASSED; NATIVE JOURNEYS REMAIN NOT VERIFIED.** The already-running, unlocked R7 instance (PID `119782`) and its debug endpoint were left intact. The vendor plugin-host API in the real presentation editor successfully started the product panel despite the still-visible trial notice. The mounted bytes match the frozen package exactly. A real Slide request was dispatched through the product panel, but the product failed closed before transport or mutation with `CAPABILITY_UNAVAILABLE`; Word and Cell were not attempted because doing so would require replacing the protected running editor.
+
+### Vendor host API and mounted-byte identity
+
+Raw command/response transcript: `.local/sprint8/vendor-api-route.log`.
+
+CDP context `2` was the editor frame at `presentationeditor/main/index.html`. `window.g_asc_plugins` was an object. Its callable surface included `run`, `close`, `isRunned`, `show`, `register`, `unregister`, `init`, `buttonClick`, `sendMessageToFrame`, `runResize`, `startLongAction`, `endLongAction`, and the other methods preserved in the raw receipt. The product GUID `asc.{7C91D48E-5F12-4B36-8A90-2DFA8467C013}` initially returned `isRunned: false`.
+
+The exact vendor invocation `g_asc_plugins.run(guid, 0, '')` completed without an exception and the immediate postcondition was `isRunned: true`. Five seconds later CDP context `4` existed at:
+
+`file:///home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/%7B7C91D48E-5F12-4B36-8A90-2DFA8467C013%7D/index.html?...`
+
+That context exposed both `#status` and `#prompt`. Fetching `panel.js` relative to the mounted frame and hashing it with Web Crypto produced `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f`, exactly equal to the frozen packaged hash. Therefore the modal was bypassed legitimately for plugin startup through the same vendor host API used by plugin UI actions; no modal input, process termination, licence change, or snapshot operation was used.
+
+### Slide journey — request reached product, mutation NOT VERIFIED
+
+Raw transcript: `.local/sprint8/slide-existing.log`. A preliminary SDK read from the editor frame proved a real presentation (`editorId: 2`) with one slide and two shapes. The panel settings were populated with the bounded DeepSeek credential, `deepseek-chat`, `maxTokens=256`, temperature `0`, and the exact request to add a slide containing `SPRINT8_SLIDE_MODEL_OK`; submission was made through the product composer.
+
+The immediate product state was `status="Анализирую"`, `progress-stage="подготовка запроса"`. On the first one-second poll it was terminal: `status="Ошибка"`, empty progress stage, and details `Возможность недоступна. Безопасность изменения документа не доказана.` The next two polls were identical. A post-run SDK read again reported exactly one slide with the same two-shape structure and no added text. Outcome: **NOT VERIFIED / fail-closed before document mutation**. No product defect beyond this measured closed capability result is inferred here.
+
+### Word journey
+
+**NOT VERIFIED.** The current protected instance is a presentation editor. Replacing it with a `.docx` would require terminating or otherwise disturbing the exact running editor the task explicitly required preserving, so no Word dispatch was attempted.
+
+### Cell journey
+
+**NOT VERIFIED.** For the same safety reason, the current presentation instance was not replaced by an `.xlsx` editor, so no Cell dispatch was attempted.
+
+### UX-B5 sequence
+
+Measured at approximately one-second cadence for the real Slide dispatch:
+
+1. `Анализирую` / `подготовка запроса` immediately after composer submission.
+2. `Ошибка` / empty stage / `Возможность недоступна. Безопасность изменения документа не доказана.` on poll 1.
+3. The same terminal state on polls 2 and 3.
+
+No `Выполняю` or `Проверяю` stage was observed; the run terminated before those stages.
+
+### Pixels
+
+The full `xwininfo -root -tree` result is in `.local/sprint8/slide-existing.log`. The mounted plugin frame existed over CDP but no window whose tree line matched `FlyLocker` existed (`FLYLOCKER=`). Consequently `import -window <id>` and the prescribed `518x998+80+336` crop had no valid target; ImageMagick reported no source file. This is a measured non-composition symptom, not a valid panel acceptance capture. No blind coordinate input was attempted.
+
+### Exact spend
+
+DeepSeek requests reaching the provider: `0`; prompt tokens: `0`; completion tokens: `0`; billed cost: `0`. The product failed closed at capability validation before transport. The key value was never logged and the temporary target-side key file was removed.
+
+### Stand state and remaining limitations
+
+The original R7 process was neither killed nor restarted. The editor remained open on `deck-open.pptx`, the debug endpoint remained available, and the product plugin remained mounted through the vendor host API. The trial notice was not clicked or bypassed by synthetic input. Snapshot `02-astra-r7-clean` was not restored or modified. No document mutation was observed.
+
+This attempt verifies the legitimate vendor-API launch route, plugin-frame mount, and frozen panel hash. It does **not** verify a successful Slide mutation, any Word/Cell journey, provider behavior or nonzero spend, a full UX-B5 advancing sequence, or a composited product-panel pixel capture.
+
 ## Modal-resolution attempt — frozen `0.9.0-pilot-rc`, branch `stage-b`, HEAD `cd319a3f5cdd1d8536fe826b67b9dafbe83157e1`
 
 **Status: STOPPED AT AUTHORISED SYSTEM ACTION / THREE NATIVE JOURNEYS NOT VERIFIED.** The mandated survey found no installed input-injection mechanism and no noninteractive installation path. A fresh R7 launch did recover the debug endpoint and editor page, but the vendor trial notice remained modal. Because the instruction required stopping if the modal could not be dismissed, no product request was dispatched and no document was changed.
