@@ -228,3 +228,64 @@ What this settles: the Astra screenshot requirement of contract §5 is now met O
 OS-level method that produced the Windows captures. What it does NOT settle: the Astra keyboard traversal and the
 Astra rendered-focus check still have not been performed (a screenshot shows appearance, not traversal), and the
 capability states were still observed on Slide only.
+
+## 10. Requested native closure measurements (2026-10-08)
+
+### Point 1 — direct-file editor launch
+
+Windows commands (no `Ctrl+O`):
+
+```powershell
+Get-Process | ? {$_.Path -like '*R7-Office*'} | Stop-Process -Force
+Get-ChildItem "$env:LOCALAPPDATA\R7-Office" -Recurse -Force -Filter 'Singleton*' | Remove-Item -Force -Recurse
+& 'C:\Program Files\R7-Office\Editors-2026.3.1\DesktopEditors.exe' --ascdesktop-support-debug-info `
+  'D:\Astra_coding\r7-ai-assistant\.worktrees\stage-b\.local\native-smoke\disposable-smoke.docx'
+# repeated with disposable-cell-inventory.xlsx
+```
+
+Both process command lines and window titles contained the requested real fixture path, but this Windows build stayed on the Recent-files shell (`index.html?waitingloader=yes`): CDP exposed only contexts 1 and 3, no editor/plugin context, and `editor-eval-file` returned `no editor or plugin context found` (`contexts:2`). Therefore the direct process invocation did not furnish new Word/Cell rendered capability text. The prior valid Windows Word surface remains `.local/sprint6/t6-windows-word-capability.json` and screenshot `.local/sprint6/t6-windows-word-capability.png`; a shell screenshot from the requested direct invocation is `.local/sprint6/t6-windows-word-direct.png` and must not be mislabelled as panel evidence. Cell remains unproved.
+
+Astra exact launch route was reproduced via:
+
+```sh
+pkill -f DesktopEditors || true
+systemd-run --user --unit=r7-t6 --collect env DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority \
+  /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info \
+  /home/r7dev/r7-verification/stage-b/gate/deck-open.pptx
+```
+
+It reached a presentation target and produced the real OS capture below, but the requested Word/Cell fixture matrix was not completed on Astra in this pass. Thus Point 1 adds an honest launch-path measurement, not a new capability-state pass.
+
+### Point 2 — Astra focus-first native Tab
+
+The persistent CDP probe was changed only as measurement instrumentation: after `Runtime.enable`/`Page.enable`, it called `Page.bringToFront`, then `window.focus()` in plugin context 4 before real `Input.dispatchKeyEvent` Tab pairs. Exact observed sequence in `.local/sprint6/t6-astra-tabs-focused.json`:
+
+`new-chat → SUMMARY → prompt → send → BODY` (then `BODY` repeated).
+
+This corrects the earlier BODY-only result: native keyboard events reached the plugin document after target/frame focus. The sequence is short because the settings disclosure was collapsed; only currently rendered/focusable controls participated. A prompt-focus OS screenshot was attempted through `xwininfo -root -tree`, the 2048×1536 `FlyLocker` window, `import -window`, and `convert ... -crop 518x998+80+336 +repage`. Artifact: `.local/sprint6/astra/t6-astra-prompt-focused-panel.png` (26,342 bytes). However the capture helper relaunched the editor before capture, so it does **not** preserve the prompt focus established by the traversal and is not accepted as rendered-focus proof.
+
+Windows comparison remains the expanded-settings order `endpoint → model → apiKey → httpTimeoutSeconds → maxTokens → temperature → rememberKey → save-settings → test-connection → reset → prompt → send`.
+
+### Point 3 — live-run mounted-DOM observation
+
+One additional bounded DeepSeek run was made with `DECK_PROVIDER=deepseek`, `DECK_MAX_TOKENS=128`. Controller sequence in `.local/sprint6/t6-live-progress-run-2.log` was `R7_PRESENCE_READY → ANALYZING → ANALYZING → ANALYZING → ANALYZING → COMPLETE`; it again ended with bridge `INVALID_DATA`/transport failure and no mutation.
+
+The second CDP poll was started at roughly 1 s cadence, but because the direct-file launch had not yielded an editor/plugin context, `.local/sprint6/t6-live-panel-sequence.jsonl` remained 0 bytes. The during-run OS capture `.local/sprint6/t6-windows-live-during-run.png` is 33,140 bytes but shows the shell, not an alive mounted panel, and is therefore not accepted as UX-B5 proof. Terminal controller status was `COMPLETE`; terminal mounted-panel compact status was not observed. Spend: one additional bounded `deepseek-chat` request family, `maxTokens=128`; exact currency was not returned.
+
+### Point 4 — proof-mapping delta
+
+| Requirement newly targeted | New measurement | Proof status |
+| --- | --- | --- |
+| Direct-file Word/Cell launch, rendered reason + next step | Windows commands above; prior Word JSON/PNG retained | Word/Windows already proven; Cell and Astra Word/Cell still open because direct launch stayed on shell / matrix not completed |
+| Astra focus-first keyboard traversal | `.local/sprint6/t6-astra-tabs-focused.json` | **Proven on Astra:** `new-chat → SUMMARY → prompt → send → BODY`; rendered prompt focus not proven |
+| UX-B5 mounted DOM advances during real run | controller log, empty DOM poll, shell screenshot | **Not proven:** controller advances, but mounted `#progress-stage`/`#status` did not get sampled |
+| Both-stand screenshot route | Windows OS capture and Astra FlyLocker capture/crop | Capture mechanisms proven; the specific alive-stage and Astra focused-prompt states remain uncaptured |
+
+## WHAT THIS STILL DOES NOT SHOW — closure delta
+
+* No new rendered Cell capability/diagnostics state exists on either stand; Astra Word is also still absent.
+* The Windows direct-file command line contained the real DOCX/XLSX path, but the application remained on the Recent-files shell and exposed no editor/plugin context.
+* Astra native traversal now reaches `new-chat`, `SUMMARY`, `prompt`, and `send`, but the saved screenshot does not preserve prompt focus because the capture helper relaunched the editor.
+* No mounted-panel `#progress-stage`/`#status` sequence was captured during either paid run; only the controller status sequence advanced.
+* The during-run Windows image is a shell capture, not evidence of an alive panel stage.
+* The latest run again proves terminal controller flow, not successful presentation mutation.
