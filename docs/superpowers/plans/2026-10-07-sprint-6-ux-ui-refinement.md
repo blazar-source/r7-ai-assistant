@@ -1,6 +1,6 @@
 # Sprint 6 — UX/UI refinement: панель как продукт (план этапа)
 
-**Статус: AUTHORIZED FOR PLANNING** по прямому указанию владельца (2026-10-07). Это **план этапа**, а не
+**Статус: CLOSED - ACCEPTED WITH PLATFORM-EVIDENCE LIMITATIONS** по прямому указанию владельца (2026-10-07). Это **план этапа**, а не
 разрешение на реализацию: код Sprint 5 (T2/T3/T4/T5) этим документом не затрагивается, и работы этапа
 начинаются только после отдельного GO владельца по каждому T-номеру.
 
@@ -188,4 +188,25 @@ Sprint 5 значило бы смешивать два класса риска �
    понятные **этапы выполнения** во время работы и **человеческие финальные статусы** — без внутренних кодов,
    с объяснением результата и следующего шага.
 
+## Closure (2026-10-08)
 
+**Sprint 6 is closed as ACCEPTED WITH PLATFORM-EVIDENCE LIMITATIONS.** T1 (contract), T2 (panel layout), T3
+(chat-first main screen, compact composer, compact status), T4 (capability-aware panel with readiness, reasons and
+next steps in diagnostics), the progress stages, T5 (accessibility and resilience) and T6 (native UX acceptance)
+are committed, and the full repository gate is green on the final bytes.
+
+Proven natively: the Astra screenshot on the final bytes, the section 7.9 criterion on the target stand (259x499
+with part of the chat, the compact input and the primary action all visible without scrolling, document 499/499),
+scroll with a pinned composer on both stands, the Windows Tab order with Send activated without a model request,
+the Windows Word capability text with a screenshot, the Astra Tab order with the events reaching the panel, a live
+run reaching a real terminal status, and the Astra Word/Cell panel identity and action state in the DOM.
+
+NOT proven natively, recorded as limitations rather than passes: the Windows Cell journey (the debug endpoint
+exposes only the api documents page and the recent-files shell for a spreadsheet, never `spreadsheeteditor/main`);
+a valid Astra Word/Cell PIXEL screenshot (the panel is not composited into the captured window, and the earlier
+captures were lock-screen artifacts); the Astra focus-ring pixels (focus verified in the DOM, pixels not captured);
+and the rendered UX-B5 progress-stage sequence from a mounted panel. Details and measured symptoms are in
+`docs/evidence/sprint-6/t6-native-ux-acceptance.md`, section "STAGE VERDICT".
+
+No product or test byte was changed while pursuing those four items: they are properties of the stands available in
+this environment, not defects of the product code. Sprint 7 has not been started.

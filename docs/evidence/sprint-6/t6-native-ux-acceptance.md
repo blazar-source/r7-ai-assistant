@@ -413,3 +413,38 @@ Raw result: `spreadsheetEditor:false`. The target list contained only `apps/api/
 * A Windows `spreadsheeteditor/main` page or Cell panel; the single bounded clean launch remained on the documents/recent shell.
 * A successful model-driven document mutation. No new spend occurred in this closure attempt.
 
+## STAGE VERDICT: ACCEPTED WITH PLATFORM-EVIDENCE LIMITATIONS
+
+Sprint 6 is closed as ACCEPTED WITH PLATFORM-EVIDENCE LIMITATIONS. The items below were NOT proven natively on the
+stands available in this environment. They are NOT pass, and nothing in this file or in the stage's commits may be
+read as claiming otherwise.
+
+1. **Windows Cell - the full UX journey was not exercised.** A clean launch (every R7 process killed, `Singleton*`
+   cleared) on a real `.xlsx` DOES receive the file - the exact path appears in the process command line - but the
+   debug endpoint exposes only the api documents page with `doctype=spreadsheet` plus the Recent-files shell, never
+   `spreadsheeteditor/main`. The editor and plugin contexts are therefore unreachable on that stand, so the Cell
+   journey (capability text, panel, apply/cancel, mutation) was not observed on Windows.
+2. **Astra Word and Cell - no valid PIXEL screenshot.** The editors DO open natively (`documenteditor`,
+   `spreadsheeteditor`) and the panel's DOM is readable for both: compact status `Готово`, the identity badge
+   `Stage B · редактор: word` / `cell · runtimeVerified: false`, and the main-screen body
+   `R7 AI Assistant / Новый чат / Готово / Диагностика / Отправить`. But the panel is not composited into the
+   captured window: the crop is 5,264 bytes and shows the grid with no panel, against the known-good 26,342-byte
+   panel crop. The earlier Word/Cell captures were lock-screen artifacts. No detailed per-editor capability
+   paragraph rendered either, so the Astra Word/Cell evidence is identity and action state, not a capability pass.
+3. **Astra focus-ring pixels were not captured.** Focus was verified in the DOM immediately before the capture
+   (`activeElement` = prompt, computed ring `outline rgb(9,92,204) solid 3px` with a white 5px box-shadow), but the
+   pixel proof failed for the same non-compositing reason as (2).
+4. **UX-B5 - no live-render capture of the progress stages.** The controller-side sequence was observed
+   (`R7_PRESENCE_READY -> ANALYZING x4 -> COMPLETE`, terminal `COMPLETE`), but the rendered `#progress-stage` and
+   compact `#status` sequence from a MOUNTED panel was never recorded, because its prerequisite - a visible mounted
+   panel on Astra - is exactly what fails. No additional model spend was incurred for it.
+
+What IS proven natively and stands: the Astra screenshot on the final bytes (contract section 5 for Astra), the
+section 7.9 criterion on the target stand (frame exactly 259x499 with the user message, the assistant message, the
+composer and Send all fully visible with the document at 499/499 and no scrolling), scroll with a pinned composer on
+BOTH stands, the Windows Tab order with Send activated without a model request, the Windows Word capability text and
+screenshot, the Astra Tab order with the events reaching the panel, a live run reaching a real terminal status, and
+the Astra Word/Cell panel identity and action state in the DOM.
+
+Scope: no product or test byte was changed by any of these attempts. The limitations above are properties of the
+stands, not defects of the product code.
