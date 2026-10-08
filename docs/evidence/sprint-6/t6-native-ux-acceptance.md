@@ -122,6 +122,83 @@ No Astra screenshot is claimed for the reason in §2.
 * It does not provide Astra native Tab traversal because the repeated-attach CDP helper hung during that procedure.
 * Injected overflow lines and chat messages are ephemeral DOM measurement fixtures; they do not test persistence or model transport.
 
+## 6. Follow-up closure attempt: Word and Cell capability text
+
+This section supersedes the earlier statement that Word was not raised; Cell remains incomplete.
+
+### Windows Word — PASS
+
+Exact sequence:
+
+```powershell
+# Start R7, then use the native Ctrl+O picker to open the fixture.
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait('^o')
+[System.Windows.Forms.SendKeys]::SendWait((Resolve-Path '.local/native-smoke/disposable-smoke.docx').Path)
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+node .local/native-smoke/cdp.mjs editor-eval-file .local/astra/vendor-open.js
+node .local/native-smoke/cdp.mjs eval 4 "JSON.stringify({status:document.getElementById('status').textContent,body:document.body.innerText})"
+. .local/sprint6/capture-r7.ps1
+```
+
+Rendered text: `Готово к запросу`; `Stage B · редактор: word · runtimeVerified: false`; and the capability/diagnostic explanation `Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.` The same surface showed `Выделение неизвестно`, explaining why selection-dependent action was not yet available. Raw DOM: `.local/sprint6/t6-windows-word-capability.json`; OS screenshot: `.local/sprint6/t6-windows-word-capability.png`. This proves the vendor-opened Word panel renders editor-specific reason and next-step context rather than a bare code.
+
+### Windows Cell — NOT COMPLETED
+
+The Cell fixture was visible in the R7 recent list, but repeated real CDP double-clicks did not transition from the shell, and a later `Ctrl+O` attempt raised `editors.exe - Системная ошибка`. Stopping here avoids claiming a rendered Cell state that was not observed. No Cell screenshot is claimed.
+
+### Astra Word / Cell — NOT COMPLETED
+
+The Astra run still had the Slide fixture raised. The Word and Cell fixture relaunches were not completed within this acceptance pass, so no Astra Word/Cell rendered-text claim is made.
+
+Comparison: Windows Word is now evidenced; Cell on Windows and both Word/Cell scenarios on Astra remain open.
+
+## 7. Follow-up closure attempt: Astra native Tab/focus
+
+A single persistent WebSocket CDP session was used to avoid the earlier repeated-attach hang. Exact driver: `.local/sprint6/astra-persistent-tabs.mjs`, copied and run by `.local/sprint6/astra-run-persistent.py`. It issued real `Input.dispatchKeyEvent` `rawKeyDown`/`keyUp` pairs with `key:'Tab'` and recorded `document.activeElement` after each event.
+
+Result: **NOT PASSED**. Across 24 dispatched Tab pairs, `document.activeElement` remained `BODY`; `#prompt` was never reached (`promptIndex:-1`). Raw record: `.local/sprint6/t6-astra-tabs-persistent.json`. Therefore there is no honest Astra traversal order, Enter/Space activation result, or prompt-focus screenshot. The previously proven Astra OS screenshot route remains valid, but a screenshot cannot prove keyboard focus when native Tab never moved focus into the plugin frame.
+
+Windows comparison remains the earlier complete order: `endpoint → model → apiKey → httpTimeoutSeconds → maxTokens → temperature → rememberKey → save-settings → test-connection → reset → prompt → send`. Astra observed order is only `BODY` repeated, which is a failed traversal rather than an accepted order.
+
+## 8. Follow-up live model run for UX-B5
+
+Command (one bounded paid request family, DeepSeek):
+
+```powershell
+$env:DECK_PROVIDER='deepseek'
+$env:DECK_MAX_TOKENS='256'
+node .local/exit-gate-slides/run-deck.mjs 4 *> .local/sprint6/t6-live-progress-run.log
+```
+
+Observed controller publication sequence: `R7_PRESENCE_READY → ANALYZING → ANALYZING → ANALYZING → ANALYZING → COMPLETE`; terminal compact state `COMPLETE` / agent `FINAL`, 2 steps, 1 tool call, 7.1 s. The tool call was `read_presentation`, ending `INVALID_DATA`, and the bridge reported a transport/CDP failure; therefore this run does **not** prove a successful editor mutation. It does prove that a live `deepseek-chat` request returned terminally through the product controller.
+
+The driver records controller statuses, not the mounted panel DOM's `#progress-stage`; no alive-stage screenshot was obtained during the 7.1-second interval. Therefore UX-B5's required rendered stage sequence and permanent-input transition remain **not passed**. Model spend caused: one bounded `deepseek-chat` run with `maxTokens=256`, two model steps reported by the runtime; the provider response did not expose a currency charge, so the exact monetary amount is unknown and must not be invented.
+
+## 9. T1 contract proof mapping for T2–T6
+
+This table makes the plan's exit-gate dependency explicit: every downstream scenario references `docs/superpowers/plans/2026-10-07-sprint-6-ux-contract.md`.
+
+| T1 contract requirement | T2 artifact | T3 artifact | T4 artifact | T5 artifact | T6 artifact |
+| --- | --- | --- | --- | --- | --- |
+| Real 304 px Windows / 259 px Astra frame; responsive rules (§2) | `docs/evidence/sprint-6/t2-panel-layout-evidence.md` geometry and screenshots | `docs/evidence/sprint-6/t3-main-screen-evidence.md` compact main-screen geometry | Unit/native capability work referenced by the Sprint 6 plan and final bytes | `tests/unit/view.test.js`, `tests/unit/styles.test.js` accessibility/responsive gate | This file §§3,5: Windows `304×570`, Astra exact `259×499` |
+| Only content scrolls; first/last lines reachable; composer fixed and no horizontal overflow (§2.1–2.6) | T2 evidence, overflow probes and both-stand screenshots | T3 evidence confirms compact composer on final screen | T4 preserves the same layout while moving diagnostics | T5 regression tests for reduced motion/focus/contrast | This file §3 and raw `.local/sprint6/t6-windows-geometry.json`, `.local/sprint6/t6-astra-scroll.json` |
+| Permanent input: present, enabled, in-frame, focusable, draft preserved through states (§3) | T2 establishes in-frame composer | T3 evidence is the primary proof for normal/error/cancel/mode/busy transitions | T4 keeps prompt present while capability/status surfaces change | T5 keyboard and focus tests; Windows native order in this file §1 | This file §§1–2 and §7; Windows passes, Astra native traversal remains failed |
+| Closed capability states; disabled action has reason + next step; defaults do not pre-refuse (§4) | Layout only; capability not owned by T2 | Main-screen presentation reserves diagnostics/capability placement | `tests/unit/view.test.js` capability/status coverage and T4 implementation on final bytes | T5 verifies states remain keyboard/accessibility safe | This file §4 and §6: Slide both stands, Word Windows; Cell/both-Astra Word/Cell still missing |
+| Vendor activation guidance (§4.1) | Panel/layout evidence uses vendor-opened live frames | T3 live screen uses vendor-opened frame | T4 human guidance is in final UI tests/implementation | T5 keyboard coverage includes exposed controls | This file's commands use `.local/astra/vendor-open.js`; live Word was opened through the vendor host |
+| Visible closed progress stages + human terminal status (§4.2) | Not T2-owned | Permanent input must remain during busy state | `tests/unit/view.test.js` derives five phrases and removes them terminally | T5 aria/status semantics cover live and terminal announcements | This file §8: controller reached `COMPLETE`, but rendered DOM stage sequence/screenshot is still missing |
+| Four-part evidence standard: screenshot, geometry, no clipping, reproducible both-stand scenario (§5) | T2 evidence file includes commands, geometry and live captures | T3 evidence file includes measured main screen and Astra criterion | T4 unit/native artifacts prove capability text on final bytes | T5 test gate plus Windows native focus images | This file §§1–5 and Astra correction; complete for geometry/scroll, incomplete for the newly requested Astra keyboard and Word/Cell matrix |
+| Target main-panel UX points 1–10 (§7) | T2 supplies responsive substrate | T3 evidence owns chat-first layout, compact composer, status and 259×499 criterion | T4 owns diagnostics/capabilities and progress text | T5 owns focus, contrast, aria-live and recovery | This file measures final native geometry, focus/Tab where available, editor text where obtained, and records failures honestly |
+
+## WHAT THIS STILL DOES NOT SHOW — final
+
+* Cell capability/diagnostics text was not rendered and captured on Windows or Astra.
+* Word capability/diagnostics was not rendered and captured on Astra; Windows Word passed.
+* Astra native Tab remained in the outer `BODY`; it did not reach plugin controls, so there is no accepted Astra order, Enter/Space activation, or prompt focus-ring screenshot.
+* The paid DeepSeek run reached terminal controller state, but no mounted-panel DOM poll or during-run OS screenshot captured the live human progress-stage text. The required rendered UX-B5 stage sequence and permanent-input transitions therefore remain unproved.
+* The DeepSeek provider did not return a monetary charge in the harness output; spend is recorded only as one bounded `deepseek-chat` run (`maxTokens=256`, two model steps), not an invented currency amount.
+* The live task's presentation bridge failed (`INVALID_DATA` / CDP transport failure), so it proves terminal status flow, not a successful document mutation.
+
 ## CORRECTION (later in the same session): the Astra screenshot EXISTS
 
 The sections above say no Astra screenshot could be obtained. That was true of the ATTEMPTS made then, but the
