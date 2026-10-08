@@ -1,5 +1,22 @@
 # Handoff: DeepSeek Harness → Codex
 
+## Current status — Codex continuation, 2026-10-09
+
+This section supersedes the historical handoff below. Work remains on `stage-b`; no clone, push, merge, tag, release or `main` modification. Product source and tested artifact identity are pinned to **`fda714d2cf8eedcc2331ff5529513c1b74c6a0db`**, followed only by evidence/documentation commits. Do not rebuild from a later evidence commit and call it this same set.
+
+- Compact UI implemented through CSS → view → tests, with safe DOM Markdown, approved dimensions and independent UI fixes. Native 259 × 499  / 22-message working-agent checks and Word/Cell/Slide pixels are recorded.
+- Native Cell API-root blocker fixed; Word and Cell actual edits/readbacks pass. Slide creates/edits the correct new slide, but the model omitted the requested move to the end. Separate guided recovery succeeds; original autonomous journey remains **FAIL / P1 blocker**.
+- Full 1361 tests pass after native fixes; final glyph-only delta passes 50 focused tests. Audit, ZIP/DEB reproducibility, SBOM/inventory and loaded-byte hashes pass.
+- Final DEB reinstall/uninstall/settings-preservation and standalone manual ZIP activation/load/deactivation are now measured. Final package is installed and the DEB per-user copy restored.
+- T5 security review is complete without blocking findings. **T8 independent exit is NOT PASS; RC not declared.** Next product decision is how to enforce/verify positional Slide requirements without silently changing `add_slide` semantics. Preserve the failed final run.
+
+Authoritative latest evidence: [final verification](evidence/sprint-8/final-verification-fda714d.md), [native UI](evidence/sprint-9/native-compact-final.md), [T5](evidence/sprint-8/t5-security-review-final.md), [T8](evidence/sprint-8/t8-independent-exit-review.md), [current limitations](deployment.md#known-limitations).
+
+Operational update: protected PID 119782 and `deck-open.pptx` stay open. Disposable tabs can be raised with `systemd-run --user` without killing/replacing that process. Final fixtures/backups are under `/home/r7dev/r7-verification/sprint9-20261009T013401`. Ordinary `loginctl unlock-session 3` followed by `import -window root` produced valid 1024 × 768 native screenshots; a FlyLocker image is a lock screen, not panel evidence. Host-key pin and credential-handling restrictions below remain in force. Checkpoint `02-astra-r7-clean` was untouched.
+
+## Historical handoff at338c9b7
+
+
 **Date:** 2026-10-09 · **Branch:** `stage-b` · **HEAD at handoff:** `0cef823`
 **Remote state:** 18 commits ahead of `origin/stage-b`; **nothing was pushed**, `main` untouched, no tags, no release.
 **Working tree at handoff:** clean (no modified, no untracked tracked-intent files).

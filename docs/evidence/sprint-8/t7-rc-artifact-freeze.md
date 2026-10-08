@@ -1,5 +1,7 @@
 # Sprint 8 T7 — `0.9.0-pilot-rc` artifact freeze
 
+**Current supersession, 2026-10-09:** see [final fda714d verification](final-verification-fda714d.md). The freezes/attempts below are historical. Current Word/Cell narrow journeys pass; the final Slide end-position requirement fails (P1); T8 is NOT PASS. Current checksums are in [SHA256SUMS](SHA256SUMS).
+
 ## Current re-freeze — capability-fix commit `dc93242fe45811b4aad0a371200765b335302ce1`
 
 **Result: PASS for artifact identity and reproducibility.** `git status --porcelain` was empty immediately before the repository-tooling build on branch `stage-b`, HEAD `dc93242fe45811b4aad0a371200765b335302ce1`. Packaged `provenance.json` names that full commit, product version `0.9.0-pilot-rc`, Node `v24.21.0`, and esbuild `0.25.10`; npm was `11.19.0`.

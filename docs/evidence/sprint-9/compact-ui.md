@@ -2,7 +2,7 @@
 
 Owner-approved design: `docs/superpowers/plans/2026-10-09-panel-compact-proposal.md`. The approval in the 2026-10-09 handoff/current request supersedes the proposal-only wording in that historical design file.
 
-Implemented CSS, then view structure, then updated structural expectations and added Markdown, draft and focus checks. Runtime, tools, bridge, limits and connection semantics are unchanged.
+Implemented CSS, then view structure, then updated structural expectations and added Markdown, draft and focus checks. This initial UI change leaves runtime, tools, bridge, limits and connection semantics unchanged. Subsequent independently diagnosed native fixes are recorded separately in [final verification](../sprint-8/final-verification-fda714d.md).
 
 ## Local verification
 
@@ -26,3 +26,7 @@ Preserved contrast-checked product colors rather than the mockup’s lighter dec
 ## Acceptance boundary
 
 Local rendered evidence uses a controlled transport and is **not** native Astra acceptance. Artifact hashes, native document read-before/read-after results and Sprint 8 exit status will be recorded separately. RC is not declared.
+
+## Final native follow-up
+
+Final product `fda714d` native measurements, keyboard/pixels and raw-HTML/long-code probes are in [native compact evidence](native-compact-final.md). The corrected full suite is 1361/1361 plus 50 final glyph-only focused tests. Sprint 8 remains NOT PASS because the Slide positional requirement failed.

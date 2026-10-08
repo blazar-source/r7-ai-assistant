@@ -1,3 +1,5 @@
-1eba90a54aa36566f05a510f2cec88983121639f8101ced1cce4c35a342ca474  dist/plugin/r7-ai-assistant.zip
-9eb7233f0b8aa76a9f973d4cc63de22e1653df3f4ba7eeb8f4cf45972a54304b  dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb
-3dd84b70e21bef72dd6402e52c6d459e16a28994aaef87612be9a8c86158d243  dist/r7-ai-assistant.spdx.json
+f96babdee1a6066afe16c513774426335c76cefdf3c3a2de5e7cc4320786df85  dist/plugin/r7-ai-assistant.zip
+7b986d7b3abd19dbf4b1408a7634eb2495c8e624aee3331e0f4f20105cd50bec  dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb
+0dbaf0c515550b7f9042f19cacdef9c9ba18bbf39fed8f4e7aa465a02d79508a  dist/r7-ai-assistant.spdx.json
+786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e  dist/plugin/panel.js
+34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  dist/plugin/styles.css

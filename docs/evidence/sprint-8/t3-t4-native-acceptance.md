@@ -1,5 +1,7 @@
 ﻿# Sprint 8 T3/T4 вЂ” native acceptance
 
+**Current supersession, 2026-10-09:** see [final fda714d verification](final-verification-fda714d.md). The freezes/attempts below are historical. Current Word/Cell narrow journeys pass; the final Slide end-position requirement fails (P1); T8 is NOT PASS. Current checksums are in [SHA256SUMS](SHA256SUMS).
+
 ## Vendor-API modal bypass attempt вЂ” frozen `0.9.0-pilot-rc`, branch `stage-b`, HEAD `cd319a3`
 
 **Status: PARTIAL / LEGITIMATE MOUNT BYPASS PASSED; NATIVE JOURNEYS REMAIN NOT VERIFIED.** The already-running, unlocked R7 instance (PID `119782`) and its debug endpoint were left intact. The vendor plugin-host API in the real presentation editor successfully started the product panel despite the still-visible trial notice. The mounted bytes match the frozen package exactly. A real Slide request was dispatched through the product panel, but the product failed closed before transport or mutation with `CAPABILITY_UNAVAILABLE`; Word and Cell were not attempted because doing so would require replacing the protected running editor.

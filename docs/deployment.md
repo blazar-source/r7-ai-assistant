@@ -2,14 +2,14 @@
 
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is a **release candidate prepared, not published**. After these version and documentation changes are committed, Sprint 8 must build and accept the exact pinned-commit artifact set:
+Version `0.9.0-pilot-rc` is **local preparation, not accepted or published**. The tested source is pinned to `fda714d2cf8eedcc2331ff5529513c1b74c6a0db`; the [final inventory](evidence/sprint-8/final-verification-fda714d.md) identifies these artifacts:
 
 - plugin ZIP: `dist/plugin/r7-ai-assistant.zip`;
 - data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`;
 - SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`;
 - checksums: `dist/SHA256SUMS`.
 
-No final RC hash exists until that post-commit build is recorded. Nothing here publishes, tags, merges or distributes the candidate. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN, and end users do not need the development toolchain.
+Hashes and native measurements are recorded, but the Slide positional requirement failed and independent T8 is NOT PASS. Later evidence commits do not redefine the pinned product bytes. Nothing here publishes, tags, merges or distributes them. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN, and end users do not need the development toolchain.
 
 ## Supported target
 
@@ -23,7 +23,7 @@ The product-owned declaration is [`../packaging/compatibility.json`](../packagin
 
 ## Administrator install and per-user activation
 
-Install the supplied, checksum-verified RC DEB from its containing directory:
+For authorized testing, install the supplied, checksum-verified DEB from its containing directory:
 
 ```sh
 sudo dpkg -i ./r7-ai-assistant_0.9.0-pilot-rc_amd64.deb
@@ -51,7 +51,7 @@ The system-wide product plugin path is **NOT VERIFIED** and must not be used. Do
 
 ## End-user configuration and operation
 
-Open **R7 AI Assistant** in Word, Cell or Slide, expand **«Настройки соединения»**, then configure:
+Open **R7 AI Assistant** in Word, Cell or Slide, open **«Диагностика»** using the header `⋯`, expand **«Настройки соединения»**, then configure:
 
 - a full HTTPS endpoint ending exactly in `/v1/chat/completions`;
 - the provider's exact model identifier (the product does not silently substitute another model);
@@ -70,7 +70,27 @@ R7 stores the plugin's browser localStorage in its user CEF LevelDB at:
 
 Product keys are `r7-ai-assistant:v1:settings` and, only after explicit plaintext-persistence opt-in, `r7-ai-assistant:v1:apiKey`. The entire profile root `$HOME/.local/share/r7-office/editors/data/` is user/vendor data and is not package-owned.
 
-Sprint 7 measured a same-version reinstall and an upgrade to the explicitly unshipped `0.9.0-pilot-dev.1` fixture; complete LevelDB hashes were unchanged immediately before and after those exact transitions. This proves the package mechanism and settings boundary for those measured bytes only, not arbitrary future upgrades. Uninstall did not remove the settings; clearing the product namespace is the user's explicit **«Сбросить настройки»** action.
+Final `fda714d` DEB reinstall and uninstall preserved the complete LevelDB file-hash manifest and vendor SDK hash. Sprint 7 additionally measured an upgrade to the explicitly unshipped `0.9.0-pilot-dev.1` fixture. These are bounded measurements, not proof for arbitrary future upgrade bytes. Clearing the product namespace is the user's explicit **«Сбросить настройки»** action.
+
+## Manual ZIP activation on the measured target
+
+The final ZIP has a measured manual per-user lifecycle. This route uses the compatibility preflight supplied by the installed DEB; the ZIP alone does not carry that preflight. It does not establish vendor plugin-manager import. Close the product panel while replacing its files; keep documents open and preserve unsaved work.
+
+After verifying the ZIP checksum against the pinned inventory, use a fresh staging directory and retain the previous plugin copy:
+
+```sh
+ZIP='/path/to/verified/r7-ai-assistant.zip'
+STAGING="$(mktemp -d)"
+python3 -m zipfile -e "$ZIP" "$STAGING/plugin"
+/usr/bin/r7-ai-assistant-preflight || exit 42
+GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
+TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
+if [ -d "$TARGET" ]; then cp -a "$TARGET" "$STAGING/previous-plugin"; fi
+install -d -m 0755 "$TARGET"
+cp -a "$STAGING/plugin/." "$TARGET/"
+```
+
+Reopen the panel. The native test verified its actual loaded JS, stylesheet and ZIP provenance hashes, then deactivated that exact GUID directory and restored the prior DEB copy. Deactivation affects only that product directory; settings and vendor SDK remain outside it. Preserve the staging backup until the replacement is verified.
 
 ## Upgrade
 
@@ -109,10 +129,13 @@ The consolidated release list is also reproduced in the [RC changelog](../CHANGE
 - **ZPS:** ZPS state and product operation with ZPS enabled are **NOT VERIFIED**; never disable or weaken ZPS to obtain acceptance evidence.
 - **Unsupported tuples:** Every Astra/R7/architecture tuple except the exact supported tuple above is **NOT VERIFIED** and refused by preflight.
 - **System-wide path:** A system-wide product plugin path is not claimed or verified and must not be used; only the per-user brace-GUID path above is supported.
-- **Plugin ZIP lifecycle:** The separately distributed plugin ZIP's own target install/activation/load/removal lifecycle is **NOT VERIFIED** until Sprint 8 measures the final ZIP bytes.
+- **Slide placement:** A final-byte append request created/edited a slide after the current one and omitted moving it to the end. This is an open P1 workflow blocker; successful tool calls and marker readback are insufficient. Verify actual document order; RC is not accepted.
+- **Plugin ZIP:** Manual per-user activation/load/deactivation is measured for the final ZIP with the DEB-installed preflight; vendor plugin-manager import and other installation routes remain **NOT VERIFIED**.
 - **Future upgrades:** Arbitrary future upgrade bytes are **NOT VERIFIED**; the synthetic `.1` fixture is not an operator path.
-- **Astra pixel proof:** Astra Word/Cell screenshots and focused-panel/focus-ring pixels were not captured, so those pixel-level claims remain **NOT VERIFIED** despite semantic evidence.
-- **UX-B5 pixels:** The complete rendered transient UX-B5 progress-stage sequence was not captured; truthful terminal behavior must be checked on final workflows, while a residual transient pixel gap remains an evidence limitation.
+- **Platform scope:** Final Astra Word/Cell/Slide screenshots, focus and compact geometry are recorded. Windows Cell and other platform combinations remain **NOT VERIFIED**.
+- **UX-B5 pixels:** A real working-stage screenshot and native progress/terminal observations are recorded; the complete transient five-state pixel sequence remains **NOT VERIFIED**.
+- **Model compliance:** Two raw-HTML/code requests were rejected with the bounded invalid-JSON error; a fresh explicit-envelope probe passed. Model output and whole-task compliance are not guaranteed. The final narrow journeys do not reverify Save/reopen, native Undo or arbitrary rich-object preservation.
+- **Cell visual effect:** Tool and independent SDK reads confirm the changed A1 value, but the captured cell still appears blank. The discrepancy is unresolved; the screenshot proves panel appearance only.
 - **Qwen calibration:** Real Qwen calibration did not establish reliable completion within the measured envelope, and Bank Qwen acceptance remains **NOT RUN**; no availability or performance guarantee is made.
 - **TIMEOUT/HTTP_ERROR:** Controlled and provider failures terminate with bounded `TIMEOUT` or `HTTP_ERROR` rather than false success, but exact bank TLS/CORS/AUTH behavior remains **NOT RUN**.
 
@@ -120,6 +143,10 @@ Additionally, reproducibility is bounded to the same pinned source commit, Node/
 
 ## Evidence index
 
+- [Current final verification and hashes](evidence/sprint-8/final-verification-fda714d.md)
+- [Final native compact-panel evidence](evidence/sprint-9/native-compact-final.md)
+- [Independent final T5 security review](evidence/sprint-8/t5-security-review-final.md)
+- [Independent T8 exit review — NOT PASS](evidence/sprint-8/t8-independent-exit-review.md)
 - [Sprint 8 release contract](superpowers/plans/2026-10-08-sprint-8-release-contract.md)
 - [Sprint 8 defect triage](evidence/sprint-8/t2-release-defect-triage.md)
 - [Sprint 7 packaging contract](superpowers/plans/2026-10-08-sprint-7-packaging-contract.md)
