@@ -121,3 +121,33 @@ No Astra screenshot is claimed for the reason in §2.
 * It does not provide an Astra screenshot or pixel-level Astra focus/colour proof. The stand's available root capture is blank and CDP does not composite the plugin frame.
 * It does not provide Astra native Tab traversal because the repeated-attach CDP helper hung during that procedure.
 * Injected overflow lines and chat messages are ephemeral DOM measurement fixtures; they do not test persistence or model transport.
+
+## CORRECTION (later in the same session): the Astra screenshot EXISTS
+
+The sections above say no Astra screenshot could be obtained. That was true of the ATTEMPTS made then, but the
+method was wrong, not the stand. The OS-level capture used on Windows works on Astra too - the mistake was
+capturing the X root window (which the Fly window manager does not draw into, hence the empty 249-byte PNG). The
+right target is the desktop's own full-screen window.
+
+Route, reproduced on the FINAL bytes:
+
+  * the plugin the page loads lives at
+    `/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}`;
+  * the build deployed there is `panel.js` sha256
+    `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f`, which equals the local final T5 build
+    (verified by hash after the deploy);
+  * R7 is raised as a unit (`systemd-run --user --unit=r7-t6 --collect env DISPLAY=:0
+    XAUTHORITY=/home/r7dev/.Xauthority ... --ascdesktop-support-debug-info <deck>`), the plugin is opened through
+    the vendor path, and the window list is read with `xwininfo -root -tree`;
+  * the capture target is the desktop window `0xe00717` (`FlyLocker`, 2048x1536) - NOT `root`;
+    `import -window 0xe00717` produced a real 77,622-byte PNG;
+  * the panel itself is cropped at 2x scale: `convert astra-final.png -crop 518x998+80+336 +repage`.
+
+Artifacts (kept outside the repository by path reference, under `.local/sprint6/astra/`):
+`astra-final.png` (full desktop, 77,622 bytes), `astra-final-panel.png` (the panel, 26,342 bytes),
+`astra-final-small.png` (whole window at 50%, 48,782 bytes).
+
+What this settles: the Astra screenshot requirement of contract §5 is now met ON THE FINAL BYTES, by the same
+OS-level method that produced the Windows captures. What it does NOT settle: the Astra keyboard traversal and the
+Astra rendered-focus check still have not been performed (a screenshot shows appearance, not traversal), and the
+capability states were still observed on Slide only.
