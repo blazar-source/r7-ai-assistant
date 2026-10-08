@@ -58,4 +58,18 @@ The byte identity is enabled by the deterministic STORE-only ZIP writer: entries
 
 ## What this does not show
 
-This evidence does **not** establish byte identity under a different Node version or major, a different esbuild version, a different operating system, or a different CPU architecture. It does not claim that such builds fail; they were not measured. It does not cover a dirty worktree, because uncommitted bytes can differ from the recorded `sourceCommit` and the durable verifier rejects that state. It does not cover the Sprint 7 DEB (T5), installation, upgrade/uninstall behavior, Astra runtime compatibility, or ZPS behavior. No DEB was built or installed for T4.
+This evidence does **not** establish byte identity under a different Node version or major, a different esbuild version, a different operating system, or a different CPU architecture. It does not claim that such builds fail; they were not measured. It does not cover a dirty worktree, because uncommitted bytes can differ from the recorded `sourceCommit` and the durable verifier rejects that state. At the time of the original T4 run it did not cover the Sprint 7 DEB (T5), installation, upgrade/uninstall behavior, Astra runtime compatibility, or ZPS behavior. No DEB was built or installed in that original T4 run.
+
+## FINAL ARTIFACT RECONCILIATION — 2026-10-08
+
+The earlier T4 proof above remains valid only for its recorded old commit. A new proof was run from the clean current HEAD `8ed3bb62d3260175d0a4ec561007f5ec0c1438d5`, with `dist/` removed before each build.
+
+| Artifact | Clean build 1 SHA-256 | Clean build 2 SHA-256 | Result |
+| --- | --- | --- | --- |
+| Plugin ZIP | `11b282dbd1bba6afa5974845850246f976f08fc5c4d212f07f028053aead22c4` | `11b282dbd1bba6afa5974845850246f976f08fc5c4d212f07f028053aead22c4` | byte-identical |
+| DEB | `cddf8367b514314d7f3a5679be33dac20a726b350f2e88004e6373e23b42a2cd` | `cddf8367b514314d7f3a5679be33dac20a726b350f2e88004e6373e23b42a2cd` | byte-identical |
+| Packaged `panel.js` | `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f` | `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f` | byte-identical |
+
+`npm run reproducible` passed at this commit and independently performed two clean plugin builds, packaged-provenance equality, source-commit validation, and per-file payload validation. The ZIP's `provenance.json` records the same full source commit, Node `v24.21.0`, and esbuild `0.25.10`. The DEB was then built twice with the same rigour: delete the complete output directory, rebuild from the still-clean tree, and hash the newly produced DEB. Both artifact classes therefore reproduce on this Windows x64 environment at this exact committed tree.
+
+The reconciled boundary now covers both the plugin ZIP and DEB byte-for-byte for commit `8ed3bb62...`, Node `v24.21.0`, esbuild `0.25.10`, and this Windows x64 environment. It still does not claim cross-OS, cross-architecture, or different-toolchain reproducibility.

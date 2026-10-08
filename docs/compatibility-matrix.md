@@ -18,7 +18,7 @@ The historical boundary below remains intact. The current packaging authority is
 | ZPS current enabled state | **NOT VERIFIED** | `/usr/sbin/astra-digsig-control status` and `is-enabled` each required superuser rights and exited 1. Installed/active Parsec alone does not establish ZPS state. |
 | Product load/run with ZPS enabled | **NOT VERIFIED** | No working enabled-state observation was established; protection was never disabled or bypassed. Promotion requires proving ZPS is enabled and then loading/running this shipped product under that unchanged state. |
 
-The exact tuple is the whole allowlist. Missing, malformed, conflicting, or different package/product/architecture evidence fails closed before activation, so the rule cannot contradict the table.
+The exact tuple is the whole allowlist. The shipped preflight reads `/etc/astra_version` and `/etc/astra/build_version` plus the installed R7 package/product evidence; missing, unreadable, malformed, conflicting, or different Astra version/build, architecture, package, or product evidence fails closed before activation, so the rule cannot contradict the table.
 
 ## Preserved Stage B measurements
 

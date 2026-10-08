@@ -14,7 +14,7 @@ This table and enforcement are deliberately exact-tuple. `packaging/compatibilit
 
 ## Product-integrated incompatible-target refusal
 
-The DEB now ships `/usr/bin/r7-ai-assistant-preflight` and `/usr/share/r7-ai-assistant/compatibility.json`. The preflight reads the declaration, obtains the installed package/version/architecture through `dpkg-query`, obtains the executable product version through `DesktopEditors --version`, and exits 42 before executing an optional activation command unless all values equal the declaration.
+The DEB now ships `/usr/bin/r7-ai-assistant-preflight` and `/usr/share/r7-ai-assistant/compatibility.json`. The preflight reads the declaration, reads the actual Astra version and build from `/etc/astra_version` and `/etc/astra/build_version`, obtains the installed package/version/architecture through `dpkg-query`, obtains the executable product version through `DesktopEditors --version`, and exits 42 before executing an optional activation command unless the whole tuple equals the declaration. Missing or unreadable Astra evidence also refuses.
 
 Stand demonstration used the real installed T7 DEB (`SHA-256 cddf8367b514314d7f3a5679be33dac20a726b350f2e88004e6373e23b42a2cd`) and its installed `/usr/bin/r7-ai-assistant-preflight`. A controlled unsupported target adapter reported `r7-office / 2026.3.1-9999~astra-signed / amd64 / 2026.3.1.9999`. Output:
 
@@ -43,4 +43,14 @@ A working privileged ZPS state query was not established in the bounded probe. C
 
 ## Repository checks
 
-Tests pin that the shipped preflight consumes the same declaration used by plugin provenance, accepts the exact tuple, refuses an unsupported tuple before activation, and is present in the DEB. Raw stand output is retained in ignored `.local/sprint7/t7-raw.log`; this document contains the sanitized result.
+Tests pin that the shipped preflight consumes the same declaration used by plugin provenance, accepts the exact whole tuple in its test adapter, refuses mismatching Astra version or build and unsupported R7 evidence before activation, and is present in the DEB. Raw stand output is retained in ignored `.local/sprint7/t7-raw.log`; this document contains the sanitized result.
+
+## FINAL ARTIFACT RECONCILIATION supersession
+
+T7 exercised DEB `cddf8367...` only for refusal. A later authorised re-run found that artifact discarded `DesktopEditors --version` stderr and wrongly refused the supported target.
+
+## 2026-10-08 corrected-package compatibility result
+
+DEB `f280af10e20314a96651b79734093bbd9684634890e6677f3b08ec85e6adaae1` captures both version streams. Its shipped preflight accepted the measured Astra `1.7.9` build `1.7.9.41`, `amd64`, R7 package `2026.1.2-1942~astra-signed`, executable `2026.1.2.1942` with exit 0 and ran the activation marker. With only `R7_AI_ASTRA_VERSION_FILE` redirected to a safe file containing `9.9.9`, it refused with exit 42, did not run the marker, and left complete plugin plus vendor hash manifests identical. R7 then loaded the activated plugin frame over CDP. This binds the supported-target PASS to exact DEB `f280af10...`; it is not a broader tuple claim.
+
+The package was built from an uncommitted tree based on `8ed3bb6`, so committed artifact provenance and exact-DEB repeat reproducibility remain **NOT VERIFIED** until controller commit/rebuild. ZPS remains **NOT VERIFIED** unchanged. See [final-artifact-reconciliation.md](final-artifact-reconciliation.md).

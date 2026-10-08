@@ -17,14 +17,14 @@ The complete supported tuple is:
 - R7 deb package `r7-office 2026.1.2-1942~astra-signed`, `amd64`;
 - R7 executable version `2026.1.2.1942`.
 
-The product-owned declaration is [`../packaging/compatibility.json`](../packaging/compatibility.json). The shipped preflight fails closed when package identity, package version, architecture, or executable version is missing, malformed, conflicting, or different. All other tuples, including R7 `2026.3.1`, are **NOT VERIFIED** and are refused until their own complete lifecycle is measured. See the [compatibility matrix](compatibility-matrix.md) and [T7 evidence](evidence/sprint-7/t7-astra-compatibility-zps.md).
+The product-owned declaration is [`../packaging/compatibility.json`](../packaging/compatibility.json). The shipped preflight reads the actual Astra version and build from `/etc/astra_version` and `/etc/astra/build_version`, then fails closed when either Astra value, the declared architecture, R7 package identity/version/architecture, or executable version is missing, unreadable, malformed, conflicting, or different. All other tuples, including R7 `2026.3.1`, are **NOT VERIFIED** and are refused until their own complete lifecycle is measured. See the [compatibility matrix](compatibility-matrix.md) and [T7 evidence](evidence/sprint-7/t7-astra-compatibility-zps.md).
 
 ## Install and activate
 
-Use the exact Sprint 7 package from the repository root:
+From a checkout where the measured Sprint 7 package has been built, run this at the repository root:
 
 ```sh
-sudo dpkg -i dist/deb/r7-ai-assistant_0.9.0-pilot-dev_amd64.deb
+sudo dpkg -i ./dist/deb/r7-ai-assistant_0.9.0-pilot-dev_amd64.deb
 ```
 
 `dpkg -i` installs an inert payload under `/usr/share/r7-ai-assistant/`, the product-owned file manifest under `/usr/share/doc/r7-ai-assistant/`, and the compatibility gate `/usr/bin/r7-ai-assistant-preflight`. It does not activate the plugin in a user profile.
@@ -59,10 +59,11 @@ The T6 upgrade measurement compared the LevelDB inventory and every file hash im
 
 ## Upgrade
 
-T6 measured an upgrade from `0.9.0-pilot-dev` to the test-only development version `0.9.0-pilot-dev.1`. Install that measured replacement with `dpkg -i`, then re-run preflight and refresh the per-user copy:
+The upgrade rule is to install a newer built-and-measured package with `dpkg -i`, then re-run preflight and refresh the per-user copy. Set `PACKAGE` to the real path of that measured package:
 
 ```sh
-sudo dpkg -i /tmp/r7-ai-assistant_0.9.0-pilot-dev.1_amd64.deb
+PACKAGE='/path/to/measured/r7-ai-assistant_<new-version>_amd64.deb'
+sudo dpkg -i "$PACKAGE"
 /usr/bin/r7-ai-assistant-preflight
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
@@ -70,7 +71,7 @@ install -d -m 0755 "$TARGET"
 cp -a "/usr/share/r7-ai-assistant/plugin/$GUID/." "$TARGET/"
 ```
 
-The `.1` package was a lifecycle fixture, not a published artifact. For a future replacement, substitute its actual measured package path rather than a guessed filename. Do not activate an upgrade when preflight refuses it. The package has no maintainer scripts and does not edit the R7 profile or vendor installation files.
+T6 exercised this lifecycle with test-only version `0.9.0-pilot-dev.1`. That `.1` package was a lifecycle-test fixture, is not shipped or published, and must not be used as an operator upgrade path. A real upgrade replaces it with an actually built-and-measured package supplied to the operator. Do not activate an upgrade when preflight refuses it. The package has no maintainer scripts and does not edit the R7 profile or vendor installation files.
 
 ## Uninstall and deactivate
 
@@ -103,5 +104,7 @@ Uninstall and deactivation do **not** remove R7 localStorage settings, the remem
 - [T6 install, activation, upgrade, and uninstall evidence](evidence/sprint-7/t6-lifecycle-astra.md)
 - [T7 compatibility, shipped refusal, and ZPS evidence](evidence/sprint-7/t7-astra-compatibility-zps.md)
 - [Compatibility matrix](compatibility-matrix.md)
+- [Final artifact inventory and commit caveat](evidence/sprint-7/final-artifact-inventory.md)
+- [Final artifact reconciliation and tested-equals-shipped evidence](evidence/sprint-7/final-artifact-reconciliation.md)
 
 Clean-install lifecycle work used a separate safe Astra state and did not restore over unsaved work. Preserve that rule for future acceptance runs.

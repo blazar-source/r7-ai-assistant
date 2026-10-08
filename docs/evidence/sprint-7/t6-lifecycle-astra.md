@@ -117,3 +117,13 @@ The safe synthetic unsupported tuple probe again returned refusal code 42 and th
 ### Tests and logs
 
 One full `node --test` run passed: **1338 tests, 1338 pass, 0 fail**. `npm run audit` returned `Authored-code audit PASS`. The targeted regression first failed because `deb.directories` was absent, then passed 4/4 after the repair. Raw commands, transfer records, stdout, stderr, and exit codes are appended in `.local/sprint7/t6-raw.log`; local test, audit, build, and hash logs are also under `.local/sprint7/`.
+
+## FINAL ARTIFACT RECONCILIATION supersession
+
+The successful lifecycle above used DEB `7f2235ca...` and predates the shipped preflight. It remains valid historical evidence for that artifact but must not be attributed to final DEB `cddf8367...`. The first authorised final-DEB re-run is recorded in [final-artifact-reconciliation.md](final-artifact-reconciliation.md): installation succeeded, but DEB `cddf8367...` refused the supported stand with `product version 'unparseable'`.
+
+## 2026-10-08 final working-tree DEB rerun
+
+After repairing stderr parsing, DEB `f280af10e20314a96651b79734093bbd9684634890e6677f3b08ec85e6adaae1` installed, accepted the real whole tuple, activated, and was genuinely loaded by R7 over CDP; packaged, installed and activated `panel.js` all hashed `bacb2938...`. Unsupported Astra override refusal returned 42 without changing plugin/vendor hashes. Uninstall removed all product-owned files and restored the prior plugin from `/tmp/r7-ai-final-backup-20261008T140309`.
+
+A same-version reinstall preserved the complete settings hash inventory, but the requested bumped-version fixture was not produced in this rerun, so final-DEB bumped upgrade preservation remains **NOT VERIFIED**. Full details and the uncommitted-provenance caveat are in [final-artifact-reconciliation.md](final-artifact-reconciliation.md).
