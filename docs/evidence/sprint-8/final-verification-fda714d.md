@@ -1,5 +1,7 @@
 # Final verification — 2026-10-09, product `fda714d`
 
+**Current supersession, 2026-10-09:** [ab06fef final verification](final-verification-ab06fef.md) closes the observed Slide P1 with fresh original/pair native assertions and visible Cell A1. Independent [T8](t8-review-ab06fef.md) is PASS WITH RECORDED LIMITATIONS; the local RC remains unpublished. Attempts below retain their original outcomes and byte identities. Current checksums: [SHA256SUMS](SHA256SUMS).
+
 **Sprint 8 exit: NOT PASS. RC is not declared or published.** Compact UI is implemented. Exact-byte native Word and Cell edits pass; Slide creates and edits the new slide but fails the requested end position. The independent review classifies that semantic failure as a release blocker. A separate guided move succeeds without retroactively passing the original request.
 
 This report supersedes the current-status claims in older Sprint 8 freezes and native attempts, while preserving those attempts as history. Product source identity is **`fda714d2cf8eedcc2331ff5529513c1b74c6a0db`**. Later evidence/documentation commits do not change this tested artifact identity.

@@ -1,5 +1,7 @@
 # Native compact panel — final `fda714d`, 2026-10-09
 
+**Current scope:** These are historical fda714d UI measurements, carried for byte-identical CSS by [ab06fef final verification](../sprint-8/final-verification-ab06fef.md). The old Slide P1 and Cell display discrepancy below are superseded by fresh native results; their original recorded outcomes remain unchanged.
+
 Product identity, package lifecycle and document outcomes: [Sprint 8 final verification](../sprint-8/final-verification-fda714d.md). The owner-approved numeric design was retained; the original proposal's historical approval gate does not override the current authorization.
 
 Real Astra plugin frame: **259 × 499 CSS px**, document/client sizes **259 × 499**, header **32 px**. The Word journey was followed by ten real ASK turns, reaching **22 alternating messages** without another document edit. Markdown DOM contains 35 paragraphs, 9 lists, 9 emphasis nodes, 9 links, 9 inline-code examples and 9 fenced-code examples.

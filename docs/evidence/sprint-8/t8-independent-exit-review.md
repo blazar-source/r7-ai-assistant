@@ -1,5 +1,7 @@
 # Sprint 8 T8 — independent exit review
 
+**Current supersession, 2026-10-09:** [ab06fef final verification](final-verification-ab06fef.md) closes the observed Slide P1 with fresh original/pair native assertions and visible Cell A1. Independent [T8](t8-review-ab06fef.md) is PASS WITH RECORDED LIMITATIONS; the local RC remains unpublished. Attempts below retain their original outcomes and byte identities. Current checksums: [SHA256SUMS](SHA256SUMS).
+
 Review date: 2026-10-09. Product commit: **`fda714d2cf8eedcc2331ff5529513c1b74c6a0db`**.
 
 **Decision: NOT PASS. Release acceptance is blocked by an observed Slide workflow failure. No RC, publication, merge or tag is approved by this report.** This is a demonstrated failure to satisfy the user's requested slide position, not simply missing verification or an unreachable platform case. Successful tool receipts and a terminal assistant response do not satisfy the workflow gate.

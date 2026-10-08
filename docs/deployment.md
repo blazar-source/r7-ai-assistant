@@ -2,14 +2,14 @@
 
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is **local preparation, not accepted or published**. The tested source is pinned to `fda714d2cf8eedcc2331ff5529513c1b74c6a0db`; the [final inventory](evidence/sprint-8/final-verification-fda714d.md) identifies these artifacts:
+Version `0.9.0-pilot-rc` is **locally accepted with recorded limitations, not published**. The tested source is pinned to `ab06fef4e42840dbb0f02893b853dfad2e646442`; the [final inventory](evidence/sprint-8/final-verification-ab06fef.md) identifies these artifacts:
 
 - plugin ZIP: `dist/plugin/r7-ai-assistant.zip`;
 - data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`;
 - SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`;
 - checksums: `dist/SHA256SUMS`.
 
-Hashes and native measurements are recorded, but the Slide positional requirement failed and independent T8 is NOT PASS. Later evidence commits do not redefine the pinned product bytes. Nothing here publishes, tags, merges or distributes them. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN, and end users do not need the development toolchain.
+The observed Slide P1 is closed by final native one-slide and ordered-pair outcomes; independent T8 is PASS WITH RECORDED LIMITATIONS for the exact target and manual per-user routes. Later evidence commits do not redefine the pinned product bytes. Nothing here publishes, tags, merges or distributes them. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN, and end users do not need the development toolchain.
 
 ## Supported target
 
@@ -70,7 +70,7 @@ R7 stores the plugin's browser localStorage in its user CEF LevelDB at:
 
 Product keys are `r7-ai-assistant:v1:settings` and, only after explicit plaintext-persistence opt-in, `r7-ai-assistant:v1:apiKey`. The entire profile root `$HOME/.local/share/r7-office/editors/data/` is user/vendor data and is not package-owned.
 
-Final `fda714d` DEB reinstall and uninstall preserved the complete LevelDB file-hash manifest and vendor SDK hash. Sprint 7 additionally measured an upgrade to the explicitly unshipped `0.9.0-pilot-dev.1` fixture. These are bounded measurements, not proof for arbitrary future upgrade bytes. Clearing the product namespace is the user's explicit **«Сбросить настройки»** action.
+Final `ab06fef` DEB reinstall and uninstall preserved the complete LevelDB file-hash manifest and vendor SDK hash. Sprint 7 additionally measured an upgrade to the explicitly unshipped `0.9.0-pilot-dev.1` fixture. These are bounded measurements, not proof for arbitrary future upgrade bytes. Clearing the product namespace is the user's explicit **«Сбросить настройки»** action.
 
 ## Manual ZIP activation on the measured target
 
@@ -129,13 +129,13 @@ The consolidated release list is also reproduced in the [RC changelog](../CHANGE
 - **ZPS:** ZPS state and product operation with ZPS enabled are **NOT VERIFIED**; never disable or weaken ZPS to obtain acceptance evidence.
 - **Unsupported tuples:** Every Astra/R7/architecture tuple except the exact supported tuple above is **NOT VERIFIED** and refused by preflight.
 - **System-wide path:** A system-wide product plugin path is not claimed or verified and must not be used; only the per-user brace-GUID path above is supported.
-- **Slide placement:** A final-byte append request created/edited a slide after the current one and omitted moving it to the end. This is an open P1 workflow blocker; successful tool calls and marker readback are insufficient. Verify actual document order; RC is not accepted.
+- **Slide completion:** The observed append/order P1 is closed on `ab06fef`. Completion review requires fresh structure/text reads and separates structural calls, but remains model-assisted: it does not deterministically prove all natural-language requirements or eliminate stale indices across turns. Check actual order/text for consequential work; completed changes remain in the document if review cannot finish.
 - **Plugin ZIP:** Manual per-user activation/load/deactivation is measured for the final ZIP with the DEB-installed preflight; vendor plugin-manager import and other installation routes remain **NOT VERIFIED**.
 - **Future upgrades:** Arbitrary future upgrade bytes are **NOT VERIFIED**; the synthetic `.1` fixture is not an operator path.
 - **Platform scope:** Final Astra Word/Cell/Slide screenshots, focus and compact geometry are recorded. Windows Cell and other platform combinations remain **NOT VERIFIED**.
 - **UX-B5 pixels:** A real working-stage screenshot and native progress/terminal observations are recorded; the complete transient five-state pixel sequence remains **NOT VERIFIED**.
 - **Model compliance:** Two raw-HTML/code requests were rejected with the bounded invalid-JSON error; a fresh explicit-envelope probe passed. Model output and whole-task compliance are not guaranteed. The final narrow journeys do not reverify Save/reopen, native Undo or arbitrary rich-object preservation.
-- **Cell visual effect:** Tool and independent SDK reads confirm the changed A1 value, but the captured cell still appears blank. The discrepancy is unresolved; the screenshot proves panel appearance only.
+- **Cell display:** The A1 repaint discrepancy is corrected by recalculation after `write_range`. Final native A1 text is visible and the full value appears in the formula bar. This narrow check does not establish arbitrary formula/recalculation behavior.
 - **Qwen calibration:** Real Qwen calibration did not establish reliable completion within the measured envelope, and Bank Qwen acceptance remains **NOT RUN**; no availability or performance guarantee is made.
 - **TIMEOUT/HTTP_ERROR:** Controlled and provider failures terminate with bounded `TIMEOUT` or `HTTP_ERROR` rather than false success, but exact bank TLS/CORS/AUTH behavior remains **NOT RUN**.
 
@@ -143,10 +143,10 @@ Additionally, reproducibility is bounded to the same pinned source commit, Node/
 
 ## Evidence index
 
-- [Current final verification and hashes](evidence/sprint-8/final-verification-fda714d.md)
+- [Current final verification and hashes](evidence/sprint-8/final-verification-ab06fef.md)
 - [Final native compact-panel evidence](evidence/sprint-9/native-compact-final.md)
-- [Independent final T5 security review](evidence/sprint-8/t5-security-review-final.md)
-- [Independent T8 exit review — NOT PASS](evidence/sprint-8/t8-independent-exit-review.md)
+- [Independent final T5 security review](evidence/sprint-8/t5-review-ab06fef.md)
+- [Independent T8 exit review — PASS WITH RECORDED LIMITATIONS](evidence/sprint-8/t8-review-ab06fef.md)
 - [Sprint 8 release contract](superpowers/plans/2026-10-08-sprint-8-release-contract.md)
 - [Sprint 8 defect triage](evidence/sprint-8/t2-release-defect-triage.md)
 - [Sprint 7 packaging contract](superpowers/plans/2026-10-08-sprint-7-packaging-contract.md)

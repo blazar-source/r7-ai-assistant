@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-**Current 2026-10-09 evidence:** [fda714d native/package verification](evidence/sprint-8/final-verification-fda714d.md) supersedes older NOT RUN claims only for the exact Astra tuple and measured narrow workflows. Word/Cell edits and native compact pixels pass; Slide requested end-position fails, so T8 is NOT PASS. Manual per-user ZIP and final DEB lifecycles are measured. Other platforms/protections remain limited as recorded.
+**Current 2026-10-09 evidence:** [ab06fef native/package verification](evidence/sprint-8/final-verification-ab06fef.md) supersedes older status claims only for the exact Astra tuple and measured workflows. Original one-slide and ordered two-slide requests pass; the observed P1 is closed. Word/Cell edits and visible A1 pass. T8 is PASS WITH RECORDED LIMITATIONS; the local RC is accepted, unpublished. Manual per-user ZIP and final DEB lifecycles are measured. Prior compact CSS/pixel evidence is explicitly carried for the unchanged stylesheet. All Sprint 1 authorization/status language below is historical and does not override the current handoff. Other platforms/protections remain limited as recorded.
 
 ## Current authority / historical evidence boundary
 

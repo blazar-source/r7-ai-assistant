@@ -1,5 +1,7 @@
 # Sprint 8 T5 — final artifact security delta review
 
+**Current supersession, 2026-10-09:** [ab06fef final verification](final-verification-ab06fef.md) closes the observed Slide P1 with fresh original/pair native assertions and visible Cell A1. Independent [T8](t8-review-ab06fef.md) is PASS WITH RECORDED LIMITATIONS; the local RC remains unpublished. Attempts below retain their original outcomes and byte identities. Current checksums: [SHA256SUMS](SHA256SUMS).
+
 Review date: 2026-10-09. Pinned product commit: **`fda714d2cf8eedcc2331ff5529513c1b74c6a0db`**.
 
 **Outcome: no critical or release-blocking security finding identified. T5 is complete within the bounded source/artifact review scope.** This report extends [the independent c7f1a83 review](t5-security-review-c7f1a83.md); its unchanged controls and limitations remain applicable. This is not security certification, final native acceptance, T8 PASS, or permission to release.

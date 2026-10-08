@@ -1,6 +1,6 @@
 # Sprint 8 T2 — release defect triage
 
-**Current supersession, 2026-10-09:** see [final fda714d verification](final-verification-fda714d.md). The freezes/attempts below are historical. Current Word/Cell narrow journeys pass; the final Slide end-position requirement fails (P1); T8 is NOT PASS. Current checksums are in [SHA256SUMS](SHA256SUMS).
+**Current supersession, 2026-10-09:** [ab06fef final verification](final-verification-ab06fef.md) closes the observed Slide P1 with fresh original/pair native assertions and visible Cell A1. Independent [T8](t8-review-ab06fef.md) is PASS WITH RECORDED LIMITATIONS; the local RC remains unpublished. Attempts below retain their original outcomes and byte identities. Current checksums: [SHA256SUMS](SHA256SUMS).
 
 **Date:** 2026-10-08. **Scope:** analysis only. No source, test, packaging, runtime, registry, bridge or limit was changed. Decisions apply the [Sprint 8 release contract](../../superpowers/plans/2026-10-08-sprint-8-release-contract.md#4-release-blocking-definition): a real unsafe/failing defect in shipped scope blocks; absent proof outside the supported boundary may remain an explicit limitation; facts required by the Sprint 8 exit gate must be measured on the final bytes.
 

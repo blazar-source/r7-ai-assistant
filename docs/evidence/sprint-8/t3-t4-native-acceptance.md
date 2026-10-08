@@ -1,6 +1,6 @@
-﻿# Sprint 8 T3/T4 вЂ” native acceptance
+# Sprint 8 T3/T4 вЂ” native acceptance
 
-**Current supersession, 2026-10-09:** see [final fda714d verification](final-verification-fda714d.md). The freezes/attempts below are historical. Current Word/Cell narrow journeys pass; the final Slide end-position requirement fails (P1); T8 is NOT PASS. Current checksums are in [SHA256SUMS](SHA256SUMS).
+**Current supersession, 2026-10-09:** [ab06fef final verification](final-verification-ab06fef.md) closes the observed Slide P1 with fresh original/pair native assertions and visible Cell A1. Independent [T8](t8-review-ab06fef.md) is PASS WITH RECORDED LIMITATIONS; the local RC remains unpublished. Attempts below retain their original outcomes and byte identities. Current checksums: [SHA256SUMS](SHA256SUMS).
 
 ## Vendor-API modal bypass attempt вЂ” frozen `0.9.0-pilot-rc`, branch `stage-b`, HEAD `cd319a3`
 
