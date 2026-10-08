@@ -287,3 +287,50 @@ Before lifecycle work, the activated plugin and process inventory were backed up
 
 This attempt does not show a successful credential use by the product transport, any paid model response, any Word/Cell/Slide document mutation, any terminal compact status, any advancing UX-B5 sequence, or a rendered product-panel pixel capture. It shows only that the credential was readable, the mounted panel initially existed at the correct activated path, the desktop was unlocked and capturable, and the subsequent R7 lifecycle attempts failed to expose the required CDP listener. All three journeys therefore remain **NOT VERIFIED**.
 
+
+## Deeper targeted-input survey — HEAD `7f2b2e8de78d048ad29cf3239f19a5d04b771270`
+
+**Status: STOPPED / TRIAL NOTICE NOT DISMISSED / NATIVE JOURNEYS NOT VERIFIED.** The ordered survey exhausted the specifically requested installed-client, interpreter-binding, AT-SPI, and local-package-media leads. No mechanism could safely activate the dialog's exact focused **OK** control. No blind global coordinate or untargeted key input was sent. The protected R7 process was not restarted or terminated, no licence state or protection was changed, and snapshot `02-astra-r7-clean` was untouched.
+
+### 1. Deeper client and interpreter sweep
+
+Complete raw output is in `.local/sprint8/deep-input-survey.log`.
+
+- `/usr/bin` and `/usr/local/bin` contained none of: `xdotool`, `xte`, `xvkbd`, `ydotool`, `wtype`, `dotool`, `xnee`, `xmacro*`, `keynav`, or `wmctrl`.
+- No matching helper was found in the R7 vendor trees, the user home, Flatpak/Snap paths, or container paths. `toolbox`, `podman`, and `docker` were also absent.
+- `perl -MX11::Protocol -e ...` and `perl -MX11::Protocol::Ext::XTEST -e ...` both failed with `Can't locate` (exit `2`).
+- `python3 -c "import tkinter"` and `python3 -c "import Xlib"` both failed with `ModuleNotFoundError` (exit `1`). Ruby, `tclsh`, and `wish` were not installed, so their X11/Tk routes were unavailable.
+- The exact modal remained measurable: `_NET_ACTIVE_WINDOW` was `0x320000c`, the child client inside the centered unnamed `571x168+227+300` frame above `deck-open.pptx`.
+
+### 2. Perl X11::Protocol + XTEST
+
+The preferred exact-window XTEST route could not be used because both Perl modules were absent. The configured Astra DVD/CD metadata supplied no installable candidate through APT for the requested helpers; therefore there was no safe module-backed Return/space dispatch to `0x320000c`.
+
+### 3. AT-SPI over D-Bus
+
+Raw discovery is in `.local/sprint8/atspi-target-probe.log` and `.local/sprint8/atspi-tree.log`.
+
+`gdbus` and `dbus-send` were installed. The desktop session did have `at-spi-bus-launcher`, a private accessibility D-Bus daemon, and `at-spi2-registryd`. The desktop session bus was recovered from `~/.dbus/session-bus/...`, and `org.a11y.Bus.GetAddress` returned the private AT-SPI bus address. However, direct `gdbus` calls against that private bus were rejected before registration (`org.freedesktop.DBus.Error.AccessDenied: Client tried to send a message other than Hello without being registered`), while introspection/root-child calls failed. No accessible object with role `push button`, name `OK`, and an invocable action could therefore be identified. Because the control could not be specifically targeted, no AT-SPI action was attempted.
+
+### 4. Local package media
+
+Raw output is in `.local/sprint8/install-input-helper.log`.
+
+`apt-cache policy xdotool xautomation` completed with no candidate/version lines. Under the owner's explicit bounded authorization, `sudo -S apt-get install -y --no-download xdotool` was attempted using the stand password from `.local/sprint5/astra-steps.py`; APT returned exit `100` with `E: Unable to locate package xdotool`. Post-checks confirmed neither `xdotool` nor `libxdo3` was installed. Thus the attempt changed no package state and needed no rollback.
+
+### 5. Trial notice, ribbon-equivalent session, journeys, UX-B5, pixels, spend
+
+The trial notice is **still present**. The already mounted vendor-API frame remains only the earlier historical route; this attempt did not establish that it became a normal ribbon-equivalent session. Following the explicit stop condition, no Word, Cell, or Slide request was dispatched:
+
+- **Word:** NOT VERIFIED; no before/after `.docx` content pair.
+- **Cell:** NOT VERIFIED; no before/after `.xlsx` content pair.
+- **Slide:** NOT VERIFIED; no before/after `.pptx` content pair.
+- **UX-B5:** no new run sequence exists because dispatch did not begin.
+- **Pixel captures:** no new valid capture was produced. Existing modal images remain stand-state diagnostics only, not product-panel acceptance evidence.
+- **Exact spend:** 0 requests, 0 prompt tokens, 0 completion tokens, billed cost 0.
+
+### Final stand state and remaining unverified
+
+The original `DesktopEditors` PID `119782` remained running with `deck-open.pptx`; active modal client `0x320000c` remained present. The session was measured active but locked at survey time; no unlock or desktop input was needed after all safe input routes failed. No editor lifecycle operation, document mutation, plugin/product behavior change, licence alteration, or package installation occurred. The preserved snapshot was neither restored nor modified.
+
+Still **NOT VERIFIED**: dismissal of the legitimate trial notice, a normal ribbon-mounted/ribbon-equivalent product session, the frozen loaded-panel hash in such a session, all three credentialed semantic document journeys, any advancing UX-B5 sequence, and valid product-panel pixel composition. The owner must click the single focused **OK** by hand before those checks can continue safely.
