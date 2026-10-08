@@ -2,7 +2,44 @@
 
 **Scope:** diagnosis only at `stage-b` / `dc93242`; no product code, document, editor lifecycle, or snapshot change. Live stand remained the protected Slide process PID `119782`. Raw evidence: `.local/sprint8/post-modal-capability.log`, `.local/sprint8/capability-live-probe.log`, `.local/sprint8/capability-refusal-live.log` (the new SSH attempt failed at banner before authentication/CDP, so it changed nothing). Cell/Word surface values below are therefore from the repository's already-recorded native measurements, not a switched live document.
 
-## Exact false condition
+## LIVE measurement — 2026-10-08, `stage-b` / `717d0ed`
+
+**Status: COMPLETE / SOURCE EXPECTATION CONTRADICTED.** This bounded read-only CDP measurement used the pinned `ssh-ed25519` host key `SHA256:C8ZeXWfRCBdNyCnfQqNA7780JIKyAi99GeBtP5XhP2k`, verified before password authentication. It changed no product code or document, did not install anything, did not kill or switch the editor, and did not restore or modify snapshot `02-astra-r7-clean`. Raw receipts are `.local/sprint8/live-capability-measurement.log`, `.local/sprint8/live-callcommand-probe.log`, and `.local/sprint8/live-cell-roots-probe.log`.
+
+Measured state: process PID `119782` was still `/opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info .../gate/deck-open.pptx`; `http://127.0.0.1:8080/json/list` answered HTTP 200 and identified `doctype=presentation`, title `deck-open.pptx`; the editor frame URL contained `presentationeditor`; the plugin frame URL contained `sdkjs-plugins/%7B7C91...%7D`; the mounted plugin resolved to `/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}`. Web Crypto over the `panel.js` fetched by that live plugin frame returned `470b3a342a7b0a64d8ab566e2012bce6c31f735674972405051eab8e51e5e596` (880431 bytes), exactly the frozen expected hash; `sha256sum` of the mounted file returned the same hash.
+
+The exact product `callCommand` presence body returned this raw value:
+
+```json
+[true,true,true,true,true,true]
+```
+
+Decoded individually, not inferred from a summary:
+
+```json
+{
+  "api": true,
+  "getDocument": true,
+  "getDocumentId": true,
+  "replaceTextSmart": true,
+  "getRangeBySelect": true,
+  "isTrackRevisions": true
+}
+```
+
+Therefore **neither `api` nor `getDocument` fails in this Slide editor**. In `bridge.js:6039-6046`, the actual condition `methodPresence.api === true && methodPresence.getDocument === true` evaluates true, so both `selectionRead.available` and `mutation.available` are true. In `controller.js:305-310`, the capability-key construction consequently appends both `document.read` and `document.write`; the line-310 empty-set guard is not the source of this live refusal. The earlier claim that Slide's exact false flag is `getDocument` is explicitly corrected: it is **CONTRADICTED** by the live values. The observed refusal must arise at a later product step, but this one bounded measurement did not replay a model request or expose the private controller/agent state needed to identify that later step; its exact identity remains unmeasured rather than guessed.
+
+Without switching away from the protected presentation, a separate presence-only `callCommand` body on the same live Slide `Api` returned:
+
+```json
+{"api":true,"getPresentation":true,"getActiveSheet":false,"getSheets":false,"getSheet":false}
+```
+
+This proves only that the running **Slide** facade exposes `GetPresentation` and does not expose the three Cell roots. It does not measure a workbook facade or Cell capability tuple. Actual Cell values require a spreadsheet editor session and remain unmeasured because switching the protected editor was forbidden.
+
+What LIVE evidence proves: the protected deck, endpoint, mounted fixed plugin and loaded bytes are the expected ones; the product's exact six-key presence probe returns six literal booleans, all true; the bridge's `api && getDocument` availability gate and the controller's empty capability-set guard therefore cannot explain the observed Slide refusal. What remains source-derived only: the code-path descriptions and the claim that `GetPresentation` / `GetActiveSheet` / `GetSheets` / `GetSheet` are the editor-specific roots. What remains unmeasured live: the precise later refusal step, any agent-private capability-set value during a fresh request, command-dispatch behavior for that request, and all workbook-specific values.
+
+## Exact false condition (superseded where contradicted by the LIVE section above)
 
 `probeCapabilities()` now dispatches the same six-slot probe for every known editor (`bridge.js:8290-8295`). `capabilities()` then defines **both** `selectionRead.available` and `mutation.available` as:
 
@@ -13,7 +50,7 @@ methodPresence.api === true && methodPresence.getDocument === true
 
 (`bridge.js:6039-6046`). The controller grants `document.read/write` only from those booleans and throws `CAPABILITY_UNAVAILABLE` when neither is granted (`controller.js:305-310`).
 
-- **Slide false flag:** `methodPresence.getDocument === false`, therefore `selectionRead.available=false`, `mutation.available=false`, capabilities `[]`, then line 310 throws. On R7 Slide the relevant root is `Api.GetPresentation()`, not `Api.GetDocument()`.
+- **Slide (source-derived hypothesis, now refuted live):** this paragraph originally predicted `methodPresence.getDocument === false`, then `selectionRead.available=false`, `mutation.available=false`, capabilities `[]`, and line 310 throwing. The LIVE section above measured `getDocument === true` (and all six keys true), so that chain does not occur on the protected deck. `Api.GetPresentation()` remains the source-derived editor-specific root, but it is not evidence that the generic `GetDocument` presence flag is false.
 - **Cell false flag:** the same `methodPresence.getDocument === false`, therefore the same two availability flags are false and the same controller guard throws. On R7 Cell the relevant root is `Api.GetActiveSheet()` / `Api.GetSheets()`, not `Api.GetDocument()`.
 
 ### Raw values / classification
@@ -27,7 +64,7 @@ Asc.scope=own writable value; Object.isExtensible(Asc)=true
 exact six-slot probe callback=[true,true,true,true,true,true]
 ```
 
-The last tuple is the crucial anomaly: the methods exist and the probe **reports** all true, yet availability still refuses. The reason is that `capabilityBody` calls `Api.GetDocument()` while constructing the tuple (`bridge.js:86-95`). In Slide, that word-shaped call cannot establish a Slide document boundary; the callback's booleans are therefore presence-like facade results, not proof of `Api.GetPresentation()`. `GetDocumentId`, `ReplaceTextSmart`, `GetRangeBySelect`, and `IsTrackRevisions` are present according to the tuple; none except `GetDocument()` is invoked by the probe (`bridge-dispatch-api.test.js:155-176`). `GetDocumentId`, `ReplaceTextSmart`, `GetRangeBySelect`, and `IsTrackRevisions` therefore **cannot be classified by this probe beyond “method exists”; their behavior was deliberately not interrogated to avoid identity/selection/write side effects**. Command dispatch exists and returned the closed tuple. The live attempt to collect an expanded no-write tuple failed before SSH authentication, so it supplies no additional values.
+The last tuple was the crucial anomaly and is now freshly confirmed per key by the LIVE section: the methods exist and the probe reports all true. `capabilityBody` calls `Api.GetDocument()` while constructing the tuple (`bridge.js:86-95`), and on this Slide facade that call completed sufficiently for both document-member presence checks to be true. These booleans still do not prove `Api.GetPresentation()`, but they do prove that the `api && getDocument` availability condition itself passes; attributing the refusal to that gate was incorrect. `GetDocumentId`, `ReplaceTextSmart`, `GetRangeBySelect`, and `IsTrackRevisions` are present according to the tuple; none except `GetDocument()` is invoked by the probe (`bridge-dispatch-api.test.js:155-176`). `GetDocumentId`, `ReplaceTextSmart`, `GetRangeBySelect`, and `IsTrackRevisions` therefore **cannot be classified by this probe beyond “method exists”; their behavior was deliberately not interrogated to avoid identity/selection/write side effects**. Command dispatch exists and returned the closed tuple. The live attempt to collect an expanded no-write tuple failed before SSH authentication, so it supplies no additional values.
 
 For Cell, no live switch was permitted. Existing native records establish the actual surface: `Api.GetActiveSheet`, `Api.GetSheets`, `Api.GetSheet`, sheet `GetName/GetIndex/GetRange`, and mutation `Api.AddSheet`; `AddSheet` returns `undefined`, so success is proven only by postcondition readback. The exact Cell six-slot callback at `dc93242` is **not freshly observed** under this protection and must not be claimed otherwise.
 
