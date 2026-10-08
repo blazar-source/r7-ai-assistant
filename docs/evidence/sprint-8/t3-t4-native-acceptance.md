@@ -334,3 +334,114 @@ The trial notice is **still present**. The already mounted vendor-API frame rema
 The original `DesktopEditors` PID `119782` remained running with `deck-open.pptx`; active modal client `0x320000c` remained present. The session was measured active but locked at survey time; no unlock or desktop input was needed after all safe input routes failed. No editor lifecycle operation, document mutation, plugin/product behavior change, licence alteration, or package installation occurred. The preserved snapshot was neither restored nor modified.
 
 Still **NOT VERIFIED**: dismissal of the legitimate trial notice, a normal ribbon-mounted/ribbon-equivalent product session, the frozen loaded-panel hash in such a session, all three credentialed semantic document journeys, any advancing UX-B5 sequence, and valid product-panel pixel composition. The owner must click the single focused **OK** by hand before those checks can continue safely.
+
+## Owner-click rerun — frozen `0.9.0-pilot-rc`, branch `stage-b`, HEAD `222def5431921c09a0514dc7b5c319f0dfd40937`
+
+**Status: STOPPED ON GENUINE RELEASE DEFECT / THREE NATIVE JOURNEYS NOT COMPLETED.** The owner's click cleared the legitimate R7 trial notice, but the critical post-modal product-path check still failed closed with `CAPABILITY_UNAVAILABLE` before model transport or mutation. Per the explicit stop condition for a genuine release defect, no Word or Cell lifecycle replacement was attempted and the protected editor PID `119782` was not disturbed.
+
+### Click wait and stand
+
+Raw receipt: `.local/sprint8/notice-wait.log`. `xwininfo -root -tree` was polled at about 15-second cadence. Modal client `0x320000c` remained present through poll 28 and was absent at poll 29 (about 435 seconds after polling began). The surviving native editor window was `deck-open.pptx`; PID `119782` remained running. `http://127.0.0.1:8080/json/list` returned HTTP 200 and the presentation document page. Snapshot `02-astra-r7-clean` was neither restored nor modified.
+
+### Mount route and frozen bytes
+
+Raw receipt: `.local/sprint8/post-click-mount.log`. No specifically identified clickable ribbon control was available to automation, so the authorised editor-frame vendor API route was used/confirmed: `window.g_asc_plugins.run('asc.{7C91D48E-5F12-4B36-8A90-2DFA8467C013}', 0, '')` in the context whose URL contains `presentationeditor`. The plugin was already running (`before:true`, `after:true`), its context `4` was mounted from the per-user brace-GUID path, and a Web Crypto SHA-256 over its fetched `panel.js` was `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f`, exactly equal to the frozen packaged hash.
+
+### Critical post-modal capability check and Slide journey
+
+Raw receipt: `.local/sprint8/resume-existing.log`. The product settings were configured with the credential read from `~/.dsh/.credentials.yaml` (the key was not logged), endpoint `https://api.deepseek.com/v1/chat/completions`, model `deepseek-chat`, `maxTokens=256`, temperature `0`, timeout 60 seconds, and `rememberKey=false`. The exact real request was: `Добавь новый слайд и помести на него точный текст: SPRINT8_SLIDE_MODEL_OK`.
+
+The document SDK read before dispatch returned `{"slides":1}`. Submission through the mounted product composer immediately reported `status="Анализирую"`, `progress-stage="подготовка запроса"`. At the first one-second poll it was terminal: `status="Ошибка"`, empty stage, details `Возможность недоступна. Безопасность изменения документа не доказана.`, and inactive Stop control. Polls two and three were identical. The SDK read after dispatch again returned `{"slides":1}`. Outcome: **Slide FAIL — genuine fail-closed release defect; no document change (1 slide → 1 slide).** `CAPABILITY_UNAVAILABLE` therefore persisted after the notice was gone; the earlier result was not caused solely by the modal.
+
+### Word journey
+
+**NOT VERIFIED.** Not attempted after the genuine release defect was established, as explicitly required. No request, terminal status, or before/after `.docx` evidence exists.
+
+### Cell journey
+
+**NOT VERIFIED.** Not attempted after the genuine release defect was established. No request, terminal status, or before/after `.xlsx` evidence exists.
+
+### UX-B5
+
+Measured at approximately one-second cadence during the real Slide run:
+
+1. Immediately after submit: `Анализирую` / `подготовка запроса`.
+2. Poll 1: `Ошибка` / empty stage / `Возможность недоступна. Безопасность изменения документа не доказана.`
+3. Polls 2 and 3: the same terminal state.
+
+No `Выполняю` or `Проверяю` stage occurred because capability validation terminated the run before transport.
+
+### Pixels
+
+The desktop/window tree was capturable and is preserved in the raw mount receipt, but no `FlyLocker` window composited during the run (`FLYLOCKER=`). Therefore `import -window <id>` had no valid panel target and the prescribed `518x998+80+336` crop could not be produced; ImageMagick reported that the source files did not exist. There is no valid product-panel pixel acceptance capture from this run.
+
+### Exact spend
+
+DeepSeek requests reaching the provider: **0**; prompt tokens: **0**; completion tokens: **0**; billed cost: **0**. Although a real credential was configured for the bounded request, the product failed locally at capability validation before transport. The temporary target-side key file and dispatch script were removed.
+
+### Stand state and what this does not show
+
+The native R7 editor PID `119782` remains running on `deck-open.pptx`; the `127.0.0.1:8080` debug endpoint remains available and the frozen plugin remains mounted. No editor process was killed or restarted, no document was changed, and no snapshot operation occurred. The source evidence file was backed up before this append at `.local/sprint8/t3-t4-native-acceptance.before-222def5.md`.
+
+This run proves the notice cleared, the surviving editor/debug endpoint remained usable, the authorised vendor-API session loaded the exact frozen panel bytes, and the post-modal product request still fails closed. It does **not** verify successful Slide mutation, any Word or Cell product journey, provider response/spend, a complete UX-B5 progression, or a composited product-panel pixel capture.
+
+## Post-modal verified-target rerun — frozen `0.9.0-pilot-rc` acceptance assignment `222def5` (observed worktree HEAD `d10e76f403801759f1515d482e7c357632ce4730`)
+
+**Status: PRODUCT FINDING CONFIRMED / SLIDE FAIL / WORD AND CELL NOT VERIFIED.** After the owner dismissed the R7 trial notice, the exact protected editor remained PID `119782` with `--ascdesktop-support-debug-info`, the modal client `0x320000c` was absent, and the presentation CDP endpoint remained live. A fresh request still failed closed before transport. Therefore the earlier `CAPABILITY_UNAVAILABLE` was **not caused by the trial modal or the modal-era mount state**; it is the frozen product's behavior on this verified target.
+
+### Mount route and frozen-byte identity
+
+No programmatically identifiable ribbon control was available. The panel was already running in the normal post-dismissal editor session (`g_asc_plugins.isRunned(guid) === true`), so the fallback vendor route was checked without closing or restarting it: editor-frame `window.g_asc_plugins.run('asc.{7C91D48E-5F12-4B36-8A90-2DFA8467C013}', 0, '')` was a no-op because the plugin was already running. The mounted plugin context was the brace-GUID per-user path. Fetching its `panel.js` yielded SHA-256 `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f`, exactly equal to the frozen packaged hash.
+
+Raw receipts: `.local/sprint8/post-click-mount.log` and `.local/sprint8/post-modal-capability.log`.
+
+### Established cause of `CAPABILITY_UNAVAILABLE`
+
+The mounted facade reported `editorType: "slide"` and own-function descriptors `callCommand: true`, `executeCommand: true`, `executeMethod: true`. Running the exact capability body and `executeCommand('command', source, callback)` envelope used by the product returned the raw callback:
+
+```json
+[true,true,true,true,true,true]
+```
+
+The product's own read-only **Проверить Р7** action then reported compact status `Готово` and details `Проверка наличия API завершена. Документ не изменён.` Thus the vendor APIs are present and the same static probe succeeds on R7 2026.1.2.1942.
+
+The failing check is instead the frozen product's local capability declaration for non-Word editors. In `src/plugin/bridge.js`, `probeCapabilities()` returns `capabilities()` without a runtime probe whenever `editor !== 'word'`. That helper defines `selectionRead.available` from `editor === 'word' && adapter.executeMethod`, making it false for Slide, and defines `mutation.available: false` unconditionally with reason `EXPLICIT_OWNED_PREVIEW_REQUIRED`. The panel can label the adapter present, but a real Slide edit request enters the agent with advertised `document.read`/`document.write`, reaches the Slide tool path, and terminates with `CAPABILITY_UNAVAILABLE` before HTTP because the product has not established the required mutation capability. This is internally inconsistent with the later `addSlide` implementation, which explicitly accepts `editor === 'slide'`, matching current editor identity, and `hasCallCommand`; all three are present on this target. No product behavior was changed to work around this finding.
+
+### Slide journey — FAIL
+
+Command/observation transcript: `.local/sprint8/post-modal-capability.log`.
+
+A real product-path request used endpoint `https://api.deepseek.com/v1/chat/completions`, model `deepseek-chat`, `maxTokens=256`, temperature `0`, and exact request `Добавь новый слайд и помести на него точный текст: SPRINT8_POST_MODAL_OK`. Before dispatch, the live editor SDK read returned `editorId: 2`, one slide, and two shapes. Submission immediately showed `Анализирую / подготовка запроса`; the first one-second poll and three subsequent polls returned `Ошибка / <empty>` with `Возможность недоступна. Безопасность изменения документа не доказана.` No action/history record and no network transport occurred. Afterward the SDK read was unchanged: one slide, same two shapes, no added text. Outcome: **FAIL** — a supported frozen Slide product journey cannot reach the model or mutate the document on this target because the product's capability gate closes first.
+
+### Word journey — NOT VERIFIED
+
+The protected live editor is a presentation. Opening a real `.docx` in its place would disturb or replace the exact editor the owner required preserved. No Word request was dispatched; there is no before/after `.docx` content pair.
+
+### Cell journey — NOT VERIFIED
+
+For the same safety reason, no `.xlsx` replaced the protected presentation editor. No Cell request was dispatched; there is no before/after workbook content pair.
+
+### UX-B5 sequence
+
+At approximately one-second cadence:
+
+1. immediate: `Анализирую` / `подготовка запроса`;
+2. poll 1: `Ошибка` / empty stage / `Возможность недоступна. Безопасность изменения документа не доказана.`;
+3. polls 2–4: identical terminal state.
+
+No `Выполняю` or `Проверяю` stage occurred because the request terminated before transport/tool execution.
+
+### Pixels
+
+`xwininfo -root -tree` found no `FlyLocker` window (`FLYLOCKER=`), so the prescribed `import -window <id>` and `518x998+80+336` crop had no target and no panel-only image was fabricated. A valid full-root diagnostic, `.local/sprint8/captures/post-modal-root.png` (`1024x768`, 76,001 bytes; SHA-256 `d23634469d8acc42300442d758d1dca953e1ce9629af14c502a600a5359204bb`), visibly captures the mounted R7 AI Assistant pane in terminal `Ошибка` beside the unchanged one-slide deck. It is a valid desktop/product-state capture, but not the requested FlyLocker crop. The measured symptom is that this panel is composited inside the main R7 window rather than exposed as a FlyLocker X11 child.
+
+### Exact spend
+
+DeepSeek requests reaching the provider: `0`; prompt tokens: `0`; completion tokens: `0`; billed cost: `0`. The credential was loaded from `~/.dsh/.credentials.yaml` into a mode-0600 temporary target file, was never logged, and that file was removed after dispatch. The closed capability result happened before HTTP.
+
+### Stand state and what this does not show
+
+The editor was not killed, closed, restarted, or switched. Final measurement retained PID `119782`, `deck-open.pptx`, the live `127.0.0.1:8080` presentation endpoint, and the mounted product panel. Modal client `0x320000c` remained absent. Snapshot `02-astra-r7-clean` was not restored or modified. The only target-side temporary files containing the credential/dispatch script were removed; raw evidence was retained only under repository `.local/sprint8/`.
+
+This rerun proves frozen mounted-byte identity, successful vendor API presence on the exact build, persistence of `CAPABILITY_UNAVAILABLE` after modal dismissal, its product capability-declaration cause, zero transport/spend, and unchanged live presentation content. It does **not** prove successful Slide mutation, any Word/Cell product journey, any paid provider response, a full advancing UX-B5 sequence, or a FlyLocker panel crop.
+
