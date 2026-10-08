@@ -56,7 +56,7 @@ test('dual build produces byte-identical ZIP STORE/.plugin exact root allowlist 
   assert.deepEqual(entries.find(e => e.name === 'config.json').data, await readFile(new URL('src/plugin/config.json', root)));
   const provenanceEntry = entries.find(e => e.name === 'provenance.json');
   const provenance = JSON.parse(provenanceEntry.data.toString('utf8'));
-  assert.equal(provenance.productVersion, '0.9.0-pilot-dev');
+  assert.equal(provenance.productVersion, '0.9.0-pilot-rc');
   assert.match(provenance.sourceCommit, /^[0-9a-f]{40}$/);
   assert.deepEqual(provenance.toolchain, { esbuild: '0.25.10', node: process.version });
   assert.deepEqual(provenance.compatibility, {
@@ -78,7 +78,7 @@ test('SBOM is deterministic and verified against the packaged bytes and zero run
   const sbom = JSON.parse(first.bytes.toString('utf8'));
   assert.equal(sbom.spdxVersion, 'SPDX-2.3');
   const product = sbom.packages.find(item => item.SPDXID === 'SPDXRef-Package-R7AIAssistant');
-  assert.equal(product.versionInfo, '0.9.0-pilot-dev');
+  assert.equal(product.versionInfo, '0.9.0-pilot-rc');
   assert.equal(product.licenseConcluded, 'LicenseRef-Proprietary');
   const entries = inventory(built.archive);
   assert.deepEqual(sbom.files.map(file => file.fileName), entries.map(entry => `./${entry.name}`).sort((a, b) => a.localeCompare(b)));

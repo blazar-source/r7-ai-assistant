@@ -11,10 +11,10 @@ const owned = ['LICENSE','THIRD_PARTY_NOTICES.md','config.json','index.html','pa
 const payloadRoot = `usr/share/r7-ai-assistant/plugin/${guid}`;
 const hash = data => createHash('sha256').update(data).digest('hex');
 
-test('DEB metadata is the required development package identity', async () => {
+test('DEB metadata is the required release-candidate package identity', async () => {
   const result = await buildDeb();
   const deb = inspectDeb(readFileSync(result.debPath));
-  assert.deepEqual(deb.control, { Architecture: 'amd64', Description: 'Data-only R7 AI Assistant plugin payload', Maintainer: 'R7 AI Assistant maintainers', Package: 'r7-ai-assistant', Version: '0.9.0-pilot-dev' });
+  assert.deepEqual(deb.control, { Architecture: 'amd64', Description: 'Data-only R7 AI Assistant plugin payload', Maintainer: 'R7 AI Assistant maintainers', Package: 'r7-ai-assistant', Version: '0.9.0-pilot-rc' });
 });
 
 test('DEB regular-file inventory equals the contract manifest plus its uninstall manifest', async () => {

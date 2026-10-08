@@ -1,5 +1,5 @@
 Package: r7-ai-assistant
-Version: 0.9.0-pilot-dev
+Version: 0.9.0-pilot-rc
 Architecture: amd64
 Maintainer: R7 AI Assistant maintainers
 Description: Data-only R7 AI Assistant plugin payload

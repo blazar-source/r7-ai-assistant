@@ -8,7 +8,7 @@ The requested source worktree was inspected before any operation on the Astra st
 
 - branch: `stage-b`;
 - clean HEAD: `6a2e1231dc5f9025d8cdb7c6ce5febab6ccfefaa`;
-- `package.json` version: `0.9.0-pilot-dev`;
+- `package.json` version at inspected commit `6a2e1231`: `0.9.0-pilot-dev` (historical preflight fact, superseded in the later RC-preparation tree);
 - expected final version under the Sprint 8 release contract: `0.9.0-pilot-rc`;
 - `dist/`: no release artifacts present.
 

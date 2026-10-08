@@ -16,9 +16,9 @@ never overstates what was measured.
    2026.3.1, that the page loads `~/.local/share/r7-office/editors/sdkjs-plugins/{GUID}` and does **not** load
    `…/editors/data/sdkjs-plugins/asc.{GUID}`. A system-wide (global) path is therefore **NOT VERIFIED** and must not
    be guessed: it may only be claimed after a separate measurement on the acceptance target.
-2. **Version string.** `0.9.0-pilot-rc` is the **Sprint 8** release string and stays reserved for the published RC.
-   Because [deployment.md](../../deployment.md) states that no installable release exists yet and bootstrap must not
-   be treated as Pilot RC, every artifact built during Sprint 7 carries a development-marked version with recorded
+2. **Version string (historical Sprint 7 rule).** `0.9.0-pilot-rc` was reserved for Sprint 8 throughout Sprint 7.
+   Sprint 8 has now prepared that release candidate but has not published it. Because the then-current deployment
+   state had no installable release and bootstrap could not be treated as Pilot RC, every artifact built during Sprint 7 carries a development-marked version with recorded
    provenance (source commit plus toolchain versions) and is **never published**.
 3. **Acceptance target.** Native lifecycle and ZPS acceptance run on the **R7 `2026.1.2.1942` (deb)** target recorded
    in [target-environment.md](../../target-environment.md). The Sprint 6 path evidence from 2026.3.1 is supporting

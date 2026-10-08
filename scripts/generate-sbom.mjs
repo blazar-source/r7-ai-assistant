@@ -6,7 +6,7 @@ import { buildPlugin } from './build-plugin.mjs';
 import { inventory } from '../tests/fixtures/archive.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const PRODUCT_VERSION = '0.9.0-pilot-dev';
+const PRODUCT_VERSION = '0.9.0-pilot-rc';
 function sha256(data) { return createHash('sha256').update(data).digest('hex'); }
 function invalid() { throw new Error('INVALID_SBOM_INPUT'); }
 function stableJson(value) {

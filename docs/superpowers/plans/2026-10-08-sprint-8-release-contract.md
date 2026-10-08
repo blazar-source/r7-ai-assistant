@@ -22,18 +22,11 @@ Authoritative scope: [Sprint 8 final-verification plan](2026-10-08-sprint-8-fina
 
 ## 2. Version freeze
 
-The release version is exactly `0.9.0-pilot-rc`. Today the build still carries Sprint 7's `0.9.0-pilot-dev` in:
+The release version is exactly `0.9.0-pilot-rc`. T6 RC preparation sets that value consistently in `package.json`, both root records in `package-lock.json`, plugin provenance generation, the default DEB version/control metadata, SPDX generation, version assertions, and user/administrator documentation.
 
-* `package.json` and both root records in `package-lock.json`;
-* `scripts/build-plugin.mjs` (`PRODUCT_VERSION`, therefore ZIP `provenance.json`);
-* `scripts/build-deb.mjs` (default `VERSION`, therefore DEB control metadata and filename; the environment override is not the release source of truth);
-* `scripts/generate-sbom.mjs` (`PRODUCT_VERSION`, therefore SPDX name, namespace, package version and validation);
-* version assertions in `tests/integration/package.test.js` and `tests/packaging/deb-package.test.js`;
-* development-state documentation including `docs/deployment.md`, `docs/licensing.md`, and `packaging/plugin/README.md`.
+Sprint 7 historically reserved `0.9.0-pilot-rc` and shipped only development-marked bytes: [Sprint 7 decision 2](2026-10-08-sprint-7-packaging-astra-zps.md#decisions-fixed-before-implementation-owner-2026-10-08) and [inventory](../../evidence/sprint-7/final-artifact-inventory.md). The release candidate is now **prepared, not published**; no final artifact exists until the controller commits these changes and T7 builds from that pinned commit.
 
-Sprint 7 intentionally reserved `0.9.0-pilot-rc` for this stage and shipped only development-marked bytes: [Sprint 7 decision 2](2026-10-08-sprint-7-packaging-astra-zps.md#decisions-fixed-before-implementation-owner-2026-10-08) and [inventory](../../evidence/sprint-7/final-artifact-inventory.md).
-
-**Freeze rule:** T6/T7 must replace the production/build metadata above with one consistent `0.9.0-pilot-rc` value, update its assertions and user/admin wording, and commit those changes before the release commit is pinned. No RC artifact may be built by supplying a one-off environment version that disagrees with the committed defaults, and this T1/T2 task changes none of those files.
+**Freeze rule:** commit all intended production/build metadata and documentation with one consistent `0.9.0-pilot-rc` value before pinning the release commit. No RC artifact may be built by supplying a one-off environment version that disagrees with the committed defaults.
 
 ## 3. TESTED == SHIPPED for both artifacts
 

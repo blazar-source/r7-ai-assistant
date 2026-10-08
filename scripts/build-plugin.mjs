@@ -11,7 +11,7 @@ import { iconPng } from './icon-assets.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const execFileAsync = promisify(execFile);
-const PRODUCT_VERSION = '0.9.0-pilot-dev';
+const PRODUCT_VERSION = '0.9.0-pilot-rc';
 const PAYLOAD_FILES = Object.freeze(['LICENSE', 'THIRD_PARTY_NOTICES.md', 'config.json', 'index.html', 'panel.js', 'resources/icon.png', 'resources/icon@2x.png', 'styles.css']);
 export const RELEASE_FILES = Object.freeze([...PAYLOAD_FILES, 'provenance.json'].sort());
 const publicCopies = Object.freeze([
