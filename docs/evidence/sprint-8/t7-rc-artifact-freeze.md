@@ -1,6 +1,21 @@
 # Sprint 8 T7 — `0.9.0-pilot-rc` artifact freeze
 
-## Current re-freeze — commit `2e64c0ef019b3ef985163a4eb9434ea298265cee`
+## Current re-freeze — capability-fix commit `dc93242fe45811b4aad0a371200765b335302ce1`
+
+**Result: PASS for artifact identity and reproducibility.** `git status --porcelain` was empty immediately before the repository-tooling build on branch `stage-b`, HEAD `dc93242fe45811b4aad0a371200765b335302ce1`. Packaged `provenance.json` names that full commit, product version `0.9.0-pilot-rc`, Node `v24.21.0`, and esbuild `0.25.10`; npm was `11.19.0`.
+
+| Current frozen artifact | SHA-256 |
+| --- | --- |
+| Plugin ZIP `dist/plugin/r7-ai-assistant.zip` | `1eba90a54aa36566f05a510f2cec88983121639f8101ced1cce4c35a342ca474` |
+| DEB `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb` | `9eb7233f0b8aa76a9f973d4cc63de22e1653df3f4ba7eeb8f4cf45972a54304b` |
+| SPDX 2.3 SBOM `dist/r7-ai-assistant.spdx.json` | `3dd84b70e21bef72dd6402e52c6d459e16a28994aaef87612be9a8c86158d243` |
+| Packaged/built `panel.js` | `470b3a342a7b0a64d8ab566e2012bce6c31f735674972405051eab8e51e5e596` |
+
+`npm run reproducible` produced the same ZIP twice. Two builds after independently removing `dist/deb` produced the same DEB hash. The regenerated SBOM matched all nine real ZIP entries with no missing, extra, or mismatched entry. Genuine target-side `dpkg-deb` extraction and comparison found all eight DEB plugin files byte-identical to the ZIP. The DEB hash changed from `4b54302a...` because the capability fix changed carried product bytes (`panel.js`); the DEB continues not to embed plugin provenance.
+
+Raw receipts: `.local/sprint8/dc93242/refreeze-build.log`, `reproducibility.log`, `sbom-archive-verify.json`, `install-fixed.log`, and `initial-hashes.txt`.
+
+## Previous current re-freeze — superseded history — commit `2e64c0ef019b3ef985163a4eb9434ea298265cee`
 
 **Result: PASS for artifact identity and reproducibility.** `git status --porcelain` was empty immediately before the repository-tooling build at branch `stage-b`, HEAD `2e64c0ef019b3ef985163a4eb9434ea298265cee`, and remained empty after the build and both repeat builds. Packaged `provenance.json` names that full commit, product version `0.9.0-pilot-rc`, Node `v24.21.0`, and esbuild `0.25.10`.
 
