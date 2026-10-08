@@ -62,3 +62,29 @@ Thus the SDK boundary and concrete Slide mutation implementation have worked nat
 ## Conclusion
 
 **Verdict: product defect.** The API-mounted route supplies everything the source checks; exact SDK channels are present and the authored probe returns six `true` values; prior Astra evidence proves real native Slide mutations. The defect is the inconsistent capability integration: a non-Word probe locally reports read false/mutation false, `checkR7` still calls Slide ready, agent capabilities are hard-coded independently, and concrete Slide tools later operate behind stricter checks. No fix was made. The controller should decide whether to authorize a release-blocker correction under the release contract (`docs/superpowers/plans/2026-10-08-sprint-8-release-contract.md:46-58`).
+
+## OWNER DECISION (2026-10-08) and the shape of the fix
+
+The owner has ruled the capability gate a RELEASE DEFECT to fix, and has chosen the authorisation model
+explicitly:
+
+* **The probe must be real for every editor.** word, cell and slide alike perform the native check they are
+  capable of performing; `selectionRead.available` and `mutation.available` are derived from the OBSERVED result,
+  not from the editor's name and not from a constant.
+* **The owned preview remains the authorisation for a mutation.** Changing the document still happens only through
+  the panel's own preview/apply path. This fix corrects what the product CLAIMS, and does not remove or weaken the
+  enforcement that decides what it may DO.
+* **Fail-closed stays.** Where the native probe cannot be performed or cannot establish the boundary, the
+  capability remains unavailable with a reason that describes the real condition - a probe failure must not borrow
+  the owned-preview reason, and the owned-preview reason must not be used to describe an unprobed editor.
+
+Implementation sites located by the diagnosis: `src/plugin/bridge.js:9` (the reason constant), `:6039-6046`
+(`capabilities()` hard-codes word-only read and always-false mutation), `:8288-8294` (`probeCapabilities` returns
+the local declaration for anything that is not word), `src/ui/controller.js:144` (the duplicated reason),
+`:478-496` (the slide branch judges readiness from those flags) and `:23-27,304-305` (the agent's hard-coded
+document read/write).
+
+Process note, recorded because it matters: two implementation attempts died mid-task and left no result; both were
+reverted, and the tree was clean before the third. The third attempt is required to work in small, complete steps
+and to run the focused tests after each, so that an interruption can never leave a renamed symbol with surviving
+old references - which is exactly how the first attempt broke.
