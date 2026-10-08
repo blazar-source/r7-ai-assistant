@@ -1,6 +1,6 @@
 # Third-party notices
 
-Production browser source has no runtime dependencies. Acorn 8.15.0 is pinned as development-only static audit tooling; it is not shipped in the plugin. No vendor R7 SDK source has been copied.
+The packaged payload was checked against `package.json`, `package-lock.json`, the built `panel.js`, and the generated SPDX 2.3 SBOM. It contains compiled first-party source and first-party static assets only: there are zero runtime dependency packages, no external module imports or CommonJS `require` calls in the browser bundle, and no copied R7 SDK source. The notice file itself carries the required MIT notices below, but no Acorn, esbuild, Node.js, platform binary, or R7 SDK code is shipped in the plugin.
 
 ## Acorn 8.15.0 (development tooling only)
 
@@ -65,4 +65,10 @@ SOFTWARE.
 
 Р7 Plugin SDK: способ подключения и условия перераспространения должны быть проверены на целевой установке. Наличие штатного SDK не означает право упаковать его копию.
 
-Для Pilot RC требуется SBOM, охватывающий runtime, build dependencies и упакованные компоненты.
+## Node.js (build tooling only)
+
+Node.js executes the deterministic packaging and SBOM scripts and is recorded at its exact build-time version in `provenance.json` and the SPDX SBOM. Node.js is MIT-licensed and is not shipped in the plugin. Source and license: https://github.com/nodejs/node/blob/main/LICENSE .
+
+## Reconciliation result
+
+The generated SPDX 2.3 SBOM covers the application archive, every packaged file with a SHA-256 verified from the real ZIP bytes, and the byte-determining Node.js/esbuild toolchain. Acorn remains development-only audit tooling: it is listed here because it is used by `npm run audit`, but it does not determine or enter the packaged bytes and therefore is not represented as a build tool in the artifact SBOM. No third-party runtime component is bundled.

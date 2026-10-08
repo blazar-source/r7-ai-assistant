@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { generateSbom } from '../../scripts/generate-sbom.mjs';
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
 import { parse } from 'acorn';
@@ -68,6 +69,36 @@ test('dual build produces byte-identical ZIP STORE/.plugin exact root allowlist 
   for (const name of expectedPayload) assert.equal(provenance.files[name].sha256, hash(entries.find(entry => entry.name === name).data), name);
   assert.deepEqual(await readFile(a.pluginPath), a.archive); assert.deepEqual(await readFile(a.zipPath), a.archive);
   for (const item of entries) { assert.equal(item.method, 0); assert.equal(item.time, 0); assert.equal(item.date, 33); }
+});
+test('SBOM is deterministic and verified against the packaged bytes and zero runtime dependency graph', async () => {
+  const built = await buildPlugin({ output: 'dist/task3-sbom-package' });
+  const first = await generateSbom({ archive: built.archive, output: 'dist/task3-sbom-a.spdx.json' });
+  const second = await generateSbom({ archive: built.archive, output: 'dist/task3-sbom-b.spdx.json' });
+  assert.deepEqual(first.bytes, second.bytes);
+  const sbom = JSON.parse(first.bytes.toString('utf8'));
+  assert.equal(sbom.spdxVersion, 'SPDX-2.3');
+  const product = sbom.packages.find(item => item.SPDXID === 'SPDXRef-Package-R7AIAssistant');
+  assert.equal(product.versionInfo, '0.9.0-pilot-dev');
+  assert.equal(product.licenseConcluded, 'LicenseRef-Proprietary');
+  const entries = inventory(built.archive);
+  assert.deepEqual(sbom.files.map(file => file.fileName), entries.map(entry => `./${entry.name}`).sort((a, b) => a.localeCompare(b)));
+  for (const entry of entries) {
+    const file = sbom.files.find(item => item.fileName === `./${entry.name}`);
+    assert.equal(file.checksums[0].algorithm, 'SHA256');
+    assert.equal(file.checksums[0].checksumValue, hash(entry.data), entry.name);
+    assert.equal(file.licenseConcluded, entry.name === 'THIRD_PARTY_NOTICES.md' ? 'LicenseRef-Proprietary AND MIT' : 'LicenseRef-Proprietary');
+  }
+  const packageJson = JSON.parse(await readFile(new URL('package.json', root), 'utf8'));
+  const lock = JSON.parse(await readFile(new URL('package-lock.json', root), 'utf8'));
+  assert.deepEqual(packageJson.dependencies ?? {}, {});
+  assert.deepEqual(lock.packages[''].dependencies ?? {}, {});
+  assert.equal(Object.entries(lock.packages).filter(([name, item]) => name && item.dev !== true).length, 0);
+  const panel = entries.find(entry => entry.name === 'panel.js').data.toString('utf8');
+  assert.equal(/(?:node_modules|require\s*\(|from\s+['"](?![./])|import\s*\(['"](?![./]))/.test(panel), false);
+  assert.deepEqual(sbom.annotations.find(item => item.annotationComment.startsWith('CHECKED: zero runtime dependencies')).annotationComment,
+    'CHECKED: zero runtime dependencies; package.json has no dependencies, package-lock root has no dependencies and all locked non-root packages are dev-only, and packaged panel.js has no external module imports or CommonJS require calls.');
+  assert.deepEqual(sbom.packages.filter(item => item.primaryPackagePurpose === 'BUILD_TOOL').map(item => [item.name, item.versionInfo, item.licenseConcluded]),
+    [['Node.js', process.version.slice(1), 'MIT'], ['esbuild', '0.25.10', 'MIT']]);
 });
 test('generated authored browser bundle passes audit with literal synchronous static command and no dev runtime', async () => {
   const built = await buildPlugin({ output: 'dist/task4-package-bundle' });
