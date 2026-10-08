@@ -37,3 +37,10 @@ test('an unclosed code fence remains literal code through the end', () => {
   assert.equal(f.root.children[0].tagName, 'PRE');
   assert.equal(f.root.children[0].textContent, '**literal**\n<img src=x>');
 });
+
+test('underscores inside identifiers stay literal instead of silently changing displayed text', () => {
+  const f = dom(); renderMarkdown(f.root, 'SPRINT9_WORD_NATIVE_C7F1A83 and a__b__c; _emphasis_ and __strong__.');
+  assert.equal(f.root.textContent, 'SPRINT9_WORD_NATIVE_C7F1A83 and a__b__c; emphasis and strong.');
+  assert.equal(f.all().filter(node => node.tagName === 'EM').length, 1);
+  assert.equal(f.all().filter(node => node.tagName === 'STRONG').length, 1);
+});

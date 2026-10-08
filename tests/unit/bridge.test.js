@@ -233,7 +233,7 @@ test('cell and slide capability probes dispatch the native check and derive avai
     const r = rig(editorType);
     const pending = r.bridge.probeCapabilities();
     assert.equal(r.calls.length, 1, `${editorType} dispatched one native probe`);
-    r.calls[0].callback(probe);
+    r.calls[0].callback(editorType === 'cell' ? [true, true, true, true] : probe);
     const result = await pending;
     assert.equal(result.editorType, editorType);
     assert.equal(result.selectionRead.available, true);

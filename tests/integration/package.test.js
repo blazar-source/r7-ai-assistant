@@ -285,7 +285,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
       // pins are the SHAPE of the shipped body, and they are exact expressions rather than mere call names: the
       // postcondition must read the book back through the collection AND the lookup by index AND the lookup by
       // name (that is what "independent readers" means), and nothing may activate a sheet.
-      if (code.includes('SetName(')) {
+      if (code.includes('typeof range.SetValue')) {
+        assert.match(code, /GetActiveSheet\(\)/);
+        assert.match(code, /GetRange\(["']A1["']\)/);
+        assert.equal(/\.SetValue\(|GetDocument\(/.test(code), false, 'Cell readiness never writes or invokes the Word root');
+        legs.push('cellcapability');
+      } else if (code.includes('SetName(')) {
         assert.match(code, /\bscope\b/, 'the rename takes the bound, the source selector and the new name from the injected scope');
         assert.match(code, /SetName\(sheetRenameWanted\)/, 'the ONE mutation is authored with the requested name');
         assert.equal((code.match(/\.SetName\s*\(/g) ?? []).length, 1,
@@ -576,8 +581,8 @@ test('generated authored browser bundle passes audit with literal synchronous st
       }
     }
   });
-  assert.equal(commands, 23, 'the adapter dispatches exactly the twenty-three authored command legs');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'slideobject', 'sliderestructure', 'structure', 'table'],
+  assert.equal(commands, 24, 'the adapter dispatches twenty-four authored command legs including Cell readiness');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellcapability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'slideobject', 'sliderestructure', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

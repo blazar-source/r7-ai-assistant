@@ -12,7 +12,7 @@ function safeLink(value) {
 }
 function inline(parent, source, depth = 0) {
   if (depth >= 8) { literal(parent, source); return; }
-  const tokens = /(`+)([^`\n]+?)\1|\[([^\]\n]+)\]\(([^\s()]+)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_|( {2,}|\\)\n|\n/g;
+  const tokens = /(`+)([^`\n]+?)\1|\[([^\]\n]+)\]\(([^\s()]+)\)|\*\*([^*\n]+)\*\*|(?<![\p{L}\p{N}_])__([^_\n]+)__(?![\p{L}\p{N}_])|\*([^*\n]+)\*|(?<![\p{L}\p{N}_])_([^_\n]+)_(?![\p{L}\p{N}_])|( {2,}|\\)\n|\n/gu;
   let offset = 0;
   for (const match of source.matchAll(tokens)) {
     literal(parent, source.slice(offset, match.index));

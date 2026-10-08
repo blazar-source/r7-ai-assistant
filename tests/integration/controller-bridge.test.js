@@ -84,7 +84,7 @@ for (const [editor, label] of [['slide', 'PRESENTATION'], ['cell', 'SPREADSHEET'
     const operation = f.controller.checkR7();
     assert.equal(f.callbacks.length, 1, `${editor} dispatches one real native probe`);
     assert.equal(f.controller.getState().active, true);
-    f.callbacks[0](presence);
+    f.callbacks[0](editor === 'cell' ? [true, true, true, true] : presence);
     assert.equal(await operation, true);
     assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
     assert.equal(f.controller.getState().capabilityCount, 2, 'availability comes from the observed Api/document pair');

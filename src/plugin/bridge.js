@@ -8,6 +8,7 @@ import { ERROR_CODES, SafeError } from '../shared/errors.js';
 const pluginOwners = new WeakSet();
 export const OWNED_PREVIEW_REASON = 'EXPLICIT_OWNED_PREVIEW_REQUIRED';
 const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'replaceTextSmart', 'getRangeBySelect', 'isTrackRevisions']);
+const cellPresenceKeys = Object.freeze(['api', 'getActiveSheet', 'readRange', 'writeRange']);
 // THE CLOSED SET OF TICKET KINDS WHOSE WORK WRITES THE DOCUMENT, in ONE place. Every one of these
 // questions is asked about more than one leg and the answers must not drift apart: does a ticket whose
 // callback never arrived leave an UNKNOWN mutation (`errorFor`/`timeoutFor`), does the panel's write lock
@@ -95,6 +96,16 @@ const capabilityBody = () => {
     ];
   } catch { return ['CAPABILITY_UNAVAILABLE']; }
 };
+// Cell exports GetDocument too, but it throws on the verified Astra build.
+// Probe only the workbook root and method presence; never call a mutation.
+const cellCapabilityBody = () => {
+  try {
+    var present = typeof Api !== 'undefined' && Api !== null;
+    var sheet = present && typeof Api.GetActiveSheet === 'function' ? Api.GetActiveSheet() : null;
+    var range = sheet && typeof sheet.GetRange === 'function' ? sheet.GetRange('A1') : null;
+    return [present, !!sheet, !!range && typeof range.GetValue === 'function', !!range && typeof range.SetValue === 'function'];
+  } catch { return ['CAPABILITY_UNAVAILABLE']; }
+};
 const contextBody = () => {
   try {
     var available = typeof Api !== 'undefined' && Api !== null;
@@ -110,7 +121,7 @@ const contextBody = () => {
 // `callCommand` builds around an author-written body. `String(...)` is a data conversion of an authored
 // function literal, never execution of a string.
 function commandTransport(which) {
-  return 'var Asc = {}; \n  var scope = Asc.scope;\n  (' + String(which === 'context' ? contextBody : capabilityBody) + ')();\n  ';
+  return 'var Asc = {}; \n  var scope = Asc.scope;\n  (' + String(which === 'context' ? contextBody : which === 'cell-capability' ? cellCapabilityBody : capabilityBody) + ')();\n  ';
 }
 // Resolve the command dispatch from the two own-function descriptors the facade may expose. The
 // returned descriptor is frozen, so the choice cannot be rewritten after the bridge is constructed.
@@ -122,6 +133,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
   if (hasCommand) {
     return Object.freeze({ present: true, method: 'callCommand',
       probe(which, callback) {
+        if (which === 'cell-capability') return plugin.callCommand(function () {
+          try {
+            var present = typeof Api !== 'undefined' && Api !== null;
+            var sheet = present && typeof Api.GetActiveSheet === 'function' ? Api.GetActiveSheet() : null;
+            var range = sheet && typeof sheet.GetRange === 'function' ? sheet.GetRange('A1') : null;
+            return [present, !!sheet, !!range && typeof range.GetValue === 'function', !!range && typeof range.SetValue === 'function'];
+          } catch { return ['CAPABILITY_UNAVAILABLE']; }
+        }, false, false, callback);
         // The value handed to `callCommand` must be a FULL inline literal, never a closure over one.
         // This native does not CALL the function: it stringifies it and evaluates the text inside the
         // editor, where bridge.js's module bindings do not exist. `() => contextBody()` therefore died
@@ -4050,8 +4069,9 @@ function decodeTuple(value, sizes) {
   }
   return members;
 }
-function decodePresence(value) {
-  const tuple = decodeTuple(value, [1, presenceKeys.length]);
+function decodePresence(value, editor) {
+  const keys = editor === 'cell' ? cellPresenceKeys : presenceKeys;
+  const tuple = decodeTuple(value, [1, keys.length]);
   if (tuple.length === 1) {
     if (tuple[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
     throw new SafeError(ERROR_CODES.INVALID_DATA);
@@ -4059,7 +4079,7 @@ function decodePresence(value) {
   const result = {};
   for (let index = 0; index < tuple.length; index++) {
     if (typeof tuple[index] !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
-    result[presenceKeys[index]] = tuple[index];
+    result[keys[index]] = tuple[index];
   }
   assertByteLimit(JSON.stringify(result), LIMITS.editorResultBytes);
   return Object.freeze(result);
@@ -6038,12 +6058,15 @@ export function createR7Bridge(plugin, {
 
   function capabilities(methodPresence = null) {
     const probed = methodPresence !== null;
-    const available = !disposed && probed && methodPresence.api === true && methodPresence.getDocument === true;
+    const nativeRoot = probed && methodPresence.api === true && (editor === 'cell' ? methodPresence.getActiveSheet === true : methodPresence.getDocument === true);
+    const available = !disposed && nativeRoot && (editor !== 'cell' || methodPresence.readRange === true);
+    const writable = !disposed && nativeRoot && (editor !== 'cell' || methodPresence.writeRange === true);
     const reason = available ? 'NATIVE_PROBE_AVAILABLE' : probed ? 'NATIVE_PROBE_UNAVAILABLE' : 'NATIVE_PROBE_NOT_PERFORMED';
+    const mutationReason = writable ? 'NATIVE_PROBE_AVAILABLE' : probed ? 'NATIVE_PROBE_UNAVAILABLE' : 'NATIVE_PROBE_NOT_PERFORMED';
     return Object.freeze({
       editorType: editor, adapter, methodPresence, runtimeVerified: false,
       selectionRead: Object.freeze({ available, runtimeVerified: false, reason }),
-      mutation: Object.freeze({ available, runtimeVerified: false, reason })
+      mutation: Object.freeze({ available: writable, runtimeVerified: false, reason: mutationReason })
     });
   }
   function ensureIdle() {
@@ -6500,7 +6523,7 @@ export function createR7Bridge(plugin, {
           // character count, because the tool's whole job is to slice ONE bounded chunk out of it and
           // to say honestly where the document ends.
           else if (kind === 'documentread') result = documentText(platform, decodeDocumentText(value));
-          else if (kind === 'probe') result = capabilities(decodePresence(value));
+          else if (kind === 'probe') result = capabilities(decodePresence(value, editor));
           else {
             if (typeof value !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
             result = Object.freeze({ acknowledged: value, effectVerified: false });
@@ -6999,7 +7022,7 @@ export function createR7Bridge(plugin, {
           // The pre-dispatch baseline phase owns the ticket first and ends by dispatching the paste
           // itself, so the mutation still happens exactly once and only after its baselines answered.
           beginInsert();
-        } else { owned.dispatched = true; command.probe('capability', callback); }
+        } else { owned.dispatched = true; command.probe(editor === 'cell' ? 'cell-capability' : 'capability', callback); }
       } catch {
         // Dispatch may have reached the SDK before throwing. Never unlock on a
         // synchronous exception unless its matching callback already settled.
