@@ -1,5 +1,24 @@
 # Sprint 8 T7 — `0.9.0-pilot-rc` artifact freeze
 
+## Re-freeze after native activation defect
+
+**Result: PASS for the corrected artifact-identity and reproducibility boundary.** Native acceptance proved that the original DEB installed its eight payload files under `/usr/share/r7-ai-assistant/plugin/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/`. The documented activation destination is already the brace-GUID directory, so that package shape could produce a nested brace-GUID directory rather than `panel.js` at the path R7 loads. The package was the wrong side of the contract: the corrected DEB places the eight files directly under `/usr/share/r7-ai-assistant/plugin/`, and the documented `cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"` now lands them directly in the verified destination. A packaging regression test pins this source-to-destination result.
+
+These re-frozen hashes belong to source commit `96fe82a93c38fa25b949bc27ded3ca7e77f232e3` plus the uncommitted re-freeze patch that the controller will commit; no commit or push was performed here. Because the ZIP provenance records `96fe82a93c38fa25b949bc27ded3ca7e77f232e3`, the controller must either commit without rebuilding and preserve this exact release identity statement, or rebuild/re-record under the resulting commit before describing that later commit as the release.
+
+| Re-frozen artifact | SHA-256 |
+| --- | --- |
+| Plugin ZIP `dist/plugin/r7-ai-assistant.zip` | `4356915881a61f0d6c10ea6053e53cbb98d3a0649c100f523a86e877522bb773` |
+| DEB `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb` | `4b54302a747fac03c0af1c39099ca7791357f6fe2a5d56e940c1fb5f69e9122a` |
+| SPDX 2.3 SBOM `dist/r7-ai-assistant.spdx.json` | `cad282af49bc46182415f7762966e1c88f6a89dc0bdac836bf944ccda6acb278` |
+| Packaged/built `panel.js` | `bacb29385578d52883ae13d02ca4ac21cf69c035c77ee91ab0c9fd0fc6250a1f` |
+
+Two clean plugin builds both produced ZIP `4356915881a61f0d6c10ea6053e53cbb98d3a0649c100f523a86e877522bb773` and provenance `9b4223e2d3fa82c684517dada290974281f0eaa4da3b02623995a2e27336962b`. Two DEB builds after removing `dist/deb` both produced `4b54302a747fac03c0af1c39099ca7791357f6fe2a5d56e940c1fb5f69e9122a`. All eight DEB payload files matched the ZIP byte-for-byte, and all nine SBOM file records matched the real ZIP entries. Genuine `dpkg-deb -c` showed `panel.js` at `./usr/share/r7-ai-assistant/plugin/panel.js`, with no nested GUID directory.
+
+The stand repair removed the malformed nested activation and restored the prior per-user plugin from `/tmp/r7-ai-sprint8-backup-20261008T152429/plugin-before`. The RC package was retained because package installation itself succeeded and removing it was unnecessary to restore prior user state. A running editor with an open document was left untouched; the preserved `02-astra-r7-clean` snapshot was not restored or modified.
+
+## Previous frozen set — superseded history
+
 **Result: PASS for the artifact-identity and reproducibility boundary stated below.** The recorded artifacts were built from clean branch `stage-b` at release commit `6360dea5a784bfe804ecaa38d2bdee2fa2a757cc`. `git status --porcelain` was empty immediately before the release build and before/after each clean repeat build. Packaged `provenance.json` records that same full commit and product version `0.9.0-pilot-rc`.
 
 ## Frozen artifact set

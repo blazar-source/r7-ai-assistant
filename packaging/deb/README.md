@@ -1,6 +1,6 @@
 # Data-only DEB
 
-Build with `npm run build:deb`. The builder emits a plain Debian binary package with deterministic uncompressed `control.tar` and `data.tar` members. It contains the plugin payload under `/usr/share/r7-ai-assistant/plugin/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}`, the compatibility declaration under `/usr/share/r7-ai-assistant/`, the uninstall manifest under `/usr/share/doc/r7-ai-assistant/`, and the bounded local `/usr/bin/r7-ai-assistant-preflight` activation gate.
+Build with `npm run build:deb`. The builder emits a plain Debian binary package with deterministic uncompressed `control.tar` and `data.tar` members. It contains the eight plugin payload files directly under `/usr/share/r7-ai-assistant/plugin/`, the compatibility declaration under `/usr/share/r7-ai-assistant/`, the uninstall manifest under `/usr/share/doc/r7-ai-assistant/`, and the bounded local `/usr/bin/r7-ai-assistant-preflight` activation gate.
 
 ## Verified activation mechanism
 
@@ -20,7 +20,7 @@ Only after that succeeds does the target user activate the payload explicitly:
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
 install -d -m 0755 "$TARGET"
-cp -a "/usr/share/r7-ai-assistant/plugin/$GUID/." "$TARGET/"
+cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"
 ```
 
 This command is the documented per-user step; it has not been run on the stand in T5. Its destination is verified by the prior running-page byte/path evidence in the packaging contract. Lifecycle execution and fresh behavior confirmation remain T6.

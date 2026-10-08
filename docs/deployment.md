@@ -38,7 +38,7 @@ As the desktop user who will run R7, execute the shipped compatibility preflight
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
 install -d -m 0755 "$TARGET"
-cp -a "/usr/share/r7-ai-assistant/plugin/$GUID/." "$TARGET/"
+cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"
 ```
 
 Do not copy after a non-zero result; unsupported targets refuse before activation with exit code `42`. Restart R7 after activation when required for plugin discovery.
@@ -83,7 +83,7 @@ sudo dpkg -i "$PACKAGE"
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
 install -d -m 0755 "$TARGET"
-cp -a "/usr/share/r7-ai-assistant/plugin/$GUID/." "$TARGET/"
+cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"
 ```
 
 Do not activate an upgrade if preflight refuses it. The Sprint 7 `.1` fixture is unshipped and must never be used as an operator package or generalized to future bytes. The DEB has no maintainer scripts and does not edit the R7 profile or vendor installation files.
