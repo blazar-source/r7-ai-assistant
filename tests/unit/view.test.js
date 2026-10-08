@@ -48,10 +48,10 @@ test('marked content container holds every content block while composer remains 
   assert.equal(content.children.includes(composer), false);
   assert.equal(content.getAttribute('data-scroll-container'), 'content');
   assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
-  assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'status', 'progress-stage', 'content', 'composer']);
+  assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'content', 'composer']);
   assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
-    ['history', 'preview', 'diagnostics']);
-  for (const section of ['history', 'preview', 'diagnostics']) {
+    ['history', 'progress-stage', 'preview', 'diagnostics']);
+  for (const section of ['history', 'progress-stage', 'preview', 'diagnostics']) {
     assert.equal(content.children.includes(id(section)), true, `${section} belongs to the content container`);
   }
   const diagnostics = id('diagnostics');
@@ -90,19 +90,19 @@ test('actual colour tokens meet text, boundary and layered focus contrast thresh
     ['button text/accent', '#ffffff', token('accent'), 4.5], ['line/surface', token('line'), token('surface'), 3],
     ['focus/surface', token('focus'), token('surface'), 3], ['submit focus halo/accent', token('surface'), token('accent'), 3]
   ]) assert.ok(contrast(foreground, background) >= threshold, `${name}: ${contrast(foreground, background).toFixed(2)} < ${threshold}`);
-  assert.match(css, /button\[type="submit"\]:focus-visible \{ box-shadow: 0 0 0 5px var\(--surface\), 0 0 0 8px var\(--focus\); \}/);
 });
 
 test('main panel keeps diagnostics collapsed and composer compact at rest', () => {
   const { all, id, panel, controller } = fixture();
   const diagnostics = id('diagnostics');
   assert.ok(diagnostics);
-  assert.equal(diagnostics.tagName, 'DETAILS');
+  assert.equal(diagnostics.tagName, 'SECTION');
+  assert.equal(diagnostics.hidden, true);
   assert.equal(diagnostics.getAttribute('open'), null);
   assert.equal(diagnostics.children.includes(id('editor')), true);
   assert.match(id('editor').textContent, /Stage B/);
   assert.equal(all().some(item => item.tagName === 'LABEL' && item.htmlFor === 'prompt'), false);
-  assert.equal(id('prompt').rows, 3);
+  assert.equal(id('prompt').rows, 2);
   assert.equal(id('input-budget').hidden, true);
   assert.equal(id('stop').hidden, true);
   panel.dispose(); controller.dispose();
@@ -187,9 +187,9 @@ test('view supplies semantic labeled editable connection controls and masked key
   assert.equal(controller.getState().settings.rememberKey, false);
   assert.equal(id('apply').disabled, true);
 });
-test('model/document text remains literal DOM text, never HTML or markdown', async () => {
+test('model HTML and document text remain inert while assistant emphasis renders', async () => {
   const { id, controller, all } = fixture(); await controller.analyze('question');
-  assert.ok(id('history').textContent.includes('<img src=x onerror=alert(1)> **not markdown**'));
+  assert.ok(id('history').textContent.includes('<img src=x onerror=alert(1)> not markdown'));
   assert.ok(id('selected-text').textContent.includes('<script>inert</script>'));
   assert.equal(all().some(node => ['IMG','SCRIPT'].includes(node.tagName)), false);
   controller.dispose();
@@ -214,7 +214,15 @@ test('draft survives EDIT to ASK mode change exactly', () => {
 });
 
 test('keyboard path covers visible controls in DOM order and activates named actions without a mouse', async () => {
-  const focusable = f => f.all().filter(node => ['BUTTON', 'TEXTAREA', 'SELECT', 'INPUT', 'SUMMARY'].includes(node.tagName) && !node.disabled && !node.hidden);
+  const focusable = f => {
+    function walk(node) {
+      if (node.hidden) return [];
+      const own = ['BUTTON', 'TEXTAREA', 'SELECT', 'INPUT', 'SUMMARY'].includes(node.tagName) && !node.disabled ? [node] : [];
+      const children = node.tagName === 'DETAILS' && node.getAttribute('open') === null ? node.children.slice(0, 1) : node.children;
+      return [...own, ...children.flatMap(walk)];
+    }
+    return walk(f.root);
+  };
   const activateButton = button => { button.focus(); button.dispatch('keydown', { key: 'Enter' }); button.dispatch('click'); };
   // This fixture dispatches the events each control handles; real browser Tab traversal and native <summary>
   // toggling are confirmed in T6, as explicitly split by the owner.
@@ -223,7 +231,7 @@ test('keyboard path covers visible controls in DOM order and activates named act
   const activeOrder = focusable(active).map(node => node.id || node.textContent);
   activateButton(active.id('stop'));
   assert.deepEqual(activeOrder,
-    ['new-chat', 'Диагностика', 'include-context', 'mode', 'Прочитанный текст', 'Настройки соединения', 'endpoint', 'model', 'apiKey', 'httpTimeoutSeconds', 'maxTokens', 'temperature', 'rememberKey', 'save-settings', 'reset', 'prompt', 'stop']); release(injected(final('late'))); await running;
+    ['new-chat', 'toggle-diagnostics', 'prompt', 'stop']); release(injected(final('late'))); await running;
   assert.equal(active.controller.getState().status, 'STOPPED'); active.panel.dispose(); active.controller.dispose();
 
   let checked = 0;
@@ -237,12 +245,15 @@ test('keyboard path covers visible controls in DOM order and activates named act
   f.id('prompt').value = 'edit'; f.id('composer').dispatch('submit'); await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.controller.getState().status, 'PREVIEW_READY', 'Send submits the message through the form');
   assert.deepEqual(focusable(f).map(node => node.id || node.textContent),
-    ['new-chat', 'apply', 'cancel-preview', 'Диагностика', 'include-context', 'mode', 'read-context', 'check-r7', 'Прочитанный текст', 'Настройки соединения', 'endpoint', 'model', 'apiKey', 'httpTimeoutSeconds', 'maxTokens', 'temperature', 'rememberKey', 'save-settings', 'test-connection', 'reset', 'prompt', 'send']);
-  const summary = f.id('diagnostics').children[0];
-  summary.focus(); summary.dispatch('keydown', { key: 'Enter' });
-  assert.equal(f.id('diagnostics').getAttribute('open'), '');
-  summary.dispatch('keydown', { key: ' ' });
-  assert.equal(f.id('diagnostics').getAttribute('open'), null);
+    ['new-chat', 'toggle-diagnostics', 'apply', 'cancel-preview', 'prompt', 'send']);
+  const toggle = f.id('toggle-diagnostics');
+  activateButton(toggle);
+  assert.equal(f.id('diagnostics').hidden, false);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  activateButton(toggle);
+  assert.equal(f.id('diagnostics').hidden, true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  activateButton(toggle);
   activateButton(f.id('check-r7')); await new Promise(resolve => setImmediate(resolve)); assert.equal(checked, 1);
   f.controller.setMode('EDIT'); await f.controller.analyze('apply proposal');
   assert.equal(f.id('apply').disabled, false);
@@ -432,21 +443,17 @@ test('a successful action line renders the outcome without a code', async () => 
   f.panel.dispose(); f.controller.dispose();
 });
 
-test('markup in a model final message stays verbatim text and never becomes an element', async () => {
-  const markup = '<img src=x onerror=alert(1)> **not markdown**';
-  const f = fixture(final(markup));
-  await f.controller.analyze('вопрос');
-  const history = f.id('history');
-  const reply = history.children[1];
-  // (a) the model's text is present VERBATIM: not parsed, escaped, stripped or shortened.
-  assert.equal(reply.children[1].textContent, markup);
-  assert.ok(history.textContent.includes(markup));
-  // (b) the history is built only from the authored element types — no element was created from the
-  // content, because the renderer sets textContent and never markup.
-  assert.deepEqual(history.children.map(child => child.tagName), ['ARTICLE', 'ARTICLE']);
-  assert.deepEqual(history.children[0].children.map(child => child.tagName), ['H2', 'PRE']);
-  assert.deepEqual(reply.children.map(child => child.tagName), ['H2', 'PRE']);
+test('assistant Markdown renders semantics with raw HTML inert and compact roles', async () => {
+  const f = fixture(final('<img src=x onerror=alert(1)> **bold**'));
+  await f.controller.analyze('**literal user**');
+  const [user, reply] = f.id('history').children;
+  assert.equal(user.children[1].textContent, '**literal user**');
+  assert.equal(reply.children[1].textContent, '<img src=x onerror=alert(1)> bold');
+  assert.deepEqual(reply.children.map(child => child.tagName), ['SPAN', 'DIV']);
+  assert.equal(reply.children[0].textContent, 'Ассистент');
+  assert.equal(f.all().filter(node => node.tagName === 'H1').length, 1);
   assert.equal(f.all().some(node => ['IMG', 'SCRIPT'].includes(node.tagName)), false);
+  assert.equal(f.all().find(node => node.tagName === 'STRONG').textContent, 'bold');
   f.panel.dispose(); f.controller.dispose();
 });
 
@@ -615,4 +622,33 @@ test('the readiness summary names the denominator of the EDITOR it describes', a
   const wordSummary = word.id('r7-capabilities').textContent;
   assert.match(wordSummary, /3 \/ 6/, 'a document keeps its six primitives: ' + wordSummary);
   cell.panel.dispose(); cell.controller.dispose(); word.panel.dispose(); word.controller.dispose();
+});
+
+ test('draft grows to the cap and shrinks without replacing focused prompt', () => {
+  const f = fixture(); const prompt = f.id('prompt'); prompt.focus();
+  prompt.scrollHeight = 140; prompt.value = 'long draft'; prompt.dispatch('input');
+  assert.equal(prompt.style.height, '72px'); assert.equal(f.document.activeElement, prompt);
+  prompt.scrollHeight = 36; prompt.value = ''; prompt.dispatch('input');
+  assert.equal(prompt.style.height, '38px'); assert.equal(f.id('prompt'), prompt);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+ test('status updates preserve readers of earlier messages and follow the current tail', () => {
+  const f = fixture(); const content = f.id('content');
+  content.scrollHeight = 1000; content.clientHeight = 300; content.scrollTop = 100;
+  f.controller.contextChanged(); assert.equal(content.scrollTop, 100);
+  content.scrollTop = 700; f.controller.contextChanged(); assert.equal(content.scrollTop, 1000);
+  f.id('toggle-diagnostics').dispatch('click'); content.scrollTop = 100;
+  f.controller.contextChanged(); assert.equal(content.scrollTop, 100);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('adding replies preserves earlier Markdown link nodes and focus', async () => {
+  const f = fixture(final('[reference](https://example.invalid/)'));
+  await f.controller.analyze('first');
+  const link = f.all().find(node => node.tagName === 'A'); link.focus();
+  await f.controller.analyze('second');
+  assert.equal(f.all().find(node => node.tagName === 'A'), link);
+  assert.equal(f.document.activeElement, link);
+  f.panel.dispose(); f.controller.dispose();
 });

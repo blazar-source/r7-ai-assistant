@@ -1,4 +1,5 @@
 import { utf8ByteLength } from '../shared/bytes.js';
+import { renderMarkdown } from './markdown.js';
 
 const statuses = Object.freeze({
   CHECKING_R7: 'Проверка наличия API Р7…', R7_PRESENCE_READY: 'Проверка наличия API завершена. Документ не изменён.', R7_CHECK_UNAVAILABLE: 'Проверка Р7 недоступна для этого редактора / моста. API не угадываются.',
@@ -159,20 +160,23 @@ export function mountPanel(root, controller) {
   }
   const header = node('header');
   const title = node('h1', 'R7 AI Assistant');
-  const fresh = button('Новый чат', 'new-chat', function () { controller.newChat(); prompt.focus(); });
-  header.append(title, fresh);
-  const diagnostics = node('details', '', 'diagnostics');
-  const diagnosticsSummary = node('summary', 'Диагностика');
-  on(diagnosticsSummary, 'keydown', function (event) {
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    if (diagnostics.getAttribute('open') === null) diagnostics.setAttribute('open', '');
-    else diagnostics.removeAttribute('open');
+  const fresh = button('＋', 'new-chat', function () { controller.newChat(); prompt.focus(); });
+  fresh.className = 'header-control'; fresh.setAttribute('aria-label', 'Новый чат'); fresh.title = 'Новый чат';
+  const diagnostics = node('section', '', 'diagnostics'); diagnostics.hidden = true;
+  diagnostics.setAttribute('aria-label', 'Диагностика');
+  const diagnosticsToggle = button('⋯', 'toggle-diagnostics', function () {
+    diagnostics.hidden = !diagnostics.hidden;
+    diagnosticsToggle.setAttribute('aria-expanded', String(!diagnostics.hidden));
+    if (!diagnostics.hidden) content.scrollTop = content.scrollHeight;
   });
+  diagnosticsToggle.className = 'header-control'; diagnosticsToggle.title = 'Диагностика';
+  diagnosticsToggle.setAttribute('aria-label', 'Диагностика');
+  diagnosticsToggle.setAttribute('aria-controls', 'diagnostics'); diagnosticsToggle.setAttribute('aria-expanded', 'false');
   const badge = node('p', 'Stage B · только предложение', 'editor'); badge.className = 'muted';
   const detailedStatus = node('p', '', 'status-details'); detailedStatus.setAttribute('aria-live', 'off'); detailedStatus.className = 'muted';
-  diagnostics.append(diagnosticsSummary, badge, detailedStatus);
+  diagnostics.append(node('h2', 'Диагностика'), badge, detailedStatus);
   const status = node('p', '', 'status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
+  header.append(title, status, fresh, diagnosticsToggle);
   const progressStage = node('p', '', 'progress-stage'); progressStage.setAttribute('aria-live', 'off'); progressStage.setAttribute('aria-busy', 'false'); progressStage.hidden = true;
   const lifecycleWarning = node('p', 'Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.'); lifecycleWarning.className = 'notice';
   const toolbar = node('section'); toolbar.setAttribute('aria-label', 'Режим и контекст');
@@ -204,16 +208,22 @@ export function mountPanel(root, controller) {
   // never become an element or an attribute.
   const orchestration = node('pre', '', 'orchestration'); orchestration.setAttribute('aria-live', 'off'); orchestration.hidden = true;
   const composer = node('form', '', 'composer');
-  const prompt = node('textarea', '', 'prompt'); prompt.rows = 3; prompt.setAttribute('aria-label', 'Запрос'); prompt.setAttribute('aria-describedby', 'input-budget');
+  const prompt = node('textarea', '', 'prompt'); prompt.rows = 2; prompt.setAttribute('aria-label', 'Запрос'); prompt.setAttribute('aria-describedby', 'input-budget');
+  prompt.placeholder = 'Сообщение…';
   const budget = node('p', '', 'input-budget'); budget.className = 'muted'; budget.hidden = true;
   on(prompt, 'input', function () {
+    const followDraftTail = diagnostics.hidden && content.scrollHeight - content.scrollTop - content.clientHeight < 32;
+    prompt.style.height = '38px';
+    prompt.style.height = `${Math.min(72, Math.max(38, prompt.scrollHeight + 2))}px`;
     const bytes = utf8ByteLength(prompt.value);
-    budget.textContent = `${bytes} / 8192 байт UTF-8 · Ctrl+Enter — отправить`;
+    budget.textContent = `${bytes} / 8192 байт UTF-8`;
     budget.hidden = bytes < 6144;
+    if (followDraftTail) content.scrollTop = content.scrollHeight;
   });
-  const send = node('button', 'Отправить', 'send'); send.type = 'submit';
+  const send = node('button', '↑', 'send'); send.type = 'submit'; send.setAttribute('aria-label', 'Отправить'); send.title = 'Отправить · Ctrl+Enter';
   const stop = button('Стоп', 'stop', function () { controller.stop(); prompt.focus(); }); stop.hidden = true;
-  composer.append(prompt, budget, send, stop);
+  const composerActions = node('div', '', 'composer-actions'); composerActions.append(send, stop);
+  composer.append(prompt, budget, composerActions);
   const preview = node('section', '', 'preview'); preview.setAttribute('aria-label', 'Предложение замены');
   const replacement = node('pre', '', 'replacement');
   const reason = node('p', 'Только явное Применить: текущее непустое выделение должно точно совпадать с исходным текстом. Перевыделение такого же текста разрешено. Срок предложения — 120 секунд. Штатный Undo выполняется вручную.', 'apply-reason');
@@ -252,12 +262,15 @@ export function mountPanel(root, controller) {
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
   diagnostics.append(lifecycleWarning, toolbar, orchestration, journal, settings);
-  content.append(history, preview, diagnostics);
-  root.replaceChildren(header, status, progressStage, content, composer);
+  content.append(history, progressStage, preview, diagnostics);
+  root.replaceChildren(header, content, composer);
   let lastSettings = null;
   let lastHistory = null;
   let lastAgentActions = null;
   const unsubscribe = controller.subscribe(function (state) {
+    // Measure before Stop/progress alter the available height. Preserve an intentional
+    // scroll into older messages, but keep a reader at the tail with the working stage.
+    const followTail = diagnostics.hidden && content.scrollHeight - content.scrollTop - content.clientHeight < 32;
     const record = state.agent ?? null;
     status.textContent = statusText(state.status, true);
     const stage = progressStageText(state);
@@ -292,16 +305,32 @@ export function mountPanel(root, controller) {
     context.textContent = contextText(state.context);
     selected.textContent = state.context.text;
     if (lastHistory !== state.chat.history) {
+      // History appends pairs and may evict old pairs at its byte cap. Keep the
+      // retained suffix mounted: focused Markdown links must survive a reply.
+      const previous = lastHistory ?? [];
+      const next = state.chat.history;
+      let retained = 0;
+      for (let start = 0; start < previous.length; start += 1) {
+        const suffix = previous.slice(start);
+        if (suffix.length <= next.length && suffix.every((entry, index) => entry.role === next.at(index).role && entry.content === next.at(index).content)) {
+          retained = suffix.length; break;
+        }
+      }
+      for (let removed = previous.length - retained; removed > 0; removed -= 1) history.removeChild(history.children[0]);
       lastHistory = state.chat.history;
-      const entries = state.chat.history.map(function (entry) {
+      const entries = state.chat.history.slice(retained).map(function (entry) {
         const article = node('article');
         const role = entry.role === 'user' ? 'user' : 'assistant';
         article.className = `message message-${role}`;
         article.setAttribute('data-role', role);
-        article.append(node('h2', role === 'user' ? 'Вы' : 'Ассистент / предложение'), node('pre', entry.content));
+        const roleLabel = node('span', role === 'user' ? 'Вы' : 'Ассистент'); roleLabel.className = 'message-role';
+        const body = node('div'); body.className = 'message-body';
+        if (role === 'assistant') renderMarkdown(body, entry.content);
+        else body.textContent = entry.content;
+        article.append(roleLabel, body);
         return article;
       });
-      history.replaceChildren(...entries);
+      history.append(...entries);
     }
     preview.hidden = !state.preview;
     replacement.textContent = state.preview?.replacement ?? '';
@@ -322,6 +351,7 @@ export function mountPanel(root, controller) {
       lastSettings = state.settings;
       for (const [name, value] of Object.entries(state.settings)) { const fieldControl = controls[name]; if (!fieldControl) continue; if (name === 'rememberKey') fieldControl.checked = value; else fieldControl.value = String(value); }
     }
+    if (followTail) content.scrollTop = content.scrollHeight;
   });
   return Object.freeze({ dispose() { unsubscribe(); for (const handler of handlers) handler.el.removeEventListener(handler.name, handler.handler); } });
 }

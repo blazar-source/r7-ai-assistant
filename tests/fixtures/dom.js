@@ -1,6 +1,6 @@
 // Minimal injected DOM boundary; no HTML parser, code execution or browser-proof claim.
 export class Element {
-  constructor(tag, document) { this.tagName = tag.toUpperCase(); this.ownerDocument = document; this.children = []; this.attributes = {}; this.listeners = {}; this.text = ''; this.value = ''; this.checked = false; this.disabled = false; this.hidden = false; }
+  constructor(tag, document) { this.tagName = tag.toUpperCase(); this.ownerDocument = document; this.children = []; this.attributes = {}; this.listeners = {}; this.text = ''; this.value = ''; this.checked = false; this.disabled = false; this.hidden = false; this.style = {}; this.scrollHeight = 0; this.scrollTop = 0; this.clientHeight = 0; }
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
   set innerHTML(_) { throw Error('HTML must never be used'); }
@@ -8,6 +8,7 @@ export class Element {
   getAttribute(key) { return this.attributes[key] ?? null; }
   removeAttribute(key) { delete this.attributes[key]; }
   append(...children) { this.children.push(...children); }
+  removeChild(child) { this.children.splice(this.children.indexOf(child), 1); return child; }
   replaceChildren(...children) { this.text = ''; this.children = children; }
   addEventListener(name,callback) { (this.listeners[name] ??= []).push(callback); }
   removeEventListener(name,callback) { this.listeners[name] = (this.listeners[name] ?? []).filter(item => item !== callback); }
