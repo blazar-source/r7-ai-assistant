@@ -11,6 +11,12 @@ const final = (message) => JSON.stringify({ type: 'final', message });
 const toolCalls = (...tools) => JSON.stringify({ type: 'tool_calls', calls: tools.map(([tool, args]) => ({ tool, arguments: args })) });
 const injected = (reply) => ({ content: typeof reply === 'string' ? reply : JSON.stringify(reply) });
 
+test('unverified agent completion has an attention label without claiming a save', () => {
+  assert.equal(statusText('AGENT_INCOMPLETE', true), 'Ошибка');
+  assert.match(statusText('AGENT_INCOMPLETE'), /не подтверждено/);
+  assert.doesNotMatch(statusText('AGENT_INCOMPLETE'), /сохранены/);
+});
+
 // The controller's transport receives (settings, messages, uuid, options); the Agent Runtime's own
 // raw envelope is a string in `content`. A bare string is passed through untouched and anything else
 // is wrapped, so both the raw and the parsed Sprint 1 style of fixture work here.

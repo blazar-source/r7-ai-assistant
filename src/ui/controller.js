@@ -26,7 +26,7 @@ function safeCode(error) { return error instanceof SafeError ? closedCode(error.
 // every action is still refused at dispatch by that owned-target check, which is the authority.
 // The Agent Runtime's terminal vocabulary mapped onto the controller's existing status codes (§8).
 const RUN_STATUS = Object.freeze({ FINAL: 'COMPLETE', PREVIEW_READY: 'PREVIEW_READY', UNCERTAIN: 'APPLY_UNCERTAIN',
-  LIMIT: 'AGENT_LIMIT', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
+  LIMIT: 'AGENT_LIMIT', INCOMPLETE: 'AGENT_INCOMPLETE', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
 const CONNECTION_REQUEST = 'Проверка соединения. Ответь JSON final.';
 // The HOST-side bound the panel brackets one multi-step agent run with. It is NOT the single-shot
 // 150 s operation timeout: a pilot task of a ten-page document needs dozens of tool calls and minutes

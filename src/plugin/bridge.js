@@ -1573,7 +1573,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
           } catch (error) {
             return writeRefusal('CAPABILITY_UNAVAILABLE');
           }
-        }, false, false, callback);
+        }, false, true, callback);
       },
       // ----- CELL: the bounded SPREADSHEET FORMATTING ---------------------------------------------
       // The SECOND Cell mutation and the FIRST that changes PRESENTATION rather than content. Every primitive

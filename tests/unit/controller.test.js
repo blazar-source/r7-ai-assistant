@@ -45,6 +45,24 @@ function setup(options = {}) {
   return { controller, replies, transport, applied, bridge, storage, clock, scheduled, advance(ms, fire = true) { time += ms; if (fire) for (const [token, t] of [...scheduled]) if (t.at <= time) { scheduled.delete(token); t.fn(); } } };
 }
 
+test('unverified Slide completion is not published as success or appended to chat', async () => {
+  const f = setup({ response: [toolCalls(['add_slide', {}]), final('unverified'), final('still unverified')], bridge: {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'slide', adapter: { commandDispatch: true, executeMethod: true },
+      selectionRead: { available: true }, mutation: { available: true } }; },
+    async addSlide() { return { ok: true, slidesCount: 6, slideIndex: 1, layoutId: '306', layoutPreserved: true }; }
+  } });
+  await f.controller.checkR7();
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('Добавь слайд в конец');
+  const state = f.controller.getState();
+  assert.equal(state.status, 'AGENT_INCOMPLETE');
+  assert.equal(state.agent.status, 'INCOMPLETE');
+  assert.equal(state.agent.toolCalls, 1);
+  assert.equal(state.chat.history.length, 0);
+  assert.equal(state.active, false);
+});
+
 test('R7 check with no bridge reports local unsupported without HTTP or credentials', async () => {
   const f = setup({ dependencies: { bridge: null } }); f.controller.reset();
   assert.equal(typeof f.controller.checkR7, 'function', 'controller read-only capability action');

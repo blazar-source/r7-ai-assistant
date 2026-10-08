@@ -10,6 +10,7 @@ import { requestCompletion } from '../ai/transport.js';
 // document, the arguments or any raw error.
 const BATCH_REFUSAL = 'one action per batch for a confirm tool; unknown tool name or invalid arguments';
 const UNSERIALIZABLE_REFUSAL = 'the tool result could not be serialized';
+const SLIDE_COMPLETION_REVIEW = 'Перед завершением сверь ВСЕ требования исходного запроса с результатом, а не только успех отдельных инструментов. Сейчас заново прочитай read_presentation (количество и порядок) и read_slide для изменённых слайдов (текст). Проверь требуемую позицию, точный текст и сохранность прежних слайдов. add_slide вставляет после текущего: если требовался конец и новый слайд не последний, выполни move_slide с fromIndex и toIndex, затем повтори оба чтения по актуальным индексам. Не создавай уже созданные слайды повторно. Используй только известные результаты, не угадывай индексы зависимых действий заранее. Верни final лишь после этой проверки; явно сообщи о невыполненных требованиях, если исправить их нельзя.';
 // §12.1/§8.3: the tool-result mapping runs OUTSIDE the per-action guard, so a result that cannot be
 // serialized must not escape to the outer catch and end the task. It becomes that batch's known tool
 // error instead: one LITERAL, bounded message, never derived from the failure, the document or the
@@ -30,9 +31,10 @@ function appendToolResults(context, results) {
     messages = toolResultMessages(results);
   } catch {
     context.append(RESULT_REFUSAL_MESSAGE);
-    return;
+    return false;
   }
   for (const message of messages) context.append(message);
+  return true;
 }
 // A code is certified by MEMBERSHIP in the closed vocabulary, never by the error's prototype:
 // `instanceof SafeError` is forgeable (`Object.create(SafeError.prototype)` with its own `code`), and a
@@ -128,13 +130,20 @@ export async function runAgent(options) {
       if (typeof registry.profileInstruction === 'function') instruction = registry.profileInstruction(profile);
     } catch { offered = catalogue; instruction = null; }
     const context = createContextWindow();
+    // A Slide edit's first final is a candidate, not effect proof. The review is bounded by the
+    // existing loop budgets; no extra writes or automatic retries are dispatched by this gate.
+    const reviewSlideCompletion = editor === 'slide' && mode === 'EDIT';
+    let mutationRevision = 0;
+    let reviewingCompletion = false;
+    let structureRevision = -1;
+    let textRevision = -1;
     // Deterministic deadline on the injected clock, checked before every step and every action.
     const deadline = now() + guardrails.operationDeadlineMs;
     // The transport compares an absolute deadline against its own clock, so it must be given the SAME
     // clock the deadline was computed on: with an injected `now` and the default transport, its
     // `Date.now` frame would put `start` past the deadline and every request would fail as a TIMEOUT.
     const send = transport ?? (messages => requestCompletion(settings, messages, uuid, { parse: 'raw', agent: true, signal, deadline, clock: { now } }));
-    context.append({ role: 'system', content: systemRules(offered, mode, instruction) });
+    context.append({ role: 'system', content: systemRules(offered, mode, instruction, reviewSlideCompletion) });
     context.append({ role: 'user', content: request });
     while (steps < guardrails.maxSteps) {
       if (signal?.aborted) return finish('CANCELLED');
@@ -150,6 +159,8 @@ export async function runAgent(options) {
         if (error instanceof SafeError && error.code === ERROR_CODES.CANCELLED) return finish('CANCELLED');
         return finish('ERROR', null, null, error instanceof SafeError ? error.code : ERROR_CODES.INTERNAL_ERROR);
       }
+      if (signal?.aborted) return finish('CANCELLED');
+      if (now() >= deadline) return finish('LIMIT');
       let envelope;
       try {
         envelope = parseEnvelope(response?.content);
@@ -161,7 +172,18 @@ export async function runAgent(options) {
         context.append({ role: 'user', content: repairMessage(error) });
         continue;
       }
-      if (envelope.type === 'final') return finish('FINAL', envelope.message);
+      if (envelope.type === 'final') {
+        if (reviewSlideCompletion && mutationRevision > 0) {
+          if (!reviewingCompletion) {
+            reviewingCompletion = true;
+            // Do not append candidate prose: it can evict the evidence needed for review.
+            context.append({ role: 'user', content: SLIDE_COMPLETION_REVIEW });
+            continue;
+          }
+          if (structureRevision !== mutationRevision || textRevision !== mutationRevision) return finish('INCOMPLETE');
+        }
+        return finish('FINAL', envelope.message);
+      }
       let batch;
       try {
         batch = validateBatch(catalogue, envelope.calls);
@@ -183,6 +205,7 @@ export async function runAgent(options) {
         continue;
       }
       const results = [];
+      const completionReads = [];
       for (const entry of batch) {
         if (signal?.aborted) return finish('CANCELLED');
         if (now() >= deadline) return finish('LIMIT');
@@ -221,10 +244,21 @@ export async function runAgent(options) {
           : { tool: entry.descriptor.name, outcome, code: actionCode(result), bytes }));
         onEvent(Object.freeze({ step: steps, tool: entry.descriptor.name, outcome }));
         if (outcome === 'uncertain') return finish('UNCERTAIN');
+        if (reviewSlideCompletion && outcome === 'ok') {
+          if (entry.descriptor.kind === 'mutate') mutationRevision += 1;
+          else if (reviewingCompletion) completionReads.push({ name: entry.descriptor.name, revision: mutationRevision });
+        }
         results.push({ tool: entry.descriptor.name, result });
       }
       context.append({ role: 'assistant', content: JSON.stringify(envelope) });
-      appendToolResults(context, results);
+      if (appendToolResults(context, results)) {
+        // A serialization refusal is not usable read evidence. Revision stamps also reject reads
+        // followed by another mutation in the same batch or in a later step.
+        for (const read of completionReads) {
+          if (read.name === 'read_presentation') structureRevision = read.revision;
+          if (read.name === 'read_slide') textRevision = read.revision;
+        }
+      }
     }
     return finish('LIMIT');
   } catch (error) {
@@ -236,7 +270,7 @@ export async function runAgent(options) {
     return Object.freeze({ status, message, preview, code, steps, toolCalls, repairs, actions: Object.freeze([...actions]) });
   }
 }
-function systemRules(catalogue, mode, instruction = null) {
+function systemRules(catalogue, mode, instruction = null, reviewSlideCompletion = false) {
   // The authored `description` is the ONLY place the model is told what a tool is FOR: without it the
   // listing is `name (kind, policy)` and the model has to guess from the name alone.
   const lines = catalogue.map(tool => `${tool.name} (${tool.kind}, ${tool.policy}): ${tool.description}`);
@@ -246,6 +280,7 @@ function systemRules(catalogue, mode, instruction = null) {
   // used — plan first, then build in parts, then re-read and continue — which is the contract a
   // long document-generation run needs and the loop itself deliberately does not carry.
   if (typeof instruction === 'string' && instruction !== '') rules.push(instruction);
+  if (reviewSlideCompletion) rules.push('В составной задаче выполни каждое требование исходного запроса, включая позицию и порядок слайдов. Зависимые вызовы отправляй после получения нужных индексов. После изменений первый final запускает проверку результата: выполни запрошенные контрольные чтения до окончательного final.');
   rules.push('Отвечай ровно одним JSON-объектом: {"type":"tool_calls","calls":[{"tool":"…","arguments":{…}}]} или {"type":"final","message":"…"}.',
     // THE BATCH CEILING, stated in the SAME model-facing text, and read from the SAME constant the envelope
     // validator enforces (`validateBatch` against `AGENT_CEILINGS.actionsPerStep`) rather than written as a second,

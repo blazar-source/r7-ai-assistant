@@ -174,7 +174,7 @@ function rig({ forge, noOp = false, editorType = 'cell', values, formulas, sheet
       const source = Function.prototype.toString.call(body);
       const scope = namespace.scope;
       const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
-      commands.push({ by: 'callCommand', source, scope, answered });
+      commands.push({ by: 'callCommand', source, scope, answered, close, recalculate });
       callback(forge === undefined ? answered : forge);
       return false;
     } };
@@ -792,4 +792,13 @@ test('a write answer carrying a TRAILING member is refused, not read as a succes
   const result = await f.bridge.writeRange({ address: 'A1', cells: [['x']] });
   assert.equal(result.ok, false, JSON.stringify(result));
   assert.equal(result.code, 'APPLY_UNCERTAIN');
+});
+
+// Native Astra stores the new value but leaves the canvas/formula bar stale with isCalc=false.
+test('write_range requests native recalculation while keeping the plugin open', async () => {
+  const f = rig();
+  const result = await f.bridge.writeRange({ address: 'A1', cells: [['VISIBLE']] });
+  assert.equal(result.ok, true);
+  assert.equal(f.commands.at(-1).close, false);
+  assert.equal(f.commands.at(-1).recalculate, true);
 });

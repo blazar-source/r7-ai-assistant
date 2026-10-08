@@ -8,6 +8,7 @@ const statuses = Object.freeze({
   COMPLETE: 'Ответ получен', PREVIEW_READY: 'Предложение готово. Документ не изменён.', PREVIEW_EXPIRED: 'Срок предложения истёк', PREVIEW_CANCELLED: 'Предложение отменено. Документ не изменён.',
   SETTINGS_CHANGED: 'Настройки изменены; предыдущий запрос и предложение недействительны', SETTINGS_SAVED: 'Настройки применены', STOPPED: 'Запрос остановлен. Поздние ответы не используются.',
   AGENT_LIMIT: 'Достигнут предел выполнения задачи. Результат неполный; проверьте документ.',
+  AGENT_INCOMPLETE: 'Завершение задачи не подтверждено контрольным чтением. Выполненные изменения остаются в открытом документе; проверьте результат.',
   ORCH_PLANNING: 'Составляю план документа… Документ не изменяется.',
   ORCH_EXECUTING: 'Выполняю план по частям…',
   ORCH_VERIFYING: 'Проверяю документ по факту: структура и объём.',
@@ -53,7 +54,7 @@ const compactClean = Object.freeze([
   'APPLY_ACKNOWLEDGED', 'ORCH_COMPLETE'
 ]);
 const compactAttention = Object.freeze([
-  'AGENT_LIMIT', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN',
+  'AGENT_LIMIT', 'AGENT_INCOMPLETE', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN',
   'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR',
   'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT',
   'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR',
