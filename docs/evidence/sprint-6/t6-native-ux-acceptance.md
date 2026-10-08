@@ -289,3 +289,65 @@ The second CDP poll was started at roughly 1 s cadence, but because the direct-f
 * No mounted-panel `#progress-stage`/`#status` sequence was captured during either paid run; only the controller status sequence advanced.
 * The during-run Windows image is a shell capture, not evidence of an alive panel stage.
 * The latest run again proves terminal controller flow, not successful presentation mutation.
+
+## 11. Final native-closure attempt with the R7 bridge available (2026-10-08)
+
+This append is measurement-only. `git status --short` was empty before this append; no product or test file was changed, and no commit/push/full-suite command was run. The newly installed `dsh-r7-office` bridge initially reported `connected:true, clientCount:2, developerMode:false`; safe `getDocumentText` / `getSelectedText` requests then timed out at 5000 ms, so bridge connectivity alone did not open another editor document.
+
+### 11.1 Word and Cell capability, native editor routes
+
+Windows clean-launch command (repeated with DOCX and XLSX):
+
+```powershell
+Get-Process | ? {$_.Name -match '^(DesktopEditors|editors|editors_helper)$' -or $_.Path -like '*R7-Office*'} |
+  Stop-Process -Force
+Get-ChildItem "$env:LOCALAPPDATA\R7-Office" -Recurse -Force -Filter 'Singleton*' | Remove-Item -Force -Recurse
+Start-Process 'C:\Program Files\R7-Office\Editors-2026.3.1\DesktopEditors.exe' `
+  -ArgumentList @('--ascdesktop-support-debug-info','<fixture>')
+# poll http://127.0.0.1:8080/json/list for documenteditor/spreadsheeteditor
+```
+
+Measured symptom: after 90 s the XLSX direct route still exposed only `index.html?waitingloader=yes`; process command line contained the exact fixture. Launching the inner `editors.exe` instead produced a single process but no CDP listener. Therefore no new Windows Cell panel was fabricated. Windows Word remains the prior valid native proof: `.local/sprint6/t6-windows-word-capability.json` and `.local/sprint6/t6-windows-word-capability.png`, with `Готово к запросу`, `Stage B · редактор: word · runtimeVerified: false`, and `Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.`
+
+Astra command, first Word then Cell:
+
+```sh
+pkill -f /opt/r7-office/desktopeditors/DesktopEditors
+systemd-run --user --unit=r7-t6-<editor>-<timestamp> --collect \
+  env DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority \
+  /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info <fixture>
+# poll /json/list; then invoke t1-open-panel.js and t1-click-plugin.js in editor context 2
+```
+
+Raw target proof: Word reached `.../apps/documenteditor/main/index.html`; Cell reached `.../apps/spreadsheeteditor/main/index.html` with `doctype=spreadsheet`; each then exposed plugin context 4. Raw panel files: `.local/sprint6/t6-astra-word-capability.json`, `.local/sprint6/t6-astra-cell-capability.json`. Rendered diagnostic badges were `Stage B · редактор: word · runtimeVerified: false` and `Stage B · редактор: cell · runtimeVerified: false`; compact status was `Готово`. The normal native panel did not render the detailed closed capability paragraph without an explicit `Проверить Р7`, so the only observed action explanation was the disabled Apply reason: `Кнопка станет доступна: сначала отправьте запрос в режиме правки. Необработанный ответ не будет применён. Срок предложения — 120 секунд. Команда Undo выполняется вручную.` This is reason + next step for Apply, but not the requested per-editor capability-check result.
+
+Requested OS screenshots were attempted with `xwininfo` + `import`; the files `.local/sprint6/astra/t6-astra-word-capability.png` and `.local/sprint6/astra/t6-astra-cell-capability.png` are invalid evidence because the first matching `FlyLocker` window was the lock screen, not the editor. After `loginctl unlock-session 3`, the editor window capture `.local/sprint6/astra/t6-astra-prompt-focus-valid-full.png` showed the spreadsheet but not the side panel; it is also not capability proof. Thus comparison is: Windows Word PASS; Windows Cell not observed; Astra Word/Cell editor/plugin identities observed in DOM, but rendered capability text + valid panel screenshots remain incomplete.
+
+### 11.2 Astra prompt focus
+
+Exact focus/capture sequence (no editor relaunch between focus and capture):
+
+```sh
+# one persistent CDP connection
+Page.bringToFront
+window.focus(); document.getElementById('new-chat').focus()
+# native Tab pairs until prompt; verify document.activeElement
+xwininfo -root -tree
+DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority import -window <editor-window> <out.png>
+```
+
+Raw sequence in the focused probe: `SUMMARY → prompt`; combined with the previously recorded whole traversal it remains `new-chat → SUMMARY → prompt → send → BODY`. Immediately before capture: `active:"prompt"`; computed focus styling: `outline: rgb(9, 92, 204) solid 3px`, `box-shadow: rgb(255, 255, 255) 0 0 0 5px`, border `rgb(120, 133, 150) 1px solid`. However the requested visual proof is still invalid: before unlock the mandated FlyLocker capture showed only the lock screen; after unlock the direct 1024×720 editor capture did not composite the plugin side panel. Screenshot path recording the symptom: `.local/sprint6/astra/t6-astra-prompt-focus-valid-full.png` (SHA-256 `117441e224d9280db7262e0a477f505c7de785941fe517e93ae74c190931d027`). DOM focus is valid; focus-ring pixels are not.
+
+### 11.3 UX-B5 live progress sequence
+
+No additional paid model run was started. The prerequisite order could not be satisfied with a trustworthy visible panel: on Windows the clean file route remained the Recent-files shell; on Astra the plugin DOM existed, but the OS capture path exposed either the lock screen or an editor window without the plugin panel. Starting another bounded request would have spent credits while leaving the decisive rendered screenshot condition unmet.
+
+Therefore the only observed live sequence remains the previous controller sequence `R7_PRESENCE_READY → ANALYZING → ANALYZING → ANALYZING → ANALYZING → COMPLETE`, terminal controller status `COMPLETE`; no mounted `#progress-stage` / compact `#status` sample sequence was obtained, so UX-B5 still does not pass. Model spend added by this final attempt: **zero**. Cumulative documented spend remains two bounded `deepseek-chat` request families (`maxTokens=256` and `128`); provider currency was not returned.
+
+## WHAT THIS STILL DOES NOT SHOW — final native closure
+
+* Windows Cell capability/diagnostics text and screenshot were not obtained; the fully killed/Singleton-cleared direct XLSX route still ended on the shell.
+* Astra reached real Word and Cell editor pages and plugin context 4, but the detailed per-editor capability-check result was not rendered/captured; only editor identity, compact Ready status, and the disabled Apply reason/next step were observed.
+* The Astra prompt was genuinely active and had measured focus CSS, but neither available OS window capture composited the focused plugin pixels. The saved image is a symptom artifact, not a valid focus-ring screenshot.
+* No rendered mounted-panel UX-B5 stage sequence or during-run panel screenshot exists. Controller-only `... → COMPLETE` remains insufficient.
+* No new model credits were spent in this final attempt; exact currency for the two earlier bounded runs remains unavailable.
