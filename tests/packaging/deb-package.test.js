@@ -30,3 +30,15 @@ test('DEB plugin payload bytes match dist/plugin bytes', async () => {
   const deb = inspectDeb(readFileSync(result.debPath));
   for (const name of owned) assert.equal(hash(deb.data[`${payloadRoot}/${name}`]), hash(readFileSync(resolve(root, 'dist/plugin', name))), name);
 });
+
+test('DEB data archive explicitly contains every payload parent directory', async () => {
+  const result = await buildDeb();
+  const deb = inspectDeb(readFileSync(result.debPath));
+  const files = [...owned.map(name => `${payloadRoot}/${name}`), 'usr/share/doc/r7-ai-assistant/product-owned-files.txt'];
+  const expectedDirectories = [...new Set(files.flatMap(name => {
+    const parts = name.split('/');
+    return parts.slice(0, -1).map((_, index) => `${parts.slice(0, index + 1).join('/')}/`);
+  }))].sort();
+  assert.deepEqual(deb.directories, expectedDirectories);
+  for (const file of files) assert.ok(deb.directories.includes(`${file.slice(0, file.lastIndexOf('/'))}/`), file);
+});
