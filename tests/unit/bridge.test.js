@@ -379,6 +379,61 @@ test('probe deadline keeps shared slot uncertain and discarded callback never be
   assert.equal(r.bridge.getState().busy, true); r.calls[2].callback('next'); assert.equal((await next).text, 'next');
 });
 
+test('owned preview targets remain editor-specific across word, cell and slide', async () => {
+  for (const editorType of ['word', 'cell', 'slide']) {
+    const r = rig(editorType);
+    const capture = r.bridge.readSelection();
+    await tick();
+    r.calls.at(-1).callback(`${editorType}-selection`);
+    const result = await capture;
+    assert.equal(result.editorType, editorType);
+    assert.equal(result.eligible, true);
+    assert.equal(r.bridge.canApply(result.target), true, `${editorType} owns its freshly captured target`);
+
+    const pending = r.bridge.applySelection({ target: result.target, replacement: `${editorType}-replacement` });
+    await tick();
+    assert.equal(r.calls.at(-1).name, 'GetSelectedText');
+    r.calls.at(-1).callback(`${editorType}-selection`);
+    await tick();
+    assert.equal(r.calls.at(-1).name, 'ReplaceTextSmart');
+    r.calls.at(-1).callback(true);
+    assert.deepEqual(await pending, { acknowledged: true, effectVerified: false });
+    assert.equal(r.bridge.canApply(result.target), false, `${editorType} target is consumed once`);
+  }
+});
+
+test('owned preview stays fail-closed for unowned, mismatched, invalidated and disposed targets in every editor', async () => {
+  for (const editorType of ['word', 'cell', 'slide']) {
+    const forgedRig = rig(editorType);
+    const forged = Object.freeze({});
+    assert.equal(forgedRig.bridge.canApply(forged), false);
+    await assert.rejects(forgedRig.bridge.applySelection({ target: forged, replacement: 'changed' }), code('SELECTION_CHANGED'));
+    assert.equal(forgedRig.calls.length, 0);
+
+    const r = rig(editorType);
+    const capture = r.bridge.readSelection();
+    await tick();
+    r.calls.at(-1).callback(`${editorType}-selection`);
+    const owned = await capture;
+    r.plugin.info.editorType = editorType === 'word' ? 'slide' : 'word';
+    assert.equal(r.bridge.canApply(owned.target), false, `${editorType} refuses a current-editor mismatch`);
+    await assert.rejects(r.bridge.applySelection({ target: owned.target, replacement: 'changed' }), code('SELECTION_CHANGED'));
+    r.plugin.info.editorType = editorType;
+
+    r.bridge.invalidate();
+    assert.equal(r.bridge.canApply(owned.target), false, `${editorType} refuses a different context owner`);
+    await assert.rejects(r.bridge.applySelection({ target: owned.target, replacement: 'changed' }), code('SELECTION_CHANGED'));
+
+    const nextCapture = r.bridge.readSelection();
+    await tick();
+    r.calls.at(-1).callback(`${editorType}-next`);
+    const nextOwned = await nextCapture;
+    r.bridge.dispose();
+    assert.equal(r.bridge.canApply(nextOwned.target), false, `${editorType} refuses after disposal`);
+    await assert.rejects(r.bridge.applySelection({ target: nextOwned.target, replacement: 'changed' }), code('CAPABILITY_UNAVAILABLE'));
+  }
+});
+
 test('Apply rejects caller-forged serializable target certificates without any SDK work', async () => {
   const r = rig();
   for (const target of [null, { originalText: 'same', locator: 'first' }, { originalText: 'same', locator: 'second' }, { documentId: 'changed', revision: 1 }, { eligible: true, domain: 'plain', json: { content: ['same'] } }, { domain: 'field' }, { domain: 'unknown' }]) {

@@ -252,20 +252,20 @@ test('transport receives original operation deadline after time spent reading co
     'the runtime guardrail deadline, not the panel TIMEOUT, is the binding limit of a long run');
   assert.ok(Object.isFrozen(replies[0][0]) && Object.isFrozen(replies[0][1]));
 });
-test('unknown/unavailable/empty/exact context is explicit; no cell/slide speculative read', async () => {
-  const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, readSelection() { throw Error('must not call'); },
+test('unknown/empty/exact context is explicit and cell context remains opt-in', async () => {
+  let cellReads = 0;
+  const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async readSelection() { cellReads++; return { text: 'ячейка', editorType: 'cell', eligible: true, target: Object.freeze({}) }; },
     async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true, executeMethod: true }, methodPresence: namedPresence,
       selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' }, mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; } } });
-  assert.equal(c.getState().context.kind, 'UNKNOWN'); await c.refreshContext();
-  assert.equal(c.getState().context.kind, 'UNAVAILABLE');
-  // UX-B2 (owner decision): for a worksheet the selection context defaults OFF, so a Cell run is NOT refused
-  // before the model is ever asked. The previous expectation - analyze() === false until the caller cleared the
-  // toggle by hand - was exactly that guaranteed pre-model refusal, so it is replaced rather than preserved.
-  // `readSelection` must still never be called: the bridge in this fixture throws if it is.
+  assert.equal(c.getState().context.kind, 'UNKNOWN');
   assert.equal(c.getState().includeContext, false, 'a cell editor defaults to no selection context');
+  assert.equal(await c.refreshContext(), true, 'an explicit refresh uses the editor-agnostic owned capture');
+  assert.equal(c.getState().context.kind, 'EXACT');
+  assert.equal(cellReads, 1);
   assert.equal(await c.checkR7(), true, 'the native probe authorises the declared capabilities');
-  assert.equal(await c.analyze('q'), true, 'the run proceeds without attaching a selection');
-  assert.equal(c.getState().context.kind, 'UNAVAILABLE', 'and the context stays explicitly UNAVAILABLE');
+  assert.equal(await c.analyze('q'), true, 'the default run proceeds without another selection capture');
+  assert.equal(cellReads, 1);
   const empty = setup({ bridge: { async readSelection() { return { text: '', editorType: 'word', eligible: false, target: null }; } } }).controller;
   await empty.refreshContext(); assert.equal(empty.getState().context.kind, 'EMPTY');
 });

@@ -6033,7 +6033,7 @@ export function createR7Bridge(plugin, {
   }
   function ownedTarget(target) {
     const saved = target && typeof target === 'object' ? targets.get(target) : null;
-    return !disposed && currentEditor() === editor && editor === 'word' && saved?.owner === contextOwner ? saved : null;
+    return !disposed && currentEditor() === editor && saved?.owner === contextOwner ? saved : null;
   }
 
   function capabilities(methodPresence = null) {
@@ -7026,7 +7026,7 @@ export function createR7Bridge(plugin, {
   return Object.freeze({
     async readSelection({ signal } = {}) {
       ensureIdle();
-      if (editor !== 'word' || currentEditor() !== editor || !adapter.executeMethod || !adapter.commandDispatch) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      if (currentEditor() !== editor || !adapter.executeMethod || !adapter.commandDispatch) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
       const owner = contextOwner;
       const text = await start('read', signal);
       if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);

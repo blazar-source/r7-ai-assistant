@@ -21,10 +21,9 @@ const noContext = () => Object.freeze({ kind: 'UNKNOWN', text: '', bytes: 0, own
 // status. Anything that is not a closed class falls back to the internal-error class.
 function closedCode(value) { return typeof value === 'string' && ERROR_CODES[value] === value ? value : ERROR_CODES.INTERNAL_ERROR; }
 function safeCode(error) { return error instanceof SafeError ? closedCode(error.code) : ERROR_CODES.INTERNAL_ERROR; }
-// The catalogue is filtered by capability keys, and the only capability this controller can honestly
-// state without guessing about the installed SDK is what §6/§9 make structural: a Word editor the
-// controller already reads and (under its own owned-target proof) applies to. Every action is still
-// refused at dispatch by the bridge's own owned-target check, which is the authority.
+// The catalogue is filtered by capability keys derived from the observed native probe. The explicit
+// Preview/Apply path additionally requires the bridge's private owned target for the current editor;
+// every action is still refused at dispatch by that owned-target check, which is the authority.
 // The Agent Runtime's terminal vocabulary mapped onto the controller's existing status codes (§8).
 const RUN_STATUS = Object.freeze({ FINAL: 'COMPLETE', PREVIEW_READY: 'PREVIEW_READY', UNCERTAIN: 'APPLY_UNCERTAIN',
   LIMIT: 'AGENT_LIMIT', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
@@ -78,8 +77,8 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let stored = store.load();
   let chat = createChatSession(crypto);
   let mode = 'ASK';
-  // Cell cannot provide the Word selection context this toggle requests. Defaulting it off prevents
-  // a guaranteed local refusal before the model is contacted; the view also disables and explains it.
+  // Cell context remains opt-in because its default authoring path works without a selection capture.
+  // When enabled explicitly, all three supported editors use the same owned-preview capture and Apply proof.
   let includeContext = bridge?.getState().editorType !== 'cell';
   let context = noContext();
   let status = 'READY';
@@ -206,7 +205,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   async function read(owned) {
     const platform = bridge?.getState();
     if (platform?.busy) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
-    if (platform?.editorType !== 'word') {
+    if (!['word', 'cell', 'slide'].includes(platform?.editorType)) {
       context = Object.freeze({ kind: 'UNAVAILABLE', text: '', bytes: 0, ownershipVerified: false });
       throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
     }
