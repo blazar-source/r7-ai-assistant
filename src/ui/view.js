@@ -160,7 +160,7 @@ export function mountPanel(root, controller) {
   }
   const header = node('header');
   const title = node('h1', 'R7 AI Assistant');
-  const fresh = button('＋', 'new-chat', function () { controller.newChat(); prompt.focus(); });
+  const fresh = button('+', 'new-chat', function () { controller.newChat(); prompt.focus(); });
   fresh.className = 'header-control'; fresh.setAttribute('aria-label', 'Новый чат'); fresh.title = 'Новый чат';
   const diagnostics = node('section', '', 'diagnostics'); diagnostics.hidden = true;
   diagnostics.setAttribute('aria-label', 'Диагностика');
