@@ -8,7 +8,8 @@ import { buildPlugin } from '../../scripts/build-plugin.mjs';
 import { auditSource } from '../../scripts/static-audit.mjs';
 import { inventory } from '../fixtures/archive.js';
 const root = new URL('../../', import.meta.url);
-const expected = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'config.json', 'index.html', 'panel.js', 'resources/icon.png', 'resources/icon@2x.png', 'styles.css'];
+const expectedPayload = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'config.json', 'index.html', 'panel.js', 'resources/icon.png', 'resources/icon@2x.png', 'styles.css'];
+const expected = [...expectedPayload, 'provenance.json'].sort();
 function hash(data) { return createHash('sha256').update(data).digest('hex'); }
 function walk(node, callback) { if (!node?.type) return; callback(node); for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(child => walk(child, callback)); else if (value && typeof value === 'object') walk(value, callback); }
 // A COMMENT-STRIPPED view of an authored command body, for the leg classifier below. The classifier is a
@@ -52,6 +53,19 @@ test('dual build produces byte-identical ZIP STORE/.plugin exact root allowlist 
   assert.deepEqual(entries.map(e => e.name), expected);
   assert.deepEqual(a.archive, b.archive); assert.equal(hash(a.archive), hash(b.archive));
   assert.deepEqual(entries.find(e => e.name === 'config.json').data, await readFile(new URL('src/plugin/config.json', root)));
+  const provenanceEntry = entries.find(e => e.name === 'provenance.json');
+  const provenance = JSON.parse(provenanceEntry.data.toString('utf8'));
+  assert.equal(provenance.productVersion, '0.9.0-pilot-dev');
+  assert.match(provenance.sourceCommit, /^[0-9a-f]{40}$/);
+  assert.deepEqual(provenance.toolchain, { esbuild: '0.25.10', node: process.version });
+  assert.deepEqual(provenance.compatibility, {
+    enforcement: 'deferred-to-installer-preflight',
+    unsupportedBehavior: 'installer-must-refuse-before-payload-change',
+    r7: { architecture: 'amd64', build: '1942', package: 'r7-office', packageForm: 'deb', packageVersion: '2026.1.2-1942~astra-signed', productVersion: '2026.1.2.1942' },
+    astra: { architecture: 'amd64', buildVersion: '1.7.9.41', edition: 'Astra Linux SE', version: '1.7.9' }
+  });
+  assert.deepEqual(Object.keys(provenance.files), expectedPayload);
+  for (const name of expectedPayload) assert.equal(provenance.files[name].sha256, hash(entries.find(entry => entry.name === name).data), name);
   assert.deepEqual(await readFile(a.pluginPath), a.archive); assert.deepEqual(await readFile(a.zipPath), a.archive);
   for (const item of entries) { assert.equal(item.method, 0); assert.equal(item.time, 0); assert.equal(item.date, 33); }
 });
@@ -575,6 +589,9 @@ test('packaged CSP permits SDK own-config bootstrap without blanket local-file o
   assert.ok(sources.includes("'self'"), "SDK GET './config.json' needs document-origin connect permission");
   assert.deepEqual(sources.slice().sort(), ["'self'", 'https:'], 'only self and HTTPS; no http:, file:, wildcard or other blanket source');
   assert.deepEqual(directives.find(([name]) => name === 'default-src'), ['default-src', "'none'"]);
+});
+test('build hard-fails when the pinned esbuild version does not match', async () => {
+  await assert.rejects(buildPlugin({ output: 'dist/task4-unpinned', esbuildVersion: '0.25.9' }), /UNPINNED_BUILD_TOOL/);
 });
 test('build refuses output outside ignored dist tree and never accepts an arbitrary copy inventory', async () => {
   await assert.rejects(buildPlugin({ output: 'src/unsafe' }));
