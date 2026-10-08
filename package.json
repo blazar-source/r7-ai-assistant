@@ -9,6 +9,7 @@
     "test": "node --test",
     "audit": "node scripts/static-audit.mjs",
     "build": "node scripts/build-plugin.mjs",
+    "reproducible": "node scripts/verify-reproducible-build.mjs",
     "sbom": "node scripts/generate-sbom.mjs"
   },
   "devDependencies": {
