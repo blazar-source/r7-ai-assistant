@@ -1,5 +1,7 @@
 # T8 independent exit review — `ab06fef`
 
+**Superseded current acceptance:** [Word display blocker](word-display-blocker.md) suspends RC acceptance after manual testing. The PASS below remains the historical decision for its measured scope, not current release readiness.
+
 Date: 2026-10-09. Frozen product: **`ab06fef4e42840dbb0f02893b853dfad2e646442`**, `0.9.0-pilot-rc`.
 
 **Verdict: PASS WITH RECORDED LIMITATIONS for the current local pilot contract and exact supported target.** No remaining blocking defect was found in the reviewed source/artifact delta, final native journeys or package lifecycle evidence. The observed Slide completion/order P1 and Cell display defect can be closed for the measured regression scenarios. This does not guarantee arbitrary model task completion, authorize publication, or extend support to untested platforms. The release handoff must retain this exact identity and the limitations below; documentation-only commits do not redefine the tested product bytes.

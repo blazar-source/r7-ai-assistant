@@ -2064,7 +2064,9 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             }
             return answer;
           } catch (error) { return blocksRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
+        // Word can expose the appended paragraphs to reads while its canvas stays stale.
+        // Recalculate as part of this write, before reporting completion; keep the panel open.
+        }, false, true, callback);
       },
       // THE TABLE INSERT, and the SECOND leg in this bridge that MUTATES a document through the `Api`
       // builder. It is the same carriage and the same three phases as the block append above — a FULL

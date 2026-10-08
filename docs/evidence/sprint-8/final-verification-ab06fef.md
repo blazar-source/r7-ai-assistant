@@ -1,5 +1,7 @@
 # Final verification — 2026-10-09, product `ab06fef`
 
+**Superseded current acceptance:** [Word display blocker](word-display-blocker.md) suspends RC acceptance after manual testing. The PASS below remains the historical decision for its measured scope, not current release readiness.
+
 Product identity: **`ab06fef4e42840dbb0f02893b853dfad2e646442`**, version `0.9.0-pilot-rc`. The observed Slide P1 is corrected and both original and ordered-pair native scenarios pass. Cell A1 visual confirmation now passes. **Sprint 8 exit: PASS WITH RECORDED LIMITATIONS; local RC accepted, unpublished.** The independent [T8 decision](t8-review-ab06fef.md) confirms this bounded acceptance; [T5](t5-review-ab06fef.md) reports no blocking security finding. Later documentation commits do not redefine these tested bytes. Nothing is published, pushed, merged or tagged.
 
 This report supersedes current-status claims in [the fda714d report](final-verification-fda714d.md). Its failed run remains historical evidence, as does the [intermediate f304507 pair failure](intermediate-f304507-native.json). Successful later runs do not retroactively pass either attempt.

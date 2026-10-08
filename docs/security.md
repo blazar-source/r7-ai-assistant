@@ -1,5 +1,7 @@
 # Security and threat model
 
+**Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** Manual Word testing exposed an append/display blocker: inserted paragraphs were stored but invisible until recalculation. The minimal source correction is prepared; activation and fresh native visual acceptance are pending. This supersedes earlier RC acceptance claims below. See [Word display blocker](evidence/sprint-8/word-display-blocker.md).
+
 ## Trust boundaries
 
 User command, settings, remote model response and document data have different authority. Model and document content cannot bypass host policy. Document/comment/embedded content is untrusted even when it contains apparent system instructions. Prompt labels help but are not a security boundary: hard policy controls mutations.

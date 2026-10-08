@@ -1,5 +1,7 @@
 # Changelog
 
+**Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** Manual Word testing exposed an append/display blocker: inserted paragraphs were stored but invisible until recalculation. The minimal source correction is prepared; activation and fresh native visual acceptance are pending. This supersedes earlier RC acceptance claims below. See [Word display blocker](docs/evidence/sprint-8/word-display-blocker.md).
+
 ## 0.9.0-pilot-rc — locally accepted with recorded limitations, unpublished
 
 This local release-candidate stage packages the embedded R7 Desktop assistant for Word, Cell and Slide. The panel connects directly to a configured HTTPS `/v1/chat/completions` endpoint, exposes ASK and EDIT workflows, validates allowlisted editor actions, and keeps confirm-policy edits behind an explicit Preview/Apply boundary.

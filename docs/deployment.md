@@ -1,5 +1,7 @@
 # Deployment
 
+**Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** Manual Word testing exposed an append/display blocker: inserted paragraphs were stored but invisible until recalculation. The minimal source correction is prepared; activation and fresh native visual acceptance are pending. This supersedes earlier RC acceptance claims below. See [Word display blocker](evidence/sprint-8/word-display-blocker.md).
+
 ## Status and release artifacts
 
 Version `0.9.0-pilot-rc` is **locally accepted with recorded limitations, not published**. The tested source is pinned to `ab06fef4e42840dbb0f02893b853dfad2e646442`; the [final inventory](evidence/sprint-8/final-verification-ab06fef.md) identifies these artifacts:

@@ -4400,8 +4400,8 @@ test('bridge insertBlocks dispatches ONE command, carries the blocks as DATA and
   const carried = r.commands[0];
   assert.equal(carried.by, 'callCommand', 'the wrapper is the entry point the measured build exposes');
   assert.equal(typeof carried.body, 'function', 'the body is handed as an authored function literal, never as text');
-  assert.equal(carried.close, false, 'the documented close/recalculate arguments are unchanged');
-  assert.equal(carried.recalculate, false);
+  assert.equal(carried.close, false, 'the assistant panel remains open');
+  assert.equal(carried.recalculate, true, 'Word layout must refresh as part of the insertion');
   assert.deepEqual(carried.scope, { blocks }, 'the blocks cross as the command SCOPE, never interpolated into source');
   assert.equal(namespace.scope, 'предыдущая-область', 'the namespace is restored: no blocks outlive their dispatch');
   assert.equal(r.doc.calls.pushes, 2, 'ONE Push per block: the whole batch is appended one paragraph at a time');

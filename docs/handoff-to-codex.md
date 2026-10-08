@@ -1,5 +1,7 @@
 # Handoff: DeepSeek Harness → Codex
 
+**Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** Manual Word testing exposed an append/display blocker: inserted paragraphs were stored but invisible until recalculation. The minimal source correction is prepared; activation and fresh native visual acceptance are pending. This supersedes earlier RC acceptance claims below. See [Word display blocker](evidence/sprint-8/word-display-blocker.md).
+
 ## Current status — Codex continuation, 2026-10-09
 
 This section supersedes the historical handoff below. Work remains on `stage-b`; no clone, push, merge, tag, release or `main` modification. Product source and tested artifact identity are pinned to **`ab06fef4e42840dbb0f02893b853dfad2e646442`**. Later evidence/documentation commits do not redefine these bytes; do not rebuild from them and label the result this same set.
