@@ -6,6 +6,20 @@ Only [Sprint 1 practical editing](<superpowers/plans/2026-10-02-sprint-1-practic
 
 All measured observations, labels and provenance below are retained historical evidence. Old statements about mandatory identity/revision/atomicity describe the previous gate only, not current prerequisites. Historical Stage B NOT PASS is not retroactively PASS. Reuse closed transport evidence with explicit unchanged-component provenance; retest only missing scenarios/relevant integration changes. Bank TLS/CORS/AUTH/Qwen stay NOT RUN until internal installation; no real-model calls in Sprint 1. Later sprints are not authorized. Remaining current checks/escalation/cleanup: [test plan](<test-plan.md>).
 
+## Current Sprint 7 packaging compatibility evidence
+
+The historical boundary below remains intact. The current packaging authority is narrower and exact-tuple: only **Astra Linux SE 1.7.9 build 1.7.9.41, amd64, with R7 deb `r7-office 2026.1.2-1942~astra-signed` / executable `2026.1.2.1942`** is supported. T6 measured its full install, activation/load, upgrade/settings preservation and uninstall lifecycle; T7 measured the shipped fail-closed refusal. Product declaration `packaging/compatibility.json` feeds both plugin provenance and the shipped preflight.
+
+| Packaging target | Current status | Evidence / requirement to promote |
+| --- | --- | --- |
+| Astra 1.7.9.41 amd64 + R7 2026.1.2.1942 deb | **SUPPORTED / PASS** | Full T6 lifecycle plus T7 product-integrated refusal evidence in [T7 report](<evidence/sprint-7/t7-astra-compatibility-zps.md>). |
+| Every other Astra/R7 tuple, including separately observed R7 2026.3.1 | **NOT VERIFIED / refused** | Must independently repeat target identity, install, byte-confirmed activation/load, upgrade/settings preservation, uninstall/product-only cleanup and shipped refusal. Historical observation cannot promote a tuple. |
+| System-wide product plugin path | **NOT VERIFIED** | Requires separate behavior proof without modifying vendor-owned files. Supported location is the measured per-user brace-GUID path. |
+| ZPS current enabled state | **NOT VERIFIED** | `/usr/sbin/astra-digsig-control status` and `is-enabled` each required superuser rights and exited 1. Installed/active Parsec alone does not establish ZPS state. |
+| Product load/run with ZPS enabled | **NOT VERIFIED** | No working enabled-state observation was established; protection was never disabled or bypassed. Promotion requires proving ZPS is enabled and then loading/running this shipped product under that unchanged state. |
+
+The exact tuple is the whole allowlist. Missing, malformed, conflicting, or different package/product/architecture evidence fails closed before activation, so the rule cannot contradict the table.
+
 ## Preserved Stage B measurements
 
 This is a development evidence matrix, not a Pilot RC PASS report. The independently reviewed [terminal Stage B NOT PASS report](<stage-b-gate-report.md>) records the failed/unresolved reporting outcome without authorizing C–M. Current whole-source review's bounded audit finding is corrected in becb6c5 with independent SPEC PASS/QUALITY APPROVED; parent post-fix host tests356/356, audit and two builds pass, unchanged exact8 archive508750. This source/tooling-only fix does not retest or promote any native gate; the acceptance review still concludes Stage B NOT PASS.

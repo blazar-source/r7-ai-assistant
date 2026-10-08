@@ -1,0 +1,42 @@
+#!/bin/sh
+set -eu
+
+DECLARATION=${R7_AI_COMPATIBILITY:-/usr/share/r7-ai-assistant/compatibility.json}
+DPKG_QUERY=${R7_AI_DPKG_QUERY:-dpkg-query}
+DESKTOP_EDITORS=${R7_AI_DESKTOP_EDITORS:-/opt/r7-office/desktopeditors/DesktopEditors}
+ACTIVATE=${R7_AI_ACTIVATE:-}
+
+refuse() {
+  printf '%s\n' "REFUSED unsupported target: $*" >&2
+  exit 42
+}
+
+[ -r "$DECLARATION" ] || refuse "compatibility declaration missing"
+PYTHON=${R7_AI_PYTHON:-python3}
+command -v "$PYTHON" >/dev/null 2>&1 || refuse "python3 unavailable for declaration parsing"
+expected=$("$PYTHON" - "$DECLARATION" <<'PY'
+import json, sys
+try:
+    rule = json.load(open(sys.argv[1], encoding='utf-8'))['compatibility']['r7']
+    values = [rule['package'], rule['packageVersion'], rule['architecture'], rule['productVersion']]
+except Exception:
+    raise SystemExit(42)
+if any(not isinstance(value, str) or not value or '\t' in value or '\n' in value for value in values):
+    raise SystemExit(42)
+print('\t'.join(values))
+PY
+) || refuse "compatibility declaration invalid"
+IFS="	" read -r expected_package expected_version expected_arch expected_product <<EOF
+$expected
+EOF
+actual=$($DPKG_QUERY -W -f='${Package}\t${Version}\t${Architecture}\n' "$expected_package" 2>/dev/null) || refuse "required R7 package missing"
+actual_tuple=$(printf '%s\t%s\t%s' "$expected_package" "$expected_version" "$expected_arch")
+[ "$actual" = "$actual_tuple" ] || refuse "package tuple '$actual'"
+[ -x "$DESKTOP_EDITORS" ] || refuse "DesktopEditors missing"
+product=$($DESKTOP_EDITORS --version 2>/dev/null | sed -n 's/^.*ver\. \([0-9][0-9.]*\).*$/\1/p' | head -n 1)
+[ "$product" = "$expected_product" ] || refuse "product version '${product:-unparseable}'"
+printf '%s\n' "SUPPORTED exact target: $actual / $product"
+if [ -n "$ACTIVATE" ]; then
+  [ -x "$ACTIVATE" ] || refuse "activation command unavailable"
+  exec "$ACTIVATE"
+fi

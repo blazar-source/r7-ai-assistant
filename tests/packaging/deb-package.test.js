@@ -20,7 +20,7 @@ test('DEB metadata is the required development package identity', async () => {
 test('DEB regular-file inventory equals the contract manifest plus its uninstall manifest', async () => {
   const result = await buildDeb();
   const deb = inspectDeb(readFileSync(result.debPath));
-  const expected = [...owned.map(name => `${payloadRoot}/${name}`), 'usr/share/doc/r7-ai-assistant/product-owned-files.txt'].sort();
+  const expected = [...owned.map(name => `${payloadRoot}/${name}`), 'usr/share/doc/r7-ai-assistant/product-owned-files.txt', 'usr/share/r7-ai-assistant/compatibility.json', 'usr/bin/r7-ai-assistant-preflight'].sort();
   assert.deepEqual(Object.keys(deb.data).sort(), expected);
   assert.equal(deb.data['usr/share/doc/r7-ai-assistant/product-owned-files.txt'].toString('utf8'), `${owned.map(name => `$HOME/.local/share/r7-office/editors/sdkjs-plugins/${guid}/${name}`).join('\n')}\n`);
 });
@@ -34,7 +34,7 @@ test('DEB plugin payload bytes match dist/plugin bytes', async () => {
 test('DEB data archive explicitly contains every payload parent directory', async () => {
   const result = await buildDeb();
   const deb = inspectDeb(readFileSync(result.debPath));
-  const files = [...owned.map(name => `${payloadRoot}/${name}`), 'usr/share/doc/r7-ai-assistant/product-owned-files.txt'];
+  const files = [...owned.map(name => `${payloadRoot}/${name}`), 'usr/share/doc/r7-ai-assistant/product-owned-files.txt', 'usr/share/r7-ai-assistant/compatibility.json', 'usr/bin/r7-ai-assistant-preflight'];
   const expectedDirectories = [...new Set(files.flatMap(name => {
     const parts = name.split('/');
     return parts.slice(0, -1).map((_, index) => `${parts.slice(0, index + 1).join('/')}/`);

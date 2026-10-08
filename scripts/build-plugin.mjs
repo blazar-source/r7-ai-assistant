@@ -57,13 +57,9 @@ export async function buildPlugin(options = {}) {
   const sourceCommit = commitOutput.trim();
   if (!/^[0-9a-f]{40}$/.test(sourceCommit)) invalid();
   const files = Object.fromEntries(entries.slice().sort((a, b) => a.name.localeCompare(b.name)).map(entry => [entry.name, { sha256: sha256(entry.data) }]));
+  const declaration = JSON.parse(await readFile(resolve(root, 'packaging/compatibility.json'), 'utf8'));
   const provenance = {
-    compatibility: {
-      astra: { architecture: 'amd64', buildVersion: '1.7.9.41', edition: 'Astra Linux SE', version: '1.7.9' },
-      enforcement: 'deferred-to-installer-preflight',
-      r7: { architecture: 'amd64', build: '1942', package: 'r7-office', packageForm: 'deb', packageVersion: '2026.1.2-1942~astra-signed', productVersion: '2026.1.2.1942' },
-      unsupportedBehavior: 'installer-must-refuse-before-payload-change'
-    },
+    compatibility: declaration.compatibility,
     files,
     productVersion: PRODUCT_VERSION,
     sourceCommit,

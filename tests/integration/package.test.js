@@ -60,8 +60,8 @@ test('dual build produces byte-identical ZIP STORE/.plugin exact root allowlist 
   assert.match(provenance.sourceCommit, /^[0-9a-f]{40}$/);
   assert.deepEqual(provenance.toolchain, { esbuild: '0.25.10', node: process.version });
   assert.deepEqual(provenance.compatibility, {
-    enforcement: 'deferred-to-installer-preflight',
-    unsupportedBehavior: 'installer-must-refuse-before-payload-change',
+    enforcement: 'shipped-preflight',
+    unsupportedBehavior: 'preflight-refuses-before-activation',
     r7: { architecture: 'amd64', build: '1942', package: 'r7-office', packageForm: 'deb', packageVersion: '2026.1.2-1942~astra-signed', productVersion: '2026.1.2.1942' },
     astra: { architecture: 'amd64', buildVersion: '1.7.9.41', edition: 'Astra Linux SE', version: '1.7.9' }
   });
