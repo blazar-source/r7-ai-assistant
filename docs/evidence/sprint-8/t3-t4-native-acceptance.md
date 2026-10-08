@@ -1,5 +1,63 @@
 # Sprint 8 T3/T4 — native acceptance
 
+## Modal-resolution attempt — frozen `0.9.0-pilot-rc`, branch `stage-b`, HEAD `cd319a3f5cdd1d8536fe826b67b9dafbe83157e1`
+
+**Status: STOPPED AT AUTHORISED SYSTEM ACTION / THREE NATIVE JOURNEYS NOT VERIFIED.** The mandated survey found no installed input-injection mechanism and no noninteractive installation path. A fresh R7 launch did recover the debug endpoint and editor page, but the vendor trial notice remained modal. Because the instruction required stopping if the modal could not be dismissed, no product request was dispatched and no document was changed.
+
+### Input-mechanism survey
+
+Exact remote survey commands and raw output are in `.local/sprint8/input-survey.log`.
+
+- `xdotool`: missing.
+- `wmctrl`: missing.
+- `xte` / xautomation: missing.
+- Python 3: present (`3.7.3`), but `python3 -c 'import Xlib'` failed with `ModuleNotFoundError`.
+- `sudo -n true`: failed (`sudo: a password is required`, exit `1`).
+- APT metadata was readable only from the configured Astra DVD/CD source; `apt-cache policy` succeeded, but an actual noninteractive `apt-get update` could not run because sudo required a password. Network/repository installation was therefore not usable under this delegated runtime.
+- Additional probes found no `xvkbd`, `ydotool`, `wtype`, `evemu-event`, `dotool`, or other key sender. The stand also lacked `gcc`, `pkg-config`, Xlib headers, and the unversioned `libX11.so` needed to build a tiny targeted helper. No portable host/WSL `xdotool` or Linux build chain was available.
+
+The least-invasive preferred mechanism was a targeted X11 Enter event sent only to the modal's exact active client window, rather than an absolute-coordinate/global click. This was selected because `xprop -root _NET_ACTIVE_WINDOW` identified `0x320000c`, the modal's embedded client below the centered `571x168` frame. The helper could not be built or installed for the reasons above, so no synthetic input was sent.
+
+### R7 launch, modal and debug endpoint
+
+Commands (complete output in `.local/sprint8/modal-resolution.log` and `.local/sprint8/dismiss-probe.log`):
+
+```text
+loginctl unlock-session 3
+systemd-run --user --unit=sprint8-modal-171649 --collect env DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info /home/r7dev/r7-verification/stage-b/gate/deck-open.pptx
+env DISPLAY=:0 XAUTHORITY=/home/r7dev/.Xauthority xwininfo -root -tree
+curl -sS --max-time 5 http://127.0.0.1:8080/json/list
+CDP_BASE=http://127.0.0.1:8080 /home/r7dev/node/bin/node cdp.mjs contexts
+```
+
+Raw observations: session 3 became `Active=yes`, `State=active`, `LockedHint=no`; the transient unit remained `active (running)` with `DesktopEditors` PID `119782`. The root capture showed the R7 vendor notice: **«Вы используете пробную версию приложения. Количество дней до окончания пробного периода: 24.»**, with one focused **OK** control. This is a legitimate trial-version informational/licensing dialog; no licence bypass, patch, falsification, or protection change was attempted. `xwininfo` exposed the modal as an unnamed centered `571x168` frame with active client `0x320000c`.
+
+Unlike the earlier blocked run, the debug endpoint did come up: `curl http://127.0.0.1:8080/json/list` returned the presentation document page for `deck-open.pptx` and the loader page, and `ss` showed `LISTEN 127.0.0.1:8080`. `cdp.mjs contexts` confirmed `presentationeditor/main/index.html` as context `2`. The plugin frame was not mounted while the modal remained, so loaded-panel hash identity was not remeasured in this attempt.
+
+### Word journey
+
+**NOT VERIFIED.** Stopped before dispatch because the trial modal could not be safely dismissed. No terminal status, UX-B5 sequence, model call, or before/after document-content pair exists.
+
+### Cell journey
+
+**NOT VERIFIED.** Stopped before dispatch because the trial modal could not be safely dismissed. No terminal status, UX-B5 sequence, model call, or before/after workbook pair exists.
+
+### Slide journey
+
+**NOT VERIFIED.** Although the real presentation editor page reached CDP, the vendor trial modal remained and prevented the product panel from mounting. No request was dispatched; slide count/content before and after were not measured.
+
+### UX-B5, pixels and spend
+
+No journey ran, so no `#progress-stage` / compact `#status` advancement or terminal status exists. `.local/sprint8/captures/modal-before.png` and `modal-after.png` are valid desktop stand-state diagnostics showing the trial notice; neither is a valid product-panel acceptance capture. No FlyLocker panel window existed, so the prescribed `518x998+80+336` product-panel crop was not produced.
+
+Exact spend: DeepSeek requests `0`; prompt tokens `0`; completion tokens `0`; billed cost `0`.
+
+### Safety, final stand state and what this does not show
+
+Snapshot `02-astra-r7-clean` was never restored or modified. No product files, licence files, protection settings, or documents were changed. The launched R7 presentation instance was left running in the unlocked user session with `deck-open.pptx` and the vendor trial notice visible, because terminating it would return the stand to the earlier no-editor state and could risk unrelated unsaved work. Temporary diagnostic source/binary attempts were limited to `/tmp/sprint8-xsend.c` (no binary was produced); repository raw logs are under `.local/sprint8/`.
+
+This attempt proves recovery of the R7 process, CDP listener and presentation editor page. It does **not** prove modal dismissal, mounted frozen panel bytes, credential use through the product, any Word/Cell/Slide semantic mutation, UX-B5 progression, product-panel pixels, or paid-provider behavior. The three journeys remain **NOT VERIFIED**.
+
 ## Corrected-byte rerun — commit `2e64c0ef019b3ef985163a4eb9434ea298265cee`
 
 **Status: PARTIAL / REQUIRED JOURNEYS NOT VERIFIED.** The corrected DEB installation, exact-tuple preflight, direct per-user activation, plugin load path and loaded-byte identity passed. The three paid product-path requests could not be run because no DeepSeek/OpenRouter model credential was available to this delegated runtime; therefore Word, Cell and Slide end-to-end mutation/readback remain **NOT VERIFIED**, not silently replaced by direct tool calls or historical runs.
