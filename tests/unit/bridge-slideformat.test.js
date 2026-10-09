@@ -32,13 +32,18 @@ function content(text = 'Hello', initial = {}, options = {}) {
 }
 function shape(value, noContent = false) { return noContent ? {} : { GetContent() { return value; } }; }
 function slide(index, objects, classType = 'slide') { return { GetClassType() { return classType; }, GetSlideIndex() { return index; }, GetAllShapes() { return objects; } }; }
-function rig({ targetContent = content(), slides, currentIndex = 0, nativeEnvelope, directScope } = {}) {
+function rig({ targetContent = content(), slides, currentIndex = 0, nativeEnvelope, directScope, noNotification = false, notificationThrows = false } = {}) {
   const namespace = { scope: directScope === undefined ? {} : directScope }; let dispatches = 0;
   const deck = slides ?? [slide(0, [shape(targetContent)])];
   const presentation = { GetCurSlideIndex() { return currentIndex; }, GetCurrentSlide() { return deck[currentIndex]; }, GetSlideByIndex(index) { return deck[index] ?? null; } };
+  const notifications = [];
   const Api = { GetPresentation() { return presentation; } };
+  if (!noNotification) Api.UpdateInterfaceState = function () {
+    notifications.push(targetContent.calls.slice());
+    if (notificationThrows) throw new Error('native notification failed');
+  };
   const plugin = { info: { editorType: 'slide' }, callCommand(body, _close, _recalc, callback) { dispatches++; callback(nativeEnvelope ?? new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(Api, directScope === undefined ? namespace.scope : directScope)); } };
-  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches, targetContent };
+  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches, targetContent, notifications };
 }
 const request = overrides => ({ slideIndex: null, objectOrdinal: 0, bold: true, maxFontSize: LIMITS.slideFormatFontSizeMax, maxResultBytes: LIMITS.slideReadResultBytes, ...overrides });
 
@@ -179,4 +184,41 @@ test('format_slide_text is uncertain for unusable or contradictory post-dispatch
 
 test('format_slide_text closes malformed native envelopes as uncertain', async () => {
   assert.deepEqual(await rig({ nativeEnvelope: [9] }).bridge.formatSlideText(request()), { ok: false, code: 'APPLY_UNCERTAIN' });
+});
+
+test('format refreshes native interface once after all requested setters', async () => {
+  const target = rig();
+  assert.equal((await target.bridge.formatSlideText(request({ fontSize: 20 }))).ok, true);
+  assert.deepEqual(target.notifications, [['bold', 'fontSize']]);
+});
+test('format refuses before setters when native interface notification is absent', async () => {
+  const target = rig({ noNotification: true });
+  assert.deepEqual(await target.bridge.formatSlideText(request()), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(target.targetContent.calls, []);
+});
+test('format notification failure retains uncertainty and never retries setters', async () => {
+  const target = rig({ notificationThrows: true });
+  assert.deepEqual(await target.bridge.formatSlideText(request()), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(target.targetContent.calls, ['bold']);
+  assert.equal(target.notifications.length, 1);
+  assert.equal((await target.bridge.formatSlideText(request())).ok, false);
+  assert.deepEqual(target.targetContent.calls, ['bold']);
+});
+
+test('missing later requested setter refuses before any formatting write', async () => {
+  const targetContent = content();
+  delete targetContent.GetElement(0).SetFontSize;
+  const target = rig({ targetContent });
+  assert.deepEqual(await target.bridge.formatSlideText(request({ fontSize: 20 })), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(targetContent.calls, []);
+  assert.deepEqual(target.notifications, []);
+});
+test('throwing later setter stays uncertain with no second write attempt', async () => {
+  const targetContent = content();
+  targetContent.GetElement(0).SetFontSize = () => { throw new Error('native setter'); };
+  const target = rig({ targetContent });
+  assert.deepEqual(await target.bridge.formatSlideText(request({ fontSize: 20 })), { ok: false, code: 'APPLY_UNCERTAIN' });
+  assert.deepEqual(targetContent.calls, ['bold']);
+  assert.equal((await target.bridge.formatSlideText(request())).ok, false);
+  assert.deepEqual(targetContent.calls, ['bold']);
 });

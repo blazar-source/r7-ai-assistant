@@ -819,12 +819,22 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (typeof t4FormatBeforeText !== 'string' || t4FormatBefore === null) return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             var t4FormatElement = t4FormatContent.GetElement(0);
             if (!t4FormatElement) return t4FormatRefusal(0, 'TOOL_ERROR');
-            if (t4FormatRequest.bold !== undefined) { if (typeof t4FormatElement.SetBold !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetBold(t4FormatRequest.bold); }
-            if (t4FormatRequest.italic !== undefined) { if (typeof t4FormatElement.SetItalic !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetItalic(t4FormatRequest.italic); }
-            if (t4FormatRequest.underline !== undefined) { if (typeof t4FormatElement.SetUnderline !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetUnderline(t4FormatRequest.underline); }
-            if (t4FormatRequest.fontSize !== undefined) { if (typeof t4FormatElement.SetFontSize !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetFontSize(t4FormatRequest.fontSize * 2); }
-            if (t4FormatRequest.fontFamily !== undefined) { if (typeof t4FormatElement.SetFontFamily !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetFontFamily(t4FormatRequest.fontFamily); }
-            if (t4FormatRequest.color !== undefined) { if (typeof t4FormatElement.SetColor !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4FormatElement.SetColor(t4FormatRequest.color.r, t4FormatRequest.color.g, t4FormatRequest.color.b); }
+            // R7 2026.1 Slide finalization omits native history/interface refresh.
+            // Narrow compatibility notification; never force dirty state or Save.
+            if (typeof Api.UpdateInterfaceState !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.bold !== undefined && typeof t4FormatElement.SetBold !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.italic !== undefined && typeof t4FormatElement.SetItalic !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.underline !== undefined && typeof t4FormatElement.SetUnderline !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.fontSize !== undefined && typeof t4FormatElement.SetFontSize !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.fontFamily !== undefined && typeof t4FormatElement.SetFontFamily !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.color !== undefined && typeof t4FormatElement.SetColor !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.bold !== undefined) { t4FormatElement.SetBold(t4FormatRequest.bold); }
+            if (t4FormatRequest.italic !== undefined) { t4FormatElement.SetItalic(t4FormatRequest.italic); }
+            if (t4FormatRequest.underline !== undefined) { t4FormatElement.SetUnderline(t4FormatRequest.underline); }
+            if (t4FormatRequest.fontSize !== undefined) { t4FormatElement.SetFontSize(t4FormatRequest.fontSize * 2); }
+            if (t4FormatRequest.fontFamily !== undefined) { t4FormatElement.SetFontFamily(t4FormatRequest.fontFamily); }
+            if (t4FormatRequest.color !== undefined) { t4FormatElement.SetColor(t4FormatRequest.color.r, t4FormatRequest.color.g, t4FormatRequest.color.b); }
+            Api.UpdateInterfaceState();
             var t4FormatProofElement = t4FormatContent.GetElement(0); var t4FormatAfter = t4FormatRPr(t4FormatContent);
             if (!t4FormatProofElement || typeof t4FormatProofElement.GetText !== 'function' || t4FormatProofElement.GetText() !== t4FormatBeforeText || t4FormatAfter === null) return t4FormatRefusal(1, 'APPLY_UNCERTAIN');
             var t4FormatNames = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color']; var t4FormatApplied = [];
@@ -884,7 +894,10 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (!t5Count(t5From) || t5From >= t5BeforeCount || (t5Request.mode === 'move' && (!t5Count(t5To) || t5To >= t5BeforeCount))) return t5Refusal(0, 'TOOL_ERROR');
             var t5Source = t5Presentation.GetSlideByIndex(t5From); if (!t5Source || typeof t5Source.GetClassType !== 'function' || t5Source.GetClassType() !== 'slide' || typeof t5Source.GetSlideIndex !== 'function' || t5Source.GetSlideIndex() !== t5From) return t5Refusal(0, 'TOOL_ERROR');
             var t5Before = t5Snapshot(t5Presentation, t5BeforeCount); if (t5Before === null) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5SourceFingerprint = t5At(t5Before, t5From); var t5SourceParsed = JSON.parse(t5SourceFingerprint);
+            // Same bounded Slide compatibility notification as slideformat.
+            if (typeof Api.UpdateInterfaceState !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t5Request.mode === 'duplicate') { if (typeof t5Source.Duplicate !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); t5Source.Duplicate(); } else { if (typeof t5Source.MoveTo !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5Moved = t5Source.MoveTo(t5To); if (t5Moved === false) return t5Refusal(0, 'TOOL_ERROR'); if (t5Moved !== true) return t5Refusal(1, 'APPLY_UNCERTAIN'); }
+            Api.UpdateInterfaceState();
             var t5AfterCount = t5Presentation.GetSlidesCount(); var t5ExpectedCount = t5Request.mode === 'duplicate' ? t5BeforeCount + 1 : t5BeforeCount; if (t5AfterCount !== t5ExpectedCount) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5After = t5Snapshot(t5Presentation, t5AfterCount); if (t5After === null) return t5Refusal(1, 'APPLY_UNCERTAIN');
             if (t5Request.mode === 'duplicate') { var t5Copy = JSON.parse(t5At(t5After, t5BeforeCount)); if (t5Copy.layoutLength !== t5SourceParsed.layoutLength || t5Copy.layoutHead !== t5SourceParsed.layoutHead || t5Copy.shapes !== t5SourceParsed.shapes || JSON.stringify(t5Copy.texts) !== JSON.stringify(t5SourceParsed.texts)) return t5Refusal(1, 'APPLY_UNCERTAIN'); for (var t5D = 0; t5D < t5BeforeCount; t5D += 1) if (t5At(t5Before, t5D) !== t5At(t5After, t5D)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5DuplicateAnswer = [6, t5AfterCount, t5BeforeCount, t5From, t5Copy.layoutLength, t5Copy.shapes]; return t5DuplicateAnswer; }
             if (t5Signature(t5At(t5After, t5To)) !== t5Signature(t5SourceFingerprint)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5Remaining = []; for (var t5B = 0; t5B < t5BeforeCount; t5B += 1) if (t5B !== t5From) t5Remaining.push(t5Signature(t5At(t5Before, t5B))); for (var t5A = 0; t5A < t5AfterCount; t5A += 1) if (t5A !== t5To) { var t5Candidate = t5Signature(t5At(t5After, t5A)); var t5Found = t5Remaining.indexOf(t5Candidate); if (t5Found < 0) return t5Refusal(1, 'APPLY_UNCERTAIN'); t5Remaining.splice(t5Found, 1); } if (t5Remaining.length !== 0) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5MoveAnswer = [7, t5AfterCount, t5From, t5To, t5SourceParsed.layoutLength, t5SourceParsed.shapes]; return t5MoveAnswer;
@@ -6455,7 +6468,7 @@ export function createR7Bridge(plugin, {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
-          if ((kind === 'slideformat' || kind === 'slideobject') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'slideformat' || kind === 'slideobject' || kind === 'sliderestructure') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
