@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "9b05063cc2c87b8eb2475f0e1b547ec6df33799a",
+  "zipEntries": 9,
+  "sbomExact": true,
+  "debPluginPayloadExact": true,
+  "knownCredentialHistoryMatches": 0,
+  "knownCredentialArtifactMatches": 0,
+  "knownCredentialValuesChecked": 1,
+  "historyObjectsChecked": 3212,
+  "panelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232"
+}

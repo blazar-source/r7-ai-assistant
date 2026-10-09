@@ -1,0 +1,1725 @@
+{
+  "sourceCommit": "9b05063cc2c87b8eb2475f0e1b547ec6df33799a",
+  "panelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232",
+  "overall": "BLOCKED",
+  "cases": [
+    {
+      "case": "compound move and format",
+      "prompt": "Перенеси слайд «Риски и меры» в самый конец презентации. Оформи его в том же стиле, что остальные: синий полужирный заголовок 40 пунктов и основной текст 20 пунктов. Тексты и остальные слайды сохрани.",
+      "before": [
+        {
+          "index": 0,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "after": [
+        {
+          "index": 0,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "terminal": {
+        "finished": true,
+        "status": "Готово",
+        "stage": "",
+        "detail": "Ответ получен",
+        "active": false,
+        "actions": "read_presentation: okread_slide: okread_slide: okread_slide: okread_slide: okmove_slide: okread_presentation: okread_slide: okformat_slide_text: okformat_slide_text: okread_slide: okread_presentation: okread_slide: okread_slide: okread_slide: okread_slide: ok",
+        "setup": false,
+        "preview": false
+      },
+      "reopened": [
+        {
+          "index": 0,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "textOrderPersisted": true
+    },
+    {
+      "case": "move only",
+      "prompt": "Перенеси слайд «Риски и меры» с последнего места на первое. Содержание и оформление всех слайдов оставь без изменений.",
+      "before": [
+        {
+          "index": 0,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "after": [
+        {
+          "index": 0,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "terminal": {
+        "finished": true,
+        "status": "Готово",
+        "stage": "",
+        "detail": "Ответ получен",
+        "active": false,
+        "actions": "read_presentation: okread_slide: okmove_slide: okread_presentation: okread_slide: ok",
+        "setup": false,
+        "preview": false
+      },
+      "reopened": [
+        {
+          "index": 0,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "textOrderPersisted": true
+    },
+    {
+      "case": "format only",
+      "prompt": "На первом слайде «Риски и меры» измени только размер заголовка на 28 пунктов. Сохрани остальные тексты, оформление и порядок слайдов.",
+      "before": [
+        {
+          "index": 0,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "after": [
+        {
+          "index": 0,
+          "text": [
+            "Риски и меры",
+            "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 2800,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 0,
+                        "blue": 255,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "text": [
+            "Пилот ИИ-ассистента в отделении",
+            "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "text": [
+            "План пилота на четыре недели",
+            "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "text": [
+            "Критерии успеха пилота",
+            "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+          ],
+          "drawings": 2,
+          "paragraphFormat": [
+            {
+              "sz": 4000,
+              "b": true,
+              "uniFill": {
+                "fill": {
+                  "color": {
+                    "rgba": {
+                      "red": 0,
+                      "green": 0,
+                      "blue": 0,
+                      "alpha": 255
+                    },
+                    "color": {
+                      "rgba": {
+                        "red": 0,
+                        "green": 70,
+                        "blue": 180,
+                        "alpha": 255
+                      },
+                      "type": "srgb"
+                    },
+                    "mods": [],
+                    "type": "uniColor"
+                  },
+                  "type": "solid"
+                },
+                "transparent": null,
+                "type": "fill"
+              },
+              "bFromDocument": false,
+              "type": "textPr"
+            },
+            {
+              "sz": 2000,
+              "bFromDocument": false,
+              "type": "textPr"
+            }
+          ]
+        }
+      ],
+      "terminal": {
+        "finished": true,
+        "status": "Готово",
+        "stage": "",
+        "detail": "Ответ получен",
+        "active": false,
+        "actions": "read_slide: okformat_slide_text: okread_slide: okread_presentation: ok",
+        "setup": false,
+        "preview": false
+      },
+      "persistenceNotClaimed": "Undo/ASK/Redo test interrupted the format-only save/reopen gate",
+      "undoClicksInHarness": 4,
+      "extraDiagnosticAfterReadBeforeUndo": 1
+    },
+    {
+      "case": "Undo then ASK then Redo",
+      "prompt": "Прочитай первый слайд и назови его заголовок. Ничего не меняй.",
+      "terminal": {
+        "finished": true,
+        "status": "Готово",
+        "stage": "",
+        "detail": "Ответ получен",
+        "active": false,
+        "actions": "read_slide: ok",
+        "setup": false,
+        "preview": false
+      },
+      "modelReplies": [
+        {
+          "httpStatus": 200,
+          "content": "{\"type\":\"tool_calls\",\"calls\":[{\"tool\":\"read_slide\",\"arguments\":{\"slideIndex\":0}}]}"
+        },
+        {
+          "httpStatus": 200,
+          "content": "{\"type\":\"final\",\"message\":\"Заголовок первого слайда: «Риски и меры».\"}"
+        }
+      ],
+      "diagnosticSDKReadsDuringAsk": 0,
+      "result": "FAIL: native Redo disabled and cancelled formatting cannot be restored",
+      "historyAfter": {
+        "index": 5,
+        "savedIndex": 5,
+        "userSavedIndex": null,
+        "points": [
+          {
+            "description": 122,
+            "items": [
+              {
+                "type": 131071,
+                "className": "x",
+                "kind": [
+                  "historyitem_TableId_Description"
+                ]
+              }
+            ]
+          },
+          {
+            "description": 122,
+            "items": [
+              {
+                "type": 131071,
+                "className": "x",
+                "kind": [
+                  "historyitem_TableId_Description"
+                ]
+              }
+            ]
+          },
+          {
+            "description": 122,
+            "items": [
+              {
+                "type": 131071,
+                "className": "x",
+                "kind": [
+                  "historyitem_TableId_Description"
+                ]
+              }
+            ]
+          },
+          {
+            "description": 122,
+            "items": [
+              {
+                "type": 131071,
+                "className": "x",
+                "kind": [
+                  "historyitem_TableId_Description"
+                ]
+              }
+            ]
+          },
+          {
+            "description": 122,
+            "items": [
+              {
+                "type": 131071,
+                "className": "x",
+                "kind": [
+                  "historyitem_TableId_Description"
+                ]
+              }
+            ]
+          },
+          {
+            "description": 122,
+            "items": [
+              {
+                "type": 131071,
+                "className": "x",
+                "kind": [
+                  "historyitem_TableId_Description"
+                ]
+              }
+            ]
+          }
+        ],
+        "undo": [
+          {
+            "id": "slot-btn-dt-undo",
+            "cls": "btn-slot",
+            "rect": {
+              "x": 120,
+              "y": 0
+            }
+          },
+          {
+            "id": "slot-btn-dt-redo",
+            "cls": "btn-slot",
+            "rect": {
+              "x": 160,
+              "y": 0
+            }
+          },
+          {
+            "id": "slot-btn-undo",
+            "cls": "btn-slot split",
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "id-toolbar-btn-undo",
+            "disabled": false,
+            "cls": "btn btn-toolbar",
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "slot-btn-redo",
+            "cls": "btn-slot",
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "id-toolbar-btn-redo",
+            "disabled": true,
+            "cls": "btn btn-toolbar disabled",
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "svg-btn-undo",
+            "cls": {},
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "svg-btn-redo",
+            "cls": {},
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "btn-redo",
+            "cls": {},
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": "btn-undo",
+            "cls": {},
+            "rect": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

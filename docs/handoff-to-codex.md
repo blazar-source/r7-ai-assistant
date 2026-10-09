@@ -1,3 +1,13 @@
+# Latest handoff delta — 2026-10-09, source 9b05063
+
+**Release BLOCKED / T8 NOT PASS: Slide Undo → ASK/read → Redo loses the redo branch.** This heading supersedes older blocker descriptions below. The previous persistence defect is fixed and compound move+format / move-only native Save-close-reopen passed. Details, artifacts, remaining gates and exact hashes: [current UAT](evidence/release-uat/verification.md), [new P1 reproduction](evidence/release-uat/slide-redo-blocker.md), [candidate](evidence/release-uat/tested-candidate.json).
+
+Changes: `6fecf8e` guarded interface refresh, restructure uncertainty ownership and all-setter preflight; `9b05063` public Slide history point. 1447 tests PASS, 35 focused PASS, source audit and independent delta review PASS. Native ASK-only trace independently confirms a substantial SDK history side effect; do not publish despite successful tests. No push/PR/merge/tag/release. Existing owner authorization to publish conditionally after all gates still applies; repository must remain private.
+
+Current VM test base: `/home/r7dev/r7-verification/release-uat-20261009T055259`; test docs `uat8-*`. `.local/release-uat/` has raw traces; `attempt6`/`attempt7` preserve prior attempts. All checkpoints and user data preserved; open test panels/documents retained. Do not repeat old successful suites without changes; solve history-neutral native reads or obtain a platform correction. Do not bypass native SDK guards or destructively alter user history.
+
+---
+
 # Handoff: DeepSeek Harness → Codex
 
 **Current continuation, 2026-10-09: RELEASE BLOCKED, T8 NOT PASS.** Owner authorized autonomous private GitHub publication after successful acceptance. Product candidate `096edbd` (panel `c227d1bb...`) passes 1431 full tests and source audit; compact UX passes native 259x499. Word section insertion, Cell financial creation/correction and initial Slide creation/addition pass data/pixels/save-reopen. **Standalone Slide move/format does not reliably persist after native Save/reopen** on the supported R7 build. Independent review confirmed PPTX XML; public MoveTo with recalculation and CreateNewHistoryPoint did not fix it. No unsafe workaround added. See [current UAT receipts and gates](evidence/release-uat/verification.md) and [minimal persistence reproduction](evidence/release-uat/slide-persistence-blocker.md). No push/PR/merge/tag/release. Historical PASS/access-blocked statements below are superseded. VM was rebooted by owner; old protected PID is gone. Current test documents, plugin backups and checkpoints are preserved. Resume from this worktree; final artifact freeze/publication await a safe persistence fix.

@@ -1,8 +1,14 @@
 # Release UAT — 2026-10-09
 
-**BLOCKED — P1 Slide persistence; T8 NOT PASS; no release.** The owner authorized autonomous private GitHub publication only after successful user acceptance and final-byte checks. Historical Sprint 8 PASS records do not establish acceptance of this revision. [Tested candidate identities](tested-candidate.json) pin source `096edbd`, panel `c227d1bb…`; subsequent documentation commits do not redefine those bytes.
+**BLOCKED — P1 Slide ASK destroys Redo; T8 NOT PASS; no release.** The owner authorized autonomous private GitHub publication only after successful user acceptance and final-byte checks. Historical Sprint 8 PASS records do not establish acceptance of this revision. [Tested candidate identities](tested-candidate.json) pin source `9b05063`, panel `95bf8ff5…`; subsequent documentation commits do not redefine those bytes.
 
-## Observed user scenarios
+## Latest acceptance delta
+
+The original standalone Slide persistence failure was fixed by a bounded interface-state notification and public history-point boundary (`6fecf8e`, `9b05063`). The natural move+format task and move-only task now persist through native Save/close/reopen. The follow-up history test found a new substantial failure: **Undo → ordinary ASK/read_slide → native Redo loses the redo branch**. Independent review confirmed the real ASK trace and pixels, with no diagnostic SDK reads around ASK. See [current blocker and reproduction](slide-redo-blocker.md) and [new receipts](slide-history-uat.json). This is not accepted as a pilot limitation.
+
+Current checks: **1447/1447 tests PASS**, zero skipped; authored-code audit PASS; independent source-delta review PASS; reproducible ZIP matched; all nine SPDX file hashes and all eight DEB plugin payloads match the ZIP. Gitleaks found no secrets in Git history or extracted release payloads; an additional in-memory comparison found no known VM credential in 3212 reachable Git objects or artifacts. These bounded scan results are not a universal PII guarantee. Final publication freeze and T8 remain incomplete.
+
+## Earlier observed user scenarios
 
 Real requests were entered through the installed panel in native Astra R7, using the configured development provider. Each scenario has independent public-SDK reads before/after and an immediate screenshot taken before the diagnostic after-read. Only disposable business fixtures were used. Test harness and original traces are retained locally under `.local/release-uat/`.
 
@@ -22,11 +28,11 @@ Independent review found malformed profile revisions could prevent Reset/Save re
 
 ## Final checks and remaining gates
 
-- [Full suite](full-tests.txt): **1431/1431 PASS**, zero skipped, on the final product source. Authored-code audit PASS. Reproducible ZIP builds matched; installed/executing panel matches the pinned candidate. These do not override the functional failure.
+- [Full suite](full-tests.txt): **1447/1447 PASS**, zero skipped, on source `9b05063`. Authored-code audit PASS. Reproducible ZIP builds matched; installed/executing panel matches the pinned candidate. These do not override the functional failure.
 - [Native compact UX](ux-native.jsonl): **259×499**, header32, idle/working composer50/73, contained overflow settings menu, no connection summary, 22-message history, visible401 settings/recovery, unchanged document and encrypted-profile revision. Error/long-dialog checks use controlled synthetic provider responses and are distinct from real-provider UAT.
 - [Native profile recovery](profile-recovery.jsonl): real CEF IndexedDB/crypto with a separate disposable database; four damaged revision types recover through Reset/Save, concurrent valid saves remain protected, key non-exportability/plaintext absence checked, temporary DB removed. Production connection was untouched.
-- Independent source security review has no open findings after the malformed-revision fix; independent reviewer confirmed the Slide persistence failure from raw PPTX XML. **T8 NOT PASS.**
-- Still required after a safe persistence fix: affected native scenarios including each slide's visible result/save/reopen, final process restart/shared-profile smoke, final candidate artifact/security/SBOM/secret/inventory checks and final T8 sign-off. Previous successful checks are carried only for unchanged components.
+- Independent source security review has no open findings after the malformed-revision fix; independent reviewer confirmed the corrected persistence evidence and the new ASK/Redo failure. **T8 NOT PASS.**
+- Still required after a safe history-neutral read fix: affected native scenarios including each slide's visible result/save/reopen, final process restart/shared-profile smoke, final candidate artifact/security/SBOM/secret/inventory checks and final T8 sign-off. Previous successful checks are carried only for unchanged components.
 - No push, PR, merge, tag or GitHub Release was performed. A complete release artifact freeze and publication remain blocked.
 
 Supported target remains Astra SE 1.7.9 build 1.7.9.41 amd64, R7 2026.1.2-1942~astra-signed. Bank TLS/CORS/AUTH/Qwen, ZPS and other target tuples remain unverified. Browser-profile encryption is not an OS vault; model-assisted completion is not a deterministic proof of arbitrary natural-language requirements.

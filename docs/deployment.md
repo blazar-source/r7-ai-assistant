@@ -2,7 +2,7 @@
 
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is blocked by a confirmed Slide persistence defect on the supported R7 build. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
+Version `0.9.0-pilot-rc` is blocked by a confirmed Slide ASK/Redo history defect on the supported R7 build. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
 
 - Plugin ZIP: `dist/plugin/r7-ai-assistant.zip`.
 - Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`.

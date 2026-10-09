@@ -1,8 +1,12 @@
 # P1 — Slide changes disappear after Save/reopen
 
-Status: **reproduced, unresolved, release blocking** on Astra SE 1.7.9.41 amd64 with R7 2026.1.2.1942. Product source `096edbd`, loaded panel SHA-256 `c227d1bb26f2249813688765740fbfbb4f3f15e4ee7a4911f47f36b248c9ea7f`.
+Historical status: **reproduced on the earlier bytes below** on Astra SE 1.7.9.41 amd64 with R7 2026.1.2.1942. Product source `096edbd`, loaded panel SHA-256 `c227d1bb26f2249813688765740fbfbb4f3f15e4ee7a4911f47f36b248c9ea7f`.
 
-## Reproduction
+## Superseding result
+
+On `9b05063` the natural compound move+format and move-only scenarios persist through Save/close/reopen. The fix adds a guarded native interface-state refresh and public history point, without rewriting the tools. This record preserves the earlier failure. **Release remains blocked by [ASK destroying Redo](slide-redo-blocker.md).** The later bounded compatibility decision is documented in `docs/security.md`; statements below about no notification describe the earlier revision.
+
+## Original reproduction
 
 Use the synthetic [four-slide fixture](slide-persistence-input.pptx). Its order is goal, risks, plan, criteria. In the installed plugin, EDIT request:
 

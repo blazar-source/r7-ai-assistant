@@ -1,31 +1,29 @@
 {
-  "sourceCommit": "096edbdda5f626bf44a2a30059b48b1e201c4a9f",
-  "status": "BLOCKED: Slide persistence P1",
-  "files": {
-    "dist/plugin/panel.js": {
-      "sha256": "c227d1bb26f2249813688765740fbfbb4f3f15e4ee7a4911f47f36b248c9ea7f",
-      "bytes": 906288
-    },
-    "dist/plugin/styles.css": {
-      "sha256": "1ab2754cd4686935bbc157e786b8bfefce9999375bb1e2108ff567256bd63085",
-      "bytes": 5905
-    },
-    "dist/plugin/r7-ai-assistant.zip": {
-      "sha256": "62b7eed2753614862e347f22edc9128efe19dd208e8676c592177b32295c5803",
-      "bytes": 921286
-    },
-    "dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb": {
-      "sha256": "54418c46ae39ae6623f08e6614b74ef3d66b343cf543a03ddcfe32a3f68e67f2",
-      "bytes": 939712
-    },
-    "dist/r7-ai-assistant.spdx.json": {
-      "sha256": "154745a6654d07f0a0f1bcdd444b7043e7c424f34d72f65be39e7871c2cda8f1",
-      "bytes": 7291
-    }
+  "sourceCommit": "9b05063cc2c87b8eb2475f0e1b547ec6df33799a",
+  "status": "BLOCKED: native ASK clears Slide redo history",
+  "panelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232",
+  "hashes": {
+    "plugin/r7-ai-assistant.zip": "7aff597bbf6a4cf5a6b79bb86aaea04e41d046cc17f2891568dcc0b4242b29a4",
+    "deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb": "3abbc8046d2c12fbe14221a35d99fad6f1ae8a941d350ed966ff256b1b2fe790",
+    "r7-ai-assistant.spdx.json": "b0adf576bd8f28df21a951b8f11c0c92ca7f4b93e597c330975c587a72b213a5",
+    "plugin/panel.js": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232",
+    "plugin/styles.css": "1ab2754cd4686935bbc157e786b8bfefce9999375bb1e2108ff567256bd63085"
   },
-  "packageChecks": {
-    "sbomFilesMatchZip": 9,
-    "debPayloadFilesMatchZip": 8,
-    "zipSourceCommit": "096edbdda5f626bf44a2a30059b48b1e201c4a9f"
-  }
+  "checks": {
+    "sourceCommit": "9b05063cc2c87b8eb2475f0e1b547ec6df33799a",
+    "zipEntries": 9,
+    "sbomExact": true,
+    "debPluginPayloadExact": true,
+    "knownCredentialHistoryMatches": 0,
+    "knownCredentialArtifactMatches": 0,
+    "knownCredentialValuesChecked": 1,
+    "historyObjectsChecked": 3212,
+    "panelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232"
+  },
+  "fullTests": {
+    "passed": 1447,
+    "failed": 0,
+    "skipped": 0
+  },
+  "native": "Compound move/format and move-only Save/reopen passed; Undo/ASK/Redo failed; final T8 not passed"
 }
