@@ -2,12 +2,13 @@
 
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is undergoing final acceptance. The owner explicitly accepted the confirmed Slide ASK/Redo history defect as a pilot limitation on 2026-10-09. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
+Version `0.9.0-pilot-rc` is a controlled pilot candidate. The owner explicitly accepted the confirmed Slide ASK/Redo history defect as a pilot limitation on 2026-10-09. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
 
 - Plugin ZIP: `dist/plugin/r7-ai-assistant.zip`.
 - Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`.
 - SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`.
-- Checksums: `dist/SHA256SUMS`.
+- Checksums: `dist/SHA256SUMS`; the published manifest uses the three artifact basenames so `sha256sum -c SHA256SUMS` works in a single download directory.
+- Final source commit, toolchain, tests, exact archive hashes and acceptance: `release-manifest.json` and `final-review.md` attached to the private GitHub Pre-release. Tracked `tested-candidate.json` identifies the earlier native-tested payload, not the later provenance-bearing release ZIP.
 
 The private GitHub release must remain a Pre-release until the bank environment and ZPS are accepted. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN; end users need no development toolchain.
 

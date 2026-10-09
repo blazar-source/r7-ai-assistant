@@ -1,16 +1,16 @@
 # Changelog
 
-## Unreleased acceptance delta — 2026-10-09
+## Acceptance delta — 2026-10-09
 
 - Correct standalone Slide save-state refresh and native history boundary; compound move/format and move-only persistence verified.
 - Preflight all requested format setters; retain uncertainty lease after restructure failures.
-- Owner accepted the native Slide ASK/Redo defect as a known pilot limitation on 2026-10-09. The defect is not fixed; remaining T8 gates are pending.
+- Owner accepted the native Slide ASK/Redo defect as a known pilot limitation on 2026-10-09. The defect is not fixed and is disclosed below.
 
-## 0.9.0-pilot-rc — unreleased, acceptance in progress
+## 0.9.0-pilot-rc
 
 The embedded Word/Cell/Slide assistant now has one shared encrypted connection profile, first-launch setup, administrator-editable settings in the overflow menu, and the approved compact interface. User UAT prompted fixes for model-visible tool schemas, short-document routing, Word section insertion, Cell column-width guidance, first-run capabilities and Slide completion checks. Damaged profile versions can be recovered without overwriting newer settings.
 
-The tested candidate passes 1447 tests and native compact UX at 259 x 499. Word and Cell user workflows pass independent data checks and save/reopen. **Slide ASK can destroy Redo after Undo on the supported R7 build; the owner explicitly accepted this limitation for the pilot.** Standalone move/format persistence is corrected. No GitHub release is published. [Current evidence and reproduction](docs/evidence/release-uat/verification.md) supersede earlier local RC acceptance.
+The tested candidate passes 1447 tests and native compact UX at 259 x 499. Word and Cell user workflows pass independent data checks and save/reopen. **Slide ASK can destroy Redo after Undo on the supported R7 build; the owner explicitly accepted this limitation for the pilot.** Standalone move/format persistence is corrected. The GitHub release is a private Pre-release; its attached manifest and checksums identify the distributed bytes. [Current evidence and reproduction](docs/evidence/release-uat/verification.md) supersede earlier local RC acceptance.
 
 ### Known limitations
 

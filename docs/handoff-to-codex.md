@@ -1,3 +1,7 @@
+# Final pilot acceptance continuation — 2026-10-09
+
+Native UAT now includes format-only, duplicate, all-slide visual inspection, Save/reopen, full process restart/shared encrypted profile, and DEB/ZIP lifecycle. Fresh full suite1447 PASS (zero skipped), authored-code audit PASS. The owner explicitly accepted only the measured unfixed Slide ASK/Redo behavior. Source payload remains9b05063 / panel95bf8ff5…; [current evidence](evidence/release-uat/verification.md) supersedes historical pending/blocking statements below. Final pinned distribution identity/review must accompany the private Pre-release as release-manifest.json/SHA256SUMS/final-review.md; no later merge SHA may silently replace the tested source commit.
+
 # Owner acceptance update — 2026-10-09
 
 The owner explicitly accepted the unfixed Slide Undo → ASK → Redo behavior as a known pilot limitation (restart does not restore Redo). This supersedes the historical release-blocking classification below, not the FAIL evidence. Resume remaining format-only/duplicate/persistence, process-restart/shared-profile, final artifact and independent T8 gates. No other defects or security gates are waived. Publication authorization remains conditional and private Pre-release only.
