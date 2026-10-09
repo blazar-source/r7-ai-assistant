@@ -48,7 +48,7 @@ function probeFixture(editorType = 'word', hasCommand = true) {
 test('UI capability action reaches native owned bridge without credentials, HTTP or chat/context changes', async () => {
   const f = probeFixture(); f.checkAction();
   const before = f.controller.getState(); const model = f.id('model');
-  model.focus(); model.value = 'unsaved draft';
+  model.focus(); model.value = 'unsaved draft'; model.dispatch('input');
   f.id('check-r7').dispatch('click');
   assert.equal(f.controller.getState().active, true);
   assert.equal(f.id('check-r7').disabled, true); assert.equal(f.id('send').disabled, true);

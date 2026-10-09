@@ -82,8 +82,7 @@ export function progressStageText(state) {
   const toolCalls = Number.isInteger(record.toolCalls) && record.toolCalls > 0 ? record.toolCalls : 0;
   if (steps === 0) return 'запрос к модели';
   if (toolCalls > 0 && record.status === 'RUNNING') {
-    const total = Array.isArray(state.orchestration?.plan?.sections) ? state.orchestration.plan.sections.length : 0;
-    return total > 0 ? `шаг ${steps} из ${total}` : `выполнение шага ${steps}`;
+    return `выполнение шага ${steps}`;
   }
   return 'сборка результата';
 }
@@ -327,6 +326,9 @@ export function mountPanel(root, controller) {
   }
   function submit() {
     if (controller.getState().active || controller.getState().settingsBusy) return;
+    // An explicit new request follows its answer; passive updates still preserve
+    // the position of someone reading earlier messages.
+    content.scrollTop = content.scrollHeight;
     Promise.resolve(controller.analyze(prompt.value)).then(function () {
       if (controller.getState().status === 'COMPLETE') prompt.focus();
     });

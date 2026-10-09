@@ -397,7 +397,7 @@ test('progress stages derive the five closed human phrases from published state'
   assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: null }), 'подготовка запроса');
   assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 0, toolCalls: 0 } }), 'запрос к модели');
   assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 3, toolCalls: 2 } }), 'выполнение шага 3');
-  assert.equal(progressStageText({ active: true, status: 'ORCH_EXECUTING', orchestration: { status: 'ORCH_EXECUTING', plan: { sections: ['A', 'B', 'C', 'D'] } }, agent: { status: 'RUNNING', steps: 3, toolCalls: 2 } }), 'шаг 3 из 4');
+  assert.equal(progressStageText({ active: true, status: 'ORCH_EXECUTING', orchestration: { status: 'ORCH_EXECUTING', plan: { sections: ['A', 'B', 'C', 'D'] } }, agent: { status: 'RUNNING', steps: 22, toolCalls: 21 } }), 'выполнение шага 22');
   assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 4, toolCalls: 0 } }), 'сборка результата');
   assert.equal(progressStageText({ active: true, status: 'ORCH_VERIFYING', orchestration: { status: 'ORCH_VERIFYING' }, agent: { status: 'FINAL', steps: 4, toolCalls: 2 } }), 'проверка результата');
 });
@@ -734,6 +734,15 @@ test('the readiness summary names the denominator of the EDITOR it describes', a
   content.scrollTop = 700; f.controller.contextChanged(); assert.equal(content.scrollTop, 1000);
   f.id('toggle-diagnostics').dispatch('click'); content.scrollTop = 100;
   f.controller.contextChanged(); assert.equal(content.scrollTop, 100);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('explicit send returns a scrolled-up conversation to the new response', async () => {
+  const f = fixture(final('answer')); const content = f.id('content');
+  content.scrollHeight = 1000; content.clientHeight = 300; content.scrollTop = 100;
+  f.id('prompt').value = 'new question'; f.id('composer').dispatch('submit');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(content.scrollTop, 1000);
   f.panel.dispose(); f.controller.dispose();
 });
 
