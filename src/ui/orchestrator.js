@@ -406,13 +406,16 @@ function resultOf(phase, fields) {
 // creation belongs here; sections, tables and edits alone must not impose that floor.
 const LONG_CREATION = /(?:^|\s)(?:создай|создайте|подготовь|подготовьте|напиши|напишите|составь|составьте|сделай|сделайте)\s/i;
 const LONG_VOLUME = /(?:^|\s)(\d+)\s*(страниц|знак|символ|char)/gi;
+// Do not mistake a source document's size for the requested output. Ambiguous
+// requests keep the ordinary agent path instead of acquiring a mandatory floor.
+const SHORT_OR_SOURCE = /кратк|коротк|резюме|исходн|(?:по|из)\s+документ|документа\s+на\s/i;
 export function isLongGenerationRequest(request) {
   if (typeof request !== 'string') return false;
   const text = request.trim();
   // A short request cannot carry a long-generation instruction; the byte bound is the controller's own
   // user-input bound, applied here so the trigger is decided by the same number the request is held to.
   if (text === '' || text.length > 1200) return false;
-  if (!LONG_CREATION.test(text)) return false;
+  if (!LONG_CREATION.test(text) || SHORT_OR_SOURCE.test(text)) return false;
   if (/(?:^|\s)десять\s+страниц/i.test(text)) return true;
   for (const match of text.matchAll(LONG_VOLUME)) {
     const characters = Number(match[1]) * (/страниц/i.test(match[2]) ? ORCHESTRATION_PAGE_CHARS : 1);

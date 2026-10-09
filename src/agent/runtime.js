@@ -280,8 +280,9 @@ export async function runAgent(options) {
 function systemRules(catalogue, mode, instruction = null, reviewSlideCompletion = false) {
   // The authored `description` is the ONLY place the model is told what a tool is FOR: without it the
   // listing is `name (kind, policy)` and the model has to guess from the name alone.
-  const lines = catalogue.map(tool => `${tool.name} (${tool.kind}, ${tool.policy}): ${tool.description}`);
-  const rules = [`Режим: ${mode}. Инструменты: ${lines.join('; ')}.`];
+  const lines = catalogue.map(tool => `${tool.name} (${tool.kind}, ${tool.policy}): ${tool.description} Аргументы: ${JSON.stringify(tool.schema)}`);
+  const rules = [`Режим: ${mode}. Инструменты: ${lines.join('\n')}.`,
+    'Соблюдай схему arguments каждого инструмента: только перечисленные поля, обязательные поля из required, допустимые значения и границы. Необязательные поля без значения пропускай. minBytes/maxBytes — длина UTF-8 в байтах.'];
   // A profile's orchestration line is registry-authored DATA rendered verbatim in this SAME model-facing
   // text (never composed here, never a second system message): it states HOW the named tools are to be
   // used — plan first, then build in parts, then re-read and continue — which is the contract a
