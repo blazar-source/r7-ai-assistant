@@ -1,3 +1,7 @@
+# Licensing update — 2026-10-09
+
+Owner named Бугров Геннадий Дмитрович and authorized free personal noncommercial use plus the bank pilot. Version0.9.0-pilot-rc.1 packages the updated LICENSE and exact SPDX license text; src is unchanged. See [delta verification](evidence/licensing-update/verification.md). Final distribution SHA/hashes and review belong to the `.1` release assets. Original rc tag/assets stay immutable; the accepted Slide history limitation and bank/ZPS gates remain.
+
 # Final pilot acceptance continuation — 2026-10-09
 
 Native UAT now includes format-only, duplicate, all-slide visual inspection, Save/reopen, full process restart/shared encrypted profile, and DEB/ZIP lifecycle. Fresh full suite1447 PASS (zero skipped), authored-code audit PASS. The owner explicitly accepted only the measured unfixed Slide ASK/Redo behavior. Source payload remains9b05063 / panel95bf8ff5…; [current evidence](evidence/release-uat/verification.md) supersedes historical pending/blocking statements below. Final pinned distribution identity/review must accompany the private Pre-release as release-manifest.json/SHA256SUMS/final-review.md; no later merge SHA may silently replace the tested source commit.

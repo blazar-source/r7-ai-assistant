@@ -6,7 +6,7 @@ import { buildPlugin } from './build-plugin.mjs';
 import { inventory } from '../tests/fixtures/archive.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const PRODUCT_VERSION = '0.9.0-pilot-rc';
+const PRODUCT_VERSION = '0.9.0-pilot-rc.1';
 function sha256(data) { return createHash('sha256').update(data).digest('hex'); }
 function invalid() { throw new Error('INVALID_SBOM_INPUT'); }
 function stableJson(value) {
@@ -24,6 +24,8 @@ export async function generateSbom(options = {}) {
   if (typeof output !== 'string' || !/^dist\/[A-Za-z0-9_.\/-]+\.spdx\.json$/.test(output) || output.includes('..')) invalid();
   const entries = inventory(archive);
   const names = entries.map(entry => entry.name);
+  const licenseText = entries.find(entry => entry.name === 'LICENSE')?.data.toString('utf8');
+  if (!licenseText?.trim()) invalid();
   const provenance = JSON.parse(entries.find(entry => entry.name === 'provenance.json')?.data.toString('utf8') ?? 'null');
   if (!provenance || provenance.productVersion !== PRODUCT_VERSION || provenance.toolchain?.node !== process.version || provenance.toolchain?.esbuild !== '0.25.10') invalid();
   for (const [name, detail] of Object.entries(provenance.files)) {
@@ -39,7 +41,7 @@ export async function generateSbom(options = {}) {
   const files = entries.slice().sort((a, b) => a.name.localeCompare(b.name)).map(entry => ({
     SPDXID: fileId(entry.name),
     checksums: [{ algorithm: 'SHA256', checksumValue: sha256(entry.data) }],
-    copyrightText: 'Copyright (c) R7 AI Assistant rights holder. All Rights Reserved.',
+    copyrightText: 'Copyright (c) 2026 Бугров Геннадий Дмитрович. All Rights Reserved.',
     fileName: `./${entry.name}`,
     licenseConcluded: entry.name === 'THIRD_PARTY_NOTICES.md' ? 'LicenseRef-Proprietary AND MIT' : 'LicenseRef-Proprietary',
     licenseInfoInFiles: entry.name === 'THIRD_PARTY_NOTICES.md' ? ['LicenseRef-Proprietary', 'MIT'] : ['LicenseRef-Proprietary']
@@ -54,10 +56,10 @@ export async function generateSbom(options = {}) {
     dataLicense: 'CC0-1.0',
     documentNamespace: `https://r7-ai-assistant.invalid/spdx/${PRODUCT_VERSION}/${sha256(archive)}`,
     files,
-    hasExtractedLicensingInfos: [{ extractedText: 'Standalone commercial product. All Rights Reserved; no license grant is made.', licenseId: 'LicenseRef-Proprietary', name: 'R7 AI Assistant proprietary license' }],
+    hasExtractedLicensingInfos: [{ extractedText: licenseText, licenseId: 'LicenseRef-Proprietary', name: 'R7 AI Assistant personal-use and bank-pilot license' }],
     name: `r7-ai-assistant-${PRODUCT_VERSION}`,
     packages: [
-      { SPDXID: 'SPDXRef-Package-R7AIAssistant', checksums: [{ algorithm: 'SHA256', checksumValue: sha256(archive) }], copyrightText: 'Copyright (c) R7 AI Assistant rights holder. All Rights Reserved.', downloadLocation: 'NOASSERTION', filesAnalyzed: true, licenseConcluded: 'LicenseRef-Proprietary', licenseDeclared: 'LicenseRef-Proprietary', name: 'r7-ai-assistant', packageFileName: 'r7-ai-assistant.zip', primaryPackagePurpose: 'APPLICATION', supplier: 'Organization: R7 AI Assistant', versionInfo: PRODUCT_VERSION, packageVerificationCode: { packageVerificationCodeValue: sha256(Buffer.from(files.map(file => file.checksums[0].checksumValue).sort().join(''), 'ascii')) } },
+      { SPDXID: 'SPDXRef-Package-R7AIAssistant', checksums: [{ algorithm: 'SHA256', checksumValue: sha256(archive) }], copyrightText: 'Copyright (c) 2026 Бугров Геннадий Дмитрович. All Rights Reserved.', downloadLocation: 'NOASSERTION', filesAnalyzed: true, licenseConcluded: 'LicenseRef-Proprietary', licenseDeclared: 'LicenseRef-Proprietary', name: 'r7-ai-assistant', packageFileName: 'r7-ai-assistant.zip', primaryPackagePurpose: 'APPLICATION', supplier: 'Person: Бугров Геннадий Дмитрович', versionInfo: PRODUCT_VERSION, packageVerificationCode: { packageVerificationCodeValue: sha256(Buffer.from(files.map(file => file.checksums[0].checksumValue).sort().join(''), 'ascii')) } },
       { SPDXID: 'SPDXRef-BuildTool-Node', copyrightText: 'Copyright Node.js contributors. MIT License.', downloadLocation: 'https://nodejs.org/', filesAnalyzed: false, licenseConcluded: 'MIT', licenseDeclared: 'MIT', name: 'Node.js', primaryPackagePurpose: 'BUILD_TOOL', supplier: 'Organization: OpenJS Foundation and Node.js contributors', versionInfo: process.version.slice(1) },
       { SPDXID: 'SPDXRef-BuildTool-esbuild', copyrightText: 'Copyright (c) 2020 Evan Wallace', downloadLocation: 'https://registry.npmjs.org/esbuild/-/esbuild-0.25.10.tgz', filesAnalyzed: false, licenseConcluded: 'MIT', licenseDeclared: 'MIT', name: 'esbuild', primaryPackagePurpose: 'BUILD_TOOL', supplier: 'Person: Evan Wallace', versionInfo: '0.25.10' }
     ],

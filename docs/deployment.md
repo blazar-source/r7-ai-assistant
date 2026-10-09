@@ -2,15 +2,19 @@
 
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is a controlled pilot candidate. The owner explicitly accepted the confirmed Slide ASK/Redo history defect as a pilot limitation on 2026-10-09. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
+Version `0.9.0-pilot-rc.1` is a controlled pilot candidate. The owner explicitly accepted the confirmed Slide ASK/Redo history defect as a pilot limitation on 2026-10-09. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
 
 - Plugin ZIP: `dist/plugin/r7-ai-assistant.zip`.
-- Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`.
+- Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc.1_amd64.deb`.
 - SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`.
 - Checksums: `dist/SHA256SUMS`; the published manifest uses the three artifact basenames so `sha256sum -c SHA256SUMS` works in a single download directory.
 - Final source commit, toolchain, tests, exact archive hashes and acceptance: `release-manifest.json` and `final-review.md` attached to the private GitHub Pre-release. Tracked `tested-candidate.json` identifies the earlier native-tested payload, not the later provenance-bearing release ZIP.
 
 The private GitHub release must remain a Pre-release until the bank environment and ZPS are accepted. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN; end users need no development toolchain.
+
+## Licensing
+
+The rights holder is **Бугров Геннадий Дмитрович**. Personal noncommercial use is free. Bank-internal pilot use is separately permitted for a bank supplied or confirmed by the rights holder for that pilot; ongoing commercial use is not granted. See [LICENSE](../LICENSE) and the [licensing guide](licensing.md). The original `0.9.0-pilot-rc` package is unchanged; use the `.1` package for the updated license.
 
 ## Supported target
 
@@ -27,7 +31,7 @@ The product-owned declaration is [`../packaging/compatibility.json`](../packagin
 For authorized testing, install the supplied, checksum-verified DEB from its containing directory:
 
 ```sh
-sudo dpkg -i ./r7-ai-assistant_0.9.0-pilot-rc_amd64.deb
+sudo dpkg -i ./r7-ai-assistant_0.9.0-pilot-rc.1_amd64.deb
 ```
 
 `dpkg -i` installs an inert payload under `/usr/share/r7-ai-assistant/`, the product-owned file manifest under `/usr/share/doc/r7-ai-assistant/`, and `/usr/bin/r7-ai-assistant-preflight`. It does not activate the plugin in a user profile.
@@ -35,7 +39,7 @@ sudo dpkg -i ./r7-ai-assistant_0.9.0-pilot-rc_amd64.deb
 As the desktop user who will run R7, execute the shipped compatibility preflight and only on exit `0` copy the payload to the measured per-user location:
 
 ```sh
-/usr/bin/r7-ai-assistant-preflight
+/usr/bin/r7-ai-assistant-preflight || exit 42
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
 install -d -m 0755 "$TARGET"
@@ -100,7 +104,7 @@ Every real future upgrade must be independently built, preflighted and measured.
 ```sh
 PACKAGE='/path/to/measured/r7-ai-assistant_<new-version>_amd64.deb'
 sudo dpkg -i "$PACKAGE"
-/usr/bin/r7-ai-assistant-preflight
+/usr/bin/r7-ai-assistant-preflight || exit 42
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
 install -d -m 0755 "$TARGET"

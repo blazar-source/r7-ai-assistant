@@ -1,13 +1,26 @@
-# Licensing
+# Лицензирование
 
-Standalone commercial product, private local repository, All Rights Reserved pending separate legal decision. No remote or publication authorized.
+Правообладатель: **Бугров Геннадий Дмитрович**. Полные условия — в [LICENSE](../LICENSE).
 
-Possible future model: free personal/noncommercial use; commercial use requires commercial license. This is business intent, not a legal grant or finalized EULA. Rights holder and final terms require a separate decision.
+- **Личное некоммерческое использование — бесплатно.** Разрешены установка, запуск и необходимые установочные и резервные копии.
+- **Использование в работе и бизнесе не разрешено общей лицензией.** Для него требуется отдельное письменное разрешение или договор с правообладателем.
+- **Банковский пилот разрешён бесплатно как отдельное исключение.** Оно распространяется на банк, которому правообладатель передал продукт для пилота или подтвердил участие, и только на внутреннее пилотное тестирование его сотрудниками и администраторами. Это не разрешение для любого банка и не разрешение на постоянную промышленную эксплуатацию.
+- Продажа, публичное распространение исходников/сборок, сублицензирование и предоставление продукта как сервиса этой лицензией не разрешаются.
 
-MIT reference code does not convert the product to MIT. Any copied component must retain required attribution/license and appear in THIRD_PARTY_NOTICES and the artifact SBOM. SDK redistribution terms must be checked before bundling.
+Это проприетарная лицензия с ограниченными разрешениями, не MIT. Уведомления MIT в [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) относятся к соответствующим сторонним инструментам и не меняют лицензию продукта. Репозиторий остаётся приватным.
 
-## Release-candidate reconciliation
+## Какой выпуск содержит эти условия
 
-The shipped plugin payload is compiled first-party source plus first-party static assets. Verification of `package.json`, `package-lock.json`, and the packaged browser bundle found zero runtime dependencies and no bundled third-party code or R7 SDK source. `THIRD_PARTY_NOTICES.md` is itself shipped and contains the notices for development/build tooling; its presence does not mean those tools are embedded in the application.
+Лицензия включена в ZIP и DEB начиная с **0.9.0-pilot-rc.1**. SBOM содержит точный текст LICENSE из соответствующего ZIP и указанного правообладателя. `package.json` ссылается на LICENSE как на пользовательскую лицензию.
 
-The deterministic SPDX 2.3 SBOM generator now declares the proprietary product package as `0.9.0-pilot-rc`; after the release commit is pinned, Sprint 8 must generate the final SBOM from the final ZIP and record its hash. The SBOM records every file actually present in the plugin archive with SHA-256 computed from the archive bytes and the exact Node.js and pinned esbuild build tools under their MIT licenses. Acorn is audit-only development tooling and neither determines nor enters the packaged bytes, so it remains documented in `THIRD_PARTY_NOTICES.md` rather than being presented as a shipped or byte-determining SBOM component. The candidate is prepared but not published.
+Первый выпуск `0.9.0-pilot-rc` сохраняет прежние байты и отметку All Rights Reserved без предоставления прав. Для поставки с новыми условиями используйте `0.9.0-pilot-rc.1`; старый тег и архивы не перезаписываются.
+
+## Банковская приёмка
+
+Разрешение на пилот и техническая приёмка — разные вопросы. Банковский контур TLS/CORS/AUTH/Qwen, ЗПС и локальные требования банка ещё требуют проверки. Перед передачей на пилот укажите банк и ответственных в сопроводительном разрешении или переписке правообладателя. Текст лицензии доступен для проверки юристом банка.
+
+[Установка и ограничения](deployment.md), [настройка администратором](admin-connection.md).
+
+## Состав поставки
+
+В сборке находятся собственный код и статические ресурсы проекта; сторонние runtime-зависимости и исходники SDK Р7 не поставляются. SBOM описывает все файлы ZIP с SHA-256 и инструменты сборки Node.js/esbuild под их лицензиями MIT. Acorn используется только при разработке и аудите; сведения о нём находятся в THIRD_PARTY_NOTICES.md. SBOM и SHA256SUMS приложены к конкретному выпуску.

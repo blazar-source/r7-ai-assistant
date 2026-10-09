@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0-pilot-rc.1 — licensing update
+
+- Name the rights holder, Бугров Геннадий Дмитрович, and permit free personal noncommercial use plus the separately authorized internal bank pilot. Other commercial use requires separate written permission.
+- Ship the full license in ZIP/DEB and its exact text in SPDX; correct stale README setup instructions and licensing status.
+- No assistant runtime/UI/tool changes. The accepted Slide ASK/Redo limitation and all platform/bank acceptance limits remain.
+- Keep the original rc tag/assets unchanged; `.1` has its own provenance, artifacts and checksums.
+
 ## Acceptance delta — 2026-10-09
 
 - Correct standalone Slide save-state refresh and native history boundary; compound move/format and move-only persistence verified.

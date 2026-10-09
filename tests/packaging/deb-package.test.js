@@ -14,7 +14,7 @@ const hash = data => createHash('sha256').update(data).digest('hex');
 test('DEB metadata is the required release-candidate package identity', async () => {
   const result = await buildDeb();
   const deb = inspectDeb(readFileSync(result.debPath));
-  assert.deepEqual(deb.control, { Architecture: 'amd64', Description: 'Data-only R7 AI Assistant plugin payload', Maintainer: 'R7 AI Assistant maintainers', Package: 'r7-ai-assistant', Version: '0.9.0-pilot-rc' });
+  assert.deepEqual(deb.control, { Architecture: 'amd64', Description: 'Data-only R7 AI Assistant plugin payload', Maintainer: 'R7 AI Assistant maintainers', Package: 'r7-ai-assistant', Version: '0.9.0-pilot-rc.1' });
 });
 
 test('DEB regular-file inventory equals the contract manifest plus its uninstall manifest', async () => {
