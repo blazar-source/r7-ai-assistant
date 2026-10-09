@@ -24,7 +24,7 @@ function wrapper(kind, options = {}) {
   };
 }
 function rig(options = {}) {
-  let dispatches = 0;
+  let dispatches = 0; const recalculations = [];
   let drawings = [], images = [], shapes = [], charts = [], ole = [];
   const slide = {
     GetClassType() { return options.classType ?? 'slide'; }, GetSlideIndex() { return options.actualIndex ?? 0; },
@@ -38,8 +38,8 @@ function rig(options = {}) {
     CreateImage(source, width, height) { return { kind: 'image', stored: wrapper('image', { source: options.badSource ?? source, width: options.badWidth ?? width, height: options.badHeight ?? height, nonString: options.nonString, unparseable: options.unparseable }) }; }
   };
   const namespace = { scope: {} };
-  const plugin = { info: { editorType: 'slide' }, callCommand(body, _close, _recalc, callback) { dispatches++; callback(new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(Api, namespace.scope)); } };
-  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches };
+  const plugin = { info: { editorType: 'slide' }, callCommand(body, _close, _recalc, callback) { dispatches++; recalculations.push(_recalc); callback(new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(Api, namespace.scope)); } };
+  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), recalculations, dispatches: () => dispatches };
 }
 const tableRequest = overrides => ({ slideIndex: null, columns: 3, rows: 2, maxColumns: LIMITS.slideTableColumnsMax, maxRows: LIMITS.slideTableRowsMax, maxResultBytes: LIMITS.slideReadResultBytes, ...overrides });
 const imageRequest = overrides => ({ slideIndex: null, imageDataUrl: PNG, widthEmu: 720000, heightEmu: 360000, maxImageBytes: LIMITS.slideImageBytesMax, maxImageEmu: LIMITS.slideImageEmuMax, maxResultBytes: LIMITS.slideReadResultBytes, ...overrides });
@@ -84,4 +84,9 @@ test('slide object requests refuse the closed malformed argument class before di
 test('slide object proof failures settle uncertain after dispatch', async () => {
   for (const options of [{ badGrid: 2 }, { badCells: 5 }, { mutateShapes: true }, { nonString: true }, { unparseable: true }]) assert.equal((await rig(options).bridge.addSlideTable(tableRequest())).code, 'APPLY_UNCERTAIN');
   for (const options of [{ mutateShapes: true }, { nonString: true }, { unparseable: true }]) assert.equal((await rig(options).bridge.addSlideImage(imageRequest())).code, 'APPLY_UNCERTAIN');
+});
+
+test('slide image requests resource loading and repaint in its command', async () => {
+ const f=rig(); assert.equal((await f.bridge.addSlideImage(imageRequest())).ok,true);
+ assert.deepEqual(f.recalculations,[true]);
 });

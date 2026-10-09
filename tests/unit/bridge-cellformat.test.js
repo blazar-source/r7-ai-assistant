@@ -121,7 +121,7 @@ function rig(options = {}) {
       const source = Function.prototype.toString.call(body);
       const scope = namespace.scope;
       const answered = new Function('Api', 'scope', 'return (' + source + ')();')(api, scope);
-      commands.push({ by: 'callCommand', source, scope, answered });
+      commands.push({ by: 'callCommand', source, scope, answered, recalculate });
       callback(options.forge === undefined ? answered : options.forge);
       return false;
     } };
@@ -732,4 +732,9 @@ test('a percent format with DECIMALS is built and proved, not only the integer p
   assert.equal(refused.code, 'APPLY_UNCERTAIN', 'the one-decimal code is a different code from 0%');
   const honest = rig();
   assert.equal((await honest.bridge.formatCells({ address: 'A1', numberFormat: { type: 'percent', decimals: 1 } })).ok, true);
+});
+
+test('cell formatting requests native paint and layout before success', async () => {
+ const f=rig(); assert.equal((await f.bridge.formatCells({address:'A1', fill:'#ffff00', fontSize:24})).ok,true);
+ assert.equal(f.commands[0].recalculate,true);
 });

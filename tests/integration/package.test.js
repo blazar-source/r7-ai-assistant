@@ -212,24 +212,7 @@ test('generated authored browser bundle passes audit with literal synchronous st
   // second argument could never hold the needle. `ToHtml` is AUTHORED NOWHERE: that export is entity-escaped,
   // so the data URL could not appear in it verbatim. The legacy whole-array insert primitive — measured to land
   // at the START and to replace existing text under a selection — is absent too.
-  // TWELVE legs are carried inline, and the LAST one is the COMMENT INSERT (`insert_comment`): the EIGHTH body
-  // that MUTATES the document through the `Api` builder, the THIRD one that APPENDS (a comment joins the
-  // document's own comment collection), and the FIRST whose proof is the COMMENT COLLECTION's own identity
-  // rather than a count, a needle or an occurrence arithmetic. It is classified by its OWN mutating primitive
-  // (`AddComment`, which no other leg authors) — and its OWN branch must come FIRST, not for the image body's
-  // reason but because it authors NONE of the primitives every later branch recognises, so without its own
-  // branch it would be blessed as the read-only CAPABILITY probe. It takes its `{ text, maxBytes, idMax }`
-  // scope as DATA, reads the document's own comment collection BEFORE the ONE `AddComment` — its length AND the
-  // ids it already holds — reads a FRESH collection after it, identifies the added comment through the id the
-  // factory returned or through the DIFFERENCE of the two id sets, and proves the write through THAT comment's
-  // own `GetText()`, which must equal the requested text exactly. NO EXPORT IS READ: the measured
-  // `ToMarkdown(...)` does NOT contain the comment text (the export length was unchanged and the text was
-  // absent), so `ToMarkdown`/`ToHtml`/`GetFileHTML` are authored nowhere on this leg — the exact opposite of
-  // the image insert beside it. `CreateComment` is authored nowhere because `Api.CreateComment` does not exist
-  // on the target (measured undefined), and `GetCommentById`/`GetCommentsReport` are absent because the
-  // collection the write really changed is the honest evidence. `AddComment` is measured to take the TEXT
-  // ALONE, so this leg has NO target argument at all. The legacy whole-array insert primitive — measured to
-  // land at the START and to replace existing text under a selection — is absent too.
+  // Comment creation uses editor methods so R7 receives its UI events.
   let commands = 0; const legs = [];
   walk(parse(source, { ecmaVersion: 'latest' }), node => {
     if (node.type === 'CallExpression' && node.callee.type === 'MemberExpression' && node.callee.property.name === 'callCommand') {
@@ -423,31 +406,6 @@ test('generated authored browser bundle passes audit with literal synchronous st
         assert.equal(code.includes('SetValue'), false, 'and writes no cell: this leg is a read');
         assert.equal(code.includes('Push('), false, 'and pushes nothing into the document');
         legs.push('sheet');
-      } else if (code.includes('AddComment')) {
-        // The twelfth leg, whose narrative is stated once at the head of this classifier. Its OWN branch
-        // must come FIRST among the WORD legs: the comment body authors neither `CreateImage` nor any
-        // other leg's primitive, so without it the classifier would fall through to the read-only
-        // CAPABILITY probe branch (its `type` is neither `Push`, `SetStyle` nor `CreateTable`), whose
-        // body looks nothing like it.
-        assert.match(code, /\bscope\b/, 'the comment body takes its text from the injected command scope');
-        assert.match(code, /GetAllComments\(\)/, 'and reads the document\u2019s own comment count on both sides of the write');
-        assert.match(code, /GetText\(\)/, 'and proves the added comment through its own text readback');
-        assert.match(code, /GetId\(\)/, 'and identifies it through its own id');
-        assert.match(code, /PRE_INSERT/, 'and marks its pre-write refusals with an explicit phase');
-        assert.match(code, /POST_INSERT/, 'and turns that phase at its ONE mutating call');
-        assert.equal((code.match(/AddComment\s*\(/g) ?? []).length, 1,
-          'the ONE mutation is authored exactly once, and never through a second route');
-        assert.equal(code.includes('CreateComment'), false,
-          'the nonexistent factory is authored nowhere: `Api.CreateComment` is undefined on the target');
-        assert.equal(code.includes('ToMarkdown'), false,
-          'and no export is read: the measured markdown export does NOT contain the comment text');
-        assert.equal(code.includes('ToHtml'), false, 'neither export is involved');
-        assert.equal(code.includes('executeMethod'), false, 'and the executeMethod route is authored nowhere');
-        assert.equal(code.includes('InsertContent'), false, 'and never the legacy whole-array primitive');
-        assert.equal(code.includes('GetCommentById'), false,
-          'the by-id reader is authored nowhere: the proof reads the collection the write really changed');
-        assert.equal(code.includes('GetCommentsReport'), false, 'and the report reader is authored nowhere too');
-        legs.push('comment');
       } else if (code.includes('t5Refusal')) {
         assert.match(code, /\.Duplicate\(\)/, 'the T5 restructure body carries the measured duplicate primitive');
         assert.match(code, /\.MoveTo\(t5To\)/, 'the T5 restructure body carries the measured move primitive');
@@ -579,13 +537,12 @@ test('generated authored browser bundle passes audit with literal synchronous st
           'every remaining Word command body carries the authored document selection-range probe');
         legs.push(code.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
       }
-      // Word append and Cell value write intentionally recalculate so changes
-      // appear immediately (68b164f / ab06fef); other command legs stay unchanged.
-      assert.equal(node.arguments[2].value, ['blocks', 'sheetwrite'].includes(legs.at(-1)));
+      // Native layout and image-resource loading complete within these mutations.
+      assert.equal(node.arguments[2].value, ['blocks', 'sheetwrite', 'cellformat', 'table', 'heading', 'hyperlink', 'image', 'slideobject'].includes(legs.at(-1)));
     }
   });
-  assert.equal(commands, 24, 'the adapter dispatches twenty-four authored command legs including Cell readiness');
-  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellcapability', 'cellformat', 'comment', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'slideobject', 'sliderestructure', 'structure', 'table'],
+  assert.equal(commands, 23, 'comment insertion uses editor methods; remaining commands stay inline');
+  assert.deepEqual(legs.sort(), ['blocks', 'capability', 'cellcapability', 'cellformat', 'context', 'format', 'heading', 'hyperlink', 'image', 'replace', 'search', 'sheet', 'sheetadd', 'sheetlist', 'sheetrename', 'sheetwrite', 'slide', 'slideformat', 'slidemutate', 'slideobject', 'sliderestructure', 'structure', 'table'],
     'every reviewed static body is carried INLINE by the adapter, each evaluable on its own');
   // The bundle's HTML sinks are pinned again, now that the confirmation parses the document export with
   // `DOMParser` instead of a detached `createElement('div')` + `innerHTML` (the pin was dropped for that

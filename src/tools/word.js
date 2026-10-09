@@ -2046,7 +2046,7 @@ export function createWordTools(bridge) {
     // refusal with the slot released.
     defineTool({
       name: 'format_range', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
-      description: 'Включает оформление диапазона абзаца: align, bold, italic, underline, strikeout. Выключить свойство нельзя.',
+      description: 'Оформляет [start, end) абзаца: end не включён. align, bold, italic, underline, strikeout. Только включает свойства.',
       schema: { type: 'object', additionalProperties: false, required: ['paragraph', 'start', 'end', 'format'],
         properties: {
           paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeIndexMax },
