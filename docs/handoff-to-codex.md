@@ -1,5 +1,7 @@
 # Handoff: DeepSeek Harness → Codex
 
+**Latest connection update, 2026-10-09:** source `a857d5b` is installed on Astra. One-time onboarding and a shared AES-256-GCM encrypted connection profile now work across Word/Cell/Slide, including existing panels running the new build. Native send preserves the profile; Cell panel reload requires no credential entry. 313 scoped tests + 12 package checks and independent delta review pass. Full R7 process restart is untested to preserve unsaved documents. **RC remains suspended.** See [connection verification](evidence/connection-profile/verification.md); this is the newest product byte set, superseding the candidate identities below.
+
 **Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** The Word append/display defect is corrected and natively verified on candidate 68b164f: both paragraphs appear immediately, before diagnostic readback. The updated candidate is installed; the prior user document remains open. Full new-set RC acceptance has not been re-established. This supersedes earlier RC acceptance claims below. See [Word display blocker](evidence/sprint-8/word-display-blocker.md).
 
 ## Current status — Codex continuation, 2026-10-09

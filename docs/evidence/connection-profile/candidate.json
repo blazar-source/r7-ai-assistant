@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "a857d5b43be1b80d8c8eee9c7c5a2b546ae9f549",
+  "hostTests": 313,
+  "packageTests": 12,
+  "audit": "PASS",
+  "independentDeltaReview": "PASS after three P2 corrections",
+  "fullR7ProcessRestart": "NOT RUN: unsaved user documents preserved",
+  "checksums": {
+    "dist\\plugin\\r7-ai-assistant.zip": "92ad05f74db7e8042599d8f4b94d3ec0b9861e7563c8433a35c84c8f8fd712d9",
+    "dist\\plugin\\panel.js": "6dd4533287ce4f72eba84f1cc8e8819cd6a7b4ab1b5d423f2e43352d5952f4c1",
+    "dist\\deb\\r7-ai-assistant_0.9.0-pilot-rc_amd64.deb": "716d976573d719dc3c1db39cb764cc0a06fb7b971db6010fa65e8626deb5510a",
+    "dist\\r7-ai-assistant.spdx.json": "16e7913bd76ffb6d52c4fc30d93f4dcff2354ef4a9bc3a323659c27c96dbe3ed",
+    "dist\\plugin\\styles.css": "d2b2b44cb10cf6cefa2f3795e3ec5a0f39edfd975e51480c385f577f9a31f015"
+  }
+}

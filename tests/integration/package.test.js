@@ -237,7 +237,7 @@ test('generated authored browser bundle passes audit with literal synchronous st
       const body = node.arguments[0];
       assert.equal(body.type, 'FunctionExpression', `the command body stays a literal inline function, got ${body.type}`);
       assert.equal(body.async, false); assert.equal(body.generator, false);
-      assert.equal(node.arguments[1].value, false); assert.equal(node.arguments[2].value, false);
+      assert.equal(node.arguments[1].value, false);
       const carried = source.slice(body.start, body.end);
       const code = withoutComments(carried);
       assert.equal(/\b(?:capabilityBody|contextBody)\b/.test(code), false,
@@ -579,6 +579,9 @@ test('generated authored browser bundle passes audit with literal synchronous st
           'every remaining Word command body carries the authored document selection-range probe');
         legs.push(code.includes('CAPABILITY_UNAVAILABLE') ? 'capability' : 'context');
       }
+      // Word append and Cell value write intentionally recalculate so changes
+      // appear immediately (68b164f / ab06fef); other command legs stay unchanged.
+      assert.equal(node.arguments[2].value, ['blocks', 'sheetwrite'].includes(legs.at(-1)));
     }
   });
   assert.equal(commands, 24, 'the adapter dispatches twenty-four authored command legs including Cell readiness');
