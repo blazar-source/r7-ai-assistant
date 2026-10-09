@@ -454,9 +454,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (sheetRenameActive === null || sheetRenameActive === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
             if (typeof sheetRenameActive.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
             if (typeof sheetRenameActive.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // R7 compatibility notification: SetName does not refresh worksheet tabs.
+            // This editor-facade method is not part of the documented Office API;
+            // narrow owner-approved exception: docs/security.md, Worksheet notification.
+            if (typeof Api.sheetsChanged !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
             // THE ONE MUTATION.
             phase = 'POST_INSERT';
             sheetRenameSource.SetName(sheetRenameWanted);
+            Api.sheetsChanged();
             // THE POSTCONDITION, through the INDEPENDENT readers: the collection, the lookup by INDEX, the lookup by
             // NAME, the OLD name that must be gone, and the active sheet (RECORDED, never switched or restored).
             var sheetRenameAfterCollection = Api.GetSheets();

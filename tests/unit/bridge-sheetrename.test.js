@@ -21,7 +21,7 @@ function rig(options = {}) {
   const namespace = { scope: {} };
   const commands = [];
   const renameCalls = [];
-  let setActiveAttempts = 0;
+  let setActiveAttempts = 0; let notifications = 0; let paintedNames = book.map(x => x.name);
   let live = book;   // a build that adds/removes a sheet on rename would change this
   // Names a build failed to RETIRE: the old name keeps resolving, which the postcondition must catch.
   const stale = new Map();
@@ -76,6 +76,11 @@ function rig(options = {}) {
     },
     GetActiveSheet: () => wrapper(book[active.index], undefined)
   };
+  if (!options.noNotification) api.sheetsChanged = () => {
+    notifications++;
+    if (options.notificationThrows) throw Error('UI event failed');
+    paintedNames = book.map(x => x.name);
+  };
   const plugin = { info: { editorType: 'cell' },
     callCommand(body, close, recalculate, callback) {
       const source = Function.prototype.toString.call(body);
@@ -89,7 +94,7 @@ function rig(options = {}) {
     } };
   const bridge = createR7Bridge(plugin, { editorType: 'cell', ascNamespace: namespace,
     clock: { now: () => 0 }, timers: { schedule() { return {}; }, clear() {} } });
-  return { bridge, commands, book, renameCalls, setActiveAttempts: () => setActiveAttempts,
+  return { paintedNames: () => paintedNames, notifications: () => notifications, bridge, commands, book, renameCalls, setActiveAttempts: () => setActiveAttempts,
     live: () => (options.dropsASheet === true ? live : book) };
 }
 
@@ -361,4 +366,21 @@ test('a facade missing the COLLECTION or the LOOKUP refuses as a capability, bef
     assert.deepEqual(f.renameCalls, [], JSON.stringify(knob));
     assert.deepEqual(f.commands[0].answered, ['PRE_INSERT', 'CAPABILITY_UNAVAILABLE'], JSON.stringify(knob));
   }
+});
+
+test('renaming refreshes sheet labels without activating another worksheet', async () => {
+  const f=rig();
+  assert.equal((await f.bridge.renameSheet({sourceIndex:1,newName:'VISIBLE'})).ok,true);
+  assert.deepEqual(f.paintedNames(), ['Sprint1','VISIBLE']);
+  assert.equal(f.notifications(),1);
+  assert.equal(f.setActiveAttempts(),0);
+});
+test('missing sheet notification refuses before rename; notification failure after rename is uncertain', async () => {
+  const missing=rig({noNotification:true});
+  assert.equal((await missing.bridge.renameSheet({sourceIndex:0,newName:'VISIBLE'})).code,'CAPABILITY_UNAVAILABLE');
+  assert.deepEqual(missing.renameCalls,[]);
+  const thrown=rig({notificationThrows:true});
+  assert.equal((await thrown.bridge.renameSheet({sourceIndex:0,newName:'VISIBLE'})).code,'APPLY_UNCERTAIN');
+  assert.equal(thrown.bridge.getState().busy,true);
+  assert.deepEqual(thrown.renameCalls,['VISIBLE']);
 });
