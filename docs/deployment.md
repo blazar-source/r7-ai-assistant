@@ -1,17 +1,15 @@
 # Deployment
 
-**Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** The Word append/display defect is corrected and natively verified on candidate 68b164f: both paragraphs appear immediately, before diagnostic readback. The updated candidate is installed; the prior user document remains open. Full new-set RC acceptance has not been re-established. This supersedes earlier RC acceptance claims below. See [Word display blocker](evidence/sprint-8/word-display-blocker.md).
-
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is **locally accepted with recorded limitations, not published**. The tested source is pinned to `ab06fef4e42840dbb0f02893b853dfad2e646442`; the [final inventory](evidence/sprint-8/final-verification-ab06fef.md) identifies these artifacts:
+Version `0.9.0-pilot-rc` is undergoing final user acceptance. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
 
-- plugin ZIP: `dist/plugin/r7-ai-assistant.zip`;
-- data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`;
-- SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`;
-- checksums: `dist/SHA256SUMS`.
+- Plugin ZIP: `dist/plugin/r7-ai-assistant.zip`.
+- Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`.
+- SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`.
+- Checksums: `dist/SHA256SUMS`.
 
-The observed Slide P1 is closed by final native one-slide and ordered-pair outcomes; independent T8 is PASS WITH RECORDED LIMITATIONS for the exact target and manual per-user routes. Later evidence commits do not redefine the pinned product bytes. Nothing here publishes, tags, merges or distributes them. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN, and end users do not need the development toolchain.
+The private GitHub release must remain a Pre-release until the bank environment and ZPS are accepted. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN; end users need no development toolchain.
 
 ## Supported target
 
@@ -53,14 +51,14 @@ The system-wide product plugin path is **NOT VERIFIED** and must not be used. Do
 
 ## End-user configuration and operation
 
-Open **R7 AI Assistant** in Word, Cell or Slide. Use the first-launch connection screen, or **«Изменить»** beside **«Подключение настроено»**, to configure:
+Open **R7 AI Assistant** in Word, Cell or Slide. Use the first-launch connection screen, or **⋯ → Настройки подключения**, to configure:
 
 - a full HTTPS endpoint ending exactly in `/v1/chat/completions`;
 - the provider's exact model identifier (the product does not silently substitute another model);
 - the API key;
 - optional HTTP timeout (`5–120` seconds), `max_tokens` (`64–8192`) and temperature (`0–2`).
 
-On first launch, use the separate connection screen and press **«Сохранить и проверить»**. A successful check saves one encrypted connection profile shared by Word, Cell and Slide. Already open panels running this version synchronize while idle within two seconds, on focus, and before requests. Sending a message never saves the settings form. Use **«Изменить»** to change the profile; stale forms cannot overwrite a newer save. The pilot administrator may configure or rotate credentials remotely in the employee's desktop session; see the [administrator procedure](admin-connection.md). The pilot does not restrict this button to an administrator role.
+On first launch, use the separate connection screen and press **«Сохранить и проверить»**. A successful check saves one encrypted connection profile shared by Word, Cell and Slide. Already open panels running this version synchronize while idle within two seconds, on focus, and before requests. Sending a message never saves the settings form. Use **⋯ → Настройки подключения** to change the profile; stale forms cannot overwrite a newer save. The pilot administrator may configure or rotate credentials remotely in the employee's desktop session; see the [administrator procedure](admin-connection.md). The pilot does not restrict this button to an administrator role.
 
 Choose ASK for analysis or EDIT for a change request, choose document context only when the panel reports it available, enter a prompt and press **«Отправить»** or `Ctrl+Enter`. **«Стоп»** ends a pending operation. Confirm-policy edits appear as Preview and require explicit **«Применить»**; saving and Undo remain explicit R7 user actions. **«Сбросить настройки»** targets only the product settings namespace.
 
@@ -131,7 +129,7 @@ The consolidated release list is also reproduced in the [RC changelog](../CHANGE
 - **ZPS:** ZPS state and product operation with ZPS enabled are **NOT VERIFIED**; never disable or weaken ZPS to obtain acceptance evidence.
 - **Unsupported tuples:** Every Astra/R7/architecture tuple except the exact supported tuple above is **NOT VERIFIED** and refused by preflight.
 - **System-wide path:** A system-wide product plugin path is not claimed or verified and must not be used; only the per-user brace-GUID path above is supported.
-- **Slide completion:** The observed append/order P1 is closed on `ab06fef`. Completion review requires fresh structure/text reads and separates structural calls, but remains model-assisted: it does not deterministically prove all natural-language requirements or eliminate stale indices across turns. Check actual order/text for consequential work; completed changes remain in the document if review cannot finish.
+- **Slide completion:** Earlier append/order cases passed on `ab06fef`; current compound-task acceptance is recorded separately. Completion review requires fresh structure/text reads and separates structural calls, but remains model-assisted: it does not deterministically prove all natural-language requirements or eliminate stale indices across turns. Check actual order/text for consequential work; completed changes remain in the document if review cannot finish.
 - **Plugin ZIP:** Manual per-user activation/load/deactivation is measured for the final ZIP with the DEB-installed preflight; vendor plugin-manager import and other installation routes remain **NOT VERIFIED**.
 - **Future upgrades:** Arbitrary future upgrade bytes are **NOT VERIFIED**; the synthetic `.1` fixture is not an operator path.
 - **Platform scope:** Final Astra Word/Cell/Slide screenshots, focus and compact geometry are recorded. Windows Cell and other platform combinations remain **NOT VERIFIED**.
@@ -145,10 +143,10 @@ Additionally, reproducibility is bounded to the same pinned source commit, Node/
 
 ## Evidence index
 
-- [Current final verification and hashes](evidence/sprint-8/final-verification-ab06fef.md)
+- [Historical ab06fef verification and hashes](evidence/sprint-8/final-verification-ab06fef.md)
 - [Final native compact-panel evidence](evidence/sprint-9/native-compact-final.md)
 - [Independent final T5 security review](evidence/sprint-8/t5-review-ab06fef.md)
-- [Independent T8 exit review — PASS WITH RECORDED LIMITATIONS](evidence/sprint-8/t8-review-ab06fef.md)
+- [Historical independent T8 exit review](evidence/sprint-8/t8-review-ab06fef.md)
 - [Sprint 8 release contract](superpowers/plans/2026-10-08-sprint-8-release-contract.md)
 - [Sprint 8 defect triage](evidence/sprint-8/t2-release-defect-triage.md)
 - [Sprint 7 packaging contract](superpowers/plans/2026-10-08-sprint-7-packaging-contract.md)
