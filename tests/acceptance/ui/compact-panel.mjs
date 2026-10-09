@@ -43,6 +43,6 @@ await page.waitForFunction(()=>!document.getElementById('stop').hidden);
 const grownStage=await page.locator('#progress-stage').boundingBox();const grown=await measure();assert.ok(grownStage.y+grownStage.height<=grown.content.bottom);
 await page.locator('#history a').last().focus();await page.evaluate(()=>window.focusedLink=document.activeElement);await page.evaluate(()=>window.finish());await page.waitForFunction(()=>document.getElementById('stop').hidden);
 assert.equal(await page.evaluate(()=>document.activeElement===window.focusedLink&&window.focusedLink.isConnected),true);
-await page.locator('#new-chat').click();await page.keyboard.press('Tab');await page.locator('#new-chat').focus();const tabs=[];for(let i=0;i<4;i++){tabs.push(await page.evaluate(()=>document.activeElement.id));await page.keyboard.press('Tab')};assert.deepEqual(tabs,['new-chat','toggle-diagnostics','prompt','send']);
+await page.locator('#new-chat').click();await page.keyboard.press('Tab');await page.locator('#new-chat').focus();const tabs=[];for(let i=0;i<5;i++){tabs.push(await page.evaluate(()=>document.activeElement.id));await page.keyboard.press('Tab')};assert.deepEqual(tabs,['new-chat','toggle-diagnostics','change-connection','prompt','send']);
 assert.deepEqual(errors,[]);const report={idle,active,expanded,diagnostics,focus,tabs,errors};await writeFile('.local/sprint9/geometry.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{await browser.close();server.close()}

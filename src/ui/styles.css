@@ -14,6 +14,11 @@ p { margin: 4px 0; overflow-wrap: anywhere; }
 .header-control::before { content: ''; position: absolute; inset: -3px; }
 #content { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; padding: 4px 6px 6px; scrollbar-width: thin; }
 #history { margin: 0; padding: 0; border: 0; background: transparent; }
+#connection-summary { display: flex; align-items: center; justify-content: space-between; gap: 4px; border: 0; padding: 0; color: var(--muted); font-size: 11px; }
+#change-connection { padding: 2px 4px; font-size: 11px; }
+#connection-setup { border: 0; padding: 4px 0; background: transparent; }
+#settings-form > details { width: 100%; }
+#connection-status, #encryption-notice, #storage-status { flex-basis: 100%; }
 section, details { margin: 4px 0; padding: 4px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); }
 .message { min-width: 0; margin: 0; padding: 4px 0 5px 6px; border: 0; border-left: 2px solid var(--line); border-radius: 0; }
 .message + .message { margin-top: 3px; }

@@ -75,6 +75,8 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
 } = {}) {
   let stored = store.load();
+  let syncing = null;
+  let configuring = false;
   let chat = createChatSession(crypto);
   let mode = 'ASK';
   // Cell context remains opt-in because its default authoring path works without a selection capture.
@@ -139,7 +141,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   }
   function snapshot() {
     return Object.freeze({ status, active: active !== null, mode, includeContext, context, chat,
-      settings: stored.settings, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
+      settings: stored.settings, settingsRevision: stored.revision ?? null, settingsBusy: configuring, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
       preview, capabilityCount, agent, orchestration, canApply: canApply(), writeLocked: writeLocked(), generation, editorType: bridge?.getState().editorType ?? 'unknown',
       mutationReason: probedCapabilities?.mutation?.reason ?? OWNED_PREVIEW_REASON, runtimeVerified: false, lifecycleEventsVerified: false });
   }
@@ -171,7 +173,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     }
     return true;
   }
-  function begin(kind, orchestrated = false) {
+  function begin(kind, orchestrated = false, connectionSettings) {
     if (disposed || active || writeLocked()) return null;
     dropPreview();
     // A new run takes the panel over, so the previous orchestration report is cleared: a stale summary
@@ -179,7 +181,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     // the continuation of the report in flight, so it keeps it and republishes it per phase.
     if (!orchestrated) { orchestration = null; lastAssistantMessage = null; }
     const deadline = now() + AGENT_RUN_HOST_DEADLINE_MS; // BEFORE any context/SDK work
-    const owned = { kind, generation: ++generation, settings: validateRequestSettings(stored.settings),
+    const owned = { kind, generation: ++generation, settings: validateRequestSettings(connectionSettings ?? stored.settings),
       mode: kind === 'connection' ? 'ASK' : mode, includeContext, uuid: kind === 'connection' ? createConnectionSession(crypto).uuid : chat.uuid,
       editorType: bridge?.getState().editorType ?? 'unknown', deadline, abort: new AbortController(), timer: null };
     active = owned;
@@ -267,7 +269,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     let owned = null;
     try {
       if (kind === 'analysis') assertByteLimit(user, LIMITS.userInputBytes);
-      owned = begin(kind, extra.orchestrated === true);
+      owned = begin(kind, extra.orchestrated === true, extra.connectionSettings);
       let capturedRun = null;
       if (kind === 'analysis' && owned.includeContext) capturedRun = await read(owned);
       if (!valid(owned)) return false;
@@ -428,17 +430,62 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     if (!active && !writeLocked()) status = record.status;
     emit();
   }
+  function syncSettings() {
+    if (disposed || active || writeLocked() || configuring || store.shared !== true) return Promise.resolve(false);
+    if (syncing) return syncing;
+    syncing = store.refresh().then(function (next) {
+      if (disposed || active || writeLocked()) return false;
+      const changed = next.revision !== stored.revision || next.settings !== stored.settings;
+      stored = next;
+      if (changed) invalidate('SETTINGS_CHANGED');
+      if (next.storageError) status = next.storageError;
+      return !next.storageError;
+    }).catch(function () { if (!disposed) status = 'STORAGE_UNAVAILABLE'; return false; }).finally(function () { syncing = null; emit(); });
+    emit();
+    return syncing;
+  }
   return Object.freeze({
+    syncSettings,
+    async saveAndTestConnection(raw, expectedRevision) {
+      if (disposed || active || writeLocked() || configuring) return false;
+      if (syncing) await syncing;
+      if (disposed || active || writeLocked() || configuring) return false;
+      configuring = true; emit();
+      try {
+        const candidate = validateRequestSettings(raw);
+        await run('connection', undefined, { connectionSettings: candidate });
+        if (disposed || status !== 'CONNECTION_OK') return false;
+        stored = await store.saveProfile(candidate, expectedRevision);
+        if (disposed) return false;
+        if (stored.storageError) { status = stored.storageError; return false; }
+        return true;
+      } catch (error) { if (!disposed) status = safeCode(error); return false; }
+      finally { configuring = false; emit(); }
+    },
+    async resetConnection() {
+      if (disposed || active || writeLocked() || configuring) return false;
+      if (syncing) await syncing;
+      if (disposed || active || writeLocked() || configuring) return false;
+      configuring = true; invalidate(); emit();
+      try { stored = await store.resetProfile(stored.revision ?? null); status = stored.storageError ?? 'READY'; return !stored.storageError; }
+      finally { configuring = false; emit(); }
+    },
     getState: snapshot,
     subscribe(listener) { listeners.add(listener); listener(snapshot()); return function () { listeners.delete(listener); }; },
     analyze(user) {
+      if (configuring || disposed) return Promise.resolve(false);
+      if (store.shared === true) return syncSettings().then(function () {
+        if (disposed || configuring || stored.storageError) return false;
+        if (mode === 'EDIT' && isLongGenerationRequest(user)) return runOrchestration(user);
+        return run('analysis', user);
+      });
       // THE LONG-GENERATION ENTRY: a request that names a volume, several parts or an explicit count is
       // planned, executed in parts, measured and continued. Every other request keeps the existing
       // single-run path exactly as it was, so an ordinary question or edit is unchanged.
       if (mode === 'EDIT' && isLongGenerationRequest(user)) return runOrchestration(user);
       return run('analysis', user);
     },
-    testConnection() { return run('connection'); },
+    testConnection() { if (configuring) return Promise.resolve(false); return store.shared === true ? syncSettings().then(function () { return stored.storageError ? false : run('connection'); }) : run('connection'); },
     async checkR7() {
       if (disposed || active || writeLocked()) return false;
       let owned = null;
@@ -530,7 +577,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     },
     settingsChanged() { if (disposed || writeLocked()) return; invalidate('SETTINGS_CHANGED'); emit(); },
     saveSettings(raw) {
-      if (disposed || writeLocked()) return false;
+      if (disposed || writeLocked() || configuring || syncing) return false;
       invalidate('SETTINGS_CHANGED');
       try { const settings = validateSettings(raw); stored = store.save(settings); status = 'SETTINGS_SAVED'; emit(); return true; }
       catch (error) { status = safeCode(error); emit(); return false; }

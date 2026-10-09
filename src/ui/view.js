@@ -19,7 +19,8 @@ const statuses = Object.freeze({
   ORCH_BLOCKED: 'Оркестрация остановлена: проверка или проход недоступны. Изменения сохранены.',
   INVALID_SETTINGS: 'Проверьте настройки соединения', INVALID_ENDPOINT: 'Нужен полный HTTPS URL с окончанием /v1/chat/completions', INVALID_KEY: 'Введите корректный ключ',
   INVALID_DATA: 'Некорректные данные', BYTE_LIMIT: 'Превышен лимит UTF-8 для ввода, выделения или ответа; текст не обрезается.',
-  STORAGE_UNAVAILABLE: 'Хранилище недоступно; настройки остаются в памяти', STORAGE_CORRUPT: 'Сохранённые настройки повреждены', INTERNAL_ERROR: 'Не удалось завершить операцию',
+  SETTINGS_CONFLICT: 'Настройки изменены в другом редакторе. Загрузите актуальный профиль и повторите изменение.',
+  STORAGE_UNAVAILABLE: 'Не удалось сохранить или прочитать зашифрованный профиль. Проверьте доступ к хранилищу и повторите.', STORAGE_CORRUPT: 'Сохранённые настройки повреждены', INTERNAL_ERROR: 'Не удалось завершить операцию',
   PROTOCOL_ERROR: 'Ответ не соответствует разрешённому JSON формату', HTTP_UNAUTHORIZED: 'Сервер отклонил ключ (401)', HTTP_FORBIDDEN: 'Доступ запрещён (403)', HTTP_RATE_LIMIT: 'Лимит запросов (429); автоматического повтора нет',
   HTTP_SERVER_ERROR: 'Ошибка сервера', HTTP_ERROR: 'HTTP запрос не выполнен', NETWORK_ERROR: 'Сеть / DNS / CORS / TLS: соединение не выполнено. Проверка сертификата не отключается.',
   OFFLINE: 'Нет сети', CANCELLED: 'Операция отменена', TIMEOUT: 'Время ожидания истекло', CAPABILITY_UNAVAILABLE: 'Возможность недоступна. Безопасность изменения документа не доказана.',
@@ -57,7 +58,7 @@ const compactAttention = Object.freeze([
   'AGENT_LIMIT', 'AGENT_INCOMPLETE', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN',
   'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR',
   'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT',
-  'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR',
+  'SETTINGS_CONFLICT', 'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR',
   'HTTP_UNAUTHORIZED', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR',
   'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT'
 ]);
@@ -231,41 +232,82 @@ export function mountPanel(root, controller) {
   const apply = button('Применить', 'apply', function () { controller.apply(); }); apply.disabled = true; apply.setAttribute('aria-describedby', 'apply-reason');
   const cancel = button('Отменить предложение', 'cancel-preview', function () { controller.cancelPreview(); prompt.focus(); });
   preview.append(node('h2', 'Предложение'), replacement, reason, apply, cancel);
-  const settings = node('details'); settings.append(node('summary', 'Настройки соединения'));
+  let editingConnection = false;
+  let dirtyConnection = false;
+  let formRevision = null;
+  const connection = node('section', '', 'connection-summary');
+  const connectionLabel = node('span', 'Подключение настроено');
+  const changeConnection = button('Изменить', 'change-connection', function () {
+    editingConnection = true; dirtyConnection = false; renderConnection(controller.getState()); controls.endpoint.focus();
+  });
+  connection.append(connectionLabel, changeConnection);
+  const settings = node('section', '', 'connection-setup'); settings.append(node('h2', 'Подключение ассистента'));
+  settings.append(node('p', 'Настройте один раз для Word, Cell и Slide. Данные сохраняются локально для этого пользователя.'));
   const form = node('form', '', 'settings-form');
   const endpoint = field(form, 'endpoint', 'Полный HTTPS URL /v1/chat/completions'); endpoint.spellcheck = false;
   field(form, 'model', 'Модель (без подмены)');
   const key = field(form, 'apiKey', 'API ключ', 'password'); key.autocomplete = 'off'; key.spellcheck = false;
-  const timeout = field(form, 'httpTimeoutSeconds', 'HTTP тайм-аут, секунд (5–120)', 'number'); timeout.min = '5'; timeout.max = '120'; timeout.step = '1';
-  const tokens = field(form, 'maxTokens', 'max_tokens (64–8192)', 'number'); tokens.min = '64'; tokens.max = '8192'; tokens.step = '1';
-  const temperature = field(form, 'temperature', 'temperature (0–2)', 'number'); temperature.min = '0'; temperature.max = '2'; temperature.step = 'any';
-  field(form, 'rememberKey', 'Запомнить ключ в незашифрованном хранилище', 'checkbox').setAttribute('aria-describedby', 'plaintext-warning persistence-warning');
-  const plaintext = node('p', 'По умолчанию ключ только в памяти. Опция «Запомнить» сохраняет ключ открытым текстом. Это не защищённое хранилище.', 'plaintext-warning'); plaintext.className = 'notice';
+  const advanced = node('details'); advanced.append(node('summary', 'Дополнительно')); form.append(advanced);
+  const timeout = field(advanced, 'httpTimeoutSeconds', 'HTTP тайм-аут, секунд (5–120)', 'number'); timeout.min = '5'; timeout.max = '120'; timeout.step = '1';
+  const tokens = field(advanced, 'maxTokens', 'max_tokens (64–8192)', 'number'); tokens.min = '64'; tokens.max = '8192'; tokens.step = '1';
+  const temperature = field(advanced, 'temperature', 'temperature (0–2)', 'number'); temperature.min = '0'; temperature.max = '2'; temperature.step = 'any';
+  const encryption = node('p', 'API-ключ сохраняется с шифрованием. Доступ к профилю пользователя или работающему Р7 позволяет его использовать.', 'encryption-notice'); encryption.className = 'muted';
   const persistence = node('p', 'Ключ может оставаться в открытом хранилище. Ошибка удаления не означает, что ключ стёрт.', 'persistence-warning'); persistence.setAttribute('aria-live', 'off'); persistence.className = 'notice';
   const storage = node('p', '', 'storage-status');
-  const save = node('button', 'Применить настройки', 'save-settings'); save.type = 'submit';
+  const save = node('button', 'Сохранить и проверить', 'save-settings'); save.type = 'submit';
   function draft() {
     return { endpoint: controls.endpoint.value, model: controls.model.value, apiKey: controls.apiKey.value,
-      httpTimeoutSeconds: Number(controls.httpTimeoutSeconds.value), maxTokens: Number(controls.maxTokens.value), temperature: Number(controls.temperature.value), rememberKey: controls.rememberKey.checked };
+      httpTimeoutSeconds: Number(controls.httpTimeoutSeconds.value), maxTokens: Number(controls.maxTokens.value), temperature: Number(controls.temperature.value), rememberKey: true };
   }
-  function saveDraft() { return controller.saveSettings(draft()); }
-  const test = button('Проверить соединение', 'test-connection', function () { if (saveDraft()) controller.testConnection(); });
-  const reset = button('Сбросить настройки', 'reset', function () { controller.reset(); controls.endpoint.focus(); });
-  for (const el of Object.values(controls).filter(el => el !== include)) on(el, 'input', function () { controller.settingsChanged(); });
-  on(form, 'submit', function (event) { event.preventDefault(); saveDraft(); });
+  const connectionStatus = node('p', '', 'connection-status'); connectionStatus.setAttribute('role', 'status');
+  const reloadConnection = button('Загрузить актуальные настройки', 'reload-connection', function () {
+    dirtyConnection = false; renderConnection(controller.getState());
+  });
+  const cancelConnection = button('Назад', 'cancel-connection', function () {
+    editingConnection = false; dirtyConnection = false; renderConnection(controller.getState()); prompt.focus();
+  });
+  const reset = button('Сбросить настройки', 'reset', async function () {
+    if (await controller.resetConnection()) {
+      dirtyConnection = false; renderConnection(controller.getState()); controls.endpoint.focus();
+    }
+  });
+  for (const el of Object.values(controls).filter(el => el !== include)) on(el, 'input', function () { dirtyConnection = true; controller.settingsChanged(); });
+  on(form, 'submit', async function (event) {
+    event.preventDefault();
+    const ok = await controller.saveAndTestConnection(draft(), formRevision);
+    if (ok) { editingConnection = false; dirtyConnection = false; renderConnection(controller.getState()); prompt.focus(); }
+  });
+  function renderConnection(state) {
+    const configured = Boolean(state.settings.endpoint && state.settings.apiKey);
+    const open = editingConnection || !configured;
+    connectionLabel.textContent = state.storageError ? statusText(state.storageError) : 'Подключение настроено';
+    connection.hidden = open; settings.hidden = !open; composer.hidden = open; history.hidden = open;
+    if (open) diagnostics.hidden = true;
+    changeConnection.disabled = state.active || state.settingsBusy || state.writeLocked;
+    cancelConnection.hidden = !configured; cancelConnection.disabled = state.settingsBusy;
+    const conflict = dirtyConnection && formRevision !== (state.settingsRevision ?? null);
+    reloadConnection.hidden = !conflict && state.status !== 'SETTINGS_CONFLICT';
+    connectionStatus.textContent = conflict ? statusText('SETTINGS_CONFLICT') : state.settingsBusy ? 'Проверка и сохранение подключения…' : state.storageError ? statusText(state.storageError) : statusText(state.status);
+    if (!dirtyConnection) {
+      formRevision = state.settingsRevision ?? null;
+      for (const [name, value] of Object.entries(state.settings)) {
+        const control = controls[name]; if (!control) continue;
+        control.value = name === 'apiKey' && !open ? '' : String(value);
+      }
+    }
+  }
   function submit() {
-    if (controller.getState().active) return;
-    if (saveDraft()) Promise.resolve(controller.analyze(prompt.value)).then(function () {
+    if (controller.getState().active || controller.getState().settingsBusy) return;
+    Promise.resolve(controller.analyze(prompt.value)).then(function () {
       if (controller.getState().status === 'COMPLETE') prompt.focus();
     });
   }
   on(composer, 'submit', function (event) { event.preventDefault(); submit(); });
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
-  form.append(plaintext, persistence, storage, save, test, reset); settings.append(form);
-  diagnostics.append(lifecycleWarning, toolbar, orchestration, journal, settings);
-  content.append(history, progressStage, preview, diagnostics);
+  form.append(encryption, persistence, storage, connectionStatus, reloadConnection, save, cancelConnection, reset); settings.append(form);
+  diagnostics.append(lifecycleWarning, toolbar, orchestration, journal);
+  content.append(connection, settings, history, progressStage, preview, diagnostics);
   root.replaceChildren(header, content, composer);
-  let lastSettings = null;
   let lastHistory = null;
   let lastAgentActions = null;
   const unsubscribe = controller.subscribe(function (state) {
@@ -289,9 +331,9 @@ export function mountPanel(root, controller) {
     capabilityState.textContent = capabilityText(state);
     stop.hidden = !state.active;
     stop.disabled = locked;
-    send.disabled = state.active || locked; test.disabled = state.active || locked; refresh.disabled = state.active || locked; checkR7.disabled = state.active || locked;
-    fresh.disabled = locked; reset.disabled = locked; save.disabled = locked; mode.disabled = locked;
-    for (const control of Object.values(controls)) control.disabled = locked;
+    send.disabled = state.active || locked || state.settingsBusy; refresh.disabled = state.active || locked; checkR7.disabled = state.active || locked;
+    fresh.disabled = locked; reset.disabled = locked || state.active || state.settingsBusy; save.disabled = locked || state.active || state.settingsBusy; mode.disabled = locked;
+    for (const control of Object.values(controls)) control.disabled = locked || state.active || state.settingsBusy;
     include.disabled = locked || selectionUnavailable;
     apply.disabled = state.canApply !== true; cancel.disabled = state.active || locked;
     // THE DENOMINATOR BELONGS TO THE EDITOR. A spreadsheet readiness counts TWO booleans — the bridge's own adapter
@@ -348,11 +390,16 @@ export function mountPanel(root, controller) {
     orchestration.hidden = report === '';
     persistence.hidden = !state.keyPersistenceWarning;
     storage.textContent = state.storageError ? statusText(state.storageError) : '';
-    if (lastSettings !== state.settings) {
-      lastSettings = state.settings;
-      for (const [name, value] of Object.entries(state.settings)) { const fieldControl = controls[name]; if (!fieldControl) continue; if (name === 'rememberKey') fieldControl.checked = value; else fieldControl.value = String(value); }
-    }
+    renderConnection(state);
     if (followTail) content.scrollTop = content.scrollHeight;
   });
-  return Object.freeze({ dispose() { unsubscribe(); for (const handler of handlers) handler.el.removeEventListener(handler.name, handler.handler); } });
+  const win = doc.defaultView;
+  let syncTimer = null;
+  function refreshConnection() { controller.syncSettings?.(); }
+  if (win) {
+    on(win, 'focus', refreshConnection); on(doc, 'visibilitychange', refreshConnection);
+    syncTimer = win.setInterval(function () { refreshConnection(); }, 2000);
+    refreshConnection();
+  }
+  return Object.freeze({ dispose() { unsubscribe(); if (syncTimer !== null) win.clearInterval(syncTimer); for (const handler of handlers) handler.el.removeEventListener(handler.name, handler.handler); } });
 }

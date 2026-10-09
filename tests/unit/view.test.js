@@ -31,13 +31,52 @@ function fixture(response = final('<img src=x onerror=alert(1)> **not markdown**
   const bridge = { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, canApply(value) { return value === target; },
     async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: true, target }; },
     async insertParagraph() { return { ok: true, data: { sent: true } }; }, ...options.bridge };
-  const controller = createController({ store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+  const controller = createController({ store: options.store ?? new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
     bridge, transport: options.transport ?? transport });
-  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  if (options.configured !== false) controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   const panel = mountPanel(tree.root, controller);
   assert.ok(tree.id('prompt'), 'mounted composer');
   return { ...tree, controller, panel, replies, transport };
 }
+
+test('first launch shows a separate connection form and hides the composer', () => {
+  const f = fixture(undefined, { configured: false });
+  assert.equal(f.id('composer').hidden, true);
+  assert.equal(f.id('connection-setup').hidden, false);
+  assert.equal(f.id('settings-form').hidden, false);
+  assert.equal(f.id('apiKey').type, 'password');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('sending a message never saves a stale settings form over the active profile', async () => {
+  const f = fixture(final('answer'));
+  f.id('apiKey').value = 'stale-form-key';
+  f.id('prompt').value = 'question';
+  f.id('composer').dispatch('submit');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.replies[0][0].apiKey, 'synthetic');
+  assert.equal(f.controller.getState().settings.apiKey, 'synthetic');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('successful shared reset clears the dirty key draft and returns to onboarding', async () => {
+  let saved = null;
+  const store = new SettingsStore({getItem() {return null;}, removeItem() {}}, {records: {
+    async read() {return saved;}, async write(value, revision) {
+      if ((saved?.revision ?? null) !== revision) return false; saved = value; return true;
+    }
+  }});
+  const f = fixture(final('ok'), {store});
+  await f.controller.saveAndTestConnection({endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic'}, null);
+  f.id('change-connection').dispatch('click');
+  f.id('model').value = 'dirty'; f.id('model').dispatch('input');
+  f.id('reset').dispatch('click');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.id('apiKey').value, '');
+  assert.equal(f.id('composer').hidden, true);
+  assert.equal(f.id('reload-connection').hidden, true);
+  f.panel.dispose(); f.controller.dispose();
+});
 test('BYTE_LIMIT status caption covers input, selection and response without implying truncation', () => {
   assert.equal(statusText('BYTE_LIMIT'), 'Превышен лимит UTF-8 для ввода, выделения или ответа; текст не обрезается.');
 });
@@ -56,14 +95,14 @@ test('marked content container holds every content block while composer remains 
   assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
   assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'content', 'composer']);
   assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
-    ['history', 'progress-stage', 'preview', 'diagnostics']);
+    ['connection-summary', 'connection-setup', 'history', 'progress-stage', 'preview', 'diagnostics']);
   for (const section of ['history', 'progress-stage', 'preview', 'diagnostics']) {
     assert.equal(content.children.includes(id(section)), true, `${section} belongs to the content container`);
   }
   const diagnostics = id('diagnostics');
   assert.equal(diagnostics.children.some(child => child.tagName === 'P' && child.className === 'notice'), true, 'lifecycle warning belongs to diagnostics');
   assert.equal(diagnostics.children.some(child => child.tagName === 'SECTION' && child.getAttribute('aria-label') === 'Режим и контекст'), true, 'toolbar belongs to diagnostics');
-  assert.equal(diagnostics.children.some(child => child.children.includes(id('settings-form'))), true, 'settings belong to diagnostics');
+  assert.equal(id('connection-setup').children.includes(id('settings-form')), true, 'connection has its own screen');
   assert.equal(root.children.at(-1), composer);
   panel.dispose(); controller.dispose();
 });
@@ -129,12 +168,12 @@ test('compact status maps every detailed state to the honest closed visible set'
   // contract: ACTIVE names the stage, CLEAN ended with nothing needing attention, ATTENTION is a real
   // failure or an incomplete/unproven outcome. A non-error terminal state must never be called an error.
   const clean = ['READY', 'COMPLETE', 'CONTEXT_READY', 'CONNECTION_OK', 'SETTINGS_SAVED', 'SETTINGS_CHANGED', 'R7_PRESENCE_READY', 'PREVIEW_READY', 'PREVIEW_EXPIRED', 'PREVIEW_CANCELLED', 'CONTEXT_CHANGED', 'STOPPED', 'CANCELLED', 'APPLY_ACKNOWLEDGED', 'ORCH_COMPLETE'];
-  const attention = ['AGENT_LIMIT', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN', 'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR', 'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT', 'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR', 'HTTP_UNAUTHORIZED', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR', 'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT'];
+  const attention = ['AGENT_LIMIT', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN', 'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR', 'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT', 'SETTINGS_CONFLICT', 'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR', 'HTTP_UNAUTHORIZED', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR', 'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT'];
   const active = { CHECKING_R7: 'Проверяю', CONNECTING: 'Проверяю', CHECKING_SELECTION: 'Проверяю', ORCH_VERIFYING: 'Проверяю', ANALYZING: 'Анализирую', ORCH_PLANNING: 'Анализирую', READING_CONTEXT: 'Выполняю', APPLYING: 'Выполняю', ORCH_EXECUTING: 'Выполняю', ORCH_CONTINUING: 'Выполняю' };
   const classified = [...clean, ...attention, ...Object.keys(active)].sort();
   // The key list is taken from the module's own status map (no helper): the assertion fails if a status is
   // added without being classified, which is what keeps this mapping honest.
-  const allStatusCodes = ['AGENT_LIMIT', 'ANALYZING', 'APPLYING', 'APPLY_ACKNOWLEDGED', 'APPLY_UNCERTAIN', 'BYTE_LIMIT', 'CANCELLED', 'CAPABILITY_UNAVAILABLE', 'CHECKING_R7', 'CHECKING_SELECTION', 'COMPLETE', 'CONNECTING', 'CONNECTION_OK', 'CONTEXT_CHANGED', 'CONTEXT_READY', 'EDITOR_BUSY', 'EDITOR_ERROR', 'HTTP_ERROR', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_UNAUTHORIZED', 'INTERNAL_ERROR', 'INVALID_DATA', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_SETTINGS', 'NETWORK_ERROR', 'OFFLINE', 'ORCH_BLOCKED', 'ORCH_COMPLETE', 'ORCH_CONTINUING', 'ORCH_EXECUTING', 'ORCH_INCOMPLETE', 'ORCH_PLANNING', 'ORCH_UNCERTAIN', 'ORCH_VERIFYING', 'PREVIEW_CANCELLED', 'PREVIEW_EXPIRED', 'PREVIEW_READY', 'PROTOCOL_ERROR', 'R7_CHECK_UNAVAILABLE', 'R7_PRESENCE_READY', 'READING_CONTEXT', 'READY', 'SELECTION_CHANGED', 'SETTINGS_CHANGED', 'SETTINGS_SAVED', 'STOPPED', 'STORAGE_CORRUPT', 'STORAGE_UNAVAILABLE', 'TIMEOUT'];
+  const allStatusCodes = ['AGENT_LIMIT', 'ANALYZING', 'APPLYING', 'APPLY_ACKNOWLEDGED', 'APPLY_UNCERTAIN', 'BYTE_LIMIT', 'CANCELLED', 'CAPABILITY_UNAVAILABLE', 'CHECKING_R7', 'CHECKING_SELECTION', 'COMPLETE', 'CONNECTING', 'CONNECTION_OK', 'CONTEXT_CHANGED', 'CONTEXT_READY', 'EDITOR_BUSY', 'EDITOR_ERROR', 'HTTP_ERROR', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_UNAUTHORIZED', 'INTERNAL_ERROR', 'INVALID_DATA', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_SETTINGS', 'NETWORK_ERROR', 'OFFLINE', 'ORCH_BLOCKED', 'ORCH_COMPLETE', 'ORCH_CONTINUING', 'ORCH_EXECUTING', 'ORCH_INCOMPLETE', 'ORCH_PLANNING', 'ORCH_UNCERTAIN', 'ORCH_VERIFYING', 'PREVIEW_CANCELLED', 'PREVIEW_EXPIRED', 'PREVIEW_READY', 'PROTOCOL_ERROR', 'R7_CHECK_UNAVAILABLE', 'R7_PRESENCE_READY', 'READING_CONTEXT', 'READY', 'SELECTION_CHANGED', 'SETTINGS_CHANGED', 'SETTINGS_SAVED', 'STOPPED', 'SETTINGS_CONFLICT', 'STORAGE_CORRUPT', 'STORAGE_UNAVAILABLE', 'TIMEOUT'];
   assert.deepEqual(classified, [...allStatusCodes].sort(), 'every status in the map is classified');
   for (const code of clean) assert.equal(statusText(code, true), 'Готово', code);
   for (const code of attention) assert.equal(statusText(code, true), 'Ошибка', code);
@@ -180,7 +219,7 @@ test('composer stays mounted and prompt-enabled across idle, active, error and p
 
 test('view supplies semantic labeled editable connection controls and masked key', () => {
   const { all, id, controller } = fixture();
-  for (const name of ['endpoint','model','apiKey','httpTimeoutSeconds','maxTokens','temperature','rememberKey']) {
+  for (const name of ['endpoint','model','apiKey','httpTimeoutSeconds','maxTokens','temperature']) {
     const control = id(name); assert.ok(control, name);
     assert.equal(control.disabled, false);
     assert.ok(all().some(node => node.tagName === 'LABEL' && node.htmlFor === name));
@@ -188,8 +227,8 @@ test('view supplies semantic labeled editable connection controls and masked key
   assert.equal(id('apiKey').type, 'password');
   assert.equal(id('temperature').step, 'any');
   assert.equal(id('status').getAttribute('aria-live'), 'polite');
-  assert.equal(id('plaintext-warning').hidden, false);
-  assert.equal(id('persistence-warning').hidden, false);
+  assert.ok(id('encryption-notice'));
+  assert.equal(id('persistence-warning').hidden, true);
   assert.equal(controller.getState().settings.rememberKey, false);
   assert.equal(id('apply').disabled, true);
 });
@@ -206,8 +245,7 @@ test('settings edits invalidate immediately without overwriting focused drafts o
   assert.equal(controller.getState().status, 'SETTINGS_CHANGED');
   controller.contextChanged();
   assert.equal(model.value, 'draft'); assert.equal(document.activeElement, model);
-  id('settings-form').dispatch('submit');
-  assert.equal(controller.getState().settings.model, 'draft');
+  assert.equal(controller.getState().settings.model, 'qwen', 'unsaved draft must not alter active profile');
   controller.dispose();
 });
 test('draft survives EDIT to ASK mode change exactly', () => {
@@ -251,7 +289,7 @@ test('keyboard path covers visible controls in DOM order and activates named act
   f.id('prompt').value = 'edit'; f.id('composer').dispatch('submit'); await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.controller.getState().status, 'PREVIEW_READY', 'Send submits the message through the form');
   assert.deepEqual(focusable(f).map(node => node.id || node.textContent),
-    ['new-chat', 'toggle-diagnostics', 'apply', 'cancel-preview', 'prompt', 'send']);
+    ['new-chat', 'toggle-diagnostics', 'change-connection', 'apply', 'cancel-preview', 'prompt', 'send']);
   const toggle = f.id('toggle-diagnostics');
   activateButton(toggle);
   assert.equal(f.id('diagnostics').hidden, false);
@@ -297,7 +335,7 @@ test('repeated keyboard submit cannot invalidate and supersede the active operat
 });
 test('view uses same complete edited settings for connection action and displays safe errors', async () => {
   const { id, controller } = fixture();
-  id('endpoint').value = 'http://invalid'; id('endpoint').dispatch('input'); id('test-connection').dispatch('click');
+  id('endpoint').value = 'http://invalid'; id('endpoint').dispatch('input'); id('settings-form').dispatch('submit');
   await Promise.resolve(); assert.equal(controller.getState().status, 'INVALID_ENDPOINT');
   assert.equal(id('status').textContent.includes('http://invalid'), false);
   controller.dispose();
@@ -422,7 +460,7 @@ test('the live step status and the actions summary are rendered as text, never a
   // Deliberately replaces the old per-region live assertions: the compact status must remain the
   // panel's single live status region, so any future live region fails this whole-panel invariant.
   const liveStatuses = f.all().filter(node => node.getAttribute('role') === 'status' || ['polite', 'assertive'].includes(node.getAttribute('aria-live')));
-  assert.deepEqual(liveStatuses.map(node => node.id), ['status']);
+  assert.deepEqual(liveStatuses.map(node => node.id), ['status', 'connection-status']);
   assert.equal(f.id('status').getAttribute('aria-live'), 'polite');
   assert.equal(f.id('status').getAttribute('aria-atomic'), 'true');
   f.panel.dispose(); f.controller.dispose();

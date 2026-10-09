@@ -60,7 +60,7 @@ Open **R7 AI Assistant** in Word, Cell or Slide, open **«Диагностика
 - the API key;
 - optional HTTP timeout (`5–120` seconds), `max_tokens` (`64–8192`) and temperature (`0–2`).
 
-Press **«Применить настройки»**, then **«Проверить соединение»**. The key remains in memory unless **«Запомнить ключ»** is selected; that option stores it as plaintext in the R7 user profile and is not protected secret storage.
+On first launch, use the separate connection screen and press **«Сохранить и проверить»**. A successful check saves one encrypted connection profile shared by Word, Cell and Slide. Already open panels running this version synchronize within two seconds, on focus, and before requests. Sending a message never saves the settings form. Use **«Изменить»** to change the profile; stale forms cannot overwrite a newer save. The pilot administrator may perform this one-time setup remotely.
 
 Choose ASK for analysis or EDIT for a change request, choose document context only when the panel reports it available, enter a prompt and press **«Отправить»** or `Ctrl+Enter`. **«Стоп»** ends a pending operation. Confirm-policy edits appear as Preview and require explicit **«Применить»**; saving and Undo remain explicit R7 user actions. **«Сбросить настройки»** targets only the product settings namespace.
 
@@ -70,7 +70,7 @@ R7 stores the plugin's browser localStorage in its user CEF LevelDB at:
 
 `$HOME/.local/share/r7-office/editors/data/cache/Local Storage/leveldb/`
 
-Product keys are `r7-ai-assistant:v1:settings` and, only after explicit plaintext-persistence opt-in, `r7-ai-assistant:v1:apiKey`. The entire profile root `$HOME/.local/share/r7-office/editors/data/` is user/vendor data and is not package-owned.
+The connection profile is stored in IndexedDB `r7-ai-assistant:connection:v2`, encrypted using AES-256-GCM with a fresh random key and nonce per save. The non-exportable CryptoKey is stored in the same browser profile. This prevents plaintext settings disclosure, but is **not an OS key vault**: access to the complete user profile or the running plugin origin can permit decryption. No hardcoded encryption key or plaintext fallback is used. On upgrade an explicitly remembered v1 profile is migrated only after encrypted commit; the legacy `r7-ai-assistant:v1:settings` and `r7-ai-assistant:v1:apiKey` records are then removed. Old copies in backups or previously allocated disk space are not securely erased. Reset commits a tombstone so an old panel cannot resurrect a v1 profile. The entire profile root `$HOME/.local/share/r7-office/editors/data/` is user/vendor data and is not package-owned.
 
 Final `ab06fef` DEB reinstall and uninstall preserved the complete LevelDB file-hash manifest and vendor SDK hash. Sprint 7 additionally measured an upgrade to the explicitly unshipped `0.9.0-pilot-dev.1` fixture. These are bounded measurements, not proof for arbitrary future upgrade bytes. Clearing the product namespace is the user's explicit **«Сбросить настройки»** action.
 
