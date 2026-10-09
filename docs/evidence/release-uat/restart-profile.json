@@ -1,0 +1,390 @@
+{
+  "word": {
+    "loadedPanelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232",
+    "state": {
+      "status": "Готово",
+      "stage": "",
+      "detail": "Настройки изменены; предыдущий запрос и предложение недействительны",
+      "active": false,
+      "actions": "",
+      "setup": false,
+      "preview": false
+    },
+    "profileMetadata": {
+      "present": true,
+      "revision": "58769631-5cb7-4351-9d28-a797134219b7",
+      "fields": [
+        "revision",
+        "key",
+        "iv",
+        "ciphertext"
+      ]
+    },
+    "reopened": {
+      "paragraphs": [
+        "",
+        "Ежедневный отчёт по обращениям клиентов",
+        "Настоящая памятка определяет единый порядок подготовки ежедневного отчёта по обращениям клиентов для сотрудников отделения. Соблюдение изложенных требований обеспечивает полноту и своевременность передачи сведений.",
+        "Отчёт формируется по итогам рабочего дня на основании зарегистрированных обращений и содержит сведения об их количестве, тематике и результатах рассмотрения.",
+        "Цель",
+        "Обеспечить регулярное поступление руководству достоверной информации об обращениях клиентов для принятия управленческих решений и контроля качества обслуживания.",
+        "Порядок работы",
+        "1. Собрать сведения о поступивших обращениях из учётной системы отделения.",
+        "2. Проверить корректность и полноту внесённых данных по каждому обращению.",
+        "3. Сформировать отчёт по установленной форме и сверить итоговые показатели.",
+        "4. Направить отчёт руководителю в установленный срок.",
+        "Контроль качества",
+        "Контроль качества осуществляется путём сверки данных отчёта с учётной системой, проверки полноты заполнения разделов и соблюдения сроков направления.",
+        "Перед отправкой отчёта необходимо проверить полноту данных: убедиться, что все зарегистрированные обращения включены в отчёт, заполнены обязательные разделы и итоговые показатели соответствуют учётной системе.",
+        "Этап",
+        "Ответственный",
+        "Срок",
+        "Сбор сведений об обращениях",
+        "Сотрудник отделения",
+        "до 15:00",
+        "Проверка данных",
+        "Сотрудник отделения",
+        "до 16:00",
+        "Формирование и направление отчёта",
+        "Сотрудник отделения",
+        "до 16:30",
+        "",
+        "Отчёт направляется руководителю до 16:30"
+      ],
+      "html": "&lt;h1&gt;&lt;strong&gt;Ежедневный отчёт по обращениям клиентов&lt;/strong&gt;&lt;/h1&gt;\n\n&lt;p&gt;Настоящая памятка определяет единый порядок подготовки ежедневного отчёта по обращениям клиентов для сотрудников отделения. Соблюдение изложенных требований обеспечивает полноту и своевременность передачи сведений.&lt;/p&gt;\n\n&lt;p&gt;Отчёт формируется по итогам рабочего дня на основании зарегистрированных обращений и содержит сведения об их количестве, тематике и результатах рассмотрения.&lt;/p&gt;\n\n&lt;h2&gt;Цель&lt;/h2&gt;\n\n&lt;p&gt;Обеспечить регулярное поступление руководству достоверной информации об обращениях клиентов для принятия управленческих решений и контроля качества обслуживания.&lt;/p&gt;\n\n&lt;h2&gt;Порядок работы&lt;/h2&gt;\n\n&lt;p&gt;1. Собрать сведения о поступивших обращениях из учётной системы отделения.&lt;/p&gt;\n\n&lt;p&gt;2. Проверить корректность и полноту внесённых данных по каждому обращению.&lt;/p&gt;\n\n&lt;p&gt;3. Сформировать отчёт по установленной форме и сверить итоговые показатели.&lt;/p&gt;\n\n&lt;p&gt;4. Направить отчёт руководителю в установленный срок.&lt;/p&gt;\n\n&lt;h2&gt;Контроль качества&lt;/h2&gt;\n\n&lt;p&gt;Контроль качества осуществляется путём сверки данных отчёта с учётной системой, проверки полноты заполнения разделов и соблюдения сроков направления.&lt;/p&gt;\n\n&lt;p&gt;Перед отправкой отчёта необходимо проверить полноту данных: убедиться, что все зарегистрированные обращения включены в отчёт, заполнены обязательные разделы и итоговые показатели соответствуют учётной системе.&lt;/p&gt;\n\n&lt;table&gt;\n\n  &lt;tr&gt;\n\n   &lt;td&gt;\n\nЭтап\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nОтветственный\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nСрок\n\n&lt;/td&gt;\n\n  &lt;/tr&gt;\n\n  &lt;tr&gt;\n\n   &lt;td&gt;\n\nСбор сведений об обращениях\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nСотрудник отделения\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nдо 15:00\n\n&lt;/td&gt;\n\n  &lt;/tr&gt;\n\n  &lt;tr&gt;\n\n   &lt;td&gt;\n\nПроверка данных\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nСотрудник отделения\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nдо 16:00\n\n&lt;/td&gt;\n\n  &lt;/tr&gt;\n\n  &lt;tr&gt;\n\n   &lt;td&gt;\n\nФормирование и направление отчёта\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nСотрудник отделения\n\n&lt;/td&gt;\n\n   &lt;td&gt;\n\nдо 16:30\n\n&lt;/td&gt;\n\n  &lt;/tr&gt;\n\n&lt;/table&gt;\n\n&lt;p&gt;Отчёт направляется руководителю до 16:30&lt;/p&gt;\n\n",
+      "tables": 1
+    }
+  },
+  "cell": {
+    "loadedPanelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232",
+    "state": {
+      "status": "Готово",
+      "stage": "",
+      "detail": "Настройки изменены; предыдущий запрос и предложение недействительны",
+      "active": false,
+      "actions": "",
+      "setup": false,
+      "preview": false
+    },
+    "profileMetadata": {
+      "present": true,
+      "revision": "58769631-5cb7-4351-9d28-a797134219b7",
+      "fields": [
+        "revision",
+        "key",
+        "iv",
+        "ciphertext"
+      ]
+    },
+    "reopened": [
+      {
+        "name": "Budget",
+        "values": [
+          [
+            "Статья",
+            "Количество",
+            "Цена, руб.",
+            "Сумма, руб.",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Онлайн-курс",
+            "25",
+            "1800",
+            "45000",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Практикум",
+            "8",
+            "950",
+            "7600",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Материалы",
+            "12",
+            "600",
+            "7200",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Итого",
+            "",
+            "",
+            "59800",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        ],
+        "formulas": [
+          [
+            "Статья",
+            "Количество",
+            "Цена, руб.",
+            "Сумма, руб.",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Онлайн-курс",
+            "25",
+            "1800",
+            "= B2*C2",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Практикум",
+            "8",
+            "950",
+            "= B3*C3",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Материалы",
+            "12",
+            "600",
+            "= B4*C4",
+            "",
+            "",
+            ""
+          ],
+          [
+            "Итого",
+            "",
+            "",
+            "= SUM(D2:D4)",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ],
+          [
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+          ]
+        ]
+      }
+    ]
+  },
+  "slide": {
+    "loadedPanelSha256": "95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232",
+    "state": {
+      "status": "Готово",
+      "stage": "",
+      "detail": "Настройки изменены; предыдущий запрос и предложение недействительны",
+      "active": false,
+      "actions": "",
+      "setup": false,
+      "preview": false
+    },
+    "profileMetadata": {
+      "present": true,
+      "revision": "58769631-5cb7-4351-9d28-a797134219b7",
+      "fields": [
+        "revision",
+        "key",
+        "iv",
+        "ciphertext"
+      ]
+    },
+    "reopened": [
+      {
+        "index": 0,
+        "text": [
+          "Риски и меры",
+          "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+        ],
+        "drawings": 2,
+        "formats": [
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":2800,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":255,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":2800,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":255,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Риски и меры\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2800,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":255,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}",
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Ошибки в ответах — проверка сотрудником.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Утечка данных — тестовые данные и ограничения доступа.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Сложный интерфейс — короткое обучение.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}"
+        ]
+      },
+      {
+        "index": 1,
+        "text": [
+          "Пилот ИИ-ассистента в отделении",
+          "Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\r\rПрактические задачи:\r1. Автоматизировать подготовку типовых документов.\r2. Сократить время поиска нужной информации.\r3. Собрать обратную связь сотрудников по удобству работы."
+        ],
+        "drawings": 2,
+        "formats": [
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Пилот ИИ-ассистента в отделении\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}",
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Цель пилота — ускорить рутинные операции и повысить качество работы с документами.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Практические задачи:\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"1. Автоматизировать подготовку типовых документов.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"2. Сократить время поиска нужной информации.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"3. Собрать обратную связь сотрудников по удобству работы.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}"
+        ]
+      },
+      {
+        "index": 2,
+        "text": [
+          "План пилота на четыре недели",
+          "Неделя 1 — настройка: подключение ассистента и базовых сценариев.\rНеделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\rНеделя 3 — пилот: ежедневное использование в работе отделения.\rНеделя 4 — оценка: анализ результатов и сбор замечаний."
+        ],
+        "drawings": 2,
+        "formats": [
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"План пилота на четыре недели\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}",
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Неделя 1 — настройка: подключение ассистента и базовых сценариев.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Неделя 2 — обучение: инструктаж сотрудников и разбор типовых задач (обучение занимает вторую неделю).\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Неделя 3 — пилот: ежедневное использование в работе отделения.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Неделя 4 — оценка: анализ результатов и сбор замечаний.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}"
+        ]
+      },
+      {
+        "index": 3,
+        "text": [
+          "Критерии успеха пилота",
+          "Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\rКачество документов: меньше ошибок и единый стандарт оформления.\rОбратная связь сотрудников: удобство работы и готовность использовать ассистента дальше."
+        ],
+        "drawings": 2,
+        "formats": [
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Критерии успеха пилота\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":4000,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":70,\"blue\":180,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}",
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Экономия времени: сокращение рутинных операций и ускорение подготовки документов.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Качество документов: меньше ошибок и единый стандарт оформления.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Обратная связь сотрудников: удобство работы и готовность использовать ассистента дальше.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}"
+        ]
+      },
+      {
+        "index": 4,
+        "text": [
+          "Риски и меры",
+          "Ошибки в ответах — проверка сотрудником.\rУтечка данных — тестовые данные и ограничения доступа.\rСложный интерфейс — короткое обучение."
+        ],
+        "drawings": 2,
+        "formats": [
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":2800,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":255,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":2800,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":255,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Риски и меры\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2800,\"b\":true,\"uniFill\":{\"fill\":{\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":0,\"alpha\":255},\"color\":{\"rgba\":{\"red\":0,\"green\":0,\"blue\":255,\"alpha\":255},\"type\":\"srgb\"},\"mods\":[],\"type\":\"uniColor\"},\"type\":\"solid\"},\"transparent\":null,\"type\":\"fill\"},\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}",
+          "{\"bPresentation\":true,\"content\":[{\"bFromDocument\":false,\"pPr\":{\"defRPr\":{\"bFromDocument\":false,\"type\":\"textPr\"},\"bFromDocument\":false},\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Ошибки в ответах — проверка сотрудником.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Утечка данных — тестовые данные и ограничения доступа.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[{\"type\":\"break\",\"breakType\":\"textWrapping\"}],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[\"Сложный интерфейс — короткое обучение.\"],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"run\"},{\"bFromDocument\":false,\"rPr\":{\"sz\":2000,\"bFromDocument\":false,\"type\":\"textPr\"},\"content\":[],\"footnotes\":[],\"endnotes\":[],\"reviewInfo\":{\"userId\":\"\",\"author\":\"\",\"date\":\"\",\"moveType\":\"noMove\",\"prevType\":-1},\"reviewType\":\"common\",\"type\":\"endRun\"}],\"changes\":[],\"type\":\"paragraph\"}],\"type\":\"docContent\"}"
+        ]
+      }
+    ]
+  },
+  "method": "Native window Close after saving current test presentation; process absent checked, then fresh R7 launch. Only named synthetic tabs were open. Normal R7 trial-period notice dismissed with OK before final screenshots; no licensing/protection change."
+}

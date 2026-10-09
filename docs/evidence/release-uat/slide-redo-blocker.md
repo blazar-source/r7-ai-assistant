@@ -1,5 +1,7 @@
 # P1 — Slide ASK destroys native Redo
 
+> Acceptance update, 2026-10-09: the owner explicitly accepted this exact unfixed history behavior as a known pilot limitation, including that restart does not restore lost Redo. Historical BLOCKED statements below describe the earlier decision. Remaining final UAT/security/package gates still apply.
+
 **Reproduced, independently confirmed, release blocking.** Tested source `9b05063cc2c87b8eb2475f0e1b547ec6df33799a`, executing panel SHA-256 `95bf8ff53f5110102aa8816ac8657e55e3f0730fc19c36a6cb57dcf6eb7d9232`, Astra SE 1.7.9.41 / R7 2026.1.2.1942. This supersedes the earlier persistence blocker as the reason T8 remains NOT PASS.
 
 ## User reproduction

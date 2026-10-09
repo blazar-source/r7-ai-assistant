@@ -2,7 +2,7 @@
 
 ## Status and release artifacts
 
-Version `0.9.0-pilot-rc` is blocked by a confirmed Slide ASK/Redo history defect on the supported R7 build. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
+Version `0.9.0-pilot-rc` is undergoing final acceptance. The owner explicitly accepted the confirmed Slide ASK/Redo history defect as a pilot limitation on 2026-10-09. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
 
 - Plugin ZIP: `dist/plugin/r7-ai-assistant.zip`.
 - Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb`.
@@ -125,6 +125,8 @@ Uninstall and deactivation do **not** remove R7 localStorage settings, a remembe
 ## Known limitations
 
 The consolidated release list is also reproduced in the [RC changelog](../CHANGELOG.md#known-limitations).
+
+- **Slide Undo/Redo (accepted pilot limitation):** Asking the assistant to read a presentation after Undo can discard the Redo branch, even in ASK mode. Reads can also add empty Undo steps. Restarting the assistant or R7 does not recover discarded Redo; the change must be performed again manually. Frequency in ordinary use has not been measured. Owner explicitly accepted this limitation on 2026-10-09; it is not a fixed or passing history workflow.
 
 - **ZPS:** ZPS state and product operation with ZPS enabled are **NOT VERIFIED**; never disable or weaken ZPS to obtain acceptance evidence.
 - **Unsupported tuples:** Every Astra/R7/architecture tuple except the exact supported tuple above is **NOT VERIFIED** and refused by preflight.

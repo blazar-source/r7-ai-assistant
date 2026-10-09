@@ -1,5 +1,7 @@
 # History-neutral Slide read investigation — 2026-10-09
 
+> Acceptance update, 2026-10-09: the owner explicitly accepted this exact unfixed history behavior as a known pilot limitation, including that restart does not restore lost Redo. Historical BLOCKED statements below describe the earlier decision. Remaining final UAT/security/package gates still apply.
+
 Status: **BLOCKED, no product workaround introduced.** This supplements the [native Undo → ASK → Redo reproduction](slide-redo-blocker.md); it does not change candidate bytes or acceptance status.
 
 ## Newer SDK, inspected without installation

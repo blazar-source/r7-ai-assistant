@@ -1,3 +1,7 @@
+# Owner acceptance update — 2026-10-09
+
+The owner explicitly accepted the unfixed Slide Undo → ASK → Redo behavior as a known pilot limitation (restart does not restore Redo). This supersedes the historical release-blocking classification below, not the FAIL evidence. Resume remaining format-only/duplicate/persistence, process-restart/shared-profile, final artifact and independent T8 gates. No other defects or security gates are waived. Publication authorization remains conditional and private Pre-release only.
+
 # Latest handoff delta — 2026-10-09, source 9b05063
 
 Continuation: [history-neutral read alternatives](evidence/release-uat/slide-history-alternatives.md) records static inspection of the newer official SDK (not installed), a failed native public export fallback on a disposable Slide document, and safe closure of that probe tab. No product bytes changed; the P1 below remains unresolved.

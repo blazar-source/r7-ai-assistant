@@ -1,5 +1,7 @@
 # Independent acceptance review — 9b05063
 
+> Owner decision, 2026-10-09: the exact unfixed ASK/Redo behavior below is now explicitly accepted for the pilot, including irreversible loss of that Redo branch. This historical verdict is preserved; a new final review must assess remaining gates within the amended boundary.
+
 Scope: source deltas `6fecf8e` and `9b05063`, focused tests, native receipts, screenshots, saved PPTX, and current ZIP/DEB/SBOM identities. Review was performed by a separate review agent, not the implementation agent. This is engineering review, not security certification.
 
 - No blocking finding in the reviewed source delta after the all-setter preflight correction. The reviewer independently ran the 35 focused tests.
