@@ -1,0 +1,27 @@
+# Slide completion and Cell repaint — targeted correction, 2026-10-09
+
+Baseline: `abcd377`. This correction does not change Slide tools, schemas or bridge primitives.
+
+The failed final `fda714d` trace contains an accurate `add_slide` result at index1, successful text write/read there, no `move_slide`, and premature model completion. The original request remained pinned in context; neither a limit nor a lost SDK callback caused the omission. `runAgent` accepted the first structurally valid `final` without a completion-review phase. The system text likewise lacked compound-task completion guidance.
+
+Only Slide EDIT runs that successfully mutate now treat the first `final` as an unpublished candidate. An authored review instruction asks the model to compare all original requirements with fresh presentation structure and slide-text reads, correct missing position/order/text work using the existing tools, and reread after corrections. Candidate prose is discarded, avoiding unnecessary eviction of tool evidence. A second final without both usable review-phase reads after the latest mutation yields `INCOMPLETE`; the UI displays `AGENT_INCOMPLETE`, not success or an exhausted-budget claim. Read revisions become stale after every later successful mutation. Serialization-refused results cannot satisfy the gate. Existing step/call/deadline ceilings and uncertain-write stopping remain intact; cancellation/deadline are also checked immediately after transport returns.
+
+This is **model-assisted completion review**, not deterministic proof of natural-language requirements. In particular, one qualifying slide read does not prove every modified slide's text. Native acceptance must independently assert final order, every requested marker, the unchanged original-slide prefix, count and absence of duplicate creation. ASK, read-only Slide, Word/Cell completion and Preview/Apply remain outside the new review phase.
+
+Cell was investigated independently. The existing A1 marker was returned by both `GetValue()` and `GetText()` with number format `General`, while canvas and formula bar stayed blank. Selecting A1 did not refresh it. Repeating the same read/selection with `isCalc=true`, without writing again, immediately displayed the marker in both places. The `sheetwrite` command had explicitly passed `isCalc=false`; only this flag is changed to true, with `isClose=false`. This matches the [official R7 plugin reference, page77](https://support.r7-office.ru/wp-content/uploads/2023/08/plaginy-i-makrosy.pdf#page=77): the parameter requests recalculation after the command. No SDK code was copied or modified.
+
+Regression coverage was added before each correction. The Slide fixture replays premature completion followed by corrective movement and fresh reads, and covers premature repeated final, stale/failed/unserializable reads, missing structural read, uncertainty, budgets and late cancellation/deadline. Controller coverage verifies the non-success status, retained action, released active state and absence of candidate chat publication. The Cell fixture pins recalculation and open-panel flags on the real bridge dispatch.
+
+Addressed test groups: runtime/protocol/context/controller/view/integration223 passing; native Cell/Slide tools and bridge plus completion107 passing; final controller/view/package111 passing (groups overlap). Authored-code audit PASS. No unchanged full-suite or full compact-panel run was repeated. Independent source review found no blocking delta issue; native final-byte acceptance is still required before closing P1/T8.
+
+## Native follow-up at intermediate `f304507`
+
+The original unguided append request passed: the model first falsely called index1 the end; review withheld that candidate, the model reread, moved1→5, reread again and only then published the verified final. Independent SDK checks proved count6, exact last text, unchanged old-text prefix and one creation.
+
+The ordered two-slide variant exposed a second failure. After first-final review, the model issued `move_slide(1,6)` and `move_slide(2,6)` in one batch. The first move changed the second target's index; the batch had already committed the stale argument. The newB slide remained at1, newA ended at5 and an old blank slide moved to6. The external acceptance assertion failed. This trace must not be replaced by the successful one-slide result.
+
+The bounded follow-up fix requires `add_slide`, `duplicate_slide` or `move_slide` to be the only action in a Slide EDIT batch. A mixed batch is rejected before any dispatch with known `TOOL_ERROR`, without consuming protocol repair. Authored guidance requires rereading current structure/targets between structural operations. Ordinary read/text-write batching and the Slide primitives remain unchanged. This prevents the demonstrated same-batch dependency hazard; it does not prove that a model can never reuse a stale index across separate turns. Fresh native one-slide and two-slide assertions remain the acceptance gate.
+
+## Final outcome at `ab06fef`
+
+Both fresh native Slide requests pass all independent assertions; final Cell A1 is visibly refreshed, and the narrow Word compatibility check passes. The final build/lifecycle identity and retained limitations are in [final verification](final-verification-ab06fef.md). Independent [T8](t8-review-ab06fef.md) is PASS WITH RECORDED LIMITATIONS. The observed P1 is closed; historical failures above retain their original outcomes.

@@ -1,0 +1,2248 @@
+TAP version 13
+# Subtest: dual build produces byte-identical ZIP STORE/.plugin exact root allowlist with canonical manifest
+ok 1 - dual build produces byte-identical ZIP STORE/.plugin exact root allowlist with canonical manifest
+  ---
+  duration_ms: 962.1294
+  type: 'test'
+  ...
+# Subtest: SBOM is deterministic and verified against the packaged bytes and zero runtime dependency graph
+ok 2 - SBOM is deterministic and verified against the packaged bytes and zero runtime dependency graph
+  ---
+  duration_ms: 335.0088
+  type: 'test'
+  ...
+# Subtest: generated authored browser bundle passes audit with literal synchronous static command and no dev runtime
+ok 3 - generated authored browser bundle passes audit with literal synchronous static command and no dev runtime
+  ---
+  duration_ms: 555.9693
+  type: 'test'
+  ...
+# Subtest: HTML/CSS only local authored assets plus exact separate installed SDK with documented CSP and visible focus
+ok 4 - HTML/CSS only local authored assets plus exact separate installed SDK with documented CSP and visible focus
+  ---
+  duration_ms: 319.4966
+  type: 'test'
+  ...
+# Subtest: packaged CSP permits SDK own-config bootstrap without blanket local-file or HTTP access
+ok 5 - packaged CSP permits SDK own-config bootstrap without blanket local-file or HTTP access
+  ---
+  duration_ms: 286.7418
+  type: 'test'
+  ...
+# Subtest: build hard-fails when the pinned esbuild version does not match
+ok 6 - build hard-fails when the pinned esbuild version does not match
+  ---
+  duration_ms: 0.7595
+  type: 'test'
+  ...
+# Subtest: build refuses output outside ignored dist tree and never accepts an arbitrary copy inventory
+ok 7 - build refuses output outside ignored dist tree and never accepts an arbitrary copy inventory
+  ---
+  duration_ms: 0.2657
+  type: 'test'
+  ...
+# Subtest: a served format is proved per property and per cell, and releases the slot
+ok 8 - a served format is proved per property and per cell, and releases the slot
+  ---
+  duration_ms: 9.3154
+  type: 'test'
+  ...
+# Subtest: the number-format code the bridge composes is proved by exact equality
+ok 9 - the number-format code the bridge composes is proved by exact equality
+  ---
+  duration_ms: 2.3509
+  type: 'test'
+  ...
+# Subtest: the proof is the FINAL STATE, so an already-formatted cell is an idempotent success
+ok 10 - the proof is the FINAL STATE, so an already-formatted cell is an idempotent success
+  ---
+  duration_ms: 1.0009
+  type: 'test'
+  ...
+# Subtest: a session that does not apply the property is UNCERTAIN, and the slot stays HELD
+ok 11 - a session that does not apply the property is UNCERTAIN, and the slot stays HELD
+  ---
+  duration_ms: 0.7384
+  type: 'test'
+  ...
+# Subtest: a property whose setter is missing is UNCERTAIN, never a silent success
+ok 12 - a property whose setter is missing is UNCERTAIN, never a silent success
+  ---
+  duration_ms: 3.5527
+  type: 'test'
+  ...
+# Subtest: a fill is proved through the PUBLIC colour accessor, and a disagreeing readback is unproved
+ok 13 - a fill is proved through the PUBLIC colour accessor, and a disagreeing readback is unproved
+  ---
+  duration_ms: 0.8728
+  type: 'test'
+  ...
+# Subtest: clearing a fill is proved by the measured "No Fill" reading
+ok 14 - clearing a fill is proved by the measured "No Fill" reading
+  ---
+  duration_ms: 0.9969
+  type: 'test'
+  ...
+# Subtest: the TWO spellings of the clearing request are the same request, and both dispatch
+ok 15 - the TWO spellings of the clearing request are the same request, and both dispatch
+  ---
+  duration_ms: 0.8759
+  type: 'test'
+  ...
+# Subtest: an unknown property refuses the whole request AT THIS LAYER, with nothing dispatched
+ok 16 - an unknown property refuses the whole request AT THIS LAYER, with nothing dispatched
+  ---
+  duration_ms: 0.5208
+  type: 'test'
+  ...
+# Subtest: geometry is proved per affected COLUMN and per affected ROW, not once for the block
+ok 17 - geometry is proved per affected COLUMN and per affected ROW, not once for the block
+  ---
+  duration_ms: 1.3822
+  type: 'test'
+  ...
+# Subtest: the CELL proof walks every cell of the block, never just the top-left one
+ok 18 - the CELL proof walks every cell of the block, never just the top-left one
+  ---
+  duration_ms: 0.8398
+  type: 'test'
+  ...
+# Subtest: the ROW-HEIGHT proof walks every affected row, never just the first one
+ok 19 - the ROW-HEIGHT proof walks every affected row, never just the first one
+  ---
+  duration_ms: 0.4451
+  type: 'test'
+  ...
+# Subtest: the engine's own clamp is caught by the readback, never trusted to the request
+ok 20 - the engine's own clamp is caught by the readback, never trusted to the request
+  ---
+  duration_ms: 2.027
+  type: 'test'
+  ...
+# Subtest: a forged or malformed answer is UNCERTAIN, and a phase-marked refusal is a known class
+ok 21 - a forged or malformed answer is UNCERTAIN, and a phase-marked refusal is a known class
+  ---
+  duration_ms: 2.3793
+  type: 'test'
+  ...
+# Subtest: a build without the facade refuses as a KNOWN class before any mutation
+ok 22 - a build without the facade refuses as a KNOWN class before any mutation
+  ---
+  duration_ms: 0.3695
+  type: 'test'
+  ...
+# Subtest: every closed precondition refuses BEFORE any dispatch, over the REAL bridge
+ok 23 - every closed precondition refuses BEFORE any dispatch, over the REAL bridge
+  ---
+  duration_ms: 0.7382
+  type: 'test'
+  ...
+# Subtest: a whole formatting block is ONE dispatch, however many properties it proves
+ok 24 - a whole formatting block is ONE dispatch, however many properties it proves
+  ---
+  duration_ms: 0.7466
+  type: 'test'
+  ...
+# Subtest: formatting a NAMED sheet lands THERE and never switches the active sheet
+ok 25 - formatting a NAMED sheet lands THERE and never switches the active sheet
+  ---
+  duration_ms: 1.3235
+  type: 'test'
+  ...
+# Subtest: the FORMATTING and ALL its verification reads use the SELECTED sheet
+ok 26 - the FORMATTING and ALL its verification reads use the SELECTED sheet
+  ---
+  duration_ms: 0.5433
+  type: 'test'
+  ...
+# Subtest: sheetIndex 0 formats the FIRST sheet even when a DIFFERENT sheet is active
+ok 27 - sheetIndex 0 formats the FIRST sheet even when a DIFFERENT sheet is active
+  ---
+  duration_ms: 0.4031
+  type: 'test'
+  ...
+# Subtest: a write with NO selector formats the ACTIVE sheet, whatever its index is
+ok 28 - a write with NO selector formats the ACTIVE sheet, whatever its index is
+  ---
+  duration_ms: 0.3932
+  type: 'test'
+  ...
+# Subtest: an unknown sheet is a KNOWN refusal raised BEFORE the first formatting setter
+ok 29 - an unknown sheet is a KNOWN refusal raised BEFORE the first formatting setter
+  ---
+  duration_ms: 1.0395
+  type: 'test'
+  ...
+# Subtest: the resolved sheet is TIED to the request before anything is formatted
+ok 30 - the resolved sheet is TIED to the request before anything is formatted
+  ---
+  duration_ms: 1.1819
+  type: 'test'
+  ...
+# Subtest: EVERY formatting setter works on the SELECTED sheet, and none of them touches the active one
+ok 31 - EVERY formatting setter works on the SELECTED sheet, and none of them touches the active one
+  ---
+  duration_ms: 2.3326
+  type: 'test'
+  ...
+# Subtest: the bridge counts FORMATTING properties, never the selector
+ok 32 - the bridge counts FORMATTING properties, never the selector
+  ---
+  duration_ms: 0.4053
+  type: 'test'
+  ...
+# Subtest: the GEOMETRY setters work on the SELECTED sheet too, and the selector itself is closed
+ok 33 - the GEOMETRY setters work on the SELECTED sheet too, and the selector itself is closed
+  ---
+  duration_ms: 0.6054
+  type: 'test'
+  ...
+# Subtest: the phase turns IMMEDIATELY before the first formatting setter, and no activation is authored
+ok 34 - the phase turns IMMEDIATELY before the first formatting setter, and no activation is authored
+  ---
+  duration_ms: 0.6205
+  type: 'test'
+  ...
+# Subtest: an ITALIC the cell does not hold is never reported as proved
+ok 35 - an ITALIC the cell does not hold is never reported as proved
+  ---
+  duration_ms: 0.9532
+  type: 'test'
+  ...
+# Subtest: a FONT SIZE the cell does not hold is never reported as proved
+ok 36 - a FONT SIZE the cell does not hold is never reported as proved
+  ---
+  duration_ms: 1.4049
+  type: 'test'
+  ...
+# Subtest: a FONT FAMILY the cell does not hold is never reported as proved
+ok 37 - a FONT FAMILY the cell does not hold is never reported as proved
+  ---
+  duration_ms: 1.2841
+  type: 'test'
+  ...
+# Subtest: a NUMBER FORMAT the cell does not hold is never reported as proved
+ok 38 - a NUMBER FORMAT the cell does not hold is never reported as proved
+  ---
+  duration_ms: 0.8419
+  type: 'test'
+  ...
+# Subtest: a percent format with DECIMALS is built and proved, not only the integer percent code
+ok 39 - a percent format with DECIMALS is built and proved, not only the integer percent code
+  ---
+  duration_ms: 0.5951
+  type: 'test'
+  ...
+# Subtest: cell formatting requests native paint and layout before success
+ok 40 - cell formatting requests native paint and layout before success
+  ---
+  duration_ms: 0.2489
+  type: 'test'
+  ...
+# Subtest: comment uses editor events, proves new internal ID and text, then reveals it
+ok 41 - comment uses editor events, proves new internal ID and text, then reveals it
+  ---
+  duration_ms: 8.1045
+  type: 'test'
+  ...
+# Subtest: unreadable baseline refuses without mutation; wrong post-state holds the lease
+ok 42 - unreadable baseline refuses without mutation; wrong post-state holds the lease
+  ---
+  duration_ms: 1.6918
+  type: 'test'
+  ...
+# Subtest: duplicate callbacks never add or reveal twice
+ok 43 - duplicate callbacks never add or reveal twice
+  ---
+  duration_ms: 0.37
+  type: 'test'
+  ...
+# Subtest: malformed or excessive baseline IDs refuse before creating a comment
+ok 44 - malformed or excessive baseline IDs refuse before creating a comment
+  ---
+  duration_ms: 4.1443
+  type: 'test'
+  ...
+# Subtest: invalid comment requests dispatch nothing
+ok 45 - invalid comment requests dispatch nothing
+  ---
+  duration_ms: 1.3397
+  type: 'test'
+  ...
+# Subtest: cancel or timeout before dispatch prevents every late write
+ok 46 - cancel or timeout before dispatch prevents every late write
+  ---
+  duration_ms: 3.4555
+  type: 'test'
+  ...
+# Subtest: cancel or timeout after dispatch never produces late success or another mutation
+ok 47 - cancel or timeout after dispatch never produces late success or another mutation
+  ---
+  duration_ms: 0.8826
+  type: 'test'
+  ...
+# Subtest: add_table uses measured columns rows order and proves stored drawing structure
+ok 48 - add_table uses measured columns rows order and proves stored drawing structure
+  ---
+  duration_ms: 8.4027
+  type: 'test'
+  ...
+# Subtest: add_table proves the measured two-column four-row graphic wrapper
+ok 49 - add_table proves the measured two-column four-row graphic wrapper
+  ---
+  duration_ms: 0.7106
+  type: 'test'
+  ...
+# Subtest: add_table refuses transposed grid dimensions despite the same recursive cell count
+ok 50 - add_table refuses transposed grid dimensions despite the same recursive cell count
+  ---
+  duration_ms: 0.4594
+  type: 'test'
+  ...
+# Subtest: add_table refuses a wrapper without graphic rather than throwing
+ok 51 - add_table refuses a wrapper without graphic rather than throwing
+  ---
+  duration_ms: 0.6355
+  type: 'test'
+  ...
+# Subtest: add_table refuses null and non-object graphic values rather than throwing
+ok 52 - add_table refuses null and non-object graphic values rather than throwing
+  ---
+  duration_ms: 1.2271
+  type: 'test'
+  ...
+# Subtest: add_image proves drawing image source and getter size
+ok 53 - add_image proves drawing image source and getter size
+  ---
+  duration_ms: 2.3262
+  type: 'test'
+  ...
+# Subtest: slide object requests refuse the closed malformed argument class before dispatch
+ok 54 - slide object requests refuse the closed malformed argument class before dispatch
+  ---
+  duration_ms: 2.2417
+  type: 'test'
+  ...
+# Subtest: slide object proof failures settle uncertain after dispatch
+ok 55 - slide object proof failures settle uncertain after dispatch
+  ---
+  duration_ms: 1.9301
+  type: 'test'
+  ...
+# Subtest: slide image requests resource loading and repaint in its command
+ok 56 - slide image requests resource loading and repaint in its command
+  ---
+  duration_ms: 1.6351
+  type: 'test'
+  ...
+# Subtest: the representative descriptor set is well formed and policy-correct
+ok 57 - the representative descriptor set is well formed and policy-correct
+  ---
+  duration_ms: 8.6193
+  type: 'test'
+  ...
+# Subtest: read_context is withheld from every catalogue until a public document read is confirmed
+ok 58 - read_context is withheld from every catalogue until a public document read is confirmed
+  ---
+  duration_ms: 1.3726
+  type: 'test'
+  ...
+# Subtest: every offered Word tool carries an authored description inside the model-facing byte bound
+ok 59 - every offered Word tool carries an authored description inside the model-facing byte bound
+  ---
+  duration_ms: 1.5809
+  type: 'test'
+  ...
+# Subtest: the three pilot-critical tools are unmistakable and no confirm tool is named to the model
+ok 60 - the three pilot-critical tools are unmistakable and no confirm tool is named to the model
+  ---
+  duration_ms: 1.0257
+  type: 'test'
+  ...
+# Subtest: the bulk profile offers exactly the five append-anchored Word tools and deletes nothing
+ok 61 - the bulk profile offers exactly the five append-anchored Word tools and deletes nothing
+  ---
+  duration_ms: 1.1462
+  type: 'test'
+  ...
+# Subtest: read_selection returns bounded data and marks refusals as known errors
+ok 62 - read_selection returns bounded data and marks refusals as known errors
+  ---
+  duration_ms: 1.0039
+  type: 'test'
+  ...
+# Subtest: read_selection publishes an entry the runtime serializer accepts, measured exactly
+ok 63 - read_selection publishes an entry the runtime serializer accepts, measured exactly
+  ---
+  duration_ms: 3.487
+  type: 'test'
+  ...
+# Subtest: read_selection refuses a selection whose SERIALIZED entry alone is over the ceiling
+ok 64 - read_selection refuses a selection whose SERIALIZED entry alone is over the ceiling
+  ---
+  duration_ms: 3.7196
+  type: 'test'
+  ...
+# Subtest: no read_selection ok result can exceed the runtime result ceiling
+ok 65 - no read_selection ok result can exceed the runtime result ceiling
+  ---
+  duration_ms: 5.6455
+  type: 'test'
+  ...
+# Subtest: a read_selection the runtime would refuse reaches the model as a closed refusal, never as ok
+ok 66 - a read_selection the runtime would refuse reaches the model as a closed refusal, never as ok
+  ---
+  duration_ms: 3.2644
+  type: 'test'
+  ...
+# Subtest: insert_paragraph requires non-empty text and passes it through unchanged
+ok 67 - insert_paragraph requires non-empty text and passes it through unchanged
+  ---
+  duration_ms: 0.6814
+  type: 'test'
+  ...
+# Subtest: read_context refuses an out-of-range or unknown scope as a known error
+ok 68 - read_context refuses an out-of-range or unknown scope as a known error
+  ---
+  duration_ms: 0.3707
+  type: 'test'
+  ...
+# Subtest: read_context bounds the SERIALIZED entry, not only the raw text, so an entry the runtime refuses can never be published as ok
+ok 69 - read_context bounds the SERIALIZED entry, not only the raw text, so an entry the runtime refuses can never be published as ok
+  ---
+  duration_ms: 1.8261
+  type: 'test'
+  ...
+# Subtest: replace_selection never executes from the loop and keeps its confirm policy
+ok 70 - replace_selection never executes from the loop and keeps its confirm policy
+  ---
+  duration_ms: 0.1931
+  type: 'test'
+  ...
+# Subtest: registry accepts the word tools and filters them by mode
+ok 71 - registry accepts the word tools and filters them by mode
+  ---
+  duration_ms: 0.4389
+  type: 'test'
+  ...
+# Subtest: replace_selection advertises the argument ceiling its handler enforces
+ok 72 - replace_selection advertises the argument ceiling its handler enforces
+  ---
+  duration_ms: 0.406
+  type: 'test'
+  ...
+# Subtest: insert_paragraph reports the native acknowledgement instead of a plain success
+ok 73 - insert_paragraph reports the native acknowledgement instead of a plain success
+  ---
+  duration_ms: 0.6637
+  type: 'test'
+  ...
+# Subtest: insert_paragraph advertises the argument ceiling its handler enforces
+ok 74 - insert_paragraph advertises the argument ceiling its handler enforces
+  ---
+  duration_ms: 0.4879
+  type: 'test'
+  ...
+# Subtest: insert_paragraph bounds the DISPATCHED payload, so the end position cannot overshoot the ceiling
+ok 75 - insert_paragraph bounds the DISPATCHED payload, so the end position cannot overshoot the ceiling
+  ---
+  duration_ms: 0.8236
+  type: 'test'
+  ...
+# Subtest: read_context requests each scope from its own ceiling
+ok 76 - read_context requests each scope from its own ceiling
+  ---
+  duration_ms: 25.8699
+  type: 'test'
+  ...
+# Subtest: read_context and insert_paragraph forward the caller signal to the bridge
+ok 77 - read_context and insert_paragraph forward the caller signal to the bridge
+  ---
+  duration_ms: 0.5994
+  type: 'test'
+  ...
+# Subtest: bridge readContext serves a bounded public read through the owned slot
+ok 78 - bridge readContext serves a bounded public read through the owned slot
+  ---
+  duration_ms: 3.8289
+  type: 'test'
+  ...
+# Subtest: bridge readContext refuses a byte-oversized native read and never returns a raw error
+ok 79 - bridge readContext refuses a byte-oversized native read and never returns a raw error
+  ---
+  duration_ms: 0.7625
+  type: 'test'
+  ...
+# Subtest: bridge readContext decodes a paragraph or section read against the requested budget
+ok 80 - bridge readContext decodes a paragraph or section read against the requested budget
+  ---
+  duration_ms: 1.6232
+  type: 'test'
+  ...
+# Subtest: bridge readContext refuses a payload above the requested budget or the editor-result ceiling
+ok 81 - bridge readContext refuses a payload above the requested budget or the editor-result ceiling
+  ---
+  duration_ms: 1.7383
+  type: 'test'
+  ...
+# Subtest: bridge readContext and insertParagraph dispatch when the facade carries only the dispatch channel
+ok 82 - bridge readContext and insertParagraph dispatch when the facade carries only the dispatch channel
+  ---
+  duration_ms: 2.5959
+  type: 'test'
+  ...
+# Subtest: bridge readContext and insertParagraph refuse a dispatch channel that is not an own data descriptor
+ok 83 - bridge readContext and insertParagraph refuse a dispatch channel that is not an own data descriptor
+  ---
+  duration_ms: 0.7822
+  type: 'test'
+  ...
+# Subtest: bridge readContext refuses a scope or an address it cannot interpret without any SDK work
+ok 84 - bridge readContext refuses a scope or an address it cannot interpret without any SDK work
+  ---
+  duration_ms: 0.4901
+  type: 'test'
+  ...
+# Subtest: bridge insertParagraph dispatches the public insert once and reports a classified outcome
+ok 85 - bridge insertParagraph dispatches the public insert once and reports a classified outcome
+  ---
+  duration_ms: 1.3914
+  type: 'test'
+  ...
+# Subtest: the handler and the real bridge agree on one ceiling for the dispatched insert
+ok 86 - the handler and the real bridge agree on one ceiling for the dispatched insert
+  ---
+  duration_ms: 3.4057
+  type: 'test'
+  ...
+# Subtest: bridge insertParagraph refuses malformed text or an unknown position without any SDK work
+ok 87 - bridge insertParagraph refuses malformed text or an unknown position without any SDK work
+  ---
+  duration_ms: 0.2991
+  type: 'test'
+  ...
+# Subtest: bridge readContext and insertParagraph refuse a pre-aborted signal without any dispatch
+ok 88 - bridge readContext and insertParagraph refuse a pre-aborted signal without any dispatch
+  ---
+  duration_ms: 0.2532
+  type: 'test'
+  ...
+# Subtest: an abort after the read was dispatched invalidates the caller and leaves the slot owned
+ok 89 - an abort after the read was dispatched invalidates the caller and leaves the slot owned
+  ---
+  duration_ms: 0.9321
+  type: 'test'
+  ...
+# Subtest: an abort during the baseline phase cancels before any paste, and one after the dispatch is uncertain
+ok 90 - an abort during the baseline phase cancels before any paste, and one after the dispatch is uncertain
+  ---
+  duration_ms: 0.8482
+  type: 'test'
+  ...
+# Subtest: an insert whose native dispatch threw is the uncertain class and keeps its callback slot owned
+ok 91 - an insert whose native dispatch threw is the uncertain class and keeps its callback slot owned
+  ---
+  duration_ms: 0.9629
+  type: 'test'
+  ...
+# Subtest: insert_paragraph stops the run for an uncertain insert instead of reporting a plain failure
+ok 92 - insert_paragraph stops the run for an uncertain insert instead of reporting a plain failure
+  ---
+  duration_ms: 0.6302
+  type: 'test'
+  ...
+# Subtest: insert_paragraph classifies a RETURNED uncertain insert exactly like a thrown one
+ok 93 - insert_paragraph classifies a RETURNED uncertain insert exactly like a thrown one
+  ---
+  duration_ms: 0.2733
+  type: 'test'
+  ...
+# Subtest: a word tool refuses a bridge that does not expose the entry point instead of crashing
+ok 94 - a word tool refuses a bridge that does not expose the entry point instead of crashing
+  ---
+  duration_ms: 0.3003
+  type: 'test'
+  ...
+# Subtest: the write path still dispatches the caller replacement unchanged
+ok 95 - the write path still dispatches the caller replacement unchanged
+  ---
+  duration_ms: 2.023
+  type: 'test'
+  ...
+# Subtest: the real bridge confirms a void acknowledgement by a document delta and the handler republishes it
+ok 96 - the real bridge confirms a void acknowledgement by a document delta and the handler republishes it
+  ---
+  duration_ms: 1.2014
+  type: 'test'
+  ...
+# Subtest: the handler publishes the effect the bridge proved and never invents one
+ok 97 - the handler publishes the effect the bridge proved and never invents one
+  ---
+  duration_ms: 0.6556
+  type: 'test'
+  ...
+# Subtest: a void acknowledgement the document does not confirm is TOOL_UNCERTAIN and never a plain failure
+ok 98 - a void acknowledgement the document does not confirm is TOOL_UNCERTAIN and never a plain failure
+  ---
+  duration_ms: 1.1438
+  type: 'test'
+  ...
+# Subtest: a document baseline above the ceiling is the closed BYTE_LIMIT class and dispatches no write
+ok 99 - a document baseline above the ceiling is the closed BYTE_LIMIT class and dispatches no write
+  ---
+  duration_ms: 1.5584
+  type: 'test'
+  ...
+# Subtest: a proof through an escaped payload crosses to the run unchanged
+ok 100 - a proof through an escaped payload crosses to the run unchanged
+  ---
+  duration_ms: 0.7809
+  type: 'test'
+  ...
+# Subtest: a document baseline that cannot be read refuses the insert and dispatches no write at all
+ok 101 - a document baseline that cannot be read refuses the insert and dispatches no write at all
+  ---
+  duration_ms: 0.6422
+  type: 'test'
+  ...
+# Subtest: read_document_text advertises the closed bounded schema the contract names
+ok 102 - read_document_text advertises the closed bounded schema the contract names
+  ---
+  duration_ms: 0.3766
+  type: 'test'
+  ...
+# Subtest: read_document_text accepts its closed argument set and rejects everything else at the schema
+ok 103 - read_document_text accepts its closed argument set and rejects everything else at the schema
+  ---
+  duration_ms: 0.7994
+  type: 'test'
+  ...
+# Subtest: read_document_text defaults an omitted offset and maxChars to the documented chunk
+ok 104 - read_document_text defaults an omitted offset and maxChars to the documented chunk
+  ---
+  duration_ms: 0.8646
+  type: 'test'
+  ...
+# Subtest: read_document_text slices exactly the requested chunk and reports its resume point
+ok 105 - read_document_text slices exactly the requested chunk and reports its resume point
+  ---
+  duration_ms: 0.6009
+  type: 'test'
+  ...
+# Subtest: read_document_text chunks walk the document with no gap, no overlap and no invented text
+ok 106 - read_document_text chunks walk the document with no gap, no overlap and no invented text
+  ---
+  duration_ms: 0.6834
+  type: 'test'
+  ...
+# Subtest: read_document_text reports an EMPTY document as a legitimate empty result
+ok 107 - read_document_text reports an EMPTY document as a legitimate empty result
+  ---
+  duration_ms: 0.2853
+  type: 'test'
+  ...
+# Subtest: read_document_text refuses an editor that is not Word before any dispatch
+ok 108 - read_document_text refuses an editor that is not Word before any dispatch
+  ---
+  duration_ms: 0.2154
+  type: 'test'
+  ...
+# Subtest: read_document_text refuses a bridge that cannot serve the read instead of crashing
+ok 109 - read_document_text refuses a bridge that cannot serve the read instead of crashing
+  ---
+  duration_ms: 0.3588
+  type: 'test'
+  ...
+# Subtest: read_document_text republishes the closed class the bridge reported, never a raw failure
+ok 110 - read_document_text republishes the closed class the bridge reported, never a raw failure
+  ---
+  duration_ms: 0.7248
+  type: 'test'
+  ...
+# Subtest: read_document_text treats an unusable bridge answer as the module’s unknown/uncertain convention
+ok 111 - read_document_text treats an unusable bridge answer as the module’s unknown/uncertain convention
+  ---
+  duration_ms: 0.7779
+  type: 'test'
+  ...
+# Subtest: read_document_text refuses an out-of-range address that never crossed the schema
+ok 112 - read_document_text refuses an out-of-range address that never crossed the schema
+  ---
+  duration_ms: 0.2519
+  type: 'test'
+  ...
+# Subtest: read_document_text keeps a DEFAULT Cyrillic read inside the per-result serialization ceiling
+ok 113 - read_document_text keeps a DEFAULT Cyrillic read inside the per-result serialization ceiling
+  ---
+  duration_ms: 0.6661
+  type: 'test'
+  ...
+# Subtest: read_document_text measures the serialized entry the protocol serializer measures
+ok 114 - read_document_text measures the serialized entry the protocol serializer measures
+  ---
+  duration_ms: 0.1445
+  type: 'test'
+  ...
+# Subtest: read_document_text delivers its default chunk to the model through the REAL runtime
+ok 115 - read_document_text delivers its default chunk to the model through the REAL runtime
+  ---
+  duration_ms: 1.8887
+  type: 'test'
+  ...
+# Subtest: read_document_text serves the largest chunk its entry ceiling allows, for every encoding
+ok 116 - read_document_text serves the largest chunk its entry ceiling allows, for every encoding
+  ---
+  duration_ms: 2.1085
+  type: 'test'
+  ...
+# Subtest: read_document_text serves the largest chunk that fits instead of refusing the request
+ok 117 - read_document_text serves the largest chunk that fits instead of refusing the request
+  ---
+  duration_ms: 1.6636
+  type: 'test'
+  ...
+# Subtest: read_document_text serves every chunk it RETURNS inside the per-result ceiling
+ok 118 - read_document_text serves every chunk it RETURNS inside the per-result ceiling
+  ---
+  duration_ms: 3.8331
+  type: 'test'
+  ...
+# Subtest: read_document_text never returns a lone surrogate, at either cut
+ok 119 - read_document_text never returns a lone surrogate, at either cut
+  ---
+  duration_ms: 0.8573
+  type: 'test'
+  ...
+# Subtest: read_document_text keeps every published nextOffset inside its own schema
+ok 120 - read_document_text keeps every published nextOffset inside its own schema
+  ---
+  duration_ms: 3.0854
+  type: 'test'
+  ...
+# Subtest: read_document_text publishes a resumable chunk for every length around the offset bound
+ok 121 - read_document_text publishes a resumable chunk for every length around the offset bound
+  ---
+  duration_ms: 9.6312
+  type: 'test'
+  ...
+# Subtest: read_document_text forwards the caller signal to its single bridge read
+ok 122 - read_document_text forwards the caller signal to its single bridge read
+  ---
+  duration_ms: 0.2768
+  type: 'test'
+  ...
+# Subtest: read_document_text touches exactly one bridge read and no write path at all
+ok 123 - read_document_text touches exactly one bridge read and no write path at all
+  ---
+  duration_ms: 0.4152
+  type: 'test'
+  ...
+# Subtest: bridge readDocumentText reads the public document export once and reports its text and total
+ok 124 - bridge readDocumentText reads the public document export once and reports its text and total
+  ---
+  duration_ms: 0.4086
+  type: 'test'
+  ...
+# Subtest: the bridge document read serves an empty document as a legitimate empty result
+ok 125 - the bridge document read serves an empty document as a legitimate empty result
+  ---
+  duration_ms: 0.6304
+  type: 'test'
+  ...
+# Subtest: bridge readDocumentText refuses an export above the ceiling instead of truncating it
+ok 126 - bridge readDocumentText refuses an export above the ceiling instead of truncating it
+  ---
+  duration_ms: 3.8704
+  type: 'test'
+  ...
+# Subtest: bridge readDocumentText classifies a malformed answer and an unusable parse
+ok 127 - bridge readDocumentText classifies a malformed answer and an unusable parse
+  ---
+  duration_ms: 0.8172
+  type: 'test'
+  ...
+# Subtest: bridge readDocumentText refuses a dispatch channel that is not an own data descriptor
+ok 128 - bridge readDocumentText refuses a dispatch channel that is not an own data descriptor
+  ---
+  duration_ms: 0.2474
+  type: 'test'
+  ...
+# Subtest: bridge readDocumentText refuses a pre-aborted signal without any dispatch
+ok 129 - bridge readDocumentText refuses a pre-aborted signal without any dispatch
+  ---
+  duration_ms: 0.2709
+  type: 'test'
+  ...
+# Subtest: read_document_text is offered with policy auto and a model call dispatches exactly one read
+ok 130 - read_document_text is offered with policy auto and a model call dispatches exactly one read
+  ---
+  duration_ms: 7.9961
+  type: 'test'
+  ...
+# Subtest: read_document_text serves the exact-ceiling chunk as the largest slice that fits, end to end
+ok 131 - read_document_text serves the exact-ceiling chunk as the largest slice that fits, end to end
+  ---
+  duration_ms: 6.2379
+  type: 'test'
+  ...
+# Subtest: read_document_text measures the exact entry it publishes, not one with the nil resume point
+ok 132 - read_document_text measures the exact entry it publishes, not one with the nil resume point
+  ---
+  duration_ms: 9.8863
+  type: 'test'
+  ...
+# Subtest: read_document_text returns text the model receives for every reviewer offset
+ok 133 - read_document_text returns text the model receives for every reviewer offset
+  ---
+  duration_ms: 14.3392
+  type: 'test'
+  ...
+# Subtest: read_document_text never publishes ok for an entry the runtime will refuse
+ok 134 - read_document_text never publishes ok for an entry the runtime will refuse
+  ---
+  duration_ms: 170.3942
+  type: 'test'
+  ...
+# Subtest: read_document_text shrinks a three-byte script exactly as far as needed and no further
+ok 135 - read_document_text shrinks a three-byte script exactly as far as needed and no further
+  ---
+  duration_ms: 13.2762
+  type: 'test'
+  ...
+# Subtest: read_document_text tiles the document exactly when the shrink moves the boundary onto a pair
+ok 136 - read_document_text tiles the document exactly when the shrink moves the boundary onto a pair
+  ---
+  duration_ms: 8.078
+  type: 'test'
+  ...
+# Subtest: read_document_text serializes an entry per END, and entry bytes DECREASE with a longer end
+ok 137 - read_document_text serializes an entry per END, and entry bytes DECREASE with a longer end
+  ---
+  duration_ms: 0.7693
+  type: 'test'
+  ...
+# Subtest: read_document_text serves a document with a lone surrogate inside the ceiling and still serializes
+ok 138 - read_document_text serves a document with a lone surrogate inside the ceiling and still serializes
+  ---
+  duration_ms: 9.8637
+  type: 'test'
+  ...
+# Subtest: read_document_text never searches below four digits, because no shorter entry reaches the ceiling
+ok 139 - read_document_text never searches below four digits, because no shorter entry reaches the ceiling
+  ---
+  duration_ms: 8.7548
+  type: 'test'
+  ...
+# Subtest: read_document_text refuses closed when not even ONE whole character can be served
+ok 140 - read_document_text refuses closed when not even ONE whole character can be served
+  ---
+  duration_ms: 2.8554
+  type: 'test'
+  ...
+# Subtest: read_paragraph advertises the closed schema, the scope it really reads and the bound it enforces
+ok 141 - read_paragraph advertises the closed schema, the scope it really reads and the bound it enforces
+  ---
+  duration_ms: 0.3408
+  type: 'test'
+  ...
+# Subtest: read_paragraph accepts only the empty argument object and rejects every other key at the schema
+ok 142 - read_paragraph accepts only the empty argument object and rejects every other key at the schema
+  ---
+  duration_ms: 0.4836
+  type: 'test'
+  ...
+# Subtest: read_paragraph refuses an editor that is not Word before any dispatch
+ok 143 - read_paragraph refuses an editor that is not Word before any dispatch
+  ---
+  duration_ms: 0.2505
+  type: 'test'
+  ...
+# Subtest: read_paragraph returns the caret sentence with exact Cyrillic byte accounting
+ok 144 - read_paragraph returns the caret sentence with exact Cyrillic byte accounting
+  ---
+  duration_ms: 0.3881
+  type: 'test'
+  ...
+# Subtest: read_paragraph treats an empty caret context as a closed known refusal, never as empty text
+ok 145 - read_paragraph treats an empty caret context as a closed known refusal, never as empty text
+  ---
+  duration_ms: 0.6158
+  type: 'test'
+  ...
+# Subtest: read_paragraph refuses a caret context longer than its bound as BYTE_LIMIT
+ok 146 - read_paragraph refuses a caret context longer than its bound as BYTE_LIMIT
+  ---
+  duration_ms: 2.0327
+  type: 'test'
+  ...
+# Subtest: read_paragraph republishes the closed class the bridge reported, never a raw failure
+ok 147 - read_paragraph republishes the closed class the bridge reported, never a raw failure
+  ---
+  duration_ms: 1.655
+  type: 'test'
+  ...
+# Subtest: read_paragraph maps a returned or thrown uncertain class to TOOL_UNCERTAIN
+ok 148 - read_paragraph maps a returned or thrown uncertain class to TOOL_UNCERTAIN
+  ---
+  duration_ms: 0.4506
+  type: 'test'
+  ...
+# Subtest: read_paragraph refuses a bridge that cannot serve the caret read instead of crashing
+ok 149 - read_paragraph refuses a bridge that cannot serve the caret read instead of crashing
+  ---
+  duration_ms: 0.6742
+  type: 'test'
+  ...
+# Subtest: read_paragraph touches exactly one bridge read and no write method at all
+ok 150 - read_paragraph touches exactly one bridge read and no write method at all
+  ---
+  duration_ms: 0.4193
+  type: 'test'
+  ...
+# Subtest: read_paragraph forwards the caller signal to its single bridge read
+ok 151 - read_paragraph forwards the caller signal to its single bridge read
+  ---
+  duration_ms: 0.2004
+  type: 'test'
+  ...
+# Subtest: read_paragraph publishes an entry the runtime serializer accepts, measured exactly
+ok 152 - read_paragraph publishes an entry the runtime serializer accepts, measured exactly
+  ---
+  duration_ms: 1.0727
+  type: 'test'
+  ...
+# Subtest: read_paragraph refuses a context whose SERIALIZED entry alone is over the ceiling
+ok 153 - read_paragraph refuses a context whose SERIALIZED entry alone is over the ceiling
+  ---
+  duration_ms: 2.7302
+  type: 'test'
+  ...
+# Subtest: bridge readParagraph dispatches GetCurrentSentence ONCE by name and decodes the sentence
+ok 154 - bridge readParagraph dispatches GetCurrentSentence ONCE by name and decodes the sentence
+  ---
+  duration_ms: 0.4017
+  type: 'test'
+  ...
+# Subtest: bridge readParagraph decodes against the requested budget and closes an oversized answer
+ok 155 - bridge readParagraph decodes against the requested budget and closes an oversized answer
+  ---
+  duration_ms: 0.22
+  type: 'test'
+  ...
+# Subtest: bridge readParagraph refuses a budget or a dispatch channel it cannot use, with no SDK work
+ok 156 - bridge readParagraph refuses a budget or a dispatch channel it cannot use, with no SDK work
+  ---
+  duration_ms: 0.274
+  type: 'test'
+  ...
+# Subtest: bridge readParagraph refuses a pre-aborted signal without any dispatch
+ok 157 - bridge readParagraph refuses a pre-aborted signal without any dispatch
+  ---
+  duration_ms: 0.1593
+  type: 'test'
+  ...
+# Subtest: read_paragraph is offered with policy auto and a model call dispatches one caret read
+ok 158 - read_paragraph is offered with policy auto and a model call dispatches one caret read
+  ---
+  duration_ms: 3.9445
+  type: 'test'
+  ...
+# Subtest: find_text advertises the closed bounded schema and states the two bounds it adds
+ok 159 - find_text advertises the closed bounded schema and states the two bounds it adds
+  ---
+  duration_ms: 3.4251
+  type: 'test'
+  ...
+# Subtest: find_text accepts its closed argument set and rejects everything else at the schema
+ok 160 - find_text accepts its closed argument set and rejects everything else at the schema
+  ---
+  duration_ms: 0.96
+  type: 'test'
+  ...
+# Subtest: find_text defaults matchCase to case-insensitive and limit to the schema maximum
+ok 161 - find_text defaults matchCase to case-insensitive and limit to the schema maximum
+  ---
+  duration_ms: 1.114
+  type: 'test'
+  ...
+# Subtest: find_text reports the MEASURED primitive shapes faithfully
+ok 162 - find_text reports the MEASURED primitive shapes faithfully
+  ---
+  duration_ms: 0.6782
+  type: 'test'
+  ...
+# Subtest: find_text treats a zero-match search as the COMPLETE answer, not as a refusal
+ok 163 - find_text treats a zero-match search as the COMPLETE answer, not as a refusal
+  ---
+  duration_ms: 0.5562
+  type: 'test'
+  ...
+# Subtest: find_text bounds how many matches it reports while count stays the TOTAL
+ok 164 - find_text bounds how many matches it reports while count stays the TOTAL
+  ---
+  duration_ms: 0.3974
+  type: 'test'
+  ...
+# Subtest: find_text publishes an entry the runtime serializer accepts and refuses one it would refuse
+ok 165 - find_text publishes an entry the runtime serializer accepts and refuses one it would refuse
+  ---
+  duration_ms: 4.1263
+  type: 'test'
+  ...
+# Subtest: find_text republishes the closed class the bridge reported, never a raw failure
+ok 166 - find_text republishes the closed class the bridge reported, never a raw failure
+  ---
+  duration_ms: 1.2881
+  type: 'test'
+  ...
+# Subtest: find_text maps a returned or thrown uncertain class to TOOL_UNCERTAIN
+ok 167 - find_text maps a returned or thrown uncertain class to TOOL_UNCERTAIN
+  ---
+  duration_ms: 0.308
+  type: 'test'
+  ...
+# Subtest: find_text treats an unusable bridge answer as the module’s unknown convention
+ok 168 - find_text treats an unusable bridge answer as the module’s unknown convention
+  ---
+  duration_ms: 1.6544
+  type: 'test'
+  ...
+# Subtest: find_text refuses an editor that is not Word before any dispatch
+ok 169 - find_text refuses an editor that is not Word before any dispatch
+  ---
+  duration_ms: 0.2899
+  type: 'test'
+  ...
+# Subtest: find_text refuses a bridge that cannot serve the search instead of crashing
+ok 170 - find_text refuses a bridge that cannot serve the search instead of crashing
+  ---
+  duration_ms: 1.5201
+  type: 'test'
+  ...
+# Subtest: find_text touches exactly one bridge search and no write method at all
+ok 171 - find_text touches exactly one bridge search and no write method at all
+  ---
+  duration_ms: 0.726
+  type: 'test'
+  ...
+# Subtest: find_text forwards the caller signal to its single bridge search
+ok 172 - find_text forwards the caller signal to its single bridge search
+  ---
+  duration_ms: 0.3929
+  type: 'test'
+  ...
+# Subtest: bridge findText dispatches ONE command, carries the needle as DATA and restores the namespace
+ok 173 - bridge findText dispatches ONE command, carries the needle as DATA and restores the namespace
+  ---
+  duration_ms: 1.5688
+  type: 'test'
+  ...
+# Subtest: bridge findText decodes the measured native shapes: 4 strict, 5 case-insensitive, 0 missing
+ok 174 - bridge findText decodes the measured native shapes: 4 strict, 5 case-insensitive, 0 missing
+  ---
+  duration_ms: 0.8197
+  type: 'test'
+  ...
+# Subtest: bridge findText refuses a build, a namespace or an answer it cannot use, with the closed class
+ok 175 - bridge findText refuses a build, a namespace or an answer it cannot use, with the closed class
+  ---
+  duration_ms: 3.312
+  type: 'test'
+  ...
+# Subtest: bridge findText refuses a request it cannot interpret without any SDK work
+ok 176 - bridge findText refuses a request it cannot interpret without any SDK work
+  ---
+  duration_ms: 0.4674
+  type: 'test'
+  ...
+# Subtest: bridge findText refuses a pre-aborted signal without any dispatch
+ok 177 - bridge findText refuses a pre-aborted signal without any dispatch
+  ---
+  duration_ms: 0.22
+  type: 'test'
+  ...
+# Subtest: find_text is offered with policy auto and a model call dispatches exactly one search
+ok 178 - find_text is offered with policy auto and a model call dispatches exactly one search
+  ---
+  duration_ms: 1.3775
+  type: 'test'
+  ...
+# Subtest: read_structure advertises the closed schema and the two bounds it adds
+ok 179 - read_structure advertises the closed schema and the two bounds it adds
+  ---
+  duration_ms: 4.3628
+  type: 'test'
+  ...
+# Subtest: read_structure accepts only the empty argument object and rejects every other key at the schema
+ok 180 - read_structure accepts only the empty argument object and rejects every other key at the schema
+  ---
+  duration_ms: 0.6102
+  type: 'test'
+  ...
+# Subtest: read_structure reports the MEASURED document structure faithfully
+ok 181 - read_structure reports the MEASURED document structure faithfully
+  ---
+  duration_ms: 0.8769
+  type: 'test'
+  ...
+# Subtest: read_structure treats an EMPTY structure as the complete answer, not a refusal
+ok 182 - read_structure treats an EMPTY structure as the complete answer, not a refusal
+  ---
+  duration_ms: 0.4271
+  type: 'test'
+  ...
+# Subtest: read_structure bounds how many headings it reports while counts stay the TOTAL
+ok 183 - read_structure bounds how many headings it reports while counts stay the TOTAL
+  ---
+  duration_ms: 0.5859
+  type: 'test'
+  ...
+# Subtest: read_structure bounds ONE heading text and publishes an explicit EMPTY omission, never a shortened heading
+ok 184 - read_structure bounds ONE heading text and publishes an explicit EMPTY omission, never a shortened heading
+  ---
+  duration_ms: 1.3577
+  type: 'test'
+  ...
+# Subtest: read_structure publishes an entry the runtime serializer accepts and refuses one it would refuse
+ok 185 - read_structure publishes an entry the runtime serializer accepts and refuses one it would refuse
+  ---
+  duration_ms: 6.966
+  type: 'test'
+  ...
+# Subtest: read_structure publishes an entry of exactly the ceiling at its true maximum, and refuses one byte more
+ok 186 - read_structure publishes an entry of exactly the ceiling at its true maximum, and refuses one byte more
+  ---
+  duration_ms: 4.1163
+  type: 'test'
+  ...
+# Subtest: read_structure republishes the closed class the bridge reported, never a raw failure
+ok 187 - read_structure republishes the closed class the bridge reported, never a raw failure
+  ---
+  duration_ms: 1.2386
+  type: 'test'
+  ...
+# Subtest: read_structure maps a returned or thrown uncertain class to TOOL_UNCERTAIN
+ok 188 - read_structure maps a returned or thrown uncertain class to TOOL_UNCERTAIN
+  ---
+  duration_ms: 0.5278
+  type: 'test'
+  ...
+# Subtest: read_structure treats an unusable bridge answer as the module’s unknown convention
+ok 189 - read_structure treats an unusable bridge answer as the module’s unknown convention
+  ---
+  duration_ms: 4.5785
+  type: 'test'
+  ...
+# Subtest: read_structure refuses an editor that is not Word before any dispatch
+ok 190 - read_structure refuses an editor that is not Word before any dispatch
+  ---
+  duration_ms: 0.5956
+  type: 'test'
+  ...
+# Subtest: read_structure refuses a bridge that cannot serve the read instead of crashing
+ok 191 - read_structure refuses a bridge that cannot serve the read instead of crashing
+  ---
+  duration_ms: 0.9616
+  type: 'test'
+  ...
+# Subtest: read_structure touches exactly one bridge read and no write method at all
+ok 192 - read_structure touches exactly one bridge read and no write method at all
+  ---
+  duration_ms: 0.5187
+  type: 'test'
+  ...
+# Subtest: read_structure forwards the caller signal to its single bridge read
+ok 193 - read_structure forwards the caller signal to its single bridge read
+  ---
+  duration_ms: 0.2275
+  type: 'test'
+  ...
+# Subtest: bridge readStructure dispatches ONE command, carries the cap as DATA and restores the namespace
+ok 194 - bridge readStructure dispatches ONE command, carries the cap as DATA and restores the namespace
+  ---
+  duration_ms: 1.4552
+  type: 'test'
+  ...
+# Subtest: the structure body answers the measured shapes in a fresh, module-free scope
+ok 195 - the structure body answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 1.4764
+  type: 'test'
+  ...
+# Subtest: bridge readStructure decodes the measured shapes and refuses an answer it cannot interpret
+ok 196 - bridge readStructure decodes the measured shapes and refuses an answer it cannot interpret
+  ---
+  duration_ms: 2.2731
+  type: 'test'
+  ...
+# Subtest: bridge readStructure refuses a build, a namespace or a request it cannot use, with the closed class
+ok 197 - bridge readStructure refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 0.6994
+  type: 'test'
+  ...
+# Subtest: read_structure is offered with policy auto and a model call dispatches exactly one structure read
+ok 198 - read_structure is offered with policy auto and a model call dispatches exactly one structure read
+  ---
+  duration_ms: 1.1224
+  type: 'test'
+  ...
+# Subtest: insert_blocks advertises the closed bounded schema and the four bounds it names
+ok 199 - insert_blocks advertises the closed bounded schema and the four bounds it names
+  ---
+  duration_ms: 0.3811
+  type: 'test'
+  ...
+# Subtest: insert_blocks refuses every illegal argument with nothing dispatched, at the schema or in the handler
+ok 200 - insert_blocks refuses every illegal argument with nothing dispatched, at the schema or in the handler
+  ---
+  duration_ms: 2.8121
+  type: 'test'
+  ...
+# Subtest: insert_blocks appends through exactly ONE bridge call and publishes the measured delta
+ok 201 - insert_blocks appends through exactly ONE bridge call and publishes the measured delta
+  ---
+  duration_ms: 0.3415
+  type: 'test'
+  ...
+# Subtest: insert_blocks publishes a verified append ONLY for the exact delta, and never retries otherwise
+ok 202 - insert_blocks publishes a verified append ONLY for the exact delta, and never retries otherwise
+  ---
+  duration_ms: 1.7488
+  type: 'test'
+  ...
+# Subtest: insert_blocks refuses an unusable baseline or a heading style it cannot resolve, with nothing inserted
+ok 203 - insert_blocks refuses an unusable baseline or a heading style it cannot resolve, with nothing inserted
+  ---
+  duration_ms: 0.3678
+  type: 'test'
+  ...
+# Subtest: insert_blocks republishes the closed class the bridge reported, never a raw failure
+ok 204 - insert_blocks republishes the closed class the bridge reported, never a raw failure
+  ---
+  duration_ms: 3.3732
+  type: 'test'
+  ...
+# Subtest: insert_blocks maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run
+ok 205 - insert_blocks maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run
+  ---
+  duration_ms: 0.8739
+  type: 'test'
+  ...
+# Subtest: insert_blocks refuses a non-Word editor and a bridge that cannot serve the append, before any dispatch
+ok 206 - insert_blocks refuses a non-Word editor and a bridge that cannot serve the append, before any dispatch
+  ---
+  duration_ms: 0.7289
+  type: 'test'
+  ...
+# Subtest: insert_blocks measures the exact entry it publishes, and its five bounded integers cannot reach the ceiling
+ok 207 - insert_blocks measures the exact entry it publishes, and its five bounded integers cannot reach the ceiling
+  ---
+  duration_ms: 0.4748
+  type: 'test'
+  ...
+# Subtest: bridge insertBlocks dispatches ONE command, carries the blocks as DATA and verifies the measured delta
+ok 208 - bridge insertBlocks dispatches ONE command, carries the blocks as DATA and verifies the measured delta
+  ---
+  duration_ms: 1.402
+  type: 'test'
+  ...
+# Subtest: the blocks body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 209 - the blocks body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 1.0671
+  type: 'test'
+  ...
+# Subtest: the Push boolean is never the signal: a false that appended verifies, a true that appended nothing does not
+ok 210 - the Push boolean is never the signal: a false that appended verifies, a true that appended nothing does not
+  ---
+  duration_ms: 1.1795
+  type: 'test'
+  ...
+# Subtest: the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an existential match over the document
+ok 211 - the outcome contract is ONE-TO-ONE over the APPENDED REGION, never an existential match over the document
+  ---
+  duration_ms: 1.1036
+  type: 'test'
+  ...
+# Subtest: a block whose text carries line breaks verifies: the editor stores them as CR and BOTH sides are compared in that form
+ok 212 - a block whose text carries line breaks verifies: the editor stores them as CR and BOTH sides are compared in that form
+  ---
+  duration_ms: 1.071
+  type: 'test'
+  ...
+# Subtest: a text that differs BEYOND line breaks still fails: the representation changed, the rule did not
+ok 213 - a text that differs BEYOND line breaks still fails: the representation changed, the rule did not
+  ---
+  duration_ms: 0.9008
+  type: 'test'
+  ...
+# Subtest: the body pushes ONE paragraph per block, in order, and never calls the legacy insert primitive
+ok 214 - the body pushes ONE paragraph per block, in order, and never calls the legacy insert primitive
+  ---
+  duration_ms: 1.3118
+  type: 'test'
+  ...
+# Subtest: a mutation that lands at the START is TOOL_UNCERTAIN with the slot HELD: the region anchor catches it
+ok 215 - a mutation that lands at the START is TOOL_UNCERTAIN with the slot HELD: the region anchor catches it
+  ---
+  duration_ms: 0.3423
+  type: 'test'
+  ...
+# Subtest: a Push that throws PART WAY THROUGH is TOOL_UNCERTAIN with the slot HELD, never a known refusal
+ok 216 - a Push that throws PART WAY THROUGH is TOOL_UNCERTAIN with the slot HELD, never a known refusal
+  ---
+  duration_ms: 0.6053
+  type: 'test'
+  ...
+# Subtest: a document that offers ONLY the legacy primitive is refused up-front with NOTHING inserted
+ok 217 - a document that offers ONLY the legacy primitive is refused up-front with NOTHING inserted
+  ---
+  duration_ms: 0.3327
+  type: 'test'
+  ...
+# Subtest: bridge insertBlocks refuses an unusable baseline or an unresolvable style with a closed class and NO Push
+ok 218 - bridge insertBlocks refuses an unusable baseline or an unresolvable style with a closed class and NO Push
+  ---
+  duration_ms: 3.0104
+  type: 'test'
+  ...
+# Subtest: bridge insertBlocks refuses a build, a namespace or a request it cannot use, with the closed class
+ok 219 - bridge insertBlocks refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 3.3589
+  type: 'test'
+  ...
+# Subtest: bridge insertBlocks decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 220 - bridge insertBlocks decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 4.6733
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the protocol: a forged one-slot sentinel answered after a real append is uncertain, never a known class
+ok 221 - the refusal PHASE is explicit in the protocol: a forged one-slot sentinel answered after a real append is uncertain, never a known class
+  ---
+  duration_ms: 1.2962
+  type: 'test'
+  ...
+# Subtest: insert_blocks is offered with policy auto and a model call appends exactly one block batch
+ok 222 - insert_blocks is offered with policy auto and a model call appends exactly one block batch
+  ---
+  duration_ms: 1.0481
+  type: 'test'
+  ...
+# Subtest: insert_table advertises the closed bounded schema and the four bounds it names
+ok 223 - insert_table advertises the closed bounded schema and the four bounds it names
+  ---
+  duration_ms: 0.3561
+  type: 'test'
+  ...
+# Subtest: insert_table refuses every illegal argument with nothing dispatched, at the schema or in the handler
+ok 224 - insert_table refuses every illegal argument with nothing dispatched, at the schema or in the handler
+  ---
+  duration_ms: 2.6696
+  type: 'test'
+  ...
+# Subtest: insert_table inserts through exactly ONE bridge call and publishes the measured delta
+ok 225 - insert_table inserts through exactly ONE bridge call and publishes the measured delta
+  ---
+  duration_ms: 0.3706
+  type: 'test'
+  ...
+# Subtest: insert_table publishes a verified insert ONLY for the exact delta, and never retries otherwise
+ok 226 - insert_table publishes a verified insert ONLY for the exact delta, and never retries otherwise
+  ---
+  duration_ms: 1.9695
+  type: 'test'
+  ...
+# Subtest: insert_table refuses an unusable baseline with zero writes and republishes the closed class it was given
+ok 227 - insert_table refuses an unusable baseline with zero writes and republishes the closed class it was given
+  ---
+  duration_ms: 2.4486
+  type: 'test'
+  ...
+# Subtest: insert_table maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run
+ok 228 - insert_table maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run
+  ---
+  duration_ms: 0.7069
+  type: 'test'
+  ...
+# Subtest: insert_table refuses a non-Word editor and a bridge that cannot serve the insert, before any dispatch
+ok 229 - insert_table refuses a non-Word editor and a bridge that cannot serve the insert, before any dispatch
+  ---
+  duration_ms: 0.6851
+  type: 'test'
+  ...
+# Subtest: insert_table measures the exact entry it publishes, and its five bounded integers cannot reach the ceiling
+ok 230 - insert_table measures the exact entry it publishes, and its five bounded integers cannot reach the ceiling
+  ---
+  duration_ms: 0.4403
+  type: 'test'
+  ...
+# Subtest: bridge insertTable dispatches ONE command, carries the matrix as DATA and verifies the exact delta
+ok 231 - bridge insertTable dispatches ONE command, carries the matrix as DATA and verifies the exact delta
+  ---
+  duration_ms: 1.6005
+  type: 'test'
+  ...
+# Subtest: the factory is given (columns, rows): ONE ROW × TWO COLUMNS (the pilot case: the row count is the SHORT one)
+ok 232 - the factory is given (columns, rows): ONE ROW × TWO COLUMNS (the pilot case: the row count is the SHORT one)
+  ---
+  duration_ms: 0.7434
+  type: 'test'
+  ...
+# Subtest: the factory is given (columns, rows): TWO ROWS × ONE COLUMN (the transposed pilot case)
+ok 233 - the factory is given (columns, rows): TWO ROWS × ONE COLUMN (the transposed pilot case)
+  ---
+  duration_ms: 0.3793
+  type: 'test'
+  ...
+# Subtest: the factory is given (columns, rows): a SQUARE 2 × 2 (the case that could never have caught the defect)
+ok 234 - the factory is given (columns, rows): a SQUARE 2 × 2 (the case that could never have caught the defect)
+  ---
+  duration_ms: 0.4474
+  type: 'test'
+  ...
+# Subtest: the factory is given (columns, rows): THREE ROWS × FIVE COLUMNS
+ok 235 - the factory is given (columns, rows): THREE ROWS × FIVE COLUMNS
+  ---
+  duration_ms: 0.5126
+  type: 'test'
+  ...
+# Subtest: the factory is given (columns, rows): FIVE ROWS × THREE COLUMNS
+ok 236 - the factory is given (columns, rows): FIVE ROWS × THREE COLUMNS
+  ---
+  duration_ms: 0.3181
+  type: 'test'
+  ...
+# Subtest: a factory that builds the OLD assumed geometry is a CLOSED pre-insert refusal with ZERO writes
+ok 237 - a factory that builds the OLD assumed geometry is a CLOSED pre-insert refusal with ZERO writes
+  ---
+  duration_ms: 1.2185
+  type: 'test'
+  ...
+# Subtest: the geometry is a VERIFIED precondition: an absent cell in either direction refuses before any write
+ok 238 - the geometry is a VERIFIED precondition: an absent cell in either direction refuses before any write
+  ---
+  duration_ms: 1.1925
+  type: 'test'
+  ...
+# Subtest: the table body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 239 - the table body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 0.9025
+  type: 'test'
+  ...
+# Subtest: the Push boolean is never the signal: a false that appended verifies, a true that appended nothing does not
+ok 240 - the Push boolean is never the signal: a false that appended verifies, a true that appended nothing does not
+  ---
+  duration_ms: 0.6829
+  type: 'test'
+  ...
+# Subtest: the table outcome contract is ONE-TO-ONE over the APPENDED TABLE, never a match over the document
+ok 241 - the table outcome contract is ONE-TO-ONE over the APPENDED TABLE, never a match over the document
+  ---
+  duration_ms: 1.1912
+  type: 'test'
+  ...
+# Subtest: a table insert that lands at the START is TOOL_UNCERTAIN with the slot HELD: the anchor catches it
+ok 242 - a table insert that lands at the START is TOOL_UNCERTAIN with the slot HELD: the anchor catches it
+  ---
+  duration_ms: 0.3557
+  type: 'test'
+  ...
+# Subtest: a throw between the create and the push is a KNOWN refusal with zero writes; a throw in the push is UNCERTAIN
+ok 243 - a throw between the create and the push is a KNOWN refusal with zero writes; a throw in the push is UNCERTAIN
+  ---
+  duration_ms: 2.2305
+  type: 'test'
+  ...
+# Subtest: a document that offers ONLY the legacy primitive is refused up-front with NOTHING inserted
+ok 244 - a document that offers ONLY the legacy primitive is refused up-front with NOTHING inserted
+  ---
+  duration_ms: 0.5312
+  type: 'test'
+  ...
+# Subtest: bridge insertTable refuses an unusable baseline with a closed class and NO Push
+ok 245 - bridge insertTable refuses an unusable baseline with a closed class and NO Push
+  ---
+  duration_ms: 2.7264
+  type: 'test'
+  ...
+# Subtest: bridge insertTable refuses a build, a namespace or a request it cannot use, with the closed class
+ok 246 - bridge insertTable refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 1.4411
+  type: 'test'
+  ...
+# Subtest: bridge insertTable decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 247 - bridge insertTable decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 5.5017
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the table protocol: a forged one-slot sentinel answered after a real insert is uncertain
+ok 248 - the refusal PHASE is explicit in the table protocol: a forged one-slot sentinel answered after a real insert is uncertain
+  ---
+  duration_ms: 1.8308
+  type: 'test'
+  ...
+# Subtest: insert_table is offered with policy auto and a model call inserts exactly one table
+ok 249 - insert_table is offered with policy auto and a model call inserts exactly one table
+  ---
+  duration_ms: 1.2204
+  type: 'test'
+  ...
+# Subtest: set_heading advertises the closed bounded schema and the two bounds it names
+ok 250 - set_heading advertises the closed bounded schema and the two bounds it names
+  ---
+  duration_ms: 0.3486
+  type: 'test'
+  ...
+# Subtest: set_heading refuses every illegal argument with nothing dispatched, at the schema or in the handler
+ok 251 - set_heading refuses every illegal argument with nothing dispatched, at the schema or in the handler
+  ---
+  duration_ms: 3.1106
+  type: 'test'
+  ...
+# Subtest: set_heading assigns the style through exactly ONE bridge call and publishes the measured proof
+ok 252 - set_heading assigns the style through exactly ONE bridge call and publishes the measured proof
+  ---
+  duration_ms: 0.6268
+  type: 'test'
+  ...
+# Subtest: set_heading publishes ok ONLY for the exact proof, and never retries otherwise
+ok 253 - set_heading publishes ok ONLY for the exact proof, and never retries otherwise
+  ---
+  duration_ms: 1.5011
+  type: 'test'
+  ...
+# Subtest: set_heading refuses an unusable baseline, an index outside the document and an unresolvable style with ZERO writes
+ok 254 - set_heading refuses an unusable baseline, an index outside the document and an unresolvable style with ZERO writes
+  ---
+  duration_ms: 0.9978
+  type: 'test'
+  ...
+# Subtest: set_heading maps each level to the measured style name and never invents one
+ok 255 - set_heading maps each level to the measured style name and never invents one
+  ---
+  duration_ms: 1.7298
+  type: 'test'
+  ...
+# Subtest: set_heading refuses a non-Word editor and a bridge that cannot serve the assignment, before any dispatch
+ok 256 - set_heading refuses a non-Word editor and a bridge that cannot serve the assignment, before any dispatch
+  ---
+  duration_ms: 1.0461
+  type: 'test'
+  ...
+# Subtest: set_heading republishes the closed class the bridge reported and maps uncertainty to TOOL_UNCERTAIN
+ok 257 - set_heading republishes the closed class the bridge reported and maps uncertainty to TOOL_UNCERTAIN
+  ---
+  duration_ms: 1.4546
+  type: 'test'
+  ...
+# Subtest: set_heading measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+ok 258 - set_heading measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+  ---
+  duration_ms: 0.3013
+  type: 'test'
+  ...
+# Subtest: bridge setHeading dispatches ONE command, carries the request as DATA and verifies the exact proof
+ok 259 - bridge setHeading dispatches ONE command, carries the request as DATA and verifies the exact proof
+  ---
+  duration_ms: 0.3864
+  type: 'test'
+  ...
+# Subtest: the heading body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 260 - the heading body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 1.2089
+  type: 'test'
+  ...
+# Subtest: a WRONG paragraph restyled, a target whose TEXT changed or a heading count that did not move is UNCERTAIN with the slot HELD
+ok 261 - a WRONG paragraph restyled, a target whose TEXT changed or a heading count that did not move is UNCERTAIN with the slot HELD
+  ---
+  duration_ms: 1.5709
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the heading protocol: a phase-less sentinel answered after a real mutation is uncertain
+ok 262 - the refusal PHASE is explicit in the heading protocol: a phase-less sentinel answered after a real mutation is uncertain
+  ---
+  duration_ms: 1.6246
+  type: 'test'
+  ...
+# Subtest: bridge setHeading refuses a build, a namespace or a request it cannot use, with the closed class
+ok 263 - bridge setHeading refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 0.6734
+  type: 'test'
+  ...
+# Subtest: bridge setHeading decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 264 - bridge setHeading decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 2.3612
+  type: 'test'
+  ...
+# Subtest: set_heading is offered with policy auto and a model call assigns exactly one heading
+ok 265 - set_heading is offered with policy auto and a model call assigns exactly one heading
+  ---
+  duration_ms: 2.1243
+  type: 'test'
+  ...
+# Subtest: set_heading verifies through the readback although the two paragraph lists answer DIFFERENT objects
+ok 266 - set_heading verifies through the readback although the two paragraph lists answer DIFFERENT objects
+  ---
+  duration_ms: 0.511
+  type: 'test'
+  ...
+# Subtest: set_heading settles the duplicate-text reproduction BY the readback: the OTHER paragraph moved, UNCERTAIN
+ok 267 - set_heading settles the duplicate-text reproduction BY the readback: the OTHER paragraph moved, UNCERTAIN
+  ---
+  duration_ms: 0.4289
+  type: 'test'
+  ...
+# Subtest: set_heading holds the slot when the style readback is UNUSABLE — there is no identity fallback
+ok 268 - set_heading holds the slot when the style readback is UNUSABLE — there is no identity fallback
+  ---
+  duration_ms: 0.4685
+  type: 'test'
+  ...
+# Subtest: the measured readback of a plain paragraph is `null`: a READABLE non-match, never an absent read
+ok 269 - the measured readback of a plain paragraph is `null`: a READABLE non-match, never an absent read
+  ---
+  duration_ms: 0.233
+  type: 'test'
+  ...
+# Subtest: set_heading folds the readback name the way the module's own style-name comparison does
+ok 270 - set_heading folds the readback name the way the module's own style-name comparison does
+  ---
+  duration_ms: 0.4661
+  type: 'test'
+  ...
+# Subtest: set_heading still refutes a readback that names a DIFFERENT style, with the slot held
+ok 271 - set_heading still refutes a readback that names a DIFFERENT style, with the slot held
+  ---
+  duration_ms: 0.2539
+  type: 'test'
+  ...
+# Subtest: set_heading refuses a paragraph that is ALREADY a heading with ZERO writes and the slot RELEASED
+ok 272 - set_heading refuses a paragraph that is ALREADY a heading with ZERO writes and the slot RELEASED
+  ---
+  duration_ms: 0.6092
+  type: 'test'
+  ...
+# Subtest: a paragraph carrying a NON-heading style is not refused: only a HEADING name is the pre-state
+ok 273 - a paragraph carrying a NON-heading style is not refused: only a HEADING name is the pre-state
+  ---
+  duration_ms: 0.2223
+  type: 'test'
+  ...
+# Subtest: a GetName() answering a NON-STRING is an UNREAD readback, never a match: UNCERTAIN, slot held
+ok 274 - a GetName() answering a NON-STRING is an UNREAD readback, never a match: UNCERTAIN, slot held
+  ---
+  duration_ms: 0.6641
+  type: 'test'
+  ...
+# Subtest: a paragraph index that STOPS EXISTING between the baseline and the mutation is UNCERTAIN, slot held
+ok 275 - a paragraph index that STOPS EXISTING between the baseline and the mutation is UNCERTAIN, slot held
+  ---
+  duration_ms: 0.3316
+  type: 'test'
+  ...
+# Subtest: an already-heading target whose readback is unusable is not refused by guesswork: UNCERTAIN, slot held
+ok 276 - an already-heading target whose readback is unusable is not refused by guesswork: UNCERTAIN, slot held
+  ---
+  duration_ms: 0.225
+  type: 'test'
+  ...
+# Subtest: format_range advertises the closed bounded schema and the measured properties it can verify
+ok 277 - format_range advertises the closed bounded schema and the measured properties it can verify
+  ---
+  duration_ms: 0.4906
+  type: 'test'
+  ...
+# Subtest: format_range refuses every illegal argument with nothing dispatched, at the schema or in the handler
+ok 278 - format_range refuses every illegal argument with nothing dispatched, at the schema or in the handler
+  ---
+  duration_ms: 4.7473
+  type: 'test'
+  ...
+# Subtest: format_range refuses an editor that is not Word and a bridge that cannot serve it
+ok 279 - format_range refuses an editor that is not Word and a bridge that cannot serve it
+  ---
+  duration_ms: 0.4512
+  type: 'test'
+  ...
+# Subtest: format_range dispatches exactly ONE bridge call and publishes only the fields it proved
+ok 280 - format_range dispatches exactly ONE bridge call and publishes only the fields it proved
+  ---
+  duration_ms: 0.4662
+  type: 'test'
+  ...
+# Subtest: format_range accepts a run-only call, applies and proves EXACTLY the named properties
+ok 281 - format_range accepts a run-only call, applies and proves EXACTLY the named properties
+  ---
+  duration_ms: 0.4602
+  type: 'test'
+  ...
+# Subtest: format_range publishes ok ONLY for the exact proof, and never retries otherwise
+ok 282 - format_range publishes ok ONLY for the exact proof, and never retries otherwise
+  ---
+  duration_ms: 5.1348
+  type: 'test'
+  ...
+# Subtest: format_range maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run
+ok 283 - format_range maps a returned or thrown uncertain class to TOOL_UNCERTAIN and holds the run
+  ---
+  duration_ms: 1.0627
+  type: 'test'
+  ...
+# Subtest: format_range measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+ok 284 - format_range measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+  ---
+  duration_ms: 0.3131
+  type: 'test'
+  ...
+# Subtest: bridge formatRange dispatches ONE command, carries the address as DATA and verifies the exact proof
+ok 285 - bridge formatRange dispatches ONE command, carries the address as DATA and verifies the exact proof
+  ---
+  duration_ms: 2.3296
+  type: 'test'
+  ...
+# Subtest: the format body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 286 - the format body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 8.0394
+  type: 'test'
+  ...
+# Subtest: the address is a BOUNDARY: an out-of-range paragraph or a range past the paragraph end writes nothing
+ok 287 - the address is a BOUNDARY: an out-of-range paragraph or a range past the paragraph end writes nothing
+  ---
+  duration_ms: 1.9741
+  type: 'test'
+  ...
+# Subtest: a run-only scope applies NO alignment at all: the sentinel writes nothing and is echoed as-is
+ok 288 - a run-only scope applies NO alignment at all: the sentinel writes nothing and is echoed as-is
+  ---
+  duration_ms: 1.4546
+  type: 'test'
+  ...
+# Subtest: a format that lands on the WRONG paragraph or leaves the readback unreadable is UNCERTAIN with the slot HELD
+ok 289 - a format that lands on the WRONG paragraph or leaves the readback unreadable is UNCERTAIN with the slot HELD
+  ---
+  duration_ms: 2.1448
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the format protocol: a phase-less sentinel answered after a real mutation is uncertain
+ok 290 - the refusal PHASE is explicit in the format protocol: a phase-less sentinel answered after a real mutation is uncertain
+  ---
+  duration_ms: 0.9751
+  type: 'test'
+  ...
+# Subtest: bridge formatRange refuses a build, a namespace or a request it cannot use, with the closed class
+ok 291 - bridge formatRange refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 0.571
+  type: 'test'
+  ...
+# Subtest: bridge formatRange decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 292 - bridge formatRange decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 1.9442
+  type: 'test'
+  ...
+# Subtest: format_range is offered with policy auto and a model call formats exactly one range
+ok 293 - format_range is offered with policy auto and a model call formats exactly one range
+  ---
+  duration_ms: 1.3613
+  type: 'test'
+  ...
+# Subtest: format_range proves EACH measured run property through its own HTML marker
+ok 294 - format_range proves EACH measured run property through its own HTML marker
+  ---
+  duration_ms: 0.8555
+  type: 'test'
+  ...
+# Subtest: format_range proves TWO properties on the SAME region in the measured nested order, outer one included
+ok 295 - format_range proves TWO properties on the SAME region in the measured nested order, outer one included
+  ---
+  duration_ms: 0.371
+  type: 'test'
+  ...
+# Subtest: format_range proves THREE properties on the same region, including the underlined outer span
+ok 296 - format_range proves THREE properties on the same region, including the underlined outer span
+  ---
+  duration_ms: 0.3465
+  type: 'test'
+  ...
+# Subtest: format_range proves the alignment AND a run property in ONE call, or settles UNCERTAIN
+ok 297 - format_range proves the alignment AND a run property in ONE call, or settles UNCERTAIN
+  ---
+  duration_ms: 0.4053
+  type: 'test'
+  ...
+# Subtest: a marker that does NOT wrap the addressed region at all is UNCERTAIN with the slot HELD
+ok 298 - a marker that does NOT wrap the addressed region at all is UNCERTAIN with the slot HELD
+  ---
+  duration_ms: 0.4316
+  type: 'test'
+  ...
+# Subtest: a marker pair covering a WIDER span than the address still verifies — the property really landed
+ok 299 - a marker pair covering a WIDER span than the address still verifies — the property really landed
+  ---
+  duration_ms: 0.2304
+  type: 'test'
+  ...
+# Subtest: format_range requires the judged opener OWN closer: a pair that closes before the region and reopens after it is UNCERTAIN with the slot HELD
+ok 300 - format_range requires the judged opener OWN closer: a pair that closes before the region and reopens after it is UNCERTAIN with the slot HELD
+  ---
+  duration_ms: 0.4096
+  type: 'test'
+  ...
+# Subtest: format_range keeps the exact pair, the wider pair and the measured nesting proven under the one-pair rule
+ok 301 - format_range keeps the exact pair, the wider pair and the measured nesting proven under the one-pair rule
+  ---
+  duration_ms: 0.4231
+  type: 'test'
+  ...
+# Subtest: a region the export does not hold is UNCERTAIN, and the PRE-read region text is the needle
+ok 302 - a region the export does not hold is UNCERTAIN, and the PRE-read region text is the needle
+  ---
+  duration_ms: 0.374
+  type: 'test'
+  ...
+# Subtest: a THROWING export is UNCERTAIN after the write and a CLOSED refusal before it
+ok 303 - a THROWING export is UNCERTAIN after the write and a CLOSED refusal before it
+  ---
+  duration_ms: 0.6909
+  type: 'test'
+  ...
+# Subtest: an export over the bound is BYTE_LIMIT with ZERO writes, and the bound really is the boundary
+ok 304 - an export over the bound is BYTE_LIMIT with ZERO writes, and the bound really is the boundary
+  ---
+  duration_ms: 0.826
+  type: 'test'
+  ...
+# Subtest: a region text that occurs MORE THAN ONCE is refused as unverifiable, never guessed at
+ok 305 - a region text that occurs MORE THAN ONCE is refused as unverifiable, never guessed at
+  ---
+  duration_ms: 1.0912
+  type: 'test'
+  ...
+# Subtest: a call that requests NO run property never reads the export at all
+ok 306 - a call that requests NO run property never reads the export at all
+  ---
+  duration_ms: 0.2742
+  type: 'test'
+  ...
+# Subtest: bridge formatRange refuses a run switch that is not a boolean, with nothing dispatched
+ok 307 - bridge formatRange refuses a run switch that is not a boolean, with nothing dispatched
+  ---
+  duration_ms: 0.3022
+  type: 'test'
+  ...
+# Subtest: add_hyperlink advertises the closed bounded schema, the two forms and the ONE URL vocabulary
+ok 308 - add_hyperlink advertises the closed bounded schema, the two forms and the ONE URL vocabulary
+  ---
+  duration_ms: 1.6757
+  type: 'test'
+  ...
+# Subtest: add_hyperlink refuses every illegal argument with nothing dispatched, at the schema or in the handler
+ok 309 - add_hyperlink refuses every illegal argument with nothing dispatched, at the schema or in the handler
+  ---
+  duration_ms: 2.0899
+  type: 'test'
+  ...
+# Subtest: add_hyperlink appends into the ADDRESSED paragraph and publishes only what it measured
+ok 310 - add_hyperlink appends into the ADDRESSED paragraph and publishes only what it measured
+  ---
+  duration_ms: 0.7309
+  type: 'test'
+  ...
+# Subtest: add_hyperlink appends a NEW paragraph when no index is named, and the count grows by exactly one
+ok 311 - add_hyperlink appends a NEW paragraph when no index is named, and the count grows by exactly one
+  ---
+  duration_ms: 0.3464
+  type: 'test'
+  ...
+# Subtest: add_hyperlink maps every refusal class it can receive, and never invents a proof
+ok 312 - add_hyperlink maps every refusal class it can receive, and never invents a proof
+  ---
+  duration_ms: 1.6981
+  type: 'test'
+  ...
+# Subtest: add_hyperlink publishes ok ONLY for the exact proof, and holds the run otherwise
+ok 313 - add_hyperlink publishes ok ONLY for the exact proof, and holds the run otherwise
+  ---
+  duration_ms: 2.2615
+  type: 'test'
+  ...
+# Subtest: addHyperlink forwards the caller signal and touches exactly one bridge entry point
+ok 314 - addHyperlink forwards the caller signal and touches exactly one bridge entry point
+  ---
+  duration_ms: 0.3881
+  type: 'test'
+  ...
+# Subtest: add_hyperlink measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+ok 315 - add_hyperlink measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+  ---
+  duration_ms: 0.4935
+  type: 'test'
+  ...
+# Subtest: bridge addHyperlink dispatches ONE command, carries the link as DATA and verifies the exact proof
+ok 316 - bridge addHyperlink dispatches ONE command, carries the link as DATA and verifies the exact proof
+  ---
+  duration_ms: 1.6838
+  type: 'test'
+  ...
+# Subtest: a FORMATTED addressed paragraph still verifies: the element readback is not a string match
+ok 317 - a FORMATTED addressed paragraph still verifies: the element readback is not a string match
+  ---
+  duration_ms: 0.6677
+  type: 'test'
+  ...
+# Subtest: bridge addHyperlink creates and PUSHES a new paragraph for the append form
+ok 318 - bridge addHyperlink creates and PUSHES a new paragraph for the append form
+  ---
+  duration_ms: 0.7502
+  type: 'test'
+  ...
+# Subtest: the hyperlink body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 319 - the hyperlink body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 4.3677
+  type: 'test'
+  ...
+# Subtest: the paragraph address is a BOUNDARY: an index outside the document or a missing primitive writes nothing
+ok 320 - the paragraph address is a BOUNDARY: an index outside the document or a missing primitive writes nothing
+  ---
+  duration_ms: 1.575
+  type: 'test'
+  ...
+# Subtest: a missing or throwing ELEMENT PRIMITIVE refuses PRE-insert with ZERO writes
+ok 321 - a missing or throwing ELEMENT PRIMITIVE refuses PRE-insert with ZERO writes
+  ---
+  duration_ms: 2.8662
+  type: 'test'
+  ...
+# Subtest: the ELEMENT proof is judged on the addressed paragraph: a wrong count, class, url or label is UNCERTAIN
+ok 322 - the ELEMENT proof is judged on the addressed paragraph: a wrong count, class, url or label is UNCERTAIN
+  ---
+  duration_ms: 1.4407
+  type: 'test'
+  ...
+# Subtest: the retired export bound is GONE: no refusal on this leg is byte-gated any more
+ok 323 - the retired export bound is GONE: no refusal on this leg is byte-gated any more
+  ---
+  duration_ms: 0.5385
+  type: 'test'
+  ...
+# Subtest: the readback’s POST side is never a refusal: a broken read after the write is UNCERTAIN
+ok 324 - the readback’s POST side is never a refusal: a broken read after the write is UNCERTAIN
+  ---
+  duration_ms: 0.678
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the hyperlink protocol: a phase-less answer after a real write is uncertain
+ok 325 - the refusal PHASE is explicit in the hyperlink protocol: a phase-less answer after a real write is uncertain
+  ---
+  duration_ms: 2.0704
+  type: 'test'
+  ...
+# Subtest: bridge addHyperlink refuses a build, a namespace or a request it cannot use, with the closed class
+ok 326 - bridge addHyperlink refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 1.4621
+  type: 'test'
+  ...
+# Subtest: bridge addHyperlink decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 327 - bridge addHyperlink decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 2.1485
+  type: 'test'
+  ...
+# Subtest: add_hyperlink is offered with policy auto and a model call appends exactly one link
+ok 328 - add_hyperlink is offered with policy auto and a model call appends exactly one link
+  ---
+  duration_ms: 1.7291
+  type: 'test'
+  ...
+# Subtest: replace_text advertises the closed bounded schema, the auto policy and the limit vocabulary
+ok 329 - replace_text advertises the closed bounded schema, the auto policy and the limit vocabulary
+  ---
+  duration_ms: 1.0774
+  type: 'test'
+  ...
+# Subtest: replace_text refuses every illegal argument with nothing dispatched
+ok 330 - replace_text refuses every illegal argument with nothing dispatched
+  ---
+  duration_ms: 2.9059
+  type: 'test'
+  ...
+# Subtest: replace_text is offered with policy auto, replaces from the loop, and refuses a needle the document lacks with zero writes
+ok 331 - replace_text is offered with policy auto, replaces from the loop, and refuses a needle the document lacks with zero writes
+  ---
+  duration_ms: 4.4979
+  type: 'test'
+  ...
+# Subtest: replace_text publishes the exact replace-all arithmetic it proved
+ok 332 - replace_text publishes the exact replace-all arithmetic it proved
+  ---
+  duration_ms: 0.4572
+  type: 'test'
+  ...
+# Subtest: replace_text proves the REQUEST-derived arithmetic for a bounded limit
+ok 333 - replace_text proves the REQUEST-derived arithmetic for a bounded limit
+  ---
+  duration_ms: 1.0241
+  type: 'test'
+  ...
+# Subtest: replace_text proves an EMPTY replacement as a deletion of the exact expected count
+ok 334 - replace_text proves an EMPTY replacement as a deletion of the exact expected count
+  ---
+  duration_ms: 0.7528
+  type: 'test'
+  ...
+# Subtest: replace_text holds the run whenever the arithmetic is not exactly what the request derived
+ok 335 - replace_text holds the run whenever the arithmetic is not exactly what the request derived
+  ---
+  duration_ms: 0.9934
+  type: 'test'
+  ...
+# Subtest: replace_text maps every refusal class it can receive, and never invents a proof
+ok 336 - replace_text maps every refusal class it can receive, and never invents a proof
+  ---
+  duration_ms: 1.9694
+  type: 'test'
+  ...
+# Subtest: replaceText forwards the caller signal and touches exactly one bridge entry point
+ok 337 - replaceText forwards the caller signal and touches exactly one bridge entry point
+  ---
+  duration_ms: 0.3535
+  type: 'test'
+  ...
+# Subtest: replace_text measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+ok 338 - replace_text measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+  ---
+  duration_ms: 0.8598
+  type: 'test'
+  ...
+# Subtest: bridge replaceText dispatches ONE command, carries the request as DATA and proves the exact arithmetic
+ok 339 - bridge replaceText dispatches ONE command, carries the request as DATA and proves the exact arithmetic
+  ---
+  duration_ms: 0.8103
+  type: 'test'
+  ...
+# Subtest: bridge replaceText counts the REPLACEMENT too, and an empty one is the empty-string deletion
+ok 340 - bridge replaceText counts the REPLACEMENT too, and an empty one is the empty-string deletion
+  ---
+  duration_ms: 0.618
+  type: 'test'
+  ...
+# Subtest: a zero pre-count is a CLOSED refusal with ZERO writes and ZERO SearchAndReplace calls
+ok 341 - a zero pre-count is a CLOSED refusal with ZERO writes and ZERO SearchAndReplace calls
+  ---
+  duration_ms: 0.508
+  type: 'test'
+  ...
+# Subtest: a limit BELOW the occurrence count is a closed refused class with ZERO writes
+ok 342 - a limit BELOW the occurrence count is a closed refused class with ZERO writes
+  ---
+  duration_ms: 1.3606
+  type: 'test'
+  ...
+# Subtest: an unexplained count after the write is UNCERTAIN with the slot HELD and no retry
+ok 343 - an unexplained count after the write is UNCERTAIN with the slot HELD and no retry
+  ---
+  duration_ms: 0.8529
+  type: 'test'
+  ...
+# Subtest: a Search that throws is a closed class BEFORE the write and uncertain after it
+ok 344 - a Search that throws is a closed class BEFORE the write and uncertain after it
+  ---
+  duration_ms: 0.8899
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the replace protocol: a phase-less answer after a real write is uncertain
+ok 345 - the refusal PHASE is explicit in the replace protocol: a phase-less answer after a real write is uncertain
+  ---
+  duration_ms: 1.5432
+  type: 'test'
+  ...
+# Subtest: bridge replaceText decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 346 - bridge replaceText decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 1.88
+  type: 'test'
+  ...
+# Subtest: bridge replaceText refuses a build, a namespace or a request it cannot use, with the closed class
+ok 347 - bridge replaceText refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 0.8247
+  type: 'test'
+  ...
+# Subtest: the replace body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 348 - the replace body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 0.7231
+  type: 'test'
+  ...
+# Subtest: insert_image advertises the closed schema: TWO accepted mimes, bounded dimensions, an optional address
+ok 349 - insert_image advertises the closed schema: TWO accepted mimes, bounded dimensions, an optional address
+  ---
+  duration_ms: 0.8995
+  type: 'test'
+  ...
+# Subtest: insert_image refuses every illegal argument with nothing dispatched
+ok 350 - insert_image refuses every illegal argument with nothing dispatched
+  ---
+  duration_ms: 2.2898
+  type: 'test'
+  ...
+# Subtest: insert_image names the ADDRESS and adds the drawing INTO that paragraph, changing no count and no text
+ok 351 - insert_image names the ADDRESS and adds the drawing INTO that paragraph, changing no count and no text
+  ---
+  duration_ms: 6.3283
+  type: 'test'
+  ...
+# Subtest: insert_image appends a NEW paragraph for the append form, and the count grows by exactly one
+ok 352 - insert_image appends a NEW paragraph for the append form, and the count grows by exactly one
+  ---
+  duration_ms: 1.4743
+  type: 'test'
+  ...
+# Subtest: insert_image maps every refusal class it can receive, and never invents a proof
+ok 353 - insert_image maps every refusal class it can receive, and never invents a proof
+  ---
+  duration_ms: 2.4692
+  type: 'test'
+  ...
+# Subtest: insert_image holds the run whenever ANY of the four measured legs is not exact
+ok 354 - insert_image holds the run whenever ANY of the four measured legs is not exact
+  ---
+  duration_ms: 1.9749
+  type: 'test'
+  ...
+# Subtest: insert_image refuses an over-bound export with ZERO writes, and holds the slot when it is over-bound AFTER the write
+ok 355 - insert_image refuses an over-bound export with ZERO writes, and holds the slot when it is over-bound AFTER the write
+  ---
+  duration_ms: 4.8104
+  type: 'test'
+  ...
+# Subtest: the refusal PHASE is explicit in the image protocol: a phase-less or mis-phased answer is uncertain
+ok 356 - the refusal PHASE is explicit in the image protocol: a phase-less or mis-phased answer is uncertain
+  ---
+  duration_ms: 2.5602
+  type: 'test'
+  ...
+# Subtest: insertImage forwards the caller signal and touches exactly one bridge entry point
+ok 357 - insertImage forwards the caller signal and touches exactly one bridge entry point
+  ---
+  duration_ms: 0.2908
+  type: 'test'
+  ...
+# Subtest: insert_image measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+ok 358 - insert_image measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+  ---
+  duration_ms: 0.3045
+  type: 'test'
+  ...
+# Subtest: bridge insertImage dispatches ONE command, carries the request as DATA and proves the exact route
+ok 359 - bridge insertImage dispatches ONE command, carries the request as DATA and proves the exact route
+  ---
+  duration_ms: 2.827
+  type: 'test'
+  ...
+# Subtest: bridge insertImage passes the markdown export the MEASURED argument list: a truthy second position drops the image
+ok 360 - bridge insertImage passes the markdown export the MEASURED argument list: a truthy second position drops the image
+  ---
+  duration_ms: 0.8863
+  type: 'test'
+  ...
+# Subtest: bridge insertImage refuses a build, a namespace or a request it cannot use, with the closed class
+ok 361 - bridge insertImage refuses a build, a namespace or a request it cannot use, with the closed class
+  ---
+  duration_ms: 0.6355
+  type: 'test'
+  ...
+# Subtest: bridge insertImage decodes ONLY the authored shapes and never publishes a malformed native answer
+ok 362 - bridge insertImage decodes ONLY the authored shapes and never publishes a malformed native answer
+  ---
+  duration_ms: 2.2247
+  type: 'test'
+  ...
+# Subtest: insert_image is offered by the catalogue and served from the loop in ONE verified command
+ok 363 - insert_image is offered by the catalogue and served from the loop in ONE verified command
+  ---
+  duration_ms: 1.4331
+  type: 'test'
+  ...
+# Subtest: the image body is self-contained: it answers the measured shapes in a fresh, module-free scope
+ok 364 - the image body is self-contained: it answers the measured shapes in a fresh, module-free scope
+  ---
+  duration_ms: 1.107
+  type: 'test'
+  ...
+# Subtest: insert_comment advertises the closed schema: ONE required text, bounded in bytes and free of control characters
+ok 365 - insert_comment advertises the closed schema: ONE required text, bounded in bytes and free of control characters
+  ---
+  duration_ms: 0.6417
+  type: 'test'
+  ...
+# Subtest: insert_comment refuses every illegal argument with nothing dispatched
+ok 366 - insert_comment refuses every illegal argument with nothing dispatched
+  ---
+  duration_ms: 1.3066
+  type: 'test'
+  ...
+# Subtest: insert_comment publishes the count delta, the identified id and the measured text lengths
+ok 367 - insert_comment publishes the count delta, the identified id and the measured text lengths
+  ---
+  duration_ms: 0.4493
+  type: 'test'
+  ...
+# Subtest: insert_comment maps every refusal class it can receive, and never invents a proof
+ok 368 - insert_comment maps every refusal class it can receive, and never invents a proof
+  ---
+  duration_ms: 2.0952
+  type: 'test'
+  ...
+# Subtest: insert_comment holds the slot whenever the count or the identified comment’s own text is not exact
+ok 369 - insert_comment holds the slot whenever the count or the identified comment’s own text is not exact
+  ---
+  duration_ms: 0.8133
+  type: 'test'
+  ...
+# Subtest: insert_comment measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+ok 370 - insert_comment measures the exact entry it publishes, and its bounded fields cannot reach the ceiling
+  ---
+  duration_ms: 0.5214
+  type: 'test'
+  ...
+# Subtest: insert_comment is offered by the catalogue and served through the verified editor methods
+ok 371 - insert_comment is offered by the catalogue and served through the verified editor methods
+  ---
+  duration_ms: 2.7471
+  type: 'test'
+  ...
+# Subtest: format_range maps exclusive end to native inclusive end for full and last-character ranges
+ok 372 - format_range maps exclusive end to native inclusive end for full and last-character ranges
+  ---
+  duration_ms: 1.04
+  type: 'test'
+  ...
+# Subtest: Word image dimensions are pixels converted to native EMU, with repaint
+ok 373 - Word image dimensions are pixels converted to native EMU, with repaint
+  ---
+  duration_ms: 0.4881
+  type: 'test'
+  ...
+1..373
+# tests 373
+# suites 0
+# pass 373
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2641.8463

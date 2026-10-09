@@ -44,9 +44,23 @@ const floor = floorFrom('создай структурированный док�
 // The canonical criteria: this floor raised by the full plan above (20000 characters, 2 tables, 4 sections).
 const criteria = criteriaFrom(floor, parsePlan(planJson()));
 
-test('the long-generation trigger is narrow: it fires on a named volume or several parts, not on an ordinary request', () => {
+test('long generation requires creation with an explicit large volume, not ordinary structure or edits', () => {
   assert.equal(isLongGenerationRequest('создай структурированный документ примерно на 10 страниц, добавь главы, несколько таблиц, списки, выводы и оформи его'), true);
-  assert.equal(isLongGenerationRequest('добавь 5 разделов о безопасности'), true);
+  assert.equal(isLongGenerationRequest('добавь 5 разделов о безопасности'), false);
+  assert.equal(isLongGenerationRequest('Подготовь структурированную памятку с тремя разделами, двумя вводными абзацами, списком из четырёх шагов и таблицей.'), false);
+  assert.equal(isLongGenerationRequest('Создай документ на 3 страницы'), false);
+  assert.equal(isLongGenerationRequest('Напиши текст на 500 символов'), false);
+  assert.equal(isLongGenerationRequest('Измени срок в разделе «Контроль качества» на 16:30'), false);
+  assert.equal(isLongGenerationRequest('Исправь орфографию в документе на 10 страниц'), false);
+  assert.equal(isLongGenerationRequest('Подготовь документ на 18000 знаков'), true);
+  assert.equal(isLongGenerationRequest('Напиши документ на десять страниц'), true);
+  for (const request of [
+    'Подготовь краткое резюме документа на 10 страниц в двух абзацах.',
+    'Сделай краткую памятку на 500 символов по документу на 10 страниц.',
+    'Напиши краткий ответ: в исходном документе 18000 знаков, что улучшить?',
+    'Подготовь резюме исходного документа на 10 страниц.',
+    'Создай памятку по документу на 10 страниц.'
+  ]) assert.equal(isLongGenerationRequest(request), false, request);
   assert.equal(isLongGenerationRequest('исправь орфографию в первом абзаце'), false);
   assert.equal(isLongGenerationRequest('что такое R7?'), false);
   assert.equal(isLongGenerationRequest(''), false);

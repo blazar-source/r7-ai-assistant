@@ -1,0 +1,3152 @@
+{
+  "productCommit": "ab06fef4e42840dbb0f02893b853dfad2e646442",
+  "method": "Actual panel/model/native tools; independent SDK reads before and after. Polling state repeats omitted; model/tool envelopes retained. Screenshots are corroboration, not semantic acceptance.",
+  "journeys": {
+    "word": [
+      {
+        "kind": "word",
+        "name": "loaded-hashes",
+        "data": [
+          [
+            "panel.js",
+            "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9"
+          ],
+          [
+            "styles.css",
+            "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+          ]
+        ]
+      },
+      {
+        "kind": "word",
+        "name": "before",
+        "data": [
+          2,
+          "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи."
+        ]
+      },
+      {
+        "kind": "word",
+        "name": "idle-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 449,
+            "w": 259,
+            "h": 50,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 455,
+            "w": 209,
+            "h": 38,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 455,
+            "w": 34,
+            "h": 34,
+            "bottom": 489,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 417,
+            "bottom": 449,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "word",
+        "name": "capabilities",
+        "data": {
+          "status": "Проверка наличия API завершена. Документ не изменён.",
+          "capability": "Редактор: Word. Доступно: шесть из шести — проверены шесть API-примитивов документа. Что сделать: можно отправлять запрос.",
+          "editor": "Stage B · редактор: word · runtimeVerified: false"
+        }
+      },
+      {
+        "kind": "word",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "insert_blocks",
+              "arguments": {
+                "blocks": [
+                  {
+                    "text": "SPRINT9_WORD_NATIVE_AB06FEF"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "word",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "insert_blocks",
+              "arguments": {
+                "blocks": [
+                  {
+                    "text": "SPRINT9_WORD_NATIVE_AB06FEF"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "word",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "insert_blocks",
+              "ok": true,
+              "data": {
+                "inserted": 1,
+                "headings": 0,
+                "paragraphsBefore": 2,
+                "paragraphsAfter": 3,
+                "bytes": 27
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "word",
+        "name": "active-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 12,
+            "y": 40,
+            "w": 241,
+            "h": 16,
+            "bottom": 56,
+            "right": 253
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "word",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_document_text",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "word",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_document_text",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "word",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_document_text",
+              "ok": true,
+              "data": {
+                "text": "\nПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_AB06FEF\n\n\n",
+                "offset": 0,
+                "totalChars": 88,
+                "truncated": false,
+                "nextOffset": null
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "word",
+        "name": "model-response",
+        "data": {
+          "type": "final",
+          "message": "Готово. В конец документа добавлен отдельный абзац с текстом SPRINT9_WORD_NATIVE_AB06FEF. Проверка чтением документа подтверждает наличие этого текста (документ теперь содержит 3 абзаца)."
+        }
+      },
+      {
+        "kind": "word",
+        "name": "after",
+        "data": [
+          3,
+          "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_AB06FEF"
+        ]
+      },
+      {
+        "kind": "word",
+        "name": "terminal",
+        "data": true
+      },
+      {
+        "kind": "word",
+        "name": "final-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "word",
+        "name": "history",
+        "data": "ВыДобавь в конец документа отдельный абзац с точным текстом SPRINT9_WORD_NATIVE_AB06FEF. Используй insert_blocks, затем перечитай документ и проверь наличие этого текста.АссистентГотово. В конец документа добавлен отдельный абзац с текстом SPRINT9_WORD_NATIVE_AB06FEF. Проверка чтением документа подтверждает наличие этого текста (документ теперь содержит 3 абзаца)."
+      },
+      {
+        "kind": "word",
+        "name": "acceptance",
+        "data": {
+          "passed": true,
+          "kind": "word",
+          "pair": false,
+          "criteria": "before/after text and preservation"
+        }
+      }
+    ],
+    "cell": [
+      {
+        "kind": "cell",
+        "name": "loaded-hashes",
+        "data": [
+          [
+            "panel.js",
+            "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9"
+          ],
+          [
+            "styles.css",
+            "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+          ]
+        ]
+      },
+      {
+        "kind": "cell",
+        "name": "before",
+        "data": [
+          "P&L",
+          "",
+          [
+            [
+              "",
+              "Год 1",
+              "Год 2",
+              "Год 3"
+            ],
+            [
+              "Выручка",
+              "10000000",
+              "11500000",
+              "13224999.999999998"
+            ],
+            [
+              "Себестоимость",
+              "6000000",
+              "6900000",
+              "7934999.999999998"
+            ],
+            [
+              "Валовая прибыль",
+              "4000000",
+              "4600000",
+              "5290000"
+            ],
+            [
+              "Маржа",
+              "0.4",
+              "0.4",
+              "0.4000000000000001"
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "cell",
+        "name": "idle-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 449,
+            "w": 259,
+            "h": 50,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 455,
+            "w": 209,
+            "h": 38,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 455,
+            "w": 34,
+            "h": 34,
+            "bottom": 489,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 417,
+            "bottom": 449,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "capabilities",
+        "data": {
+          "status": "Проверка наличия API завершена. Документ не изменён.",
+          "capability": "Редактор: Cell. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.",
+          "editor": "Stage B · редактор: cell · runtimeVerified: false"
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "write_range",
+              "arguments": {
+                "address": "A1",
+                "cells": [
+                  [
+                    "SPRINT9_CELL_NATIVE_AB06FEF"
+                  ]
+                ]
+              }
+            },
+            {
+              "tool": "read_range",
+              "arguments": {
+                "address": "A1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "write_range",
+              "arguments": {
+                "address": "A1",
+                "cells": [
+                  [
+                    "SPRINT9_CELL_NATIVE_AB06FEF"
+                  ]
+                ]
+              }
+            },
+            {
+              "tool": "read_range",
+              "arguments": {
+                "address": "A1"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "write_range",
+              "ok": true,
+              "data": {
+                "address": "A1",
+                "rowCount": 1,
+                "columnCount": 1,
+                "cells": 1,
+                "bytes": 27
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_range",
+              "ok": true,
+              "data": {
+                "sheetName": "P&L",
+                "sheetIndex": 2,
+                "sheetCount": 3,
+                "requestAddress": "A1",
+                "readAddress": "A1",
+                "totalRows": 1,
+                "totalColumns": 1,
+                "rowCount": 1,
+                "columnCount": 1,
+                "truncated": false,
+                "values": [
+                  [
+                    "SPRINT9_CELL_NATIVE_AB06FEF"
+                  ]
+                ],
+                "formulas": [
+                  [
+                    ""
+                  ]
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "active-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 12,
+            "y": 40,
+            "w": 241,
+            "h": 16,
+            "bottom": 56,
+            "right": 253
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "model-response",
+        "data": {
+          "type": "final",
+          "message": "Готово. В ячейку A1 активного листа (P&L) записан текст SPRINT9_CELL_NATIVE_AB06FEF. Перечитывание A1 подтверждает точное совпадение: значение — SPRINT9_CELL_NATIVE_AB06FEF."
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "after",
+        "data": [
+          "P&L",
+          "SPRINT9_CELL_NATIVE_AB06FEF",
+          [
+            [
+              "SPRINT9_CELL_NATIVE_AB06FEF",
+              "Год 1",
+              "Год 2",
+              "Год 3"
+            ],
+            [
+              "Выручка",
+              "10000000",
+              "11500000",
+              "13224999.999999998"
+            ],
+            [
+              "Себестоимость",
+              "6000000",
+              "6900000",
+              "7934999.999999998"
+            ],
+            [
+              "Валовая прибыль",
+              "4000000",
+              "4600000",
+              "5290000"
+            ],
+            [
+              "Маржа",
+              "0.4",
+              "0.4",
+              "0.4000000000000001"
+            ]
+          ]
+        ]
+      },
+      {
+        "kind": "cell",
+        "name": "terminal",
+        "data": true
+      },
+      {
+        "kind": "cell",
+        "name": "final-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "cell",
+        "name": "history",
+        "data": "ВыЗапиши в ячейку A1 активного листа точный текст SPRINT9_CELL_NATIVE_AB06FEF, затем перечитай A1 и проверь результат.АссистентГотово. В ячейку A1 активного листа (P&L) записан текст SPRINT9_CELL_NATIVE_AB06FEF. Перечитывание A1 подтверждает точное совпадение: значение — SPRINT9_CELL_NATIVE_AB06FEF."
+      },
+      {
+        "kind": "cell",
+        "name": "acceptance",
+        "data": {
+          "passed": true,
+          "kind": "cell",
+          "pair": false,
+          "criteria": "before/after text and preservation"
+        }
+      }
+    ],
+    "slide": [
+      {
+        "kind": "slide",
+        "name": "loaded-hashes",
+        "data": [
+          [
+            "panel.js",
+            "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9"
+          ],
+          [
+            "styles.css",
+            "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+          ]
+        ]
+      },
+      {
+        "kind": "slide",
+        "name": "before",
+        "data": [
+          5,
+          "\n",
+          "\n",
+          "\n",
+          "WHOLE_OBJECT_TEXT\n",
+          "SPRINT1 unchanged Slide fixture\n"
+        ]
+      },
+      {
+        "kind": "slide",
+        "name": "idle-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 449,
+            "w": 259,
+            "h": 50,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 455,
+            "w": 209,
+            "h": 38,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 455,
+            "w": 34,
+            "h": 34,
+            "bottom": 489,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 417,
+            "bottom": 449,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "capabilities",
+        "data": {
+          "status": "Проверка наличия API завершена. Документ не изменён.",
+          "capability": "Редактор: Slide. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.",
+          "editor": "Stage B · редактор: slide · runtimeVerified: false"
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 5,
+                "currentSlideIndex": 0,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 5,
+                "slidesTotal": 5,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "active-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 12,
+            "y": 40,
+            "w": 241,
+            "h": 16,
+            "bottom": 56,
+            "right": 253
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "add_slide",
+              "arguments": {
+                "layoutFromSlideIndex": 0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "add_slide",
+              "arguments": {
+                "layoutFromSlideIndex": 0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "add_slide",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "slideIndex": 1,
+                "layoutId": "306",
+                "layoutPreserved": true
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 1
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 1
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 1,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "set_slide_text",
+              "arguments": {
+                "slideIndex": 1,
+                "objectOrdinal": 0,
+                "text": "SPRINT9_SLIDE_NATIVE_AB06FEF"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "set_slide_text",
+              "arguments": {
+                "slideIndex": 1,
+                "objectOrdinal": 0,
+                "text": "SPRINT9_SLIDE_NATIVE_AB06FEF"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "set_slide_text",
+              "ok": true,
+              "data": {
+                "slideIndex": 1,
+                "objectOrdinal": 0,
+                "textLength": 28,
+                "textBytes": 28
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 1
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 1,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "SPRINT9_SLIDE_NATIVE_AB06FEF",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "completion-review",
+        "data": true
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "final",
+          "message": "Добавлен новый слайд (индекс 1, всего слайдов 6) и в его текстовый блок (objectOrdinal 0) записан точный текст SPRINT9_SLIDE_NATIVE_AB06FEF. Контрольное чтение слайда подтверждает: текст присутствует без искажений."
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "currentSlideIndex": 1,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 6,
+                "slidesTotal": 6,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "move_slide",
+              "arguments": {
+                "fromIndex": 1,
+                "toIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "move_slide",
+              "arguments": {
+                "fromIndex": 1,
+                "toIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "move_slide",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "fromIndex": 1,
+                "toIndex": 5,
+                "layoutLength": 11200,
+                "shapes": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "currentSlideIndex": 1,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 6,
+                "slidesTotal": 6,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 5,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "SPRINT9_SLIDE_NATIVE_AB06FEF",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "final",
+          "message": "Готово. В презентацию добавлен новый слайд и перемещён в конец (позиция 5 из 6, индекс 5). На нём размещён текстовый блок с точным текстом «SPRINT9_SLIDE_NATIVE_AB06FEF» (ordinal 0).\n\nПроверка:\n- read_presentation: слайдов 6, новый слайд — последний (index 5).\n- read_slide(5): текст объекта ordinal 0 = «SPRINT9_SLIDE_NATIVE_AB06FEF» — совпадает точно.\n- Прежние 5 слайдов сохранены (индексы 0–4, структура shapes/drawings соответствует исходной).\n\nВсе требования исходного запроса выполнены."
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "after",
+        "data": [
+          6,
+          "\n",
+          "\n",
+          "\n",
+          "WHOLE_OBJECT_TEXT\n",
+          "SPRINT1 unchanged Slide fixture\n",
+          "SPRINT9_SLIDE_NATIVE_AB06FEF\n"
+        ]
+      },
+      {
+        "kind": "slide",
+        "name": "terminal",
+        "data": true
+      },
+      {
+        "kind": "slide",
+        "name": "final-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": [
+            "content"
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "history",
+        "data": "ВыДобавь в конец презентации один новый слайд и текстовый блок с точным текстом SPRINT9_SLIDE_NATIVE_AB06FEF. Затем перечитай добавленный слайд и проверь текст.АссистентГотово. В презентацию добавлен новый слайд и перемещён в конец (позиция 5 из 6, индекс 5). На нём размещён текстовый блок с точным текстом «SPRINT9_SLIDE_NATIVE_AB06FEF» (ordinal 0).Проверка:read_presentation: слайдов 6, новый слайд — последний (index 5).read_slide(5): текст объекта ordinal 0 = «SPRINT9_SLIDE_NATIVE_AB06FEF» — совпадает точно.Прежние 5 слайдов сохранены (индексы 0–4, структура shapes/drawings соответствует исходной).Все требования исходного запроса выполнены."
+      },
+      {
+        "kind": "slide",
+        "name": "acceptance",
+        "data": {
+          "passed": true,
+          "kind": "slide",
+          "pair": false,
+          "criteria": "count, original text prefix, final indices, exact markers, creation count"
+        }
+      }
+    ],
+    "slidepair": [
+      {
+        "kind": "slide",
+        "name": "loaded-hashes",
+        "data": [
+          [
+            "panel.js",
+            "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9"
+          ],
+          [
+            "styles.css",
+            "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+          ]
+        ]
+      },
+      {
+        "kind": "slide",
+        "name": "before",
+        "data": [
+          5,
+          "\n",
+          "\n",
+          "\n",
+          "WHOLE_OBJECT_TEXT\n",
+          "SPRINT1 unchanged Slide fixture\n"
+        ]
+      },
+      {
+        "kind": "slide",
+        "name": "idle-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 449,
+            "w": 259,
+            "h": 50,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 455,
+            "w": 209,
+            "h": 38,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 455,
+            "w": 34,
+            "h": 34,
+            "bottom": 489,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 417,
+            "bottom": 449,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "capabilities",
+        "data": {
+          "status": "Проверка наличия API завершена. Документ не изменён.",
+          "capability": "Редактор: Slide. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.",
+          "editor": "Stage B · редактор: slide · runtimeVerified: false"
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 5,
+                "currentSlideIndex": 0,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 5,
+                "slidesTotal": 5,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "active-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 12,
+            "y": 40,
+            "w": 241,
+            "h": 16,
+            "bottom": 56,
+            "right": 253
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": []
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "add_slide",
+              "arguments": {
+                "layoutFromSlideIndex": 0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "add_slide",
+              "arguments": {
+                "layoutFromSlideIndex": 0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "add_slide",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "slideIndex": 1,
+                "layoutId": "306",
+                "layoutPreserved": true
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "currentSlideIndex": 1,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 6,
+                "slidesTotal": 6,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "move_slide",
+              "arguments": {
+                "fromIndex": 1,
+                "toIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "move_slide",
+              "arguments": {
+                "fromIndex": 1,
+                "toIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "move_slide",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "fromIndex": 1,
+                "toIndex": 5,
+                "layoutLength": 11200,
+                "shapes": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 6,
+                "currentSlideIndex": 1,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  }
+                ],
+                "slidesRead": 6,
+                "slidesTotal": 6,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 5,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "set_slide_text",
+              "arguments": {
+                "slideIndex": 5,
+                "objectOrdinal": 0,
+                "text": "SPRINT9_SLIDE_NATIVE_AB06FEF_A"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "set_slide_text",
+              "arguments": {
+                "slideIndex": 5,
+                "objectOrdinal": 0,
+                "text": "SPRINT9_SLIDE_NATIVE_AB06FEF_A"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "set_slide_text",
+              "ok": true,
+              "data": {
+                "slideIndex": 5,
+                "objectOrdinal": 0,
+                "textLength": 30,
+                "textBytes": 30
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "add_slide",
+              "arguments": {
+                "layoutFromSlideIndex": 0
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "add_slide",
+              "ok": true,
+              "data": {
+                "slidesCount": 7,
+                "slideIndex": 2,
+                "layoutId": "306",
+                "layoutPreserved": true
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 7,
+                "currentSlideIndex": 2,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 6,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 7,
+                "slidesTotal": 7,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "move_slide",
+              "arguments": {
+                "fromIndex": 2,
+                "toIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "move_slide",
+              "arguments": {
+                "fromIndex": 2,
+                "toIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "move_slide",
+              "ok": true,
+              "data": {
+                "slidesCount": 7,
+                "fromIndex": 2,
+                "toIndex": 6,
+                "layoutLength": 11200,
+                "shapes": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 7,
+                "currentSlideIndex": 2,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 6,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  }
+                ],
+                "slidesRead": 7,
+                "slidesTotal": 7,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 6,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "set_slide_text",
+              "arguments": {
+                "slideIndex": 6,
+                "objectOrdinal": 0,
+                "text": "SPRINT9_SLIDE_NATIVE_AB06FEF_B"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "set_slide_text",
+              "arguments": {
+                "slideIndex": 6,
+                "objectOrdinal": 0,
+                "text": "SPRINT9_SLIDE_NATIVE_AB06FEF_B"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "set_slide_text",
+              "ok": true,
+              "data": {
+                "slideIndex": 6,
+                "objectOrdinal": 0,
+                "textLength": 30,
+                "textBytes": 30
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            },
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            },
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            },
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            },
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_presentation",
+              "ok": true,
+              "data": {
+                "slidesCount": 7,
+                "currentSlideIndex": 2,
+                "slides": [
+                  {
+                    "index": 0,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 1,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 2,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": false
+                  },
+                  {
+                    "index": 3,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 3,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 4,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 5,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  },
+                  {
+                    "index": 6,
+                    "layoutId": null,
+                    "shapes": 2,
+                    "drawings": 2,
+                    "images": 0,
+                    "charts": 0,
+                    "oleObjects": 0,
+                    "hasText": true
+                  }
+                ],
+                "slidesRead": 7,
+                "slidesTotal": 7,
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 5,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "SPRINT9_SLIDE_NATIVE_AB06FEF_A",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "tool-envelope",
+        "data": {
+          "type": "tool_results",
+          "results": [
+            {
+              "tool": "read_slide",
+              "ok": true,
+              "data": {
+                "slideIndex": 6,
+                "layoutId": null,
+                "objectCount": 2,
+                "objectsRead": 2,
+                "counts": {
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0
+                },
+                "objects": [
+                  {
+                    "ordinal": 0,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "SPRINT9_SLIDE_NATIVE_AB06FEF_B",
+                    "textOmitted": false
+                  },
+                  {
+                    "ordinal": 1,
+                    "classType": "shape",
+                    "placeholder": true,
+                    "category": "shape",
+                    "text": "",
+                    "textOmitted": false
+                  }
+                ],
+                "truncated": false
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "completion-review",
+        "data": true
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "final",
+          "message": "Готово. В конец презентации добавлены два новых слайда в требуемом порядке: слайд 5 (индекс 5) содержит точный текст SPRINT9_SLIDE_NATIVE_AB06FEF_A, слайд 6 (индекс 6) — точный текст SPRINT9_SLIDE_NATIVE_AB06FEF_B. Все существующие слайды сохранены: их количество и порядок не изменились (исходные 5 слайдов остались на позициях 0–4). Проверка чтением презентации и обоих новых слайдов подтверждает корректность текста и порядка."
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "tool_calls",
+          "calls": [
+            {
+              "tool": "read_presentation",
+              "arguments": {}
+            },
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 5
+              }
+            },
+            {
+              "tool": "read_slide",
+              "arguments": {
+                "slideIndex": 6
+              }
+            }
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "model-response",
+        "data": {
+          "type": "final",
+          "message": "Готово. В конец презентации добавлены два новых слайда в требуемом порядке:\n- слайд с индексом 5: текст «SPRINT9_SLIDE_NATIVE_AB06FEF_A»;\n- слайд с индексом 6: текст «SPRINT9_SLIDE_NATIVE_AB06FEF_B».\n\nПроверка чтением:\n- read_presentation: всего 7 слайдов; исходные 5 слайдов сохранены на позициях 0–4 (структура shapes/drawings и наличие текста не изменились), новые слайды находятся в конце — индексы 5 и 6.\n- read_slide(5): objectOrdinal 0 содержит точный текст «SPRINT9_SLIDE_NATIVE_AB06FEF_A».\n- read_slide(6): objectOrdinal 0 содержит точный текст «SPRINT9_SLIDE_NATIVE_AB06FEF_B».\n\nПорядок и текст существующих слайдов сохранены, оба новых слайда стоят в конце в нужной последовательности. Невыполненных требований нет."
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "after",
+        "data": [
+          7,
+          "\n",
+          "\n",
+          "\n",
+          "WHOLE_OBJECT_TEXT\n",
+          "SPRINT1 unchanged Slide fixture\n",
+          "SPRINT9_SLIDE_NATIVE_AB06FEF_A\n",
+          "SPRINT9_SLIDE_NATIVE_AB06FEF_B\n"
+        ]
+      },
+      {
+        "kind": "slide",
+        "name": "terminal",
+        "data": true
+      },
+      {
+        "kind": "slide",
+        "name": "final-geometry",
+        "data": {
+          "frame": [
+            259,
+            499
+          ],
+          "doc": [
+            259,
+            259,
+            499,
+            499
+          ],
+          "composer": {
+            "x": 0,
+            "y": 415,
+            "w": 259,
+            "h": 84,
+            "bottom": 499,
+            "right": 259
+          },
+          "prompt": {
+            "x": 6,
+            "y": 421,
+            "w": 209,
+            "h": 72,
+            "bottom": 493,
+            "right": 215
+          },
+          "send": {
+            "x": 219,
+            "y": 421,
+            "w": 34,
+            "h": 34,
+            "bottom": 455,
+            "right": 253
+          },
+          "stage": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "bottom": 0,
+            "right": 0
+          },
+          "content": {
+            "x": 0,
+            "y": 32,
+            "w": 259,
+            "h": 383,
+            "bottom": 415,
+            "right": 259
+          },
+          "header": 32,
+          "overflow": [
+            "content"
+          ]
+        }
+      },
+      {
+        "kind": "slide",
+        "name": "history",
+        "data": "ВыДобавь в конец презентации два новых слайда: сначала с точным текстом SPRINT9_SLIDE_NATIVE_AB06FEF_A, затем с точным текстом SPRINT9_SLIDE_NATIVE_AB06FEF_B. Сохрани порядок и текст всех существующих слайдов. Проверь результат чтением презентации и обоих новых слайдов.АссистентГотово. В конец презентации добавлены два новых слайда в требуемом порядке:слайд с индексом 5: текст «SPRINT9_SLIDE_NATIVE_AB06FEF_A»;слайд с индексом 6: текст «SPRINT9_SLIDE_NATIVE_AB06FEF_B».Проверка чтением:read_presentation: всего 7 слайдов; исходные 5 слайдов сохранены на позициях 0–4 (структура shapes/drawings и наличие текста не изменились), новые слайды находятся в конце — индексы 5 и 6.read_slide(5): objectOrdinal 0 содержит точный текст «SPRINT9_SLIDE_NATIVE_AB06FEF_A».read_slide(6): objectOrdinal 0 содержит точный текст «SPRINT9_SLIDE_NATIVE_AB06FEF_B».Порядок и текст существующих слайдов сохранены, оба новых слайда стоят в конце в нужной последовательности. Невыполненных требований нет."
+      },
+      {
+        "kind": "slide",
+        "name": "acceptance",
+        "data": {
+          "passed": true,
+          "kind": "slide",
+          "pair": true,
+          "criteria": "count, original text prefix, final indices, exact markers, creation count"
+        }
+      }
+    ]
+  }
+}

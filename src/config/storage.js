@@ -1,95 +1,117 @@
-import { DEFAULT_SETTINGS, validateSettings } from './settings.js';
-import { ERROR_CODES } from '../shared/errors.js';
+import { DEFAULT_SETTINGS, validateSettings, validateRequestSettings } from './settings.js';
+import { ERROR_CODES, SafeError } from '../shared/errors.js';
 import { assertByteLimit } from '../shared/bytes.js';
+import { createProfileRecords, profileRevision } from './profile-records.js';
 
 export const STORAGE_NAMESPACE = 'r7-ai-assistant:v1:';
 const settingsKey = STORAGE_NAMESPACE + 'settings';
 const apiKeyKey = STORAGE_NAMESPACE + 'apiKey';
-// Valid nonsecret settings fit well below this before JSON parsing.
-const storedSettingsBytes = 4096;
-function browserStorage() {
-  try { return globalThis.localStorage ?? null; } catch { return null; }
-}
+const aad = new TextEncoder().encode('r7-ai-assistant:connection:v2');
+function browserStorage() { try { return globalThis.localStorage ?? null; } catch { return null; } }
 
-// UI must show keyPersistenceWarning whenever true: storage is explicit plaintext,
-// or an old persisted key cannot be ruled out (even if rememberKey is now false).
-// Corrupt records are retained for recovery, with a conservative risk warning;
-// successful opt-out deletion/reset clears that risk. Never echo storage errors.
-// save validates a draft, not request readiness.
+// AES-GCM protects the stored profile from plaintext disclosure and undetected edits.
+// Its non-exportable CryptoKey lives in the browser profile, NOT an OS key vault.
+// An attacker controlling that profile or this running origin can still decrypt it.
 export class SettingsStore {
-  #storage;
+  #storage; #records; #crypto;
   #settings = DEFAULT_SETTINGS;
-  // Independent of the current opt-in: a failed read/delete can leave an old key.
+  #revision = null;
   #persistenceRisk = false;
-  constructor(storage = browserStorage()) { this.#storage = storage; }
-
+  constructor(storage = browserStorage(), { records = createProfileRecords(), crypto = globalThis.crypto } = {}) {
+    this.#storage = storage; this.#records = records; this.#crypto = crypto;
+  }
   #state(storageError = null) {
-    return Object.freeze({ settings: this.#settings, keyPersistenceWarning: this.#settings.rememberKey || this.#persistenceRisk, storageError });
+    return Object.freeze({ settings: this.#settings, revision: this.#revision,
+      keyPersistenceWarning: this.#persistenceRisk, storageError });
   }
-
-  load() {
-    // Until a successful opt-out deletion, persisted state is unknown/plaintext.
-    this.#persistenceRisk = true;
-    let record;
-    let storedKey;
-    try {
-      if (!this.#storage) return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE);
-      record = this.#storage.getItem(settingsKey);
-    } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
-    let draft;
-    try {
-      if (record === null) draft = DEFAULT_SETTINGS;
-      else {
-        assertByteLimit(record, storedSettingsBytes);
-        const raw = JSON.parse(record);
-        if (raw && Object.hasOwn(raw, 'apiKey')) return this.#state(ERROR_CODES.STORAGE_CORRUPT);
-        draft = validateSettings(raw);
-      }
-    } catch { return this.#state(ERROR_CODES.STORAGE_CORRUPT); }
-    try {
-      if (draft.rememberKey) storedKey = this.#storage.getItem(apiKeyKey);
-      else {
-        this.#storage.removeItem(apiKeyKey);
-        this.#persistenceRisk = false;
-      }
-    } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
-    try {
-      this.#settings = validateSettings({ ...draft, apiKey: draft.rememberKey ? (storedKey ?? '') : this.#settings.apiKey });
-    } catch { return this.#state(ERROR_CODES.STORAGE_CORRUPT); }
-    return this.#state();
-  }
-
+  get shared() { return this.#records.available !== false; }
+  load() { return this.#state(); }
+  // Explicit volatile configuration for callers that do not request persistence.
+  // No synchronous path can write an API key to localStorage.
   save(raw) {
     const settings = validateSettings(raw);
+    if (settings.rememberKey) throw new SafeError(ERROR_CODES.INVALID_SETTINGS);
     this.#settings = settings;
-    this.#persistenceRisk = true;
-    try {
-      if (!this.#storage) return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE);
-      // Delete first: an ensuing quota failure cannot leave an opted-out key behind.
-      if (!settings.rememberKey) {
-        this.#storage.removeItem(apiKeyKey);
-        this.#persistenceRisk = false;
-      }
-      const { apiKey, ...nonsecret } = settings;
-      this.#storage.setItem(settingsKey, JSON.stringify(nonsecret));
-      if (settings.rememberKey) this.#storage.setItem(apiKeyKey, apiKey);
-    } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
     return this.#state();
   }
-
+  #cleanLegacy() {
+    this.#persistenceRisk = true;
+    if (!this.#storage) throw new Error('storage');
+    this.#storage.removeItem(apiKeyKey);
+    this.#storage.removeItem(settingsKey);
+    this.#persistenceRisk = false;
+  }
+  async refresh() {
+    let record;
+    try { record = await this.#records.read(); }
+    catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
+    if (record) {
+      try {
+        if (profileRevision(record) === null) throw new Error('record');
+        if (record.revision !== this.#revision || this.#settings === DEFAULT_SETTINGS) {
+          let settings = DEFAULT_SETTINGS;
+          if (record.reset !== true) {
+            if (!(record.iv instanceof Uint8Array) || record.iv.length !== 12 ||
+                !(record.ciphertext instanceof Uint8Array) || record.ciphertext.length > 16384 ||
+                record.key?.extractable !== false || record.key?.algorithm?.name !== 'AES-GCM' || record.key?.algorithm?.length !== 256) throw new Error('record');
+            const bytes = await this.#crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv, additionalData: aad, tagLength: 128 }, record.key, record.ciphertext);
+            settings = validateRequestSettings(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
+          }
+          this.#settings = settings; this.#revision = record.revision;
+        }
+      } catch { this.#settings = DEFAULT_SETTINGS; this.#revision = profileRevision(record); return this.#state(ERROR_CODES.STORAGE_CORRUPT); }
+      try { this.#cleanLegacy(); } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
+      return this.#state();
+    }
+    if (this.#revision !== null) { this.#settings = DEFAULT_SETTINGS; this.#revision = null; }
+    // Upgrade an explicitly remembered legacy profile; never fall back to it when
+    // a v2 record exists (including reset tombstones or damaged ciphertext).
+    try {
+      if (!this.#storage) return this.#state();
+      this.#persistenceRisk = this.#storage.getItem(apiKeyKey) !== null;
+      const legacy = this.#storage.getItem(settingsKey);
+      if (legacy === null) return this.#state();
+      assertByteLimit(legacy, 4096);
+      const raw = JSON.parse(legacy);
+      if (Object.hasOwn(raw, 'apiKey')) throw new Error('record');
+      const draft = validateSettings(raw);
+      if (!draft.rememberKey) return this.#state();
+      const settings = validateRequestSettings({ ...draft, apiKey: this.#storage.getItem(apiKeyKey) ?? '' });
+      return await this.saveProfile(settings, null);
+    } catch { return this.#state(ERROR_CODES.STORAGE_CORRUPT); }
+  }
+  async saveProfile(raw, expectedRevision) {
+    const settings = validateRequestSettings({ ...validateSettings(raw), rememberKey: true });
+    try {
+      const key = await this.#crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      const iv = this.#crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = new Uint8Array(await this.#crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, key,
+        new TextEncoder().encode(JSON.stringify(settings))));
+      const revision = this.#crypto.randomUUID();
+      if (!await this.#records.write({ revision, key, iv, ciphertext }, expectedRevision)) return this.#state(ERROR_CODES.SETTINGS_CONFLICT);
+      this.#settings = settings; this.#revision = revision;
+      this.#cleanLegacy();
+      return this.#state();
+    } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
+  }
+  async resetProfile(expectedRevision) {
+    try {
+      const revision = this.#crypto.randomUUID();
+      if (!await this.#records.write({ revision, reset: true }, expectedRevision)) return this.#state(ERROR_CODES.SETTINGS_CONFLICT);
+      this.#revision = revision; this.#settings = DEFAULT_SETTINGS;
+      this.#cleanLegacy(); return this.#state();
+    } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
+  }
   reset() {
     this.#settings = DEFAULT_SETTINGS;
-    this.#persistenceRisk = true;
     try {
-      if (!this.#storage) return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE);
-      const keys = [];
-      for (let i = 0; i < this.#storage.length; i += 1) {
-        const key = this.#storage.key(i);
-        if (typeof key === 'string' && key.startsWith(STORAGE_NAMESPACE)) keys.push(key);
+      if (this.#storage) {
+        const keys = [];
+        for (let i = 0; i < this.#storage.length; i++) { const key = this.#storage.key(i); if (key?.startsWith(STORAGE_NAMESPACE)) keys.push(key); }
+        for (const key of keys) this.#storage.removeItem(key);
       }
-      for (const key of keys) this.#storage.removeItem(key);
       this.#persistenceRisk = false;
-    } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
-    return this.#state();
+      return this.#state();
+    } catch { this.#persistenceRisk = true; return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
   }
 }

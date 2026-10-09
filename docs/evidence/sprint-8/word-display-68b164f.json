@@ -1,0 +1,519 @@
+{
+  "productCommit": "68b164fcbf2ff76dfe862cac2b397ac82d752f0e",
+  "scope": "Word display correction only; overall RC acceptance remains suspended.",
+  "native": [
+    {
+      "kind": "word",
+      "name": "loaded-hashes",
+      "data": [
+        [
+          "panel.js",
+          "36227cee7aab7174a8abcca60fe51837faac5fa26342a42f2dd00901ceb47421"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "before",
+      "data": [
+        2,
+        "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи."
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "idle-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "capabilities",
+      "data": {
+        "status": "Проверка наличия API завершена. Документ не изменён.",
+        "capability": "Редактор: Word. Доступно: шесть из шести — проверены шесть API-примитивов документа. Что сделать: можно отправлять запрос.",
+        "editor": "Stage B · редактор: word · runtimeVerified: false"
+      }
+    },
+    {
+      "kind": "word",
+      "name": "active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 40,
+          "w": 241,
+          "h": 16,
+          "bottom": 56,
+          "right": 253
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "R7 AI Assistant — это интеллектуальный помощник, предназначенный для работы с текстовыми документами прямо в редакторе. Он сочетает возможности языковой модели с инструментами редактирования, позволяя пользователю формулировать задачи на естественном языке и получать готовый результат без ручного форматирования.",
+                  "heading": null
+                },
+                {
+                  "text": "Основная ценность R7 AI Assistant заключается в том, что он берёт на себя рутинные операции: вставку и структурирование текста, создание таблиц, поиск и замену фрагментов, оформление заголовков и добавление ссылок. Благодаря этому пользователь может сосредоточиться на содержании, а не на технических деталях, а сам процесс подготовки документа становится быстрее и удобнее.",
+                  "heading": null
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "batch",
+            "ok": false,
+            "code": "TOOL_ERROR",
+            "message": "one action per batch for a confirm tool; unknown tool name or invalid arguments"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "model-response",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "R7 AI Assistant — это интеллектуальный помощник, предназначенный для работы с текстовыми документами прямо в редакторе. Он сочетает возможности языковой модели с инструментами редактирования, позволяя пользователю формулировать задачи на естественном языке и получать готовый результат без ручного форматирования.",
+                  "heading": null
+                },
+                {
+                  "text": "Основная ценность R7 AI Assistant заключается в том, что он берёт на себя рутинные операции: вставку и структурирование текста, создание таблиц, поиск и замену фрагментов, оформление заголовков и добавление ссылок. Благодаря этому пользователь может сосредоточиться на содержании, а не на технических деталях, а сам процесс подготовки документа становится быстрее и удобнее.",
+                  "heading": null
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "model-response",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "R7 AI Assistant — это интеллектуальный помощник, предназначенный для работы с текстовыми документами прямо в редакторе. Он сочетает возможности языковой модели с инструментами редактирования, позволяя пользователю формулировать задачи на естественном языке и получать готовый результат без ручного форматирования."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "R7 AI Assistant — это интеллектуальный помощник, предназначенный для работы с текстовыми документами прямо в редакторе. Он сочетает возможности языковой модели с инструментами редактирования, позволяя пользователю формулировать задачи на естественном языке и получать готовый результат без ручного форматирования."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "insert_blocks",
+            "ok": true,
+            "data": {
+              "inserted": 1,
+              "headings": 0,
+              "paragraphsBefore": 2,
+              "paragraphsAfter": 3,
+              "bytes": 573
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "model-response",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "Основная ценность R7 AI Assistant заключается в том, что он берёт на себя рутинные операции: вставку и структурирование текста, создание таблиц, поиск и замену фрагментов, оформление заголовков и добавление ссылок. Благодаря этому пользователь может сосредоточиться на содержании, а не на технических деталях, а сам процесс подготовки документа становится быстрее и удобнее."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "Основная ценность R7 AI Assistant заключается в том, что он берёт на себя рутинные операции: вставку и структурирование текста, создание таблиц, поиск и замену фрагментов, оформление заголовков и добавление ссылок. Благодаря этому пользователь может сосредоточиться на содержании, а не на технических деталях, а сам процесс подготовки документа становится быстрее и удобнее."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "insert_blocks",
+            "ok": true,
+            "data": {
+              "inserted": 1,
+              "headings": 0,
+              "paragraphsBefore": 3,
+              "paragraphsAfter": 4,
+              "bytes": 676
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "model-response",
+      "data": {
+        "type": "final",
+        "message": "Готово. Добавил в конец документа два абзаца введения по теме R7 AI Assistant: первый — о назначении помощника, второй — о его ценности и типовых задачах."
+      }
+    },
+    {
+      "kind": "word",
+      "name": "capture-before-read",
+      "data": true
+    },
+    {
+      "kind": "word",
+      "name": "capture-complete",
+      "data": true
+    },
+    {
+      "kind": "word",
+      "name": "after",
+      "data": [
+        4,
+        "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи.\nR7 AI Assistant — это интеллектуальный помощник, предназначенный для работы с текстовыми документами прямо в редакторе. Он сочетает возможности языковой модели с инструментами редактирования, позволяя пользователю формулировать задачи на естественном языке и получать готовый результат без ручного форматирования.\nОсновная ценность R7 AI Assistant заключается в том, что он берёт на себя рутинные операции: вставку и структурирование текста, создание таблиц, поиск и замену фрагментов, оформление заголовков и добавление ссылок. Благодаря этому пользователь может сосредоточиться на содержании, а не на технических деталях, а сам процесс подготовки документа становится быстрее и удобнее."
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "terminal",
+      "data": true
+    },
+    {
+      "kind": "word",
+      "name": "final-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "history",
+      "data": "ВыПривет, добавь короткое введение по теме R7 AI Assistant. Придумай сам содержание. Два абзаца.АссистентГотово. Добавил в конец документа два абзаца введения по теме R7 AI Assistant: первый — о назначении помощника, второй — о его ценности и типовых задачах."
+    },
+    {
+      "kind": "word",
+      "name": "appended-paragraphs",
+      "data": [
+        "R7 AI Assistant — это интеллектуальный помощник, предназначенный для работы с текстовыми документами прямо в редакторе. Он сочетает возможности языковой модели с инструментами редактирования, позволяя пользователю формулировать задачи на естественном языке и получать готовый результат без ручного форматирования.",
+        "Основная ценность R7 AI Assistant заключается в том, что он берёт на себя рутинные операции: вставку и структурирование текста, создание таблиц, поиск и замену фрагментов, оформление заголовков и добавление ссылок. Благодаря этому пользователь может сосредоточиться на содержании, а не на технических деталях, а сам процесс подготовки документа становится быстрее и удобнее."
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "acceptance",
+      "data": {
+        "passed": true,
+        "kind": "word",
+        "pair": false,
+        "criteria": "before/after text and preservation"
+      }
+    }
+  ],
+  "executingScript": {
+    "method": "Debugger.getScriptSource: actual loaded script, no reload",
+    "sha256": "36227cee7aab7174a8abcca60fe51837faac5fa26342a42f2dd00901ceb47421",
+    "document": "compact-word-v6.docx",
+    "panel": {
+      "path": "/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/%7B7C91D48E-5F12-4B36-8A90-2DFA8467C013%7D/index.html",
+      "composer": true,
+      "status": "Готово",
+      "draftLength": 94,
+      "script": "panel.js"
+    }
+  },
+  "assertions": {
+    "originalPrefixUnchanged": true,
+    "exactlyTwoInsertedParagraphs": true,
+    "successfulToolArgumentsMatchDocument": true,
+    "immediateScreenshotBeforeIndependentRead": true,
+    "schemaRefusals": 1
+  },
+  "install": [
+    {
+      "command": "cp -a '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/word-display-20261009T023639/plugin-before",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/r7-verification/word-display-20261009T023639/r7-ai-assistant.zip",
+      "exit": 0,
+      "out": "25e7e0925d06c0bd05d204fe20579f46b8dbc782bf33cfa57019a8b6b7d78165  /home/r7dev/r7-verification/word-display-20261009T023639/r7-ai-assistant.zip\n",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/r7-verification/word-display-20261009T023639/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "exit": 0,
+      "out": "222d32f3096aa169d0d2ad6e38510e6afd9ae8a6109fc6269b12280da5010ca8  /home/r7dev/r7-verification/word-display-20261009T023639/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb\n",
+      "err": ""
+    },
+    {
+      "command": "sudo -S -p '' dpkg -i /home/r7dev/r7-verification/word-display-20261009T023639/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "exit": 0,
+      "out": "(Чтение базы данных … на данный момент установлено 221896 файлов и каталогов.)\nПодготовка к распаковке …/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb …\nРаспаковывается r7-ai-assistant (0.9.0-pilot-rc) на замену (0.9.0-pilot-rc) …\nНастраивается пакет r7-ai-assistant (0.9.0-pilot-rc) …\nОбрабатываются триггеры для xserver-xorg-core (2:21.1.7-1ubuntu4.astra.se64) …\n",
+      "err": "update exec ids due to /usr/bin changed\n"
+    },
+    {
+      "command": "/usr/bin/r7-ai-assistant-preflight",
+      "exit": 0,
+      "out": "SUPPORTED exact target: Astra 1.7.9 build 1.7.9.41 / r7-office\t2026.1.2-1942~astra-signed\tamd64 / 2026.1.2.1942\n",
+      "err": ""
+    },
+    {
+      "command": "cp -a /usr/share/r7-ai-assistant/plugin/. '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "sha256sum '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js' '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css'",
+      "exit": 0,
+      "out": "36227cee7aab7174a8abcca60fe51837faac5fa26342a42f2dd00901ceb47421  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js\n34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css\n",
+      "err": ""
+    },
+    {
+      "command": "pgrep -a DesktopEditors",
+      "exit": 0,
+      "out": "119782 /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info /home/r7dev/r7-verification/stage-b/gate/deck-open.pptx\n",
+      "err": ""
+    }
+  ],
+  "buildLogs": {
+    "word-display-reproducible.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc reproducible\n> node scripts/verify-reproducible-build.mjs\n\n{\n  \"sourceCommit\": \"68b164fcbf2ff76dfe862cac2b397ac82d752f0e\",\n  \"node\": \"v24.21.0\",\n  \"builds\": [\n    {\n      \"number\": 1,\n      \"archiveSha256\": \"25e7e0925d06c0bd05d204fe20579f46b8dbc782bf33cfa57019a8b6b7d78165\",\n      \"provenanceSha256\": \"126b6268c2d655b3351b385a901e88e5ac00ae4c5f3162f18daf9701865dc5a5\"\n    },\n    {\n      \"number\": 2,\n      \"archiveSha256\": \"25e7e0925d06c0bd05d204fe20579f46b8dbc782bf33cfa57019a8b6b7d78165\",\n      \"provenanceSha256\": \"126b6268c2d655b3351b385a901e88e5ac00ae4c5f3162f18daf9701865dc5a5\"\n    }\n  ]\n}\n",
+    "word-display-deb.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc build:deb\n> node scripts/build-deb.mjs\n\nDEB build: 11 regular files; SHA-256 222d32f3096aa169d0d2ad6e38510e6afd9ae8a6109fc6269b12280da5010ca8\nD:\\Astra_coding\\r7-ai-assistant\\.worktrees\\stage-b\\dist\\deb\\r7-ai-assistant_0.9.0-pilot-rc_amd64.deb\n",
+    "word-display-sbom.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc sbom\n> node scripts/generate-sbom.mjs\n\nSPDX 2.3 SBOM: D:\\Astra_coding\\r7-ai-assistant\\.worktrees\\stage-b\\dist\\r7-ai-assistant.spdx.json; SHA-256 796a8f488b4b0d652ebaa2e5bd06e191679da5bee06c808d3e536c8bbb1956c1\n"
+  },
+  "checksums": "25e7e0925d06c0bd05d204fe20579f46b8dbc782bf33cfa57019a8b6b7d78165  dist/plugin/r7-ai-assistant.zip\n222d32f3096aa169d0d2ad6e38510e6afd9ae8a6109fc6269b12280da5010ca8  dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb\n796a8f488b4b0d652ebaa2e5bd06e191679da5bee06c808d3e536c8bbb1956c1  dist/r7-ai-assistant.spdx.json\n36227cee7aab7174a8abcca60fe51837faac5fa26342a42f2dd00901ceb47421  dist/plugin/panel.js\n34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  dist/plugin/styles.css\n"
+}

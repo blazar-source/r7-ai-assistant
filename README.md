@@ -4,39 +4,52 @@
 
 ## Статус
 
-Pilot RC **не выпущен**. Целевая версия: `0.9.0-pilot-rc`. [Исторический Stage B NOT PASS](<docs/stage-b-gate-report.md>) не пересчитан в PASS.
-Принят [план восьми спринтов](<docs/roadmap.md>); разрешён только [Sprint 1](<docs/superpowers/plans/2026-10-02-sprint-1-practical-selection-editing.md>): practical selection editing с Preview, explicit Apply, same current document/editor check, current-selection reread и exact text comparison. Task 1 done; Task 2 measured DEV probe prerequisite GO (N09 branch PARTIAL); Task 3 Apply implemented in independently reviewed local candidate cb291d7. [Текущие доказательства и ограничения](<docs/sprint-1-progress.md>): Task 4 IN PROGRESS, scoped R10–R17 native evidence includes candidate Preview/Apply/formatting/Undo and settings/session checks; whole Task 4 / Stage B NOT PASS, remaining gates explicit. Исторический old-production Apply OFF не является состоянием текущего установленного кандидата. Host tests не native proof; bank TLS/CORS/AUTH/Qwen NOT RUN, real-model calls в Sprint 1 запрещены.
+Версия `0.9.0-pilot-rc`: **приёмка приостановлена, NOT PASS**. Дефект отображения Word исправлен в 68b164f и проверен на Astra: оба абзаца видны сразу, до диагностического чтения. Исправленная сборка установлена. Общая приёмка нового комплекта RC ещё не восстановлена. [Дефект и условия повторной приёмки](docs/evidence/sprint-8/word-display-blocker.md).
 
-## Runtime
+## Возможности
 
-Только встроенный browser plugin: Chat UI → Context Manager → bounded JSON Agent Runtime → Security Validator → allowlisted R7 Plugin API tools / HTTPS AI adapter.
-Нет Node runtime, MCP, daemon, localhost, WebSocket, CDN, telemetry, автоматического сохранения документа.
+Панель работает внутри Word, Cell и Slide, отправляет запросы только на настроенный HTTPS endpoint формата `/v1/chat/completions` и предоставляет два режима: ASK для анализа и EDIT для разрешённых изменений. Изменения с confirm-policy показываются как Preview и применяются только явной кнопкой **«Применить»** после повторных проверок текущего редактора и цели; сохранение документа и штатный Undo остаются действиями пользователя.
+
+Runtime — только встроенный browser plugin: Chat UI → Context Manager → bounded JSON Agent Runtime → Security Validator → allowlisted R7 Plugin API tools / HTTPS AI adapter. В продукте нет Node runtime, MCP, daemon, localhost, WebSocket, CDN, telemetry или автоматического сохранения документа.
+
+## Установка и активация
+
+Поддерживается только Astra Linux SE `1.7.9` build `1.7.9.41` `amd64` с пакетом `r7-office 2026.1.2-1942~astra-signed` и executable `2026.1.2.1942`. Администратор устанавливает data-only DEB, а пользователь запускает compatibility preflight и активирует payload в проверенном per-user каталоге. Полные команды установки, обновления и удаления находятся в [docs/deployment.md](docs/deployment.md); system-wide plugin path использовать нельзя.
+
+## Настройка и работа с панелью
+
+1. Откройте панель **R7 AI Assistant** в нужном редакторе Р7.
+2. Откройте **«Диагностика»** кнопкой `⋯` в заголовке, затем раскройте **«Настройки соединения»** и укажите полный HTTPS URL, заканчивающийся на `/v1/chat/completions`, точный идентификатор модели и API-ключ.
+3. При необходимости измените HTTP timeout, `max_tokens` и `temperature`, затем нажмите **«Применить настройки»** и **«Проверить соединение»**.
+4. По умолчанию ключ хранится только в памяти; опция **«Запомнить ключ»** сохраняет его открытым текстом в локальном хранилище профиля Р7 и должна включаться только осознанно.
+5. Выберите ASK или EDIT, при необходимости включите доступный контекст документа, введите запрос и нажмите **«Отправить»** или `Ctrl+Enter`. Во время операции доступна кнопка **«Стоп»**.
+6. Для предложения замены проверьте Preview и нажмите **«Применить»** только если результат подходит; Undo выполняется штатными средствами Р7. Кнопка **«Сбросить настройки»** удаляет только namespace настроек продукта.
+
+Проверенные границы, поведение `TIMEOUT`/`HTTP_ERROR` и единый список известных ограничений находятся в [CHANGELOG](CHANGELOG.md#known-limitations) и [docs/deployment.md](docs/deployment.md#known-limitations).
 
 ## Разработка
 
-Dev-зависимости обязательны для гейта: без них 4 теста и `scripts/static-audit.mjs` не находят `acorn`, а `scripts/build-plugin.mjs` — `esbuild`. Чистый клон без установки даёт 844 теста / 4 fail и падение аудита.
+Dev-зависимости обязательны для проверки и сборки:
 
-```
-npm ci
-node --test                    # 995/995 pass, 0 fail
-node scripts/static-audit.mjs  # Authored-code audit PASS
-node scripts/build-plugin.mjs  # ZIP STORE SHA-256 42f96c78…f499a73
+```sh
+npm ci --ignore-scripts
+node --test
+npm run audit
 ```
 
-Проверено на Node.js `v24.21.0`. `npm ci` ставит `acorn@8.15.0` и `esbuild@0.25.10`; версия esbuild закреплена в `scripts/build-plugin.mjs` (иначе `UNPINNED_BUILD_TOOL`). Сборка пишет в `dist/` — это вне Git.
+Сборка release-артефактов не является частью обычной пользовательской установки и выполняется только после фиксации release-коммита по [контракту Sprint 8](docs/superpowers/plans/2026-10-08-sprint-8-release-contract.md). Проверенный Sprint 7 toolchain: Node.js `v24.21.0`, `acorn@8.15.0`, `esbuild@0.25.10`; выходной каталог `dist/` не хранится в Git.
 
 ## Документы
 
+- [CHANGELOG и ограничения](CHANGELOG.md)
+- [Установка, эксплуатация и администрирование](docs/deployment.md)
 - [Архитектура](docs/architecture.md)
 - [Целевая среда и наблюдения](docs/target-environment.md)
 - [Протокол AI](docs/ai-protocol.md)
 - [Безопасность](docs/security.md)
-- [Установка](docs/deployment.md)
 - [План проверки](docs/test-plan.md)
 - [Матрица совместимости](docs/compatibility-matrix.md)
-- [Спецификация vertical slice](docs/superpowers/specs/2026-10-02-compatibility-vertical-slice-design.md)
 - [Этапы](docs/roadmap.md)
 - [Лицензирование](docs/licensing.md)
-- [ADR](docs/decisions/0001-embedded-runtime-and-compatibility-gate.md)
 
-Локальный Git — источник истины. Основной remote — приватный `blazar-source/r7-ai-assistant` (`main` стабильна, работа через feature branches / PR); публичный репозиторий, релизы и любые публикации по-прежнему требуют отдельной команды. Secrets, пользовательские endpoints, персональные данные и содержимое рабочих документов не коммитятся.
+Локальный Git — источник истины. Публичный репозиторий, релизы, публикация, тегирование и merge в `main` требуют отдельной команды владельца. Secrets, пользовательские endpoints, персональные данные и содержимое рабочих документов не коммитятся.

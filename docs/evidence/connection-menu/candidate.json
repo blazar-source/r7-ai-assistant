@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "81d67837101c34877f5ce5b401b7cb73b2d571aa",
+  "uiCommit": "aff7b10",
+  "nativeBase": "/home/r7dev/r7-verification/ux-menu-20261009T041725",
+  "installedFilesVerified": true,
+  "nativeUxAcceptance": "BLOCKED: SSH banner unavailable; VM console permission denied",
+  "artifacts": {
+    "dist/plugin/panel.js": "17c0e83eca9babeac90c7423d770728f56654f30de5a58d782ccc82cd510acab",
+    "dist/plugin/styles.css": "1ab2754cd4686935bbc157e786b8bfefce9999375bb1e2108ff567256bd63085",
+    "dist/plugin/r7-ai-assistant.zip": "d71d7efb4cef9634bd076933b246fd20f5518723a7c63e78f4cef24006c95b2b",
+    "dist/plugin/provenance.json": "3188c1797e0f513e2abea2bc8558f78c065b716f52a487d5057dd4009c5c9ebc",
+    "dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb": "208eac7aebd543b13fbf92c353284ff3aa7f3a42144049d30e5e6fd84969bf9a",
+    "dist/r7-ai-assistant.spdx.json": "ad0867a1e475d567a1824f529dccf404f155b050708abcf26349d6c569042559"
+  }
+}

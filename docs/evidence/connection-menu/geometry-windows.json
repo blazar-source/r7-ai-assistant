@@ -1,0 +1,201 @@
+{
+  "idle": {
+    "doc": [
+      259,
+      259,
+      499,
+      499
+    ],
+    "composer": {
+      "x": 0,
+      "y": 449,
+      "w": 259,
+      "h": 50,
+      "bottom": 499,
+      "right": 259
+    },
+    "prompt": {
+      "x": 6,
+      "y": 455,
+      "w": 209,
+      "h": 38,
+      "bottom": 493,
+      "right": 215
+    },
+    "send": {
+      "x": 219,
+      "y": 455,
+      "w": 34,
+      "h": 34,
+      "bottom": 489,
+      "right": 253
+    },
+    "content": {
+      "x": 0,
+      "y": 32,
+      "w": 259,
+      "h": 417,
+      "bottom": 449,
+      "right": 259
+    },
+    "header": 32,
+    "overflow": [
+      "content"
+    ],
+    "messages": 20,
+    "font": "12.5px",
+    "line": "17px"
+  },
+  "active": {
+    "doc": [
+      259,
+      259,
+      499,
+      499
+    ],
+    "composer": {
+      "x": 0,
+      "y": 426,
+      "w": 259,
+      "h": 73,
+      "bottom": 499,
+      "right": 259
+    },
+    "prompt": {
+      "x": 6,
+      "y": 432,
+      "w": 209,
+      "h": 38,
+      "bottom": 470,
+      "right": 215
+    },
+    "send": {
+      "x": 219,
+      "y": 432,
+      "w": 34,
+      "h": 34,
+      "bottom": 466,
+      "right": 253
+    },
+    "content": {
+      "x": 0,
+      "y": 32,
+      "w": 259,
+      "h": 394,
+      "bottom": 426,
+      "right": 259
+    },
+    "header": 32,
+    "overflow": [
+      "content"
+    ],
+    "messages": 20,
+    "font": "12.5px",
+    "line": "17px"
+  },
+  "expanded": {
+    "doc": [
+      259,
+      259,
+      499,
+      499
+    ],
+    "composer": {
+      "x": 0,
+      "y": 415,
+      "w": 259,
+      "h": 84,
+      "bottom": 499,
+      "right": 259
+    },
+    "prompt": {
+      "x": 6,
+      "y": 421,
+      "w": 209,
+      "h": 72,
+      "bottom": 493,
+      "right": 215
+    },
+    "send": {
+      "x": 219,
+      "y": 421,
+      "w": 34,
+      "h": 34,
+      "bottom": 455,
+      "right": 253
+    },
+    "content": {
+      "x": 0,
+      "y": 32,
+      "w": 259,
+      "h": 383,
+      "bottom": 415,
+      "right": 259
+    },
+    "header": 32,
+    "overflow": [
+      "content"
+    ],
+    "messages": 20,
+    "font": "12.5px",
+    "line": "17px"
+  },
+  "diagnostics": {
+    "doc": [
+      259,
+      259,
+      499,
+      499
+    ],
+    "composer": {
+      "x": 0,
+      "y": 426,
+      "w": 259,
+      "h": 73,
+      "bottom": 499,
+      "right": 259
+    },
+    "prompt": {
+      "x": 6,
+      "y": 432,
+      "w": 209,
+      "h": 38,
+      "bottom": 470,
+      "right": 215
+    },
+    "send": {
+      "x": 219,
+      "y": 432,
+      "w": 34,
+      "h": 34,
+      "bottom": 466,
+      "right": 253
+    },
+    "content": {
+      "x": 0,
+      "y": 32,
+      "w": 259,
+      "h": 394,
+      "bottom": 426,
+      "right": 259
+    },
+    "header": 32,
+    "overflow": [
+      "content"
+    ],
+    "messages": 20,
+    "font": "12.5px",
+    "line": "17px"
+  },
+  "focus": {
+    "style": "solid",
+    "width": "2px"
+  },
+  "tabs": [
+    "new-chat",
+    "toggle-menu",
+    "prompt",
+    "send"
+  ],
+  "errors": []
+}

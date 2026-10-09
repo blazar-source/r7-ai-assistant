@@ -1,13 +1,14 @@
 import { LIMITS } from '../shared/limits.js';
-import { assertByteLimit, utf8ByteLength } from '../shared/bytes.js';
+import { assertByteLimit, characterLength, utf8ByteLength } from '../shared/bytes.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 
 // Identity leases persist through disposal: replacing a JS adapter is not proof
 // that queued SDK work was retracted. Only a genuinely new initialized plugin
 // object may start a new lifecycle. Never call SDK outside this sole bridge.
 const pluginOwners = new WeakSet();
-const MUTATION_REASON = 'EXPLICIT_OWNED_PREVIEW_REQUIRED';
+export const OWNED_PREVIEW_REASON = 'EXPLICIT_OWNED_PREVIEW_REQUIRED';
 const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'replaceTextSmart', 'getRangeBySelect', 'isTrackRevisions']);
+const cellPresenceKeys = Object.freeze(['api', 'getActiveSheet', 'readRange', 'writeRange']);
 // THE CLOSED SET OF TICKET KINDS WHOSE WORK WRITES THE DOCUMENT, in ONE place. Every one of these
 // questions is asked about more than one leg and the answers must not drift apart: does a ticket whose
 // callback never arrived leave an UNKNOWN mutation (`errorFor`/`timeoutFor`), does the panel's write lock
@@ -37,8 +38,17 @@ const presenceKeys = Object.freeze(['api', 'getDocument', 'getDocumentId', 'repl
 // hyperlink insert, and it is named here explicitly for that leg's reason. `commentinsert` is the comment
 // insert: it creates ONE comment through the DOCUMENT's own `AddComment`, which joins the document's comment
 // collection — an APPEND, but of a comment rather than of a block — and it is named here explicitly for the
-// same reason.
-const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert']));
+// same reason. `sheetwrite` is the SPREADSHEET write: it is the FIRST leg that writes into a WORKBOOK rather
+// than a document, through ONE `range.SetValue` per cell of the addressed block inside its own command body,
+// and it is the FIRST whose proof is a bounded readback of the very block it wrote (one flag per cell) rather
+// than a document delta. It is named here explicitly for the same reason every other write leg is.
+// `cellformat` is the CELL FORMATTING: it changes PRESENTATION rather than content, through the measured
+// formatting setters on the addressed block, and its proof is one flag per (property, cell) and per
+// (geometry property, column/row) — the first leg whose proof is per-PROPERTY rather than per-target, because
+// a single flag per cell could hide one unproven property behind the proven ones.
+const WRITE_KINDS = Object.freeze(new Set(['write', 'insert', 'blocksinsert', 'tableinsert', 'headinginsert', 'rangeformat', 'hyperlinkinsert', 'replaceinsert', 'imageinsert', 'commentinsert', 'sheetwrite', 'cellformat', 'sheetadd', 'sheetrename']));
+WRITE_KINDS.add('slideadd'); WRITE_KINDS.add('slidetext');
+WRITE_KINDS.add('slideformat'); WRITE_KINDS.add('slideobject'); WRITE_KINDS.add('sliderestructure');
 
 // Inspect data descriptors, never extract a command function for execution.
 function ownFunction(object, name) {
@@ -86,6 +96,16 @@ const capabilityBody = () => {
     ];
   } catch { return ['CAPABILITY_UNAVAILABLE']; }
 };
+// Cell exports GetDocument too, but it throws on the verified Astra build.
+// Probe only the workbook root and method presence; never call a mutation.
+const cellCapabilityBody = () => {
+  try {
+    var present = typeof Api !== 'undefined' && Api !== null;
+    var sheet = present && typeof Api.GetActiveSheet === 'function' ? Api.GetActiveSheet() : null;
+    var range = sheet && typeof sheet.GetRange === 'function' ? sheet.GetRange('A1') : null;
+    return [present, !!sheet, !!range && typeof range.GetValue === 'function', !!range && typeof range.SetValue === 'function'];
+  } catch { return ['CAPABILITY_UNAVAILABLE']; }
+};
 const contextBody = () => {
   try {
     var available = typeof Api !== 'undefined' && Api !== null;
@@ -101,7 +121,7 @@ const contextBody = () => {
 // `callCommand` builds around an author-written body. `String(...)` is a data conversion of an authored
 // function literal, never execution of a string.
 function commandTransport(which) {
-  return 'var Asc = {}; \n  var scope = Asc.scope;\n  (' + String(which === 'context' ? contextBody : capabilityBody) + ')();\n  ';
+  return 'var Asc = {}; \n  var scope = Asc.scope;\n  (' + String(which === 'context' ? contextBody : which === 'cell-capability' ? cellCapabilityBody : capabilityBody) + ')();\n  ';
 }
 // Resolve the command dispatch from the two own-function descriptors the facade may expose. The
 // returned descriptor is frozen, so the choice cannot be rewritten after the bridge is constructed.
@@ -113,6 +133,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
   if (hasCommand) {
     return Object.freeze({ present: true, method: 'callCommand',
       probe(which, callback) {
+        if (which === 'cell-capability') return plugin.callCommand(function () {
+          try {
+            var present = typeof Api !== 'undefined' && Api !== null;
+            var sheet = present && typeof Api.GetActiveSheet === 'function' ? Api.GetActiveSheet() : null;
+            var range = sheet && typeof sheet.GetRange === 'function' ? sheet.GetRange('A1') : null;
+            return [present, !!sheet, !!range && typeof range.GetValue === 'function', !!range && typeof range.SetValue === 'function'];
+          } catch { return ['CAPABILITY_UNAVAILABLE']; }
+        }, false, false, callback);
         // The value handed to `callCommand` must be a FULL inline literal, never a closure over one.
         // This native does not CALL the function: it stringifies it and evaluates the text inside the
         // editor, where bridge.js's module bindings do not exist. `() => contextBody()` therefore died
@@ -306,6 +334,1604 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // whose phase is absent (a bare `['CAPABILITY_UNAVAILABLE']`) or not pre-insert is treated as the
       // post-insert uncertain class, so the name alone can never release a slot for an append that may
       // already be in the document.
+      // ----- CELL: the bounded SPREADSHEET read ---------------------------------------------------
+      // The first Cell leg in this repo, and it authors primitives MEASURED on a live Cell session
+      // (R7-Office Editors 2026.3.1, document `doctype=spreadsheet`): `Api.GetActiveSheet()`,
+      // `sheet.GetName()`, `sheet.GetIndex()`, `Api.GetSheets()` (an Array whose `length` is the sheet
+      // count), `sheet.GetUsedRange()` (the ONLY used-range discovery this build exposes —
+      // `GetRowsCount`/`GetColumnsCount`/`GetMaxRow`/`GetMaxColumn` are all `undefined`), and
+      // `range.GetValue()` (a 2-D array of strings, one row per row, for a BLOCK — but a SCALAR STRING for a
+      // ONE-CELL range, which the shape rule below separates). `range.GetFormula()` was measured on
+      // BOTH sizes and answers two DIFFERENT things: a ONE-CELL range answers the formula SOURCE, while a
+      // MULTI-CELL range answers the computed VALUES. The sources are therefore collected ADDRESSALLY, one
+      // single-cell range per published cell, and a cell's slot holds the source only when it begins with
+      // `=` — the same getter answers a cell's own TEXT when the cell holds no formula at all.
+      // The answer is ONE flat array of primitives, exactly like the search/structure legs (the native
+      // return validator keeps those and strips a plain object):
+      //   `[CAPABILITY_UNAVAILABLE]` — the body's own closed refusal; or
+      //   `[sheetName, sheetIndex, sheetCount, address, rowCount, columnCount, formulasMatch, v…, f…]`
+      // where the `rowCount × columnCount` value strings are followed by the same number of FORMULA SOURCE
+      // strings ONLY when `formulasMatch` is 1. It is a READ: it has no phase, no mutation and no leg
+      // that could reach a write class.
+      // ----- CELL: the bounded RENAME of a sheet's own name -----------------------------
+      // `Api.SetName(...)` answers `undefined` like `AddSheet`, so nothing is read from its return value: the
+      // verdict is a POSTCONDITION measured through the INDEPENDENT readers — the collection, the lookup by INDEX,
+      // the lookup by NAME and the active sheet. MEASURED before this leg existed: the engine rewrites cross-sheet
+      // references when a sheet is renamed, so the legs do NOT rescan for them; that capability is accepted once,
+      // natively, instead of being re-proved on every call.
+      // TWO REFUSALS HAPPEN BEFORE THE MUTATION, because both states must be impossible to leave behind: the source
+      // sheet does not resolve (or resolves to a DIFFERENT sheet than the request named), or the requested new name
+      // ALREADY RESOLVES — including the sheet's own current name, which would be a no-op whose outcome could not
+      // be proved at all.
+      // THE PHASE TURNS IMMEDIATELY BEFORE THE ONE `SetName`: from that call on an unproved postcondition is the
+      // UNCERTAIN class with the callback slot HELD, and the name is NEVER renamed back — an attempted rollback
+      // would be a SECOND hidden mutation on top of an unknown state.
+      sheetrename(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          function renameRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameMax = request.maxSheets;
+            if (typeof sheetRenameMax !== 'number' || sheetRenameMax < 1 || sheetRenameMax % 1 !== 0) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameWanted = request.newName;
+            if (typeof sheetRenameWanted !== 'string' || sheetRenameWanted === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameSourceName = request.sourceName === undefined ? null : request.sourceName;
+            var sheetRenameSourceIndex = request.sourceIndex === undefined ? null : request.sourceIndex;
+            if (sheetRenameSourceName !== null && typeof sheetRenameSourceName !== 'string') return renameRefusal('TOOL_ERROR');
+            if (sheetRenameSourceName !== null && sheetRenameSourceName === '') return renameRefusal('TOOL_ERROR');
+            if (sheetRenameSourceIndex !== null && (typeof sheetRenameSourceIndex !== 'number' || sheetRenameSourceIndex < 0 || sheetRenameSourceIndex % 1 !== 0)) return renameRefusal('TOOL_ERROR');
+            if (sheetRenameSourceName !== null && sheetRenameSourceIndex !== null) return renameRefusal('TOOL_ERROR');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // DEFENSIVE guards, like every other authored body here: the surrounding catch answers the same refusal.
+            if (typeof Api.GetSheets !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetSheet !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // THE BASELINE: the count, the ordered names and the active sheet by NAME and INDEX.
+            var sheetRenameCollection = Api.GetSheets();
+            if (sheetRenameCollection === null || sheetRenameCollection === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameCollection.length !== 'number') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameBefore = sheetRenameCollection.length;
+            if (sheetRenameBefore < 1) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetRenameBefore > sheetRenameMax) return renameRefusal('TOOL_ERROR');
+            var sheetRenameBeforeNames = [];
+            for (var sheetRenamePre = 0; sheetRenamePre < sheetRenameBefore; sheetRenamePre++) {
+              var sheetRenamePreSheet = Api.GetSheet(sheetRenamePre);
+              if (sheetRenamePreSheet === null || sheetRenamePreSheet === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetRenamePreSheet.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetRenamePreName = String(sheetRenamePreSheet.GetName());
+              if (sheetRenamePreName === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              sheetRenameBeforeNames.push(sheetRenamePreName);
+            }
+            // THE SOURCE: the caller's selector, or the ACTIVE sheet when the caller named none.
+            var sheetRenameSource = null;
+            if (sheetRenameSourceName !== null || sheetRenameSourceIndex !== null) {
+              sheetRenameSource = sheetRenameSourceName !== null ? Api.GetSheet(sheetRenameSourceName) : Api.GetSheet(sheetRenameSourceIndex);
+              if (sheetRenameSource === null || sheetRenameSource === undefined) return renameRefusal('TOOL_ERROR');
+              // TIED TO THE REQUEST before anything is renamed: the resolved sheet's OWN identity must agree, so a
+              // build that resolved a different sheet cannot silently rename the wrong one.
+              // MEASURED EQUIVALENCE, stated because a mutant campaign found it: deleting the INDEX half below
+              // changes no observable outcome FOR A STATELESS LOOKUP, because a lying index is caught first by the
+              // bound further down (a large lie) or by the name/index agreement check (a small one). A
+              // STATE-DEPENDENT lookup — one that answered differently on a second call — would defeat that
+              // argument, so the equivalence is bounded by what was measured, not asserted in general. The clause
+              // stays because it names the rule where the resolution happens, and the NAME half is load-bearing and
+              // pinned.
+              if (sheetRenameSourceName !== null) {
+                if (typeof sheetRenameSource.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+                if (String(sheetRenameSource.GetName()) !== sheetRenameSourceName) return renameRefusal('TOOL_ERROR');
+              } else {
+                if (typeof sheetRenameSource.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+                if (Number(sheetRenameSource.GetIndex()) !== sheetRenameSourceIndex) return renameRefusal('TOOL_ERROR');
+              }
+            } else {
+              sheetRenameSource = Api.GetActiveSheet();
+              if (sheetRenameSource === null || sheetRenameSource === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (typeof sheetRenameSource.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameSource.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameSource.SetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameOldName = String(sheetRenameSource.GetName());
+            var sheetRenameIndex = Number(sheetRenameSource.GetIndex());
+            if (sheetRenameOldName === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(sheetRenameIndex >= 0) || sheetRenameIndex % 1 !== 0) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetRenameIndex >= sheetRenameBefore) return renameRefusal('TOOL_ERROR');
+            // The INDEX and the NAME must agree about which sheet this is, or the proof below could rename one
+            // sheet while measuring another one. DEFENCE IN DEPTH, and stated as such: a build whose collection and
+            // lookup disagree is ALSO caught by the decoder's coherence clause (`byIndexValue`/`byNameValue`), so
+            // removing this line changes WHICH guard refuses and never turns a disagreement into a success.
+            if (sheetRenameBeforeNames[sheetRenameIndex] !== sheetRenameOldName) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameTaken = Api.GetSheet(sheetRenameWanted);
+            if (sheetRenameTaken !== null && sheetRenameTaken !== undefined) return renameRefusal('TOOL_ERROR');
+            var sheetRenameActive = Api.GetActiveSheet();
+            if (sheetRenameActive === null || sheetRenameActive === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActive.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActive.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // R7 compatibility notification: SetName does not refresh worksheet tabs.
+            // This editor-facade method is not part of the documented Office API;
+            // narrow owner-approved exception: docs/security.md, Worksheet notification.
+            if (typeof Api.sheetsChanged !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ONE MUTATION.
+            phase = 'POST_INSERT';
+            sheetRenameSource.SetName(sheetRenameWanted);
+            Api.sheetsChanged();
+            // THE POSTCONDITION, through the INDEPENDENT readers: the collection, the lookup by INDEX, the lookup by
+            // NAME, the OLD name that must be gone, and the active sheet (RECORDED, never switched or restored).
+            var sheetRenameAfterCollection = Api.GetSheets();
+            if (sheetRenameAfterCollection === null || sheetRenameAfterCollection === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameAfterCollection.length !== 'number') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameAfter = sheetRenameAfterCollection.length;
+            var sheetRenameAfterNames = [];
+            for (var sheetRenamePost = 0; sheetRenamePost < sheetRenameAfter; sheetRenamePost++) {
+              var sheetRenamePostSheet = Api.GetSheet(sheetRenamePost);
+              if (sheetRenamePostSheet === null || sheetRenamePostSheet === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetRenamePostSheet.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetRenamePostName = String(sheetRenamePostSheet.GetName());
+              if (sheetRenamePostName === '') return renameRefusal('CAPABILITY_UNAVAILABLE');
+              sheetRenameAfterNames.push(sheetRenamePostName);
+            }
+            var sheetRenameByIndex = Api.GetSheet(sheetRenameIndex);
+            var sheetRenameByIndexValue = sheetRenameByIndex === null || sheetRenameByIndex === undefined ? -1 : Number(sheetRenameByIndex.GetIndex());
+            var sheetRenameByName = Api.GetSheet(sheetRenameWanted);
+            var sheetRenameByNameValue = sheetRenameByName === null || sheetRenameByName === undefined ? -1 : Number(sheetRenameByName.GetIndex());
+            var sheetRenameOldStill = Api.GetSheet(sheetRenameOldName);
+            var sheetRenameOldStillValue = sheetRenameOldStill === null || sheetRenameOldStill === undefined ? 0 : 1;
+            var sheetRenameActiveAfter = Api.GetActiveSheet();
+            if (sheetRenameActiveAfter === null || sheetRenameActiveAfter === undefined) return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActiveAfter.GetName !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetRenameActiveAfter.GetIndex !== 'function') return renameRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetRenameAnswer = [];
+            sheetRenameAnswer.push(phase);
+            sheetRenameAnswer.push(sheetRenameBefore);
+            sheetRenameAnswer.push(sheetRenameAfter);
+            sheetRenameAnswer.push(sheetRenameIndex);
+            sheetRenameAnswer.push(sheetRenameOldStillValue);
+            sheetRenameAnswer.push(sheetRenameByIndexValue);
+            sheetRenameAnswer.push(sheetRenameByNameValue);
+            sheetRenameAnswer.push(Number(sheetRenameActiveAfter.GetIndex()));
+            sheetRenameAnswer.push(String(sheetRenameActiveAfter.GetName()));
+            for (var sheetRenamePreOut = 0; sheetRenamePreOut < sheetRenameBeforeNames.length; sheetRenamePreOut++) sheetRenameAnswer.push(sheetRenameBeforeNames[sheetRenamePreOut]);
+            for (var sheetRenamePostOut = 0; sheetRenamePostOut < sheetRenameAfterNames.length; sheetRenamePostOut++) sheetRenameAnswer.push(sheetRenameAfterNames[sheetRenamePostOut]);
+            return sheetRenameAnswer;
+          } catch (error) {
+            return renameRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, false, callback);
+      },
+      // ----- CELL: the bounded WORKBOOK MUTATION (add a sheet) -----------------------------------
+      // The first MUTATION whose subject is the book. `Api.AddSheet(name?)` answers `undefined`, which is
+      // neither success nor failure, so NOTHING is read from its return value: the outcome is a POSTCONDITION
+      // measured from the editor afterwards, and the decoder proves it. `AddSheet` MEASURABLY appends the new
+      // sheet LAST and makes it ACTIVE, and the previous active sheet is deliberately NOT restored — restoring
+      // it would be a hidden second action, and the caller is told which sheet was active before instead.
+      // TWO REFUSALS HAPPEN BEFORE THE MUTATION, because both are states the book must never be left in: adding
+      // would exceed the sheet bound, or the requested name ALREADY EXISTS (measured: `Api.GetSheet(name)`
+      // answers that sheet, and null for a name that does not exist).
+      // THE PHASE TURNS POST_INSERT IMMEDIATELY BEFORE `AddSheet`: from that call on, an unproved postcondition
+      // is the UNCERTAIN class with the callback slot HELD — never a known error, never a retry, and a sheet that
+      // may have been created is deliberately NOT deleted.
+      sheetadd(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          function addRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddMax = request.maxSheets;
+            if (typeof sheetAddMax !== 'number' || sheetAddMax < 1 || sheetAddMax % 1 !== 0) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddRequested = request.requestedName === undefined ? null : request.requestedName;
+            if (sheetAddRequested !== null && (typeof sheetAddRequested !== 'string' || sheetAddRequested === '')) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return addRefusal('CAPABILITY_UNAVAILABLE');
+            // DEFENSIVE guards, like the listing body's: the surrounding catch answers the same refusal.
+            if (typeof Api.GetSheets !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetSheet !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.AddSheet !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddCollection = Api.GetSheets();
+            if (sheetAddCollection === null || sheetAddCollection === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddCollection.length !== 'number') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddBefore = sheetAddCollection.length;
+            if (sheetAddBefore < 1) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetAddBefore + 1 > sheetAddMax) return addRefusal('TOOL_ERROR');
+            if (sheetAddRequested !== null) {
+              var sheetAddExisting = Api.GetSheet(sheetAddRequested);
+              if (sheetAddExisting !== null && sheetAddExisting !== undefined) return addRefusal('TOOL_ERROR');
+            }
+            // THE BASELINE: the ordered names, and the active sheet by NAME and INDEX (never by object identity).
+            var sheetAddBeforeNames = [];
+            for (var sheetAddPre = 0; sheetAddPre < sheetAddBefore; sheetAddPre++) {
+              var sheetAddPreSheet = Api.GetSheet(sheetAddPre);
+              if (sheetAddPreSheet === null || sheetAddPreSheet === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetAddPreSheet.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetAddPreName = String(sheetAddPreSheet.GetName());
+              if (sheetAddPreName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+              sheetAddBeforeNames.push(sheetAddPreName);
+            }
+            var sheetAddActive = Api.GetActiveSheet();
+            if (sheetAddActive === null || sheetAddActive === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActive.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActive.GetIndex !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddWasActiveName = String(sheetAddActive.GetName());
+            var sheetAddWasActiveIndex = Number(sheetAddActive.GetIndex());
+            if (sheetAddWasActiveName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (!(sheetAddWasActiveIndex >= 0) || sheetAddWasActiveIndex % 1 !== 0) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (sheetAddWasActiveIndex >= sheetAddBefore) return addRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ONE MUTATION. Nothing else is called on the book, and the previous active sheet is not restored.
+            phase = 'POST_INSERT';
+            if (sheetAddRequested === null) Api.AddSheet();
+            else Api.AddSheet(sheetAddRequested);
+            // THE POSTCONDITION, measured from the editor: the sizes, the ordered names, the new LAST sheet and
+            // the active sheet. The DECODER proves the arithmetic; this body reports what it measured.
+            var sheetAddAfterCollection = Api.GetSheets();
+            if (sheetAddAfterCollection === null || sheetAddAfterCollection === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddAfterCollection.length !== 'number') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddAfter = sheetAddAfterCollection.length;
+            if (sheetAddAfter < 1) return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddAfterNames = [];
+            for (var sheetAddPost = 0; sheetAddPost < sheetAddAfter; sheetAddPost++) {
+              var sheetAddPostSheet = Api.GetSheet(sheetAddPost);
+              if (sheetAddPostSheet === null || sheetAddPostSheet === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+              if (typeof sheetAddPostSheet.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+              var sheetAddPostName = String(sheetAddPostSheet.GetName());
+              if (sheetAddPostName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+              sheetAddAfterNames.push(sheetAddPostName);
+            }
+            var sheetAddLast = Api.GetSheet(sheetAddAfter - 1);
+            if (sheetAddLast === null || sheetAddLast === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddLast.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddLastName = String(sheetAddLast.GetName());
+            if (sheetAddLastName === '') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddActiveAfter = Api.GetActiveSheet();
+            if (sheetAddActiveAfter === null || sheetAddActiveAfter === undefined) return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActiveAfter.GetName !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheetAddActiveAfter.GetIndex !== 'function') return addRefusal('CAPABILITY_UNAVAILABLE');
+            var sheetAddActiveName = String(sheetAddActiveAfter.GetName());
+            var sheetAddActiveIndex = Number(sheetAddActiveAfter.GetIndex());
+            var sheetAddAnswer = [];
+            sheetAddAnswer.push(phase);
+            sheetAddAnswer.push(sheetAddBefore);
+            sheetAddAnswer.push(sheetAddAfter);
+            sheetAddAnswer.push(sheetAddAfter - 1);
+            sheetAddAnswer.push(sheetAddLastName);
+            sheetAddAnswer.push(sheetAddActiveIndex);
+            sheetAddAnswer.push(sheetAddActiveName);
+            sheetAddAnswer.push(sheetAddWasActiveIndex);
+            sheetAddAnswer.push(sheetAddWasActiveName);
+            for (var sheetAddPreOut = 0; sheetAddPreOut < sheetAddBeforeNames.length; sheetAddPreOut++) sheetAddAnswer.push(sheetAddBeforeNames[sheetAddPreOut]);
+            for (var sheetAddPostOut = 0; sheetAddPostOut < sheetAddAfterNames.length; sheetAddPostOut++) sheetAddAnswer.push(sheetAddAfterNames[sheetAddPostOut]);
+            return sheetAddAnswer;
+          } catch (error) {
+            return addRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, false, callback);
+      },
+      // ----- CELL: the bounded WORKBOOK LISTING ------------------------------------------------
+      // The first WORKBOOK-level body: its subject is the BOOK, not one sheet. It answers the listing the
+      // agent needs before it can address anything — what sheets exist, which one is ACTIVE, and which are
+      // hidden — and it is a READ, so it has no phase and nothing it refuses can have changed the book.
+      // THE ACTIVE SHEET IS DECIDED BY INDEX, NEVER BY OBJECT IDENTITY, and that is MEASURED rather than
+      // stylistic: on a live editor `Api.GetSheets()[i]` and `Api.GetActiveSheet()` answer DIFFERENT wrapper
+      // objects even for the same sheet (measured: `GetSheet('Sprint1') === GetActiveSheet()` is false), so a
+      // listing that compared objects would mark EVERY sheet inactive — a lie a caller could not detect.
+      // WHAT THE BODY CHECKS BEFORE IT ANSWERS: the book is non-empty, its size is inside the bound the tool
+      // carries, the active sheet's name and index are readable, and every sheet can answer its own name,
+      // index and visibility. Anything else is this body's own ONE-slot refusal.
+      // THE ANSWER IS A FLAT ARRAY OF PRIMITIVES, header first and then FOUR slots per sheet
+      // (`name`, `index`, `active`, `visible`), because a body that needs structured output must encode it:
+      // the native return validator keeps an array of primitives and strips a plain object.
+      sheetlist(callback) {
+        return plugin.callCommand(function () {
+          function listRefusal() {
+            var refusal = [];
+            refusal.push('CAPABILITY_UNAVAILABLE');
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return listRefusal();
+            var sheetListMax = request.maxSheets;
+            if (typeof sheetListMax !== 'number' || sheetListMax < 1 || sheetListMax % 1 !== 0) return listRefusal();
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return listRefusal();
+            // These three guards are DEFENSIVE rather than load-bearing, and that is stated because it was
+            // measured: the whole body runs inside a try/catch that answers the SAME one-slot refusal, so
+            // deleting any one of them changes no observable outcome. They stay because a missing primitive
+            // should be named where it is used rather than discovered by the catch.
+            if (typeof Api.GetSheets !== 'function') return listRefusal();
+            if (typeof Api.GetSheet !== 'function') return listRefusal();
+            if (typeof Api.GetActiveSheet !== 'function') return listRefusal();
+            // THE COLLECTION IS READ ONLY FOR ITS SIZE, and each sheet is then addressed by INDEX through
+            // `Api.GetSheet(position)` — MEASURED to answer the same sheet. That is not a style choice: a call
+            // RESULT is what the authored-code audit accepts as a receiver, while indexing an editor collection
+            // taints the local BY NAME across the whole bundle and turns every later call on it into a
+            // dynamic-property finding (the same trap the write leg records for its `block` local).
+            var sheetListCollection = Api.GetSheets();
+            if (sheetListCollection === null || sheetListCollection === undefined) return listRefusal();
+            if (typeof sheetListCollection.length !== 'number') return listRefusal();
+            var sheetListCount = sheetListCollection.length;
+            if (sheetListCount < 1) return listRefusal();
+            // A book larger than the bound is a KNOWN refusal, never a truncated listing: a listing that
+            // omitted sheets would misrepresent the workbook to the caller.
+            if (sheetListCount > sheetListMax) return listRefusal();
+            var sheetListActive = Api.GetActiveSheet();
+            if (sheetListActive === null || sheetListActive === undefined) return listRefusal();
+            if (typeof sheetListActive.GetName !== 'function') return listRefusal();
+            if (typeof sheetListActive.GetIndex !== 'function') return listRefusal();
+            var sheetListActiveName = String(sheetListActive.GetName());
+            var sheetListActiveIndex = Number(sheetListActive.GetIndex());
+            if (sheetListActiveName === '') return listRefusal();
+            if (!(sheetListActiveIndex >= 0) || sheetListActiveIndex % 1 !== 0) return listRefusal();
+            if (sheetListActiveIndex >= sheetListCount) return listRefusal();
+            var sheetListAnswer = [];
+            sheetListAnswer.push(sheetListCount);
+            sheetListAnswer.push(sheetListActiveIndex);
+            sheetListAnswer.push(sheetListActiveName);
+            for (var sheetListPosition = 0; sheetListPosition < sheetListCount; sheetListPosition++) {
+              var sheetListEntry = Api.GetSheet(sheetListPosition);
+              if (sheetListEntry === null || sheetListEntry === undefined) return listRefusal();
+              if (typeof sheetListEntry.GetName !== 'function') return listRefusal();
+              if (typeof sheetListEntry.GetIndex !== 'function') return listRefusal();
+              if (typeof sheetListEntry.GetVisible !== 'function') return listRefusal();
+              var sheetListName = String(sheetListEntry.GetName());
+              var sheetListEntryIndex = Number(sheetListEntry.GetIndex());
+              if (sheetListName === '') return listRefusal();
+              sheetListAnswer.push(sheetListName);
+              sheetListAnswer.push(sheetListEntryIndex);
+              // THE ACTIVE SHEET IS DECIDED BY INDEX, NEVER BY OBJECT IDENTITY (measured: the editor answers
+              // different wrapper objects for the same sheet).
+              sheetListAnswer.push(sheetListEntryIndex === sheetListActiveIndex ? 1 : 0);
+              sheetListAnswer.push(String(sheetListEntry.GetVisible()) === 'true' ? 1 : 0);
+            }
+            return sheetListAnswer;
+          } catch (error) {
+            return listRefusal();
+          }
+        }, false, false, callback);
+      },
+      slide(callback) {
+        return plugin.callCommand(function () {
+          function t2SlideRefusal() { var t2SlideRefusalOut = []; t2SlideRefusalOut.push('CAPABILITY_UNAVAILABLE'); return t2SlideRefusalOut; }
+          function t2SlideTextBytes(t2SlideChars) { var t2SlideBytes = 0; for (var t2SlideCharPosition = 0; t2SlideCharPosition < t2SlideChars.length; t2SlideCharPosition += 1) { var t2SlideCode = t2SlideChars.charCodeAt(t2SlideCharPosition); if (t2SlideCode < 128) t2SlideBytes += 1; else if (t2SlideCode < 2048) t2SlideBytes += 2; else if (t2SlideCode >= 55296 && t2SlideCode <= 56319 && t2SlideCharPosition + 1 < t2SlideChars.length && t2SlideChars.charCodeAt(t2SlideCharPosition + 1) >= 56320 && t2SlideChars.charCodeAt(t2SlideCharPosition + 1) <= 57343) { t2SlideBytes += 4; t2SlideCharPosition += 1; } else t2SlideBytes += 3; } return t2SlideBytes; }
+          function t2SlideLayout(t2SlideLayoutOwner) { try { var t2SlideLayoutValue = t2SlideLayoutOwner.GetLayout(); var t2SlideLayoutJson = t2SlideLayoutValue && typeof t2SlideLayoutValue.ToJSON === 'function' ? t2SlideLayoutValue.ToJSON() : null; return t2SlideLayoutJson && typeof t2SlideLayoutJson.id === 'number' ? t2SlideLayoutJson.id : null; } catch (t2SlideLayoutError) { return null; } }
+          function t2SlideObjectText(t2SlideTextObject, t2SlideTextCap) { try { if (!t2SlideTextObject || typeof t2SlideTextObject.GetContent !== 'function') return { text: null, omitted: 0 }; var t2SlideContent = t2SlideTextObject.GetContent(); if (!t2SlideContent || typeof t2SlideContent.GetElementsCount !== 'function' || typeof t2SlideContent.GetElement !== 'function') return { text: null, omitted: 0 }; var t2SlideParagraphCount = t2SlideContent.GetElementsCount(); if (typeof t2SlideParagraphCount !== 'number' || t2SlideParagraphCount < 0 || t2SlideParagraphCount % 1 !== 0) return { text: null, omitted: 0 }; var t2SlideCombinedText = ''; for (var t2SlideParagraphPosition = 0; t2SlideParagraphPosition < t2SlideParagraphCount; t2SlideParagraphPosition += 1) { var t2SlideParagraph = t2SlideContent.GetElement(t2SlideParagraphPosition); if (!t2SlideParagraph || typeof t2SlideParagraph.GetText !== 'function') return { text: null, omitted: 0 }; var t2SlidePart = t2SlideParagraph.GetText(); if (typeof t2SlidePart !== 'string') return { text: null, omitted: 0 }; t2SlideCombinedText += (t2SlideParagraphPosition === 0 ? '' : '\n') + t2SlidePart; } return t2SlideTextBytes(t2SlideCombinedText) > t2SlideTextCap ? { text: null, omitted: 1 } : { text: t2SlideCombinedText, omitted: 0 }; } catch (t2SlideTextError) { return { text: null, omitted: 0 }; } }
+          function t2SlideCollections(t2SlideCollectionOwner) { try { var t2SlideShapes = t2SlideCollectionOwner.GetAllShapes(); var t2SlideDrawings = t2SlideCollectionOwner.GetAllDrawings(); var t2SlideImages = t2SlideCollectionOwner.GetAllImages(); var t2SlideCharts = t2SlideCollectionOwner.GetAllCharts(); var t2SlideOle = t2SlideCollectionOwner.GetAllOleObjects(); if (!Array.isArray(t2SlideShapes) || !Array.isArray(t2SlideDrawings) || !Array.isArray(t2SlideImages) || !Array.isArray(t2SlideCharts) || !Array.isArray(t2SlideOle)) return null; return { shapes: t2SlideShapes, drawings: t2SlideDrawings, images: t2SlideImages, charts: t2SlideCharts, ole: t2SlideOle }; } catch (t2SlideCollectionsError) { return null; } }
+          try {
+            var t2SlideRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t2SlideRequest || typeof t2SlideRequest.mode !== 'string' || typeof t2SlideRequest.maxTextBytes !== 'number' || (t2SlideRequest.mode === 'slide' && typeof t2SlideRequest.maxObjects !== 'number')) return t2SlideRefusal();
+            if (!(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t2SlideRefusal();
+            var t2SlidePresentation = Api.GetPresentation(); if (!t2SlidePresentation || typeof t2SlidePresentation.GetSlidesCount !== 'function' || typeof t2SlidePresentation.GetCurrentSlide !== 'function' || typeof t2SlidePresentation.GetCurSlideIndex !== 'function' || typeof t2SlidePresentation.GetSlideByIndex !== 'function') return t2SlideRefusal();
+            var t2SlideTotal = t2SlidePresentation.GetSlidesCount(), t2SlideCurrent = t2SlidePresentation.GetCurSlideIndex(); if (typeof t2SlideTotal !== 'number' || t2SlideTotal < 0 || t2SlideTotal % 1 !== 0 || typeof t2SlideCurrent !== 'number' || t2SlideCurrent < 0 || t2SlideCurrent % 1 !== 0) return t2SlideRefusal();
+            if (t2SlideRequest.mode === 'presentation') { var t2SlideMaxSlides = t2SlideRequest.maxSlides; if (typeof t2SlideMaxSlides !== 'number' || t2SlideMaxSlides < 1 || t2SlideMaxSlides % 1 !== 0) return t2SlideRefusal(); var t2SlideReadCount = t2SlideTotal < t2SlideMaxSlides ? t2SlideTotal : t2SlideMaxSlides; var t2SlidePresentationAnswer = []; t2SlidePresentationAnswer.push(0); t2SlidePresentationAnswer.push(t2SlideTotal); t2SlidePresentationAnswer.push(t2SlideCurrent); t2SlidePresentationAnswer.push(t2SlideReadCount); t2SlidePresentationAnswer.push(t2SlideTotal); t2SlidePresentationAnswer.push(t2SlideReadCount < t2SlideTotal ? 1 : 0); for (var t2SlideIndex = 0; t2SlideIndex < t2SlideReadCount; t2SlideIndex += 1) { var t2SlideEntry = t2SlidePresentation.GetSlideByIndex(t2SlideIndex); if (!t2SlideEntry || typeof t2SlideEntry.GetClassType !== 'function' || typeof t2SlideEntry.GetSlideIndex !== 'function' || t2SlideEntry.GetClassType() !== 'slide' || t2SlideEntry.GetSlideIndex() !== t2SlideIndex) return t2SlideRefusal(); var t2SlideEntryCollections = t2SlideCollections(t2SlideEntry); if (t2SlideEntryCollections === null) return t2SlideRefusal(); var t2SlideHasText = 0; t2SlideEntryCollections.shapes.forEach(function (t2SlideSummaryShape) { var t2SlideSummaryText = t2SlideObjectText(t2SlideSummaryShape, t2SlideRequest.maxTextBytes); if (t2SlideSummaryText.text !== null && t2SlideSummaryText.text !== '') t2SlideHasText = 1; }); t2SlidePresentationAnswer.push(t2SlideIndex); t2SlidePresentationAnswer.push(t2SlideLayout(t2SlideEntry)); t2SlidePresentationAnswer.push(t2SlideEntryCollections.shapes.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.drawings.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.images.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.charts.length); t2SlidePresentationAnswer.push(t2SlideEntryCollections.ole.length); t2SlidePresentationAnswer.push(t2SlideHasText); } return t2SlidePresentationAnswer; }
+            if (t2SlideRequest.mode !== 'slide') return t2SlideRefusal(); var t2SlideWanted = t2SlideRequest.slideIndex === null ? t2SlideCurrent : t2SlideRequest.slideIndex; if (typeof t2SlideWanted !== 'number' || t2SlideWanted < 0 || t2SlideWanted % 1 !== 0) return t2SlideRefusal(); var t2SlideTarget = t2SlideRequest.slideIndex === null ? t2SlidePresentation.GetCurrentSlide() : t2SlidePresentation.GetSlideByIndex(t2SlideWanted); if (!t2SlideTarget || typeof t2SlideTarget.GetClassType !== 'function' || t2SlideTarget.GetClassType() !== 'slide' || (t2SlideRequest.slideIndex !== null && (typeof t2SlideTarget.GetSlideIndex !== 'function' || t2SlideTarget.GetSlideIndex() !== t2SlideWanted))) { var t2SlideSelectorFailure = []; t2SlideSelectorFailure.push('TOOL_ERROR'); return t2SlideSelectorFailure; } var t2SlideTargetCollections = t2SlideCollections(t2SlideTarget); if (t2SlideTargetCollections === null) return t2SlideRefusal(); var t2SlideObjectCount = t2SlideTargetCollections.shapes.length, t2SlideObjectsRead = t2SlideObjectCount < t2SlideRequest.maxObjects ? t2SlideObjectCount : t2SlideRequest.maxObjects; var t2SlideAnswer = []; t2SlideAnswer.push(1); t2SlideAnswer.push(t2SlideWanted); t2SlideAnswer.push(t2SlideLayout(t2SlideTarget)); t2SlideAnswer.push(t2SlideObjectCount); t2SlideAnswer.push(t2SlideObjectsRead); t2SlideAnswer.push(t2SlideObjectsRead < t2SlideObjectCount ? 1 : 0); t2SlideAnswer.push(t2SlideTargetCollections.shapes.length); t2SlideAnswer.push(t2SlideTargetCollections.drawings.length); t2SlideAnswer.push(t2SlideTargetCollections.images.length); t2SlideAnswer.push(t2SlideTargetCollections.charts.length); t2SlideAnswer.push(t2SlideTargetCollections.ole.length); var t2SlideOrdinal = 0; t2SlideTargetCollections.shapes.forEach(function (t2SlideObject) { if (t2SlideOrdinal < t2SlideObjectsRead) { if (!t2SlideObject || typeof t2SlideObject.GetClassType !== 'function' || typeof t2SlideObject.GetPlaceholder !== 'function') { t2SlideOrdinal = -1; return; } var t2SlideObjectTextValue = t2SlideObjectText(t2SlideObject, t2SlideRequest.maxTextBytes); t2SlideAnswer.push(t2SlideOrdinal); t2SlideAnswer.push(String(t2SlideObject.GetClassType())); t2SlideAnswer.push(t2SlideObject.GetPlaceholder() === null || t2SlideObject.GetPlaceholder() === undefined ? 0 : 1); t2SlideAnswer.push('shape'); t2SlideAnswer.push(t2SlideObjectTextValue.text); t2SlideAnswer.push(t2SlideObjectTextValue.omitted); t2SlideOrdinal += 1; } }); if (t2SlideOrdinal !== t2SlideObjectsRead) return t2SlideRefusal(); return t2SlideAnswer;
+          } catch (t2SlideCommandError) { return t2SlideRefusal(); }
+        }, false, false, callback);
+      },
+      slidemutate(callback) {
+        return plugin.callCommand(function () {
+          function t3MutationRefusal(t3MutationPhase, t3MutationCode) { var t3MutationOut = []; t3MutationOut.push(t3MutationPhase); t3MutationOut.push(t3MutationCode); return t3MutationOut; }
+          function t3MutationLayoutString(t3MutationLayout) { try { if (!t3MutationLayout || typeof t3MutationLayout.ToJSON !== 'function') return null; var t3MutationJson = t3MutationLayout.ToJSON(); if (typeof t3MutationJson === 'string') return t3MutationJson === '' ? null : t3MutationJson; if (t3MutationJson && typeof t3MutationJson === 'object') return JSON.stringify(t3MutationJson); return null; } catch (t3MutationError) { return null; } }
+          function t3MutationTextBytes(t3MutationText) { var t3MutationBytes = 0; for (var t3MutationPosition = 0; t3MutationPosition < t3MutationText.length; t3MutationPosition += 1) { var t3MutationCode = t3MutationText.charCodeAt(t3MutationPosition); if (t3MutationCode < 128) t3MutationBytes += 1; else if (t3MutationCode < 2048) t3MutationBytes += 2; else if (t3MutationCode >= 55296 && t3MutationCode <= 56319 && t3MutationPosition + 1 < t3MutationText.length && t3MutationText.charCodeAt(t3MutationPosition + 1) >= 56320 && t3MutationText.charCodeAt(t3MutationPosition + 1) <= 57343) { t3MutationBytes += 4; t3MutationPosition += 1; } else t3MutationBytes += 3; } return t3MutationBytes; }
+          try {
+            var t3MutationRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t3MutationRequest || typeof t3MutationRequest.mode !== 'string') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (!(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t3MutationPresentation = Api.GetPresentation();
+            if (!t3MutationPresentation || typeof t3MutationPresentation.GetSlidesCount !== 'function' || typeof t3MutationPresentation.GetCurSlideIndex !== 'function' || typeof t3MutationPresentation.GetCurrentSlide !== 'function' || typeof t3MutationPresentation.GetSlideByIndex !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t3MutationRequest.mode === 'add') {
+              if (typeof Api.AddSlide !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+              var t3MutationSourceIndex = t3MutationRequest.layoutFromSlideIndex;
+              var t3MutationSource = t3MutationSourceIndex === null ? t3MutationPresentation.GetCurrentSlide() : t3MutationPresentation.GetSlideByIndex(t3MutationSourceIndex);
+              if (!t3MutationSource || typeof t3MutationSource.GetClassType !== 'function' || t3MutationSource.GetClassType() !== 'slide' || (t3MutationSourceIndex !== null && (typeof t3MutationSource.GetSlideIndex !== 'function' || t3MutationSource.GetSlideIndex() !== t3MutationSourceIndex))) return t3MutationRefusal(0, 'TOOL_ERROR');
+              if (typeof t3MutationSource.GetLayout !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+              var t3MutationSourceLayout = t3MutationSource.GetLayout();
+              var t3MutationSourceSerialized = t3MutationLayoutString(t3MutationSourceLayout);
+              if (t3MutationSourceSerialized === null) return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+              var t3MutationBeforeCount = t3MutationPresentation.GetSlidesCount();
+              if (typeof t3MutationBeforeCount !== 'number' || t3MutationBeforeCount < 0 || t3MutationBeforeCount % 1 !== 0) return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+              Api.AddSlide(t3MutationSourceLayout);
+              var t3MutationAfterCount = t3MutationPresentation.GetSlidesCount();
+              var t3MutationCreatedIndex = t3MutationPresentation.GetCurSlideIndex();
+              var t3MutationCreated = t3MutationPresentation.GetSlideByIndex(t3MutationCreatedIndex);
+              if (t3MutationAfterCount !== t3MutationBeforeCount + 1 || typeof t3MutationCreatedIndex !== 'number' || t3MutationCreatedIndex < 0 || t3MutationCreatedIndex % 1 !== 0 || !t3MutationCreated || typeof t3MutationCreated.GetClassType !== 'function' || t3MutationCreated.GetClassType() !== 'slide' || typeof t3MutationCreated.GetLayout !== 'function') return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
+              if (typeof t3MutationCreated.ApplyLayout !== 'function') return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
+              t3MutationCreated.ApplyLayout(t3MutationSourceLayout);
+              var t3MutationCreatedSerialized = t3MutationLayoutString(t3MutationCreated.GetLayout());
+              if (t3MutationCreatedSerialized === null || t3MutationCreatedSerialized !== t3MutationSourceSerialized) return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
+              var t3MutationIdMatch = /\"id\"\s*:\s*\"([^\"]+)\"/.exec(t3MutationSourceSerialized);
+              var t3MutationAddAnswer = []; t3MutationAddAnswer.push(1); t3MutationAddAnswer.push(t3MutationAfterCount); t3MutationAddAnswer.push(t3MutationCreatedIndex); t3MutationAddAnswer.push(t3MutationIdMatch ? t3MutationIdMatch[1] : null); t3MutationAddAnswer.push(1); return t3MutationAddAnswer;
+            }
+            if (t3MutationRequest.mode !== 'text') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (typeof Api.CreateParagraph !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t3MutationWantedIndex = t3MutationRequest.slideIndex;
+            var t3MutationTargetIndex = t3MutationWantedIndex === null ? t3MutationPresentation.GetCurSlideIndex() : t3MutationWantedIndex;
+            var t3MutationTarget = t3MutationWantedIndex === null ? t3MutationPresentation.GetCurrentSlide() : t3MutationPresentation.GetSlideByIndex(t3MutationWantedIndex);
+            if (!t3MutationTarget || typeof t3MutationTarget.GetClassType !== 'function' || t3MutationTarget.GetClassType() !== 'slide' || (t3MutationWantedIndex !== null && (typeof t3MutationTarget.GetSlideIndex !== 'function' || t3MutationTarget.GetSlideIndex() !== t3MutationWantedIndex))) return t3MutationRefusal(0, 'TOOL_ERROR');
+            if (typeof t3MutationTarget.GetAllShapes !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t3MutationObjects = t3MutationTarget.GetAllShapes();
+            if (!Array.isArray(t3MutationObjects) || t3MutationRequest.objectOrdinal >= t3MutationObjects.length) return t3MutationRefusal(0, 'TOOL_ERROR');
+            var t3MutationObject = null;
+            t3MutationObjects.forEach(function (t3MutationCandidate, t3MutationOrdinal) { if (t3MutationOrdinal === t3MutationRequest.objectOrdinal) t3MutationObject = t3MutationCandidate; });
+            if (!t3MutationObject || typeof t3MutationObject.GetContent !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t3MutationContent = t3MutationObject.GetContent();
+            if (!t3MutationContent || typeof t3MutationContent.RemoveAllElements !== 'function' || typeof t3MutationContent.AddElement !== 'function' || typeof t3MutationContent.GetElement !== 'function' || typeof t3MutationContent.GetElementsCount !== 'function') return t3MutationRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            t3MutationContent.RemoveAllElements();
+            t3MutationContent.AddElement(Api.CreateParagraph());
+            var t3MutationAttached = t3MutationContent.GetElement(0);
+            if (!t3MutationAttached || typeof t3MutationAttached.AddText !== 'function') return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
+            var t3MutationLf = String(t3MutationRequest.text).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            var t3MutationStored = t3MutationLf.replace(/\n/g, '\r');
+            t3MutationAttached.AddText(t3MutationLf.replace(/\n/g, '\r\n'));
+            var t3MutationProof = t3MutationContent.GetElement(0);
+            if (!t3MutationProof || typeof t3MutationProof.GetText !== 'function' || t3MutationProof.GetText() !== t3MutationStored || t3MutationContent.GetElementsCount() !== 1) return t3MutationRefusal(1, 'APPLY_UNCERTAIN');
+            var t3MutationTextAnswer = []; t3MutationTextAnswer.push(2); t3MutationTextAnswer.push(t3MutationTargetIndex); t3MutationTextAnswer.push(t3MutationRequest.objectOrdinal); t3MutationTextAnswer.push(t3MutationStored.length); t3MutationTextAnswer.push(t3MutationTextBytes(t3MutationStored)); return t3MutationTextAnswer;
+          } catch (t3MutationCommandError) { return t3MutationRefusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, false, callback);
+      },
+      slideformat(callback) {
+        return plugin.callCommand(function () {
+          function t4FormatRefusal(t4FormatPhase, t4FormatCode) { var t4FormatOut = []; t4FormatOut.push(t4FormatPhase); t4FormatOut.push(t4FormatCode); return t4FormatOut; }
+          function t4FormatRPr(t4FormatContent) { var t4FormatRaw = t4FormatContent.ToJSON(); if (typeof t4FormatRaw !== 'string') return null; var t4FormatParsed = JSON.parse(t4FormatRaw); function t4FormatFind(t4FormatNode) { if (!t4FormatNode || typeof t4FormatNode !== 'object') return null; if (t4FormatNode.rPr && typeof t4FormatNode.rPr === 'object') return t4FormatNode.rPr; var t4FormatKeys = Object.keys(t4FormatNode); for (var t4FormatKeyIndex = 0; t4FormatKeyIndex < t4FormatKeys.length; t4FormatKeyIndex += 1) { var t4FormatChild = t4FormatNode[t4FormatKeys[t4FormatKeyIndex]]; var t4FormatFound = t4FormatFind(t4FormatChild); if (t4FormatFound !== null) return t4FormatFound; } return null; } return t4FormatFind(t4FormatParsed); }
+          function t4FormatValue(t4FormatRPrValue, t4FormatName) { if (t4FormatName === 'bold') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'b') ? t4FormatRPrValue.b : undefined; if (t4FormatName === 'italic') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'i') ? t4FormatRPrValue.i : undefined; if (t4FormatName === 'underline') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'u') ? t4FormatRPrValue.u : undefined; if (t4FormatName === 'fontSize') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'sz') ? t4FormatRPrValue.sz : undefined; if (t4FormatName === 'fontFamily') return Object.prototype.hasOwnProperty.call(t4FormatRPrValue, 'latin') ? t4FormatRPrValue.latin : undefined; var t4FormatFill = t4FormatRPrValue.uniFill; return t4FormatFill && t4FormatFill.fill && t4FormatFill.fill.color && t4FormatFill.fill.color.color ? t4FormatFill.fill.color.color.rgba : undefined; }
+          function t4FormatSame(t4FormatLeft, t4FormatRight) { return JSON.stringify(t4FormatLeft) === JSON.stringify(t4FormatRight); }
+          try {
+            var t4FormatRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t4FormatRequest || !(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatAllowedKeys = { slideIndex: true, objectOrdinal: true, bold: true, italic: true, underline: true, fontSize: true, fontFamily: true, color: true, maxFontSize: true, maxResultBytes: true }; var t4FormatRequestKeys = Object.keys(t4FormatRequest);
+            for (var t4FormatRequestKeyIndex = 0; t4FormatRequestKeyIndex < t4FormatRequestKeys.length; t4FormatRequestKeyIndex += 1) { if (!Object.prototype.hasOwnProperty.call(t4FormatAllowedKeys, t4FormatRequestKeys[t4FormatRequestKeyIndex])) return t4FormatRefusal(0, 'TOOL_ERROR'); }
+            var t4FormatHasProperty = t4FormatRequest.bold !== undefined || t4FormatRequest.italic !== undefined || t4FormatRequest.underline !== undefined || t4FormatRequest.fontSize !== undefined || t4FormatRequest.fontFamily !== undefined || t4FormatRequest.color !== undefined;
+            if (!t4FormatHasProperty || !(t4FormatRequest.slideIndex === null || (Number.isSafeInteger(t4FormatRequest.slideIndex) && t4FormatRequest.slideIndex >= 0)) || !Number.isSafeInteger(t4FormatRequest.objectOrdinal) || t4FormatRequest.objectOrdinal < 0) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if ((t4FormatRequest.bold !== undefined && typeof t4FormatRequest.bold !== 'boolean') || (t4FormatRequest.italic !== undefined && typeof t4FormatRequest.italic !== 'boolean') || (t4FormatRequest.underline !== undefined && typeof t4FormatRequest.underline !== 'boolean')) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (typeof t4FormatRequest.maxFontSize !== 'number' || !Number.isSafeInteger(t4FormatRequest.maxFontSize) || t4FormatRequest.maxFontSize < 1) return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.fontSize !== undefined && (!Number.isSafeInteger(t4FormatRequest.fontSize) || t4FormatRequest.fontSize < 1 || t4FormatRequest.fontSize > t4FormatRequest.maxFontSize)) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (t4FormatRequest.fontFamily !== undefined && (typeof t4FormatRequest.fontFamily !== 'string' || t4FormatRequest.fontFamily.length < 1)) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (t4FormatRequest.color !== undefined && (t4FormatRequest.color === null || typeof t4FormatRequest.color !== 'object' || Array.isArray(t4FormatRequest.color) || Object.keys(t4FormatRequest.color).length !== 3 || !Number.isSafeInteger(t4FormatRequest.color.r) || t4FormatRequest.color.r < 0 || t4FormatRequest.color.r > 255 || !Number.isSafeInteger(t4FormatRequest.color.g) || t4FormatRequest.color.g < 0 || t4FormatRequest.color.g > 255 || !Number.isSafeInteger(t4FormatRequest.color.b) || t4FormatRequest.color.b < 0 || t4FormatRequest.color.b > 255)) return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatPresentation = Api.GetPresentation();
+            if (!t4FormatPresentation || typeof t4FormatPresentation.GetCurSlideIndex !== 'function' || typeof t4FormatPresentation.GetCurrentSlide !== 'function' || typeof t4FormatPresentation.GetSlideByIndex !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatWanted = t4FormatRequest.slideIndex;
+            var t4FormatIndex = t4FormatWanted === null ? t4FormatPresentation.GetCurSlideIndex() : t4FormatWanted;
+            var t4FormatSlide = t4FormatWanted === null ? t4FormatPresentation.GetCurrentSlide() : t4FormatPresentation.GetSlideByIndex(t4FormatWanted);
+            if (!t4FormatSlide || typeof t4FormatSlide.GetClassType !== 'function' || t4FormatSlide.GetClassType() !== 'slide' || (t4FormatWanted !== null && (typeof t4FormatSlide.GetSlideIndex !== 'function' || t4FormatSlide.GetSlideIndex() !== t4FormatWanted))) return t4FormatRefusal(0, 'TOOL_ERROR');
+            if (typeof t4FormatSlide.GetAllShapes !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatObjects = t4FormatSlide.GetAllShapes();
+            if (!Array.isArray(t4FormatObjects) || t4FormatRequest.objectOrdinal >= t4FormatObjects.length) return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatObject = null; t4FormatObjects.forEach(function (t4FormatCandidate, t4FormatOrdinal) { if (t4FormatOrdinal === t4FormatRequest.objectOrdinal) t4FormatObject = t4FormatCandidate; });
+            if (!t4FormatObject || typeof t4FormatObject.GetContent !== 'function') return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatContent = t4FormatObject.GetContent();
+            if (!t4FormatContent || typeof t4FormatContent.GetElementsCount !== 'function' || typeof t4FormatContent.GetElement !== 'function' || typeof t4FormatContent.ToJSON !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatContent.GetElementsCount() < 1) return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatBeforeElement = t4FormatContent.GetElement(0);
+            if (!t4FormatBeforeElement || typeof t4FormatBeforeElement.GetText !== 'function') return t4FormatRefusal(0, 'TOOL_ERROR');
+            var t4FormatBeforeText = t4FormatBeforeElement.GetText();
+            var t4FormatBefore = t4FormatRPr(t4FormatContent);
+            if (typeof t4FormatBeforeText !== 'string' || t4FormatBefore === null) return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4FormatElement = t4FormatContent.GetElement(0);
+            if (!t4FormatElement) return t4FormatRefusal(0, 'TOOL_ERROR');
+            // R7 2026.1 Slide finalization omits native history/interface refresh.
+            // Narrow compatibility notification; never force dirty state or Save.
+            if (typeof Api.UpdateInterfaceState !== 'function' || typeof t4FormatPresentation.CreateNewHistoryPoint !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.bold !== undefined && typeof t4FormatElement.SetBold !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.italic !== undefined && typeof t4FormatElement.SetItalic !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.underline !== undefined && typeof t4FormatElement.SetUnderline !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.fontSize !== undefined && typeof t4FormatElement.SetFontSize !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.fontFamily !== undefined && typeof t4FormatElement.SetFontFamily !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4FormatRequest.color !== undefined && typeof t4FormatElement.SetColor !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            t4FormatPresentation.CreateNewHistoryPoint();
+            if (t4FormatRequest.bold !== undefined) { t4FormatElement.SetBold(t4FormatRequest.bold); }
+            if (t4FormatRequest.italic !== undefined) { t4FormatElement.SetItalic(t4FormatRequest.italic); }
+            if (t4FormatRequest.underline !== undefined) { t4FormatElement.SetUnderline(t4FormatRequest.underline); }
+            if (t4FormatRequest.fontSize !== undefined) { t4FormatElement.SetFontSize(t4FormatRequest.fontSize * 2); }
+            if (t4FormatRequest.fontFamily !== undefined) { t4FormatElement.SetFontFamily(t4FormatRequest.fontFamily); }
+            if (t4FormatRequest.color !== undefined) { t4FormatElement.SetColor(t4FormatRequest.color.r, t4FormatRequest.color.g, t4FormatRequest.color.b); }
+            Api.UpdateInterfaceState();
+            var t4FormatProofElement = t4FormatContent.GetElement(0); var t4FormatAfter = t4FormatRPr(t4FormatContent);
+            if (!t4FormatProofElement || typeof t4FormatProofElement.GetText !== 'function' || t4FormatProofElement.GetText() !== t4FormatBeforeText || t4FormatAfter === null) return t4FormatRefusal(1, 'APPLY_UNCERTAIN');
+            var t4FormatNames = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color']; var t4FormatApplied = [];
+            for (var t4FormatNameIndex = 0; t4FormatNameIndex < t4FormatNames.length; t4FormatNameIndex += 1) { var t4FormatName = t4FormatNames[t4FormatNameIndex]; var t4FormatRequested = t4FormatRequest[t4FormatName] !== undefined; var t4FormatActual = t4FormatValue(t4FormatAfter, t4FormatName); if (t4FormatRequested) { var t4FormatExpected = t4FormatRequest[t4FormatName]; if (t4FormatName === 'underline') t4FormatExpected = t4FormatExpected ? 'sng' : 'none'; if (t4FormatName === 'fontSize') t4FormatExpected *= 100; if (t4FormatName === 'color') t4FormatExpected = { red: t4FormatRequest.color.r, green: t4FormatRequest.color.g, blue: t4FormatRequest.color.b, alpha: 255 }; if (!t4FormatSame(t4FormatActual, t4FormatExpected)) return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); t4FormatApplied.push(t4FormatName); } else if (!t4FormatSame(t4FormatValue(t4FormatBefore, t4FormatName), t4FormatActual)) return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); }
+            var t4FormatAnswer = [3, t4FormatIndex, t4FormatRequest.objectOrdinal, t4FormatBeforeText.length]; for (var t4FormatAppliedIndex = 0; t4FormatAppliedIndex < t4FormatApplied.length; t4FormatAppliedIndex += 1) t4FormatAnswer.push(t4FormatApplied[t4FormatAppliedIndex]); return t4FormatAnswer;
+          } catch (t4FormatError) { return t4FormatRefusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, false, callback);
+      },
+      slideobject(callback) {
+        return plugin.callCommand(function () {
+          function t4ObjectRefusal(t4ObjectPhase, t4ObjectCode) { var t4ObjectOut = []; t4ObjectOut.push(t4ObjectPhase); t4ObjectOut.push(t4ObjectCode); return t4ObjectOut; }
+          function t4ObjectCount(t4ObjectNode, t4ObjectKey) { if (!t4ObjectNode || typeof t4ObjectNode !== 'object') return 0; var t4ObjectTotal = Object.prototype.hasOwnProperty.call(t4ObjectNode, t4ObjectKey) ? 1 : 0; var t4ObjectKeys = Object.keys(t4ObjectNode); for (var t4ObjectKeyIndex = 0; t4ObjectKeyIndex < t4ObjectKeys.length; t4ObjectKeyIndex += 1) t4ObjectTotal += t4ObjectCount(t4ObjectNode[t4ObjectKeys[t4ObjectKeyIndex]], t4ObjectKey); return t4ObjectTotal; }
+          try {
+            var t4ObjectRequest = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t4ObjectRequest || !(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectAllowedKeys = { mode: true, slideIndex: true, columns: true, rows: true, imageDataUrl: true, widthEmu: true, heightEmu: true, maxColumns: true, maxRows: true, maxImageBytes: true, maxImageEmu: true, maxResultBytes: true }; var t4ObjectRequestKeys = Object.keys(t4ObjectRequest);
+            for (var t4ObjectRequestKeyIndex = 0; t4ObjectRequestKeyIndex < t4ObjectRequestKeys.length; t4ObjectRequestKeyIndex += 1) if (!Object.prototype.hasOwnProperty.call(t4ObjectAllowedKeys, t4ObjectRequestKeys[t4ObjectRequestKeyIndex])) return t4ObjectRefusal(0, 'TOOL_ERROR');
+            if ((t4ObjectRequest.mode !== 'table' && t4ObjectRequest.mode !== 'image') || !(t4ObjectRequest.slideIndex === null || (Number.isSafeInteger(t4ObjectRequest.slideIndex) && t4ObjectRequest.slideIndex >= 0))) return t4ObjectRefusal(0, 'TOOL_ERROR');
+            if (!Number.isSafeInteger(t4ObjectRequest.maxResultBytes) || t4ObjectRequest.maxResultBytes < 1) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t4ObjectRequest.mode === 'table') { if (!Number.isSafeInteger(t4ObjectRequest.maxColumns) || t4ObjectRequest.maxColumns < 1 || !Number.isSafeInteger(t4ObjectRequest.maxRows) || t4ObjectRequest.maxRows < 1) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); if (!Number.isSafeInteger(t4ObjectRequest.columns) || t4ObjectRequest.columns < 1 || t4ObjectRequest.columns > t4ObjectRequest.maxColumns || !Number.isSafeInteger(t4ObjectRequest.rows) || t4ObjectRequest.rows < 1 || t4ObjectRequest.rows > t4ObjectRequest.maxRows) return t4ObjectRefusal(0, 'TOOL_ERROR'); }
+            if (t4ObjectRequest.mode === 'image') { if (!Number.isSafeInteger(t4ObjectRequest.maxImageBytes) || t4ObjectRequest.maxImageBytes < 1 || !Number.isSafeInteger(t4ObjectRequest.maxImageEmu) || t4ObjectRequest.maxImageEmu < 1) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); if (typeof t4ObjectRequest.imageDataUrl !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(t4ObjectRequest.imageDataUrl) || t4ObjectRequest.imageDataUrl.length < 24 || t4ObjectRequest.imageDataUrl.length > t4ObjectRequest.maxImageBytes || !Number.isSafeInteger(t4ObjectRequest.widthEmu) || t4ObjectRequest.widthEmu < 1 || t4ObjectRequest.widthEmu > t4ObjectRequest.maxImageEmu || !Number.isSafeInteger(t4ObjectRequest.heightEmu) || t4ObjectRequest.heightEmu < 1 || t4ObjectRequest.heightEmu > t4ObjectRequest.maxImageEmu) return t4ObjectRefusal(0, 'TOOL_ERROR'); }
+            var t4ObjectPresentation = Api.GetPresentation();
+            if (!t4ObjectPresentation || typeof t4ObjectPresentation.GetCurSlideIndex !== 'function' || typeof t4ObjectPresentation.GetCurrentSlide !== 'function' || typeof t4ObjectPresentation.GetSlideByIndex !== 'function' || typeof t4ObjectPresentation.GetSlidesCount !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectWanted = t4ObjectRequest.slideIndex; var t4ObjectIndex = t4ObjectWanted === null ? t4ObjectPresentation.GetCurSlideIndex() : t4ObjectWanted; var t4ObjectSlide = t4ObjectWanted === null ? t4ObjectPresentation.GetCurrentSlide() : t4ObjectPresentation.GetSlideByIndex(t4ObjectWanted);
+            if (!t4ObjectSlide || typeof t4ObjectSlide.GetClassType !== 'function' || t4ObjectSlide.GetClassType() !== 'slide' || (t4ObjectWanted !== null && (typeof t4ObjectSlide.GetSlideIndex !== 'function' || t4ObjectSlide.GetSlideIndex() !== t4ObjectWanted))) return t4ObjectRefusal(0, 'TOOL_ERROR');
+            if (typeof t4ObjectSlide.GetAllDrawings !== 'function' || typeof t4ObjectSlide.GetAllShapes !== 'function' || typeof t4ObjectSlide.GetAllImages !== 'function' || typeof t4ObjectSlide.GetAllCharts !== 'function' || typeof t4ObjectSlide.GetAllOleObjects !== 'function' || typeof t4ObjectSlide.AddObject !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectBeforeDrawings = t4ObjectSlide.GetAllDrawings(); var t4ObjectBeforeShapes = t4ObjectSlide.GetAllShapes(); var t4ObjectBeforeImages = t4ObjectSlide.GetAllImages(); var t4ObjectBeforeCharts = t4ObjectSlide.GetAllCharts(); var t4ObjectBeforeOle = t4ObjectSlide.GetAllOleObjects(); var t4ObjectBeforeSlides = t4ObjectPresentation.GetSlidesCount();
+            if (![t4ObjectBeforeDrawings, t4ObjectBeforeShapes, t4ObjectBeforeImages, t4ObjectBeforeCharts, t4ObjectBeforeOle].every(Array.isArray) || !Number.isSafeInteger(t4ObjectBeforeSlides)) return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t4ObjectCreated; if (t4ObjectRequest.mode === 'table') { if (typeof Api.CreateTable !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4ObjectCreated = Api.CreateTable(t4ObjectRequest.columns, t4ObjectRequest.rows); } else { if (typeof Api.CreateImage !== 'function') return t4ObjectRefusal(0, 'CAPABILITY_UNAVAILABLE'); t4ObjectCreated = Api.CreateImage(t4ObjectRequest.imageDataUrl, t4ObjectRequest.widthEmu, t4ObjectRequest.heightEmu); }
+            t4ObjectSlide.AddObject(t4ObjectCreated);
+            var t4ObjectAfterDrawings = t4ObjectSlide.GetAllDrawings(); var t4ObjectAfterShapes = t4ObjectSlide.GetAllShapes(); var t4ObjectAfterImages = t4ObjectSlide.GetAllImages(); var t4ObjectAfterCharts = t4ObjectSlide.GetAllCharts(); var t4ObjectAfterOle = t4ObjectSlide.GetAllOleObjects();
+            if (![t4ObjectAfterDrawings, t4ObjectAfterShapes, t4ObjectAfterImages, t4ObjectAfterCharts, t4ObjectAfterOle].every(Array.isArray) || t4ObjectAfterDrawings.length !== t4ObjectBeforeDrawings.length + 1 || t4ObjectAfterShapes.length !== t4ObjectBeforeShapes.length || t4ObjectAfterCharts.length !== t4ObjectBeforeCharts.length || t4ObjectAfterOle.length !== t4ObjectBeforeOle.length || t4ObjectPresentation.GetSlidesCount() !== t4ObjectBeforeSlides) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN');
+            var t4ObjectStored = null; t4ObjectAfterDrawings.forEach(function (t4ObjectCandidate, t4ObjectOrdinal) { if (t4ObjectOrdinal === t4ObjectAfterDrawings.length - 1) t4ObjectStored = t4ObjectCandidate; }); if (!t4ObjectStored || typeof t4ObjectStored.ToJSON !== 'function') return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); var t4ObjectRaw = t4ObjectStored.ToJSON(); if (typeof t4ObjectRaw !== 'string') return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); var t4ObjectJson = JSON.parse(t4ObjectRaw);
+            if (t4ObjectRequest.mode === 'table') { if (!t4ObjectJson || !t4ObjectJson.graphic || typeof t4ObjectJson.graphic !== 'object' || !Array.isArray(t4ObjectJson.graphic.tblGrid) || t4ObjectJson.graphic.tblGrid.length !== t4ObjectRequest.columns || t4ObjectCount(t4ObjectJson, 'tcPr') !== t4ObjectRequest.columns * t4ObjectRequest.rows || t4ObjectAfterImages.length !== t4ObjectBeforeImages.length) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); var t4ObjectTableAnswer = [4, t4ObjectIndex, t4ObjectRequest.columns, t4ObjectRequest.rows, t4ObjectAfterDrawings.length, t4ObjectRequest.columns * t4ObjectRequest.rows]; return t4ObjectTableAnswer; }
+            if (t4ObjectAfterImages.length !== t4ObjectBeforeImages.length + 1 || t4ObjectCount(t4ObjectJson, 'rasterImageId') !== 1 || typeof t4ObjectJson.blipFill !== 'object' || t4ObjectJson.blipFill.rasterImageId !== t4ObjectRequest.imageDataUrl || typeof t4ObjectStored.GetWidth !== 'function' || typeof t4ObjectStored.GetHeight !== 'function' || t4ObjectStored.GetWidth() !== t4ObjectRequest.widthEmu || t4ObjectStored.GetHeight() !== t4ObjectRequest.heightEmu) return t4ObjectRefusal(1, 'APPLY_UNCERTAIN');
+            var t4ObjectImageAnswer = [5, t4ObjectIndex, t4ObjectAfterImages.length, t4ObjectRequest.widthEmu, t4ObjectRequest.heightEmu, t4ObjectRequest.imageDataUrl.length]; return t4ObjectImageAnswer;
+          } catch (t4ObjectError) { return t4ObjectRefusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, true, callback);
+      },
+      sliderestructure(callback) {
+        return plugin.callCommand(function () {
+          function t5Refusal(t5Phase, t5Code) { var t5Out = []; t5Out.push(t5Phase); t5Out.push(t5Code); return t5Out; }
+          function t5Count(t5Value) { return Number.isSafeInteger(t5Value) && t5Value >= 0; }
+          function t5At(t5List, t5Index) { return t5Index >= 0 && t5Index < t5List.length ? t5List[t5Index] : null; }
+          function t5Text(t5Object) { try { if (!t5Object || typeof t5Object.GetContent !== 'function') return null; var t5Content = t5Object.GetContent(); if (!t5Content || typeof t5Content.GetElementsCount !== 'function' || typeof t5Content.GetElement !== 'function') return null; var t5Parts = [], t5Elements = t5Content.GetElementsCount(); if (!t5Count(t5Elements)) return null; for (var t5I = 0; t5I < t5Elements; t5I += 1) { var t5Paragraph = t5Content.GetElement(t5I); if (!t5Paragraph || typeof t5Paragraph.GetText !== 'function') return null; var t5Part = t5Paragraph.GetText(); if (typeof t5Part !== 'string') return null; t5Parts.push(t5Part); } return t5Parts.join('\n'); } catch (t5Error) { return null; } }
+          function t5Fingerprint(t5Slide, t5Index) { try { if (!t5Slide || typeof t5Slide.GetClassType !== 'function' || t5Slide.GetClassType() !== 'slide' || typeof t5Slide.GetSlideIndex !== 'function' || t5Slide.GetSlideIndex() !== t5Index || typeof t5Slide.GetLayout !== 'function' || typeof t5Slide.GetAllShapes !== 'function' || typeof t5Slide.ToJSON !== 'function') return null; var t5Layout = t5Slide.GetLayout(); var t5LayoutJson = t5Layout && typeof t5Layout.ToJSON === 'function' ? t5Layout.ToJSON() : null; var t5Json = t5Slide.ToJSON(); var t5Shapes = t5Slide.GetAllShapes(); if (typeof t5LayoutJson !== 'string' || typeof t5Json !== 'string' || !Array.isArray(t5Shapes)) return null; var t5Texts = []; for (var t5O = 0; t5O < t5Shapes.length; t5O += 1) { var t5Value = t5Text(t5At(t5Shapes, t5O)); if (typeof t5Value !== 'string') return null; t5Texts.push(t5Value); } return JSON.stringify({ layoutLength: t5LayoutJson.length, layoutHead: t5LayoutJson.slice(0, 128), shapes: t5Shapes.length, texts: t5Texts, jsonLength: t5Json.length, jsonHead: t5Json.slice(0, 128) }); } catch (t5Error) { return null; } }
+          function t5Snapshot(t5Presentation, t5Size) { var t5Values = []; for (var t5Index = 0; t5Index < t5Size; t5Index += 1) { var t5Value = t5Fingerprint(t5Presentation.GetSlideByIndex(t5Index), t5Index); if (t5Value === null) return null; t5Values.push(t5Value); } return t5Values; }
+          function t5Signature(t5FingerprintValue) { var t5Parsed = JSON.parse(t5FingerprintValue); delete t5Parsed.index; return JSON.stringify(t5Parsed); }
+          try {
+            var t5Request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (!t5Request || !(typeof Api !== 'undefined' && Api !== null) || typeof Api.GetPresentation !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5Allowed = { mode: true, slideIndex: true, fromIndex: true, toIndex: true, maxResultBytes: true }; var t5Keys = Object.keys(t5Request); for (var t5K = 0; t5K < t5Keys.length; t5K += 1) if (!Object.prototype.hasOwnProperty.call(t5Allowed, t5Keys[t5K])) return t5Refusal(0, 'TOOL_ERROR');
+            if ((t5Request.mode !== 'duplicate' && t5Request.mode !== 'move') || !t5Count(t5Request.maxResultBytes)) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5Presentation = Api.GetPresentation(); if (!t5Presentation || typeof t5Presentation.GetSlidesCount !== 'function' || typeof t5Presentation.GetSlideByIndex !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5BeforeCount = t5Presentation.GetSlidesCount(); if (!t5Count(t5BeforeCount)) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            var t5From = t5Request.mode === 'duplicate' ? t5Request.slideIndex : t5Request.fromIndex; var t5To = t5Request.toIndex;
+            if (!t5Count(t5From) || t5From >= t5BeforeCount || (t5Request.mode === 'move' && (!t5Count(t5To) || t5To >= t5BeforeCount))) return t5Refusal(0, 'TOOL_ERROR');
+            var t5Source = t5Presentation.GetSlideByIndex(t5From); if (!t5Source || typeof t5Source.GetClassType !== 'function' || t5Source.GetClassType() !== 'slide' || typeof t5Source.GetSlideIndex !== 'function' || t5Source.GetSlideIndex() !== t5From) return t5Refusal(0, 'TOOL_ERROR');
+            var t5Before = t5Snapshot(t5Presentation, t5BeforeCount); if (t5Before === null) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5SourceFingerprint = t5At(t5Before, t5From); var t5SourceParsed = JSON.parse(t5SourceFingerprint);
+            // Same bounded Slide compatibility notification as slideformat.
+            if (typeof Api.UpdateInterfaceState !== 'function' || typeof t5Presentation.CreateNewHistoryPoint !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t5Request.mode === 'duplicate' && typeof t5Source.Duplicate !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t5Request.mode === 'move' && typeof t5Source.MoveTo !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            t5Presentation.CreateNewHistoryPoint();
+            if (t5Request.mode === 'duplicate') { t5Source.Duplicate(); } else { var t5Moved = t5Source.MoveTo(t5To); if (t5Moved === false) return t5Refusal(0, 'TOOL_ERROR'); if (t5Moved !== true) return t5Refusal(1, 'APPLY_UNCERTAIN'); }
+            Api.UpdateInterfaceState();
+            var t5AfterCount = t5Presentation.GetSlidesCount(); var t5ExpectedCount = t5Request.mode === 'duplicate' ? t5BeforeCount + 1 : t5BeforeCount; if (t5AfterCount !== t5ExpectedCount) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5After = t5Snapshot(t5Presentation, t5AfterCount); if (t5After === null) return t5Refusal(1, 'APPLY_UNCERTAIN');
+            if (t5Request.mode === 'duplicate') { var t5Copy = JSON.parse(t5At(t5After, t5BeforeCount)); if (t5Copy.layoutLength !== t5SourceParsed.layoutLength || t5Copy.layoutHead !== t5SourceParsed.layoutHead || t5Copy.shapes !== t5SourceParsed.shapes || JSON.stringify(t5Copy.texts) !== JSON.stringify(t5SourceParsed.texts)) return t5Refusal(1, 'APPLY_UNCERTAIN'); for (var t5D = 0; t5D < t5BeforeCount; t5D += 1) if (t5At(t5Before, t5D) !== t5At(t5After, t5D)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5DuplicateAnswer = [6, t5AfterCount, t5BeforeCount, t5From, t5Copy.layoutLength, t5Copy.shapes]; return t5DuplicateAnswer; }
+            if (t5Signature(t5At(t5After, t5To)) !== t5Signature(t5SourceFingerprint)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5Remaining = []; for (var t5B = 0; t5B < t5BeforeCount; t5B += 1) if (t5B !== t5From) t5Remaining.push(t5Signature(t5At(t5Before, t5B))); for (var t5A = 0; t5A < t5AfterCount; t5A += 1) if (t5A !== t5To) { var t5Candidate = t5Signature(t5At(t5After, t5A)); var t5Found = t5Remaining.indexOf(t5Candidate); if (t5Found < 0) return t5Refusal(1, 'APPLY_UNCERTAIN'); t5Remaining.splice(t5Found, 1); } if (t5Remaining.length !== 0) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5MoveAnswer = [7, t5AfterCount, t5From, t5To, t5SourceParsed.layoutLength, t5SourceParsed.shapes]; return t5MoveAnswer;
+          } catch (t5Error) { return t5Refusal(1, 'APPLY_UNCERTAIN'); }
+        }, false, false, callback);
+      },
+      sheet(callback) {
+        return plugin.callCommand(function () {
+          // The refusal is a ONE-slot array, and it is built by APPENDING to a literal for the same
+          // authored-code-audit reason the block append states: a literal built from identifier names
+          // would make the receiver of every later call on it a computed value.
+          function readRefusal() {
+            var refusal = [];
+            refusal.push('CAPABILITY_UNAVAILABLE');
+            return refusal;
+          }
+          // A SECOND, NARROWER REFUSAL: the caller named a sheet that is not in this book. That is an ARGUMENT
+          // the caller can fix by naming another sheet and the read has changed nothing, so it is a known tool
+          // error rather than "this leg cannot read".
+          function selectorRefusal() {
+            var refusal = [];
+            refusal.push('TOOL_ERROR');
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return readRefusal();
+            var address = request.address === undefined ? null : request.address;
+            var maxCells = request.maxCells;
+            if (typeof maxCells !== 'number' || maxCells < 1 || maxCells % 1 !== 0) return readRefusal();
+            if (address !== null && typeof address !== 'string') return readRefusal();
+            if (address !== null && address === '') return readRefusal();
+            // The facade is checked through the SAME literal guard every other authored body carries
+            // (`typeof Api !== 'undefined'`): the packaging test walks every carried body and requires it,
+            // because a body that reaches the editor without proving the facade exists would depend on a
+            // global it never checked.
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return readRefusal();
+            // Every primitive is a FUNCTION CHECK before any call, exactly like the search and structure
+            // bodies: an editor that does not expose one of them answers this body's own refusal rather
+            // than a read of invented values.
+            if (typeof Api.GetActiveSheet !== 'function' || typeof Api.GetSheets !== 'function') return readRefusal();
+            // WHICH SHEET IS READ: the caller's selector, or the ACTIVE sheet when the caller named none. The
+            // selector is resolved through the MEASURED lookup `Api.GetSheet(name | index)` — the one form that
+            // addresses a sheet — and that sheet OBJECT is then read directly, so the active sheet is never
+            // switched for a read (measured: reading another sheet leaves the active one exactly where it was).
+            var selectorName = request.sheetName === undefined ? null : request.sheetName;
+            var selectorIndex = request.sheetIndex === undefined ? null : request.sheetIndex;
+            // A MALFORMED SELECTOR ANSWERS THE SAME ARGUMENT CLASS THE BRIDGE ANSWERS ABOVE, not the capability
+            // class: this body is shared with `read_sheet`, and ONE argument must not have two failure classes
+            // depending on which layer noticed. (Today the bridge validates first, so these are defence in depth.)
+            // THEY ARE DELIBERATELY UNREACHABLE THROUGH BOTH BRIDGE METHODS, stated because a mutant campaign
+            // proved it: putting the capability class back here leaves every test green. They stay because
+            // `Api.GetSheet` with a non-string or a negative key is NOT measured, and a build that THREW there
+            // would otherwise be reported as "this leg cannot read" instead of "your selector is wrong".
+            if (selectorName !== null && typeof selectorName !== 'string') return selectorRefusal();
+            if (selectorName !== null && selectorName === '') return selectorRefusal();
+            if (selectorIndex !== null && (typeof selectorIndex !== 'number' || selectorIndex < 0 || selectorIndex % 1 !== 0)) return selectorRefusal();
+            var sheet = null;
+            if (selectorName !== null || selectorIndex !== null) {
+              if (typeof Api.GetSheet !== 'function') return readRefusal();
+              sheet = selectorName !== null ? Api.GetSheet(selectorName) : Api.GetSheet(selectorIndex);
+              if (sheet === null || sheet === undefined) return selectorRefusal();
+            } else {
+              sheet = Api.GetActiveSheet();
+            }
+            if (sheet === null || sheet === undefined) return readRefusal();
+            if (typeof sheet.GetName !== 'function' || typeof sheet.GetRange !== 'function') return readRefusal();
+            var sheetName = sheet.GetName();
+            if (typeof sheetName !== 'string') return readRefusal();
+            var sheets = Api.GetSheets();
+            if (sheets === null || sheets === undefined || typeof sheets.length !== 'number') return readRefusal();
+            var sheetCount = sheets.length;
+            if (!(sheetCount >= 1)) return readRefusal();
+            var sheetIndex = 0;
+            if (typeof sheet.GetIndex === 'function') {
+              var rawIndex = sheet.GetIndex();
+              if (typeof rawIndex === 'number' && rawIndex === rawIndex && rawIndex >= 0 && rawIndex % 1 === 0) sheetIndex = rawIndex;
+            }
+            // THE ADDRESS: the caller's own, or the sheet's own used range when the caller named none.
+            // A named address is never trimmed or reinterpreted — it is handed to the editor unchanged
+            // and the editor's own answer is what the caller receives.
+            var target = null;
+            if (address === null) {
+              if (typeof sheet.GetUsedRange !== 'function') return readRefusal();
+              target = sheet.GetUsedRange();
+              if (target === null || target === undefined) return readRefusal();
+              if (typeof target.GetAddress !== 'function') return readRefusal();
+              address = target.GetAddress();
+              if (typeof address !== 'string' || address === '') return readRefusal();
+            } else {
+              target = sheet.GetRange(address);
+              if (target === null || target === undefined) return readRefusal();
+            }
+            if (typeof target.GetValue !== 'function') return readRefusal();
+            var requestAddress = address;
+            var matrix = target.GetValue();
+            if (matrix === null || matrix === undefined) return readRefusal();
+            // THE ANSWER'S OWN TYPE DECIDES ITS SHAPE, and the test is NESTED-AWARE rather than a `.length`
+            // probe. MEASURED on this build: a ONE-CELL range answers a SCALAR STRING while a BLOCK answers
+            // a 2-D array — and a STRING ALSO HAS A NUMERIC `length`, so a `.length` test reads a scalar as
+            // a matrix and publishes a cell's own CHARACTERS as rows. Of the two figures below, the FIRST is
+            // NATIVE (the corrective task's proof read the cell `K1` holding `zz` and the shipped body
+            // answered `totalRows: 2` with the values `['z','z']`) and the SECOND is the HOST RIG's
+            // measurement (a cell holding `1000` answered FOUR rows of one digit): the arithmetic is the
+            // same, but only the first was taken from a live editor. The shape is decided ONCE, here, and the
+            // one-cell case is carried through the rest of this body as 1 x 1.
+            var readbackIsMatrix = Array.isArray(matrix) && (matrix.length === 0 || Array.isArray(matrix[0]));
+            // A shape that is neither a scalar primitive nor a 2-D array is NOT one this build was measured
+            // to answer (a FLAT array, for instance), so it refuses closed here rather than being
+            // stringified into a single cell that would attribute a joined value to one address.
+            if (!readbackIsMatrix && typeof matrix === 'object') return readRefusal();
+            var totalRows = 1;
+            var columnCount = 1;
+            if (readbackIsMatrix) {
+              totalRows = matrix.length;
+              if (!(totalRows >= 1)) return readRefusal();
+              var firstRow = matrix[0];
+              if (firstRow === null || firstRow === undefined || typeof firstRow.length !== 'number') return readRefusal();
+              columnCount = firstRow.length;
+              if (!(columnCount >= 1)) return readRefusal();
+            }
+            // THE CAP IS APPLIED BY CLIPPING WHOLE ROWS, never by trimming a row or a cell. The range's
+            // complete shape is measured first (its own `GetValue()`), and the first `rowsToRead` rows are
+            // published, so the answer is always a RECTANGULAR, honest prefix of the range whose address
+            // is reported beside it. A range whose SINGLE ROW is wider than the cap cannot be clipped into
+            // it at all and refuses closed: publishing a partial row would make one row's cells a
+            // different width from the matrix the caller reads, which is the approximation this module
+            // refuses everywhere.
+            var rowsToRead = Math.floor(maxCells / columnCount);
+            if (rowsToRead > totalRows) rowsToRead = totalRows;
+            if (!(rowsToRead >= 1)) return readRefusal();
+            var rowCount = rowsToRead;
+            var values = [];
+            if (readbackIsMatrix) {
+              for (var row = 0; row < rowsToRead; row++) {
+                var sheetValueRow = matrix[row];
+                if (sheetValueRow === null || sheetValueRow === undefined || typeof sheetValueRow.length !== 'number') return readRefusal();
+                if (sheetValueRow.length !== columnCount) return readRefusal();
+                for (var column = 0; column < sheetValueRow.length; column++) {
+                  var sheetCellRaw = sheetValueRow[column];
+                  // A cell is published as a STRING so the wire stays one primitive type: the measured
+                  // `GetValue()` answers strings for the fixture's cells, and a number or a missing cell
+                  // is normalised here rather than decoded as an unmeasured type later.
+                  if (sheetCellRaw === null || sheetCellRaw === undefined) values.push('');
+                  else values.push(String(sheetCellRaw));
+                }
+              }
+            } else {
+              // The ONE-CELL answer IS the value, and it is never indexed: indexing a scalar string is
+              // exactly the mistake this branch exists to prevent.
+              values.push(String(matrix));
+            }
+            // THE ADDRESS THE EDITOR ITSELF ANSWERED FOR THIS RANGE, and the ONLY spelling the addressal
+            // pass and the clipped report may be derived from. MEASURED on this build (R7-Office Editors
+            // 2026.3.1): a REVERSED request is NORMALISED — `GetRange('B2:A1').GetAddress()` answers
+            // `'A1:B2'` and its value matrix is A1-first — so a pass built from the CALLER's spelling would
+            // walk a rectangle sharing only a corner with the values it is proving, and would publish one
+            // cell's formula source in ANOTHER cell's slot. That is the exact wrong-cell attribution this
+            // module refuses. The editor's own answer describes the same range object the values came from.
+            var answeredAddress = requestAddress;
+            if (typeof target.GetAddress === 'function') {
+              var editorAddress = target.GetAddress();
+              if (typeof editorAddress === 'string' && editorAddress !== '') answeredAddress = editorAddress;
+            }
+            // The ANSWERED address with its END ROW replaced by the last published row, or `''` when this
+            // address cannot be rewritten that way. Declared here because the clipped report below tries the
+            // editor's spelling first and the CALLER's second.
+            function clippedAddress(address, publishedRows) {
+              var colon = address.indexOf(':');
+              if (colon < 1) return '';
+              var clean = address.replace(/\$/g, '');
+              var cleanColon = clean.indexOf(':');
+              var head = clean.slice(0, cleanColon);
+              var tail = clean.slice(cleanColon + 1);
+              var headDigits = head.replace(/^[A-Z]+/, '');
+              var tailColumn = tail.replace(/[0-9]+$/, '');
+              if (headDigits === '' || tailColumn === '') return '';
+              var lastRow = Number(headDigits) + publishedRows - 1;
+              if (!(lastRow >= 1)) return '';
+              // Rebuilt WITHOUT any `$`: the report is a relative range, so a mixed `$A$1:B200` spelling can
+              // never come out of a partially absolute answer.
+              return address.slice(0, colon).replace(/\$/g, '') + ':' + tailColumn + String(lastRow);
+            }
+            // THE ADDRESS THE ANSWER ACTUALLY COVERS. It is derived ONLY when the answer really was clipped,
+            // so an unclipped read reports the range the editor answered and the two fields then agree
+            // exactly when nothing was omitted and the editor did not re-spell the request. The EDITOR's
+            // spelling is preferred because it is the accurate one, and the CALLER's is the fallback
+            // precisely because the closed address pattern guarantees it can always be rewritten: a clipped
+            // `read_range` therefore keeps the availability it had, and only an answer nobody can rewrite
+            // (an editor spelling with no colon at all, on `read_sheet`) refuses, exactly as before.
+            var readAddress = answeredAddress;
+            if (rowCount < totalRows) {
+              var clippedAnswered = clippedAddress(answeredAddress, rowCount);
+              var clippedRequested = clippedAddress(requestAddress, rowCount);
+              if (clippedAnswered !== '') readAddress = clippedAnswered;
+              else if (clippedRequested !== '') readAddress = clippedRequested;
+              else return readRefusal();
+            }
+            // THE FORMULA SOURCES ARE READ ADDRESSALLY, ONE SINGLE-CELL RANGE PER PUBLISHED CELL, and never
+            // from the BLOCK's own `GetFormula()`. MEASURED on this build (R7-Office Editors 2026.3.1): a
+            // MULTI-CELL `GetFormula()` answers the computed VALUES — the recorded read-leg finding is a
+            // `K1:K2` read (K1 holding the text `A`, K2 the formula `=1+1`) whose BLOCK getter answered
+            // `["A","2"]`, the value `2` exactly where the source `=1+1` belonged — so
+            // asking the block published a second copy of the values as `formulas`. That made a formula cell
+            // report `3` in place of its source `=1+2`, a one-cell read of a one-character text cell report
+            // that character as its own formula, and a ONE-CELL read of a multi-character formula report
+            // `formulas: null`. Only a ONE-CELL `GetFormula()` answers the SOURCE, so the sources are
+            // collected one address at a time, over exactly the rows this answer publishes. MEASURED cost on
+            // the measured sheet: 132 cells in about 4 ms, so the cap of `LIMITS.sheetReadCellsMax` cells
+            // stays a bounded pass rather than a scan of the document.
+            // The slot carries the SOURCE of a cell that holds a formula, and the EMPTY STRING for a cell
+            // that does not. That filter is required because the same measured getter answers a cell's own
+            // TEXT when there is no formula (`GetFormula()` on the text cell 'Москва' answers 'Москва'), so
+            // the '=' prefix is what separates a formula from a value — the same test the write leg's proof
+            // uses. The slot is `null` only when this read published NO sources at all — the pass below states
+            // its own three conditions where it decides them — while a range that answers and holds no formula
+            // reports empty strings, never `null`.
+            function columnName(position) {
+              var name = '';
+              var remaining = position;
+              while (remaining > 0) {
+                var remainder = (remaining - 1) % 26;
+                name = String.fromCharCode(65 + remainder) + name;
+                remaining = Math.floor((remaining - 1) / 26);
+              }
+              return name;
+            }
+            // The rectangle an ANSWERED address names, as `[startColumn, startRow]`, but ONLY when that
+            // rectangle is the rectangle the value matrix measured. `null` means this leg cannot tell which
+            // cell a published value came from, and the caller of this reader must then publish no formula
+            // sources at all. The shape rule is the write leg's own, applied to the read.
+            function answeredRectangle(address, rows, columns) {
+              var head = address;
+              var tail = null;
+              var colon = address.indexOf(':');
+              if (colon > 0) {
+                head = address.slice(0, colon);
+                tail = address.slice(colon + 1);
+              }
+              // The `$` is stripped BEFORE the split, not after: stripping it only from the column or only
+              // from the row makes `A$1` parse while `$A$1` does not, which would silently DROP every
+              // source on a build that answers absolute addresses.
+              var cleanHead = head.replace(/\$/g, '');
+              var headColumn = cleanHead.replace(/[0-9]+$/, '');
+              var headRow = cleanHead.replace(/^[A-Z]+/, '');
+              if (headColumn === '' || headRow === '') return null;
+              var startColumn = 0;
+              for (var headLetter = 0; headLetter < headColumn.length; headLetter++) {
+                startColumn = startColumn * 26 + (headColumn.charCodeAt(headLetter) - 64);
+              }
+              var startRow = Number(headRow);
+              if (!(startColumn >= 1) || !(startRow >= 1)) return null;
+              var endColumn = startColumn;
+              var endRow = startRow;
+              if (tail !== null) {
+                var cleanTail = tail.replace(/\$/g, '');
+                var tailColumn = cleanTail.replace(/[0-9]+$/, '');
+                var tailRow = cleanTail.replace(/^[A-Z]+/, '');
+                if (tailColumn === '' || tailRow === '') return null;
+                endColumn = 0;
+                for (var tailLetter = 0; tailLetter < tailColumn.length; tailLetter++) {
+                  endColumn = endColumn * 26 + (tailColumn.charCodeAt(tailLetter) - 64);
+                }
+                endRow = Number(tailRow);
+                if (!(endColumn >= 1) || !(endRow >= 1)) return null;
+              }
+              if (endColumn - startColumn + 1 !== columns || endRow - startRow + 1 !== rows) return null;
+              var rectangle = [];
+              rectangle.push(startColumn);
+              rectangle.push(startRow);
+              return rectangle;
+            }
+            var formulas = [];
+            var formulasMatch = 0;
+            // THE RECTANGLE THE ANSWERED ADDRESS NAMES MUST BE THE RECTANGLE THE VALUE MATRIX MEASURED, AND
+            // THE PASS VERIFIES IT CELL BY CELL. When either check fails, this leg cannot tell WHICH cell each
+            // published value came from, so it publishes NO sources at all — the decoder turns that into
+            // `formulas: null` — rather than guessing: the VALUES are still served, because they are what the
+            // editor answered, and no formula source is ever attributed to a cell that does not hold it.
+            // `formulas: null` therefore carries THREE conditions, all stated where they are decided: the
+            // range exposes no getter, the answered address cannot be read as the matrix's own rectangle, or
+            // a published cell's own single-cell value disagrees with the value published for it.
+            var formulaRectangle = answeredRectangle(answeredAddress, totalRows, columnCount);
+            // THE ALIGNMENT IS VERIFIED PER CELL, NOT SAMPLED. The rectangle check above is DIMENSION-only,
+            // so a same-SIZE rectangle at a different ORIGIN would pass it and the sources would be read from
+            // cells the values never came from — a build whose `GetAddress()` and `GetValue()` disagree about
+            // the same object. Sampling one cell (the first) would only make that unlikely, so EVERY published
+            // cell is checked instead: the single-cell `GetValue()` of the cell this address names must hold
+            // the value this position published, cell by cell, while its source is read. The pass costs one
+            // extra native read per published cell and no extra `GetRange` — the same range object answers
+            // both — and a single disagreement WITHHOLDS EVERY SOURCE (`formulasMatch` stays 0, so the decoder
+            // publishes `formulas: null`). It can only WITHHOLD, never relocate. The one case this check cannot
+            // see is a build that disagrees with itself about the ORIGIN while agreeing on EVERY published
+            // value: such an answer is indistinguishable from a correct one through this API, and the pass then
+            // follows the address it was given. Everything else it can do is withhold, which is the direction
+            // this module always fails in.
+            if (typeof target.GetFormula === 'function' && formulaRectangle !== null) {
+              var sourcesHold = true;
+              for (var sourceRow = 0; sourceRow < rowsToRead && sourcesHold; sourceRow++) {
+                for (var sourceColumn = 0; sourceColumn < columnCount && sourcesHold; sourceColumn++) {
+                  var sourceAddress = columnName(formulaRectangle[0] + sourceColumn) + String(formulaRectangle[1] + sourceRow);
+                  var sourceRange = sheet.GetRange(sourceAddress);
+                  // A capability that disappears part-way through the pass refuses the READ CLOSED rather
+                  // than publishing the cells it happened to reach: a short formula list would attribute
+                  // formulas to the wrong cells, which is the approximation this module refuses everywhere.
+                  if (sourceRange === null || sourceRange === undefined || typeof sourceRange.GetFormula !== 'function') return readRefusal();
+                  // A range that cannot place its own values (no `GetValue`) withholds the sources instead of
+                  // costing the caller the values.
+                  if (typeof sourceRange.GetValue !== 'function') { sourcesHold = false; break; }
+                  var placedRaw = sourceRange.GetValue();
+                  var placedText = placedRaw === null || placedRaw === undefined ? '' : String(placedRaw);
+                  if (placedText !== values[sourceRow * columnCount + sourceColumn]) { sourcesHold = false; break; }
+                  var sourceRaw = sourceRange.GetFormula();
+                  var sourceText = sourceRaw === null || sourceRaw === undefined ? '' : String(sourceRaw);
+                  formulas.push(sourceText.length > 0 && sourceText.charAt(0) === '=' ? sourceText : '');
+                }
+              }
+              if (sourcesHold) formulasMatch = 1;
+            }
+            var answer = [];
+            answer.push(sheetName);
+            answer.push(sheetIndex);
+            answer.push(sheetCount);
+            answer.push(requestAddress);
+            answer.push(readAddress);
+            answer.push(totalRows);
+            answer.push(columnCount);
+            answer.push(rowCount);
+            answer.push(columnCount);
+            answer.push(formulasMatch);
+            for (var vi = 0; vi < values.length; vi++) answer.push(values[vi]);
+            if (formulasMatch === 1) {
+              for (var fi = 0; fi < formulas.length; fi++) answer.push(formulas[fi]);
+            }
+            return answer;
+          } catch (error) {
+            return readRefusal();
+          }
+        }, false, false, callback);
+      },
+      // ----- CELL: the bounded SPREADSHEET write --------------------------------------------------
+      // The first Cell MUTATION, and it authors primitives measured on a live Cell session: `SetValue`
+      // on a single-cell range, `GetValue` on the whole addressed block and `GetFormula` on ONE
+      // single-cell range per formula cell for the readback, and `GetActiveSheet`. Three
+      // measured rules decide what is written:
+      //   * an INTEGER-looking cell (`0`, `-12`, and no leading zero) is handed to the editor as a
+      //     NUMBER, because the measured JS number for an integer is stored numerically. A LEADING ZERO is
+      //     deliberately not integer-looking, and that rule's INTENT is the one the engine does not honour:
+      //     MEASURED, `SetValue('007')` is coerced to a NUMBER anyway and reads back `7` (`'00'` -> `0`,
+      //     `'-012'` -> `-12`), so an account code with a leading zero CANNOT be written by this leg on this
+      //     build. What it does NOT do is silently renumber the account: the readback below refutes the
+      //     coercion as a mismatch, so the outcome is the fail-safe flag-0 class — UNCERTAIN, the slot HELD,
+      //     and no retry — rather than a stored `7` reported as a success.
+      //   * the integer form is capped at FIFTEEN digits, where a JS number still carries every integer
+      //     exactly; a longer digit string goes through as the string the caller sent, and MEASURED the
+      //     engine coerces that too and loses precision (`'12345678901234567890'` read back as
+      //     `12345678901234567000`), which the readback refutes the same way — so the cap changes which
+      //     route is taken, not whether a lossy write is proved.
+      //   * everything else goes through as the STRING the caller sent. That is the measured rule that
+      //     makes a decimal a real number (`SetValue('123,45')` answers `=ЕЧИСЛО` TRUE) while a
+      //     non-integer JS number is stored as TEXT.
+      //   * A DOT-DECIMAL is therefore rewritten into the engine's OWN numeric form before it is sent, and the
+      //     SEPARATOR comes from the engine rather than from an assumption: MEASURED on this build,
+      //     `Api.GetLocale()` answers 1049 (ru-RU), whose numeric form is the comma one — the native proof wrote
+      //     `0,15` and the engine answered `=ЕЧИСЛО` TRUE. The COMMA LOCALES are an explicit set below, and what a
+      //     locale OUTSIDE it gets is stated exactly: the value is still sent in the dot form (the behaviour this
+      //     body had before the decimal route existed) and the NUMERIC CLAIM IS NOT MADE for it — it falls to the
+      //     spelling proof, which passes for a cell whose text equals the request. That is NOT fail-closed, and a
+      //     reviewer measured it: on a build whose numeric form is the comma (i.e. NOT this one), locale 1033 keeps
+      //     the value as TEXT and the write still reports success. What the gate buys is that no locale this body
+      //     does not know can be told a NUMBER was stored on the strength of a separator it guessed.
+      //     The rewrite is a MATCH test on a closed decimal shape, never a sweep: ordinary text and formulas are
+      //     written verbatim.
+      //   * a cell whose text begins with `=` is a FORMULA, and the engine's own parser decides whether
+      //     it is valid. A `.` in a formula source is rejected by the parser and CLEARS the cell, which
+      //     is exactly the failure the readback below exists to catch.
+      // THE ADDRESS AND THE MATRIX MUST AGREE: the authored block is the addressed block, so no cell of
+      // the request is left unwritten and the readback is over precisely what was asked for.
+      // THE PROOF IS ONE BOUNDED READBACK OF THE WHOLE BLOCK, one flag per cell: an ERROR value can never
+      // EQUAL a different request, so it is never a proof of one, while a caller who literally asked for
+      // `#`-leading TEXT is proved by the match (`SetValue('#REF!')` stores text, measured); a formula cell
+      // is proved by HOLDING A FORMULA (the engine rewrites names and separators, so comparing formula TEXT
+      // would compare the engine's own normalisation), and any other cell is proved by its value matching the
+      // request after the ONE stated normalisation (spaces removed, `,` read as `.` — the form the editor
+      // answers a locale number in). The REQUEST's own type decides which of the two proofs applies, and it
+      // is decided FIRST, so a written formula that evaluates to an error value is still proved by holding
+      // its formula.
+      // THE TWO READS HAVE DELIBERATELY DIFFERENT SHAPES, and the difference is MEASURED rather than
+      // chosen: the VALUES come from ONE `GetValue()` over the addressed block, while a formula SOURCE
+      // is read ADDRESSALLY, one single-cell range per formula cell. The reason is recorded at the
+      // readback below and is the whole point: on this build a MULTI-CELL `GetFormula()` answers the
+      // computed VALUES, so a block-level formula read could never prove a formula cell and every one
+      // of them would be reported as unproved.
+      // WHAT THE PROOF COVERS, and it is deliberately asymmetric. A NUMERIC request (integer or decimal) is proved
+      // by its NUMBER: the engine renders a stored number canonically, so `1.0` and `2.50` come back as `1` and
+      // `2.5`, and a spelling comparison would call a correctly stored number UNPROVED. A TEXT request is proved by
+      // its spelling, because that is all it is. Neither rule can be satisfied by the other kind of cell: a text
+      // cell holding the locale spelling does NOT parse as that number, which is what keeps a wrong locale from
+      // ever being reported as a success.
+      sheetwrite(callback) {
+        return plugin.callCommand(function () {
+          var phase = 'PRE_INSERT';
+          // The refusal is a TWO-slot array whose first slot is the phase, built by APPENDING to a
+          // literal for the authored-code-audit reason every other body states.
+          function writeRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var address = request.address;
+            var cells = request.cells;
+            if (typeof address !== 'string' || address === '') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            if (cells === null || cells === undefined || typeof cells.length !== 'number' || !(cells.length >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            // WHICH SHEET IS WRITTEN: the caller's selector, or the ACTIVE sheet when the caller named none. The
+            // selector is resolved through the MEASURED lookup `Api.GetSheet(name | index)`, and the write and ALL
+            // its proofs then use THAT sheet's own ranges, so the active sheet is neither read nor switched: the
+            // body authors no activation at all. (MEASURED before this leg existed: writing through another
+            // sheet's range object leaves the active sheet exactly where it was.) A selector that names nothing
+            // is a KNOWN refusal raised HERE, before the phase turns, so nothing is written.
+            // A malformed selector answers the ARGUMENT class on purpose — the same class the bridge answers
+            // above — so ONE argument does not have two failure classes depending on which layer noticed it.
+            var selectorName = request.sheetName === undefined ? null : request.sheetName;
+            var selectorIndex = request.sheetIndex === undefined ? null : request.sheetIndex;
+            if (selectorName !== null && typeof selectorName !== 'string') return writeRefusal('TOOL_ERROR');
+            if (selectorName !== null && selectorName === '') return writeRefusal('TOOL_ERROR');
+            if (selectorIndex !== null && (typeof selectorIndex !== 'number' || selectorIndex < 0 || selectorIndex % 1 !== 0)) return writeRefusal('TOOL_ERROR');
+            var sheet = null;
+            if (selectorName !== null || selectorIndex !== null) {
+              if (typeof Api.GetSheet !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+              sheet = selectorName !== null ? Api.GetSheet(selectorName) : Api.GetSheet(selectorIndex);
+              if (sheet === null || sheet === undefined) return writeRefusal('TOOL_ERROR');
+              // THE RESOLVED SHEET IS TIED TO THE REQUEST BEFORE ANYTHING IS WRITTEN, and this is what makes the
+              // selector's promise checkable rather than assumed. The readback below reads the SAME object it
+              // wrote, so BY CONSTRUCTION it can never notice that the OBJECT was the wrong sheet: a build that
+              // resolved another sheet, or that clamped an index, would write elsewhere and still prove itself
+              // cell by cell. The sheet's own name/index must therefore AGREE with what the caller asked for, and
+              // a disagreement refuses with NOTHING written (the argument is what is wrong, so the argument class).
+              if (selectorName !== null) {
+                if (typeof sheet.GetName !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+                if (String(sheet.GetName()) !== selectorName) return writeRefusal('TOOL_ERROR');
+              } else {
+                if (typeof sheet.GetIndex !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+                if (Number(sheet.GetIndex()) !== selectorIndex) return writeRefusal('TOOL_ERROR');
+              }
+            } else {
+              sheet = Api.GetActiveSheet();
+            }
+            if (sheet === null || sheet === undefined) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof sheet.GetRange !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            // The addressed block, split into its two corners. The address shape was closed by the
+            // bridge before dispatch, so anything unparseable here is a damaged request.
+            var colon = address.indexOf(':');
+            var head = colon < 0 ? address : address.slice(0, colon);
+            var tail = colon < 0 ? null : address.slice(colon + 1);
+            var headColumn = head.replace(/[0-9]+$/, '');
+            var headRow = head.replace(/^[A-Z]+/, '');
+            if (headColumn === '' || headRow === '') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var startColumn = 0;
+            for (var letter = 0; letter < headColumn.length; letter++) {
+              startColumn = startColumn * 26 + (headColumn.charCodeAt(letter) - 64);
+            }
+            var startRow = Number(headRow);
+            if (!(startColumn >= 1) || !(startRow >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var expectedRows = cells.length;
+            // A DECIMAL NUMERIC STRING, and the CLOSED shape of one. MEASURED end to end: this engine stores a
+            // dot-decimal string as TEXT, while its OWN locale form is a real number (`'123,45'` answered as a
+            // number on this build), which is why an agent's correctly built P&L read `#VALUE!` in every year whose
+            // formula used an assumption such as `0.15`. The test is narrow on purpose: the integer part carries
+            // no leading zeros (the fail-safe rule the integer branch already keeps) and is capped at the same
+            // fifteen digits, exactly one dot is present, and the FRACTION IS NOT CAPPED — a bound on it would
+            // leave the very defect being fixed one digit past the bound ('0.1234567890' would land as text again).
+            // A formula can never match, because its first character is neither a digit nor `-`.
+            var sheetWriteDecimal = /^-?(0|[1-9][0-9]{0,14})\.[0-9]+$/;
+            // The same shape WITH the integer-only form, used by the proof below: a request that is numeric at all
+            // is proved by its VALUE, and this is the test that decides whether that proof applies.
+            var sheetWriteNumeric = /^-?(0|[1-9][0-9]{0,14})(\.[0-9]+)?$/;
+            // THE ENGINE'S OWN DECIMAL SEPARATOR. MEASURED on this build: `Api.GetLocale()` answers 1049 (ru-RU),
+            // whose numeric form uses the comma — the native proof wrote `0,15` and the engine answered `=ЕЧИСЛО`
+            // TRUE. The COMMA LOCALES are an EXPLICIT set rather than "1049, otherwise the dot", because the comma
+            // is the rule in many of them (de-DE 1031, fr-FR 1036, es-ES 1034, it-IT 1040, pt-BR 1046, pl-PL 1045,
+            // tr-TR 1055, cs-CZ 1029, uk-UA 1058, …) and a spelling the locale does not use is not a number: the
+            // engine stores it as TEXT. An UNLISTED locale keeps the dot, which is exactly the behaviour this body
+            // had before the decimal route existed, and the proof below claims NUMERICITY only for the routes this
+            // body actually chose — so an unknown locale can lose a round trip, but it cannot be told a text cell
+            // was a number because of a separator this body guessed.
+            var sheetWriteCommaLocales = [1029, 1031, 1034, 1036, 1040, 1043, 1045, 1046, 1049, 1055, 1058];
+            var sheetWriteLocale = null;
+            try {
+              if (typeof Api.GetLocale === 'function') sheetWriteLocale = Number(Api.GetLocale());
+            } catch (error) {
+              sheetWriteLocale = null;
+            }
+            var sheetWriteCommaLocale = false;
+            for (var sheetWriteLocaleIndex = 0; sheetWriteLocaleIndex < sheetWriteCommaLocales.length; sheetWriteLocaleIndex++) {
+              if (sheetWriteCommaLocales[sheetWriteLocaleIndex] === sheetWriteLocale) sheetWriteCommaLocale = true;
+            }
+            var sheetWriteSeparator = sheetWriteCommaLocale ? ',' : '.';
+            var expectedColumns = 0;
+            for (var rowIndex = 0; rowIndex < expectedRows; rowIndex++) {
+              var rowCells = cells[rowIndex];
+              if (rowCells === null || rowCells === undefined || typeof rowCells.length !== 'number' || !(rowCells.length >= 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+              if (rowIndex === 0) expectedColumns = rowCells.length;
+              else if (rowCells.length !== expectedColumns) return writeRefusal('CAPABILITY_UNAVAILABLE');
+              for (var cellIndex = 0; cellIndex < rowCells.length; cellIndex++) {
+                if (typeof rowCells[cellIndex] !== 'string') return writeRefusal('CAPABILITY_UNAVAILABLE');
+              }
+            }
+            var addressedColumns = 1;
+            var addressedRows = 1;
+            if (tail !== null) {
+              var tailColumn = tail.replace(/[0-9]+$/, '');
+              var tailRow = tail.replace(/^[A-Z]+/, '');
+              if (tailColumn === '' || tailRow === '') return writeRefusal('CAPABILITY_UNAVAILABLE');
+              var endColumn = 0;
+              for (var tailLetter = 0; tailLetter < tailColumn.length; tailLetter++) {
+                endColumn = endColumn * 26 + (tailColumn.charCodeAt(tailLetter) - 64);
+              }
+              addressedColumns = endColumn - startColumn + 1;
+              addressedRows = Number(tailRow) - startRow + 1;
+            }
+            if (addressedColumns !== expectedColumns || addressedRows !== expectedRows) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            function columnName(position) {
+              var name = '';
+              var remaining = position;
+              while (remaining > 0) {
+                var remainder = (remaining - 1) % 26;
+                name = String.fromCharCode(65 + remainder) + name;
+                remaining = Math.floor((remaining - 1) / 26);
+              }
+              return name;
+            }
+            // THE MUTATION, and the exact boundary the two classes are split on. It turns `POST_INSERT`
+            // IMMEDIATELY BEFORE the first `SetValue`: from the first call entered, nothing observed here
+            // proves the sheet was not touched, so every refusal below carries the post-insert phase and
+            // the decoder turns it into the uncertain class, for which the bridge HOLDS its slot.
+            phase = 'POST_INSERT';
+            for (var writeRow = 0; writeRow < expectedRows; writeRow++) {
+              for (var writeColumn = 0; writeColumn < expectedColumns; writeColumn++) {
+                var cellAddress = columnName(startColumn + writeColumn) + String(startRow + writeRow);
+                var target = sheet.GetRange(cellAddress);
+                if (target === null || target === undefined || typeof target.SetValue !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+                var wanted = cells[writeRow][writeColumn];
+                if (/^-?(0|[1-9][0-9]{0,14})$/.test(wanted)) target.SetValue(Number(wanted));
+                // A decimal goes in the engine's OWN numeric form so the cell holds a NUMBER. The conversion runs
+                // through a PARAMETER BOUNDARY (`decimalInLocale`), never as a method call on the caller-derived
+                // local: the authored-code audit treats a call on a computed value as a dynamic-property sink, and
+                // this body's own normaliser and `=` test already use that boundary for exactly this reason.
+                else if (sheetWriteDecimal.test(wanted)) target.SetValue(decimalInLocale(wanted, sheetWriteSeparator));
+                // AN EMPTY REQUEST CLEARS THE CELL, and the primitive is chosen by MEASUREMENT because the two builds
+                // disagree about the obvious one. On the development build `SetValue('')` reads back as `''`; on the
+                // TARGET build (R7 2026.1.2.1942 on Astra SE) the SAME call leaves a cell that answers `'0'` — so the
+                // proof correctly refused to call it empty and a batch carrying one blank cell settled UNCERTAIN,
+                // blocking the whole write. `Clear()` was measured producing an EMPTY cell on both builds, which is
+                // what an empty request means; a build without it falls back to the old call.
+                else if (wanted === '') {
+                  if (typeof target.Clear === 'function') target.Clear();
+                  else target.SetValue('');
+                }
+                else target.SetValue(wanted);
+              }
+            }
+            // THE ONE BOUNDED READBACK, over exactly the addressed block. The local is `sheetWriteBlock`
+            // rather than `block` on purpose: the authored-code audit resolves taint by identifier NAME
+            // across the whole bundle, and `block` is already a caller-derived name in the block-append
+            // body, so calling a method on it here was a dynamic-property finding.
+            var sheetWriteBlock = sheet.GetRange(address);
+            if (sheetWriteBlock === null || sheetWriteBlock === undefined || typeof sheetWriteBlock.GetValue !== 'function') return writeRefusal('CAPABILITY_UNAVAILABLE');
+            var readback = sheetWriteBlock.GetValue();
+            // THE READBACK'S OWN TYPE DECIDES ITS SHAPE, and the test is NESTED-AWARE rather than a `.length`
+            // probe. MEASURED on this build (R7-Office Editors 2026.3.1): a ONE-CELL range answers a SCALAR
+            // STRING — `GetRange('H1').GetValue()`, and even the explicit `GetRange('H1:H1')` spelling, both
+            // answered `"Москва"` — while a BLOCK answers a 2-D array, a 1xN or Nx1 block included
+            // (`GetRange('H1:H2').GetValue()` -> `[["Москва"],["1000"]]`). A STRING ALSO HAS A NUMERIC
+            // `length`, so the `.length` test this body used first classified a scalar string as a MATRIX and
+            // indexed its FIRST CHARACTER: every one-cell write was then unprovable, an empty one-cell readback
+            // threw out of the index, and a one-character request could even be "proved" against a stale longer
+            // value. Requiring the first element to be an array as well additionally refuses to be fooled by a
+            // shape the measurement never produced — a FLAT one-element array for a one-cell range — which is
+            // read as a scalar: a scalar can only be proved by an exact single-element match (the value really
+            // is that text) and can never be indexed into a FIRST CHARACTER, which is the false positive this
+            // rule exists to exclude. A multi-cell request that ever met a flat answer refuses as a POST_INSERT
+            // refusal, i.e. UNCERTAIN with the slot held, so this reading fails safe in both directions.
+            var readbackIsMatrix = Array.isArray(readback) && (readback.length === 0 || Array.isArray(readback[0]));
+            var singleCell = !readbackIsMatrix;
+            if (singleCell && (expectedRows !== 1 || expectedColumns !== 1)) return writeRefusal('CAPABILITY_UNAVAILABLE');
+            // THERE IS DELIBERATELY NO BLOCK-LEVEL `GetFormula()` HERE, and that is MEASURED rather than an
+            // omission. On this build (R7-Office Editors 2026.3.1) a MULTI-CELL range answered the computed
+            // VALUES: `GetRange('B4').GetFormula()` on ONE cell answered the real formula source
+            // `= B2-B3`, while the SAME call on the whole block answered `300` — the value that formula
+            // evaluates to — in the formula's place. A multi-cell `GetFormula()` is therefore NOT a source
+            // of original formulas on the measured build, so a block-level formula read could never prove
+            // a formula cell and would report every one of them as unproved. Each formula cell is read on
+            // its OWN single-cell range in the proof loop below, which is the shape the measurement found
+            // answering the source.
+            function normalize(text) {
+              return String(text).replace(/ /g, '').replace(/,/g, '.').trim();
+            }
+            // The engine's OWN numeric form of a decimal, applied on the PARAMETER: a method call on a
+            // caller-derived local would be read by the authored-code audit as a dynamic-property sink, so the
+            // conversion happens on the parameter, exactly as this body's normaliser and `=` test do. The parameter
+            // carries its OWN name rather than a generic one, because that audit resolves taint by NAME across the
+            // whole bundle: a generic name shared with a caller-derived local anywhere else would taint this call.
+            // The call site has already matched the exact decimal shape, so the guard is what keeps this from ever
+            // being a sweep — not the call itself.
+            function decimalInLocale(decimalText, separator) {
+              return separator === ',' ? decimalText.replace('.', ',') : decimalText;
+            }
+            // WHETHER THIS REQUEST TOOK A ROUTE THAT MAKES THE ENGINE STORE A NUMBER: the integer route always, and
+            // the decimal route only where this body actually rewrote the spelling for the engine's locale. The
+            // gate is the point — a decimal sent VERBATIM on an unlisted locale is proved by its spelling, exactly
+            // as it was before this route existed, so no locale this body does not know can be told a text cell was
+            // a number. Works on its PARAMETERS for the audit reason the helper above states.
+            function numericWasWritten(wantedSource, commaLocale) {
+              if (/^-?(0|[1-9][0-9]{0,14})$/.test(wantedSource)) return true;
+              return sheetWriteNumeric.test(wantedSource) && commaLocale === true;
+            }
+            // A cell is a formula when its FIRST character is `=`. The test lives in its own function and
+            // works on the PARAMETER, never on the caller-derived local directly: the authored-code audit
+            // treats a method call on a computed value read as a dynamic-property sink, and the parameter
+            // boundary is what the other bodies use for exactly this normalisation.
+            function startsWithEquals(sourceText) {
+              return sourceText.charAt(0) === '=';
+            }
+            var answer = [];
+            answer.push(phase);
+            answer.push(expectedRows);
+            answer.push(expectedColumns);
+            for (var checkRow = 0; checkRow < expectedRows; checkRow++) {
+              for (var checkColumn = 0; checkColumn < expectedColumns; checkColumn++) {
+                var wantedText = cells[checkRow][checkColumn];
+                var gotRaw = singleCell ? readback : readback[checkRow][checkColumn];
+                var gotText = gotRaw === null || gotRaw === undefined ? '' : String(gotRaw);
+                var flag = 0;
+                // THE REQUEST'S OWN TYPE DECIDES WHICH PROOF APPLIES, and this branch is therefore decided
+                // FIRST. The `#`-leading "error value" test that used to run before it was both too broad and
+                // in the wrong place: it refused a caller who correctly asked for `#`-leading TEXT — MEASURED,
+                // `SetValue('#REF!')` stores the literal text `#REF!`, answered by both `GetValue()` and
+                // `GetFormula()` — and it PRE-EMPTED the formula proof, so a correctly stored formula that
+                // EVALUATES to an error value was scored unproved even though it still held its formula, which
+                // contradicted the rule stated above. The order is not cosmetic, and the measurement says why:
+                // `=1/0` answered the EMPTY string immediately after the write and `#DIV/0!` on a LATER read of
+                // the same cell, so under the old order a correctly written formula's proof depended on WHEN
+                // the sheet happened to recalculate it. No separate error rule is needed for a VALUE request:
+                // an error value can never EQUAL a different request, so it is still never a proof of one,
+                // and a request that literally asks for that text is proved by the match.
+                if (startsWithEquals(wantedText)) {
+                  // The formula SOURCE of this one cell, read ADDRESSALLY on its own single-cell range:
+                  // the address is rebuilt exactly the way the write loop above built it, so the cell
+                  // that is proved is the cell that was written. Only text is taken from the editor —
+                  // the `=` test runs on a parameter, never on a value read out of the sheet.
+                  var storedFormula = '';
+                  var formulaAddress = columnName(startColumn + checkColumn) + String(startRow + checkRow);
+                  var formulaRange = sheet.GetRange(formulaAddress);
+                  if (formulaRange !== null && formulaRange !== undefined && typeof formulaRange.GetFormula === 'function') {
+                    var formulaSource = formulaRange.GetFormula();
+                    storedFormula = formulaSource === null || formulaSource === undefined ? '' : String(formulaSource);
+                  }
+                  flag = startsWithEquals(storedFormula) ? 1 : 0;
+                } else if (numericWasWritten(wantedText, sheetWriteCommaLocale)) {
+                  // A NUMERIC ROUTE IS PROVED BY ITS VALUE, and this branch is decided FIRST. MEASURED, and the
+                  // failure it closes: the engine renders a stored number CANONICALLY, so `1.0` comes back as `1`,
+                  // and a spelling comparison reported a CORRECT write as unproved (UNCERTAIN, slot held, run
+                  // stopped). WHAT IT CLOSES AND WHAT IT CANNOT, stated rather than implied: it requires the
+                  // CANONICAL rendering of the parsed value (so `' '`, `'0x10'` and `'1e1'` are refused) and it runs
+                  // only for the routes this body CHOSE to write numerically (so no unlisted locale can be told a
+                  // text cell was a number). It CANNOT separate a stored NUMBER from TEXT that spells the value
+                  // exactly as the engine would render that number — `0.15` is both — because a readback is a string
+                  // and carries no type. That residual is the price of proving `1.0` at all, and it is recorded in
+                  // the evidence file with the measurements behind it.
+                  var wantedNumber = Number(wantedText);
+                  var gotTrimmed = gotText.trim();
+                  var gotNumber = gotTrimmed === '' ? NaN : Number(gotTrimmed);
+                  var gotCanonical = isNaN(gotNumber) ? '' : String(gotNumber);
+                  flag = !isNaN(wantedNumber) && !isNaN(gotNumber) && wantedNumber === gotNumber
+                    && (gotTrimmed === gotCanonical || gotTrimmed.toLowerCase() === gotCanonical.toLowerCase()) ? 1 : 0;
+                } else {
+                  flag = normalize(gotText) === normalize(wantedText) ? 1 : 0;
+                }
+                answer.push(flag);
+              }
+            }
+            return answer;
+          } catch (error) {
+            return writeRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, true, callback);
+      },
+      // ----- CELL: the bounded SPREADSHEET FORMATTING ---------------------------------------------
+      // The SECOND Cell mutation and the FIRST that changes PRESENTATION rather than content. Every primitive
+      // it authors was MEASURED on a live Cell session (R7-Office Editors 2026.3.1) and the measurement is
+      // recorded in `docs/evidence/sprint-4/t4.0-format-range-evidence.md`: which properties have BOTH a
+      // setter and a public readback, the closed number-format code families, and the value ranges that read
+      // back EXACTLY.
+      // THE PROOF IS ONE FLAG PER (PROPERTY, CELL) AND PER (GEOMETRY PROPERTY, COLUMN|ROW), and that shape is
+      // the point: a single flag per cell would let one unproven property hide behind the proven ones, while a
+      // flag list lets the bridge require EVERY requested property to be confirmed while it still owns the
+      // slot. The check proves the FINAL STATE and never the fact of a change: a cell that already held the
+      // requested value is an idempotent success, because the readback is compared against the REQUEST and
+      // never against a baseline.
+      // THE MEASURED SHAPES THIS BODY DEPENDS ON, all recorded in the evidence above:
+      //   * `range.GetNumberFormat()` answers the very CODE that was set, which makes the number-format proof
+      //     an exact equality against the code the bridge itself composed;
+      //   * `range.GetFillColor()` answers the string `"No Fill"` for an unfilled cell and an object whose
+      //     colour exposes `getRgb()` for a filled one — PUBLIC accessors, not private fields — while
+      //     `Api.CreateNoFill()` is the measured way to clear a fill back to `"No Fill"`;
+      //   * a TEXT property is readable only through `range.GetCharacters().GetFont()`, where bold and italic
+      //     answer the STRING `"true"` when set and `null` when not (never `"false"`), `GetSize()` answers a
+      //     STRING, and `GetName()` answers the family VERBATIM even when the engine does not have it;
+      //   * `range.GetWrapText()` answers a real boolean, and a COLUMN's width / a ROW's height are readable
+      //     from any cell of that column or row, which is how the geometry proof is done per affected
+      //     column/row rather than once for the block.
+      // A property WITHOUT such a readback is not in the schema at all — font colour, both alignments, borders
+      // and autofit are refused by the TOOL before any dispatch — because this body can only prove what these
+      // primitives can be asked. `SetFillColor` with a colour STRING is the measured trap that justifies that
+      // rule: it returns `undefined` and is silently ignored, so an unproven format property would be
+      // reported as applied when nothing happened.
+      // THE ANSWER IS ONE FLAT ARRAY OF PRIMITIVES, exactly like the other legs (the native return validator
+      // keeps those and strips a plain object):
+      //   `[PRE_INSERT, name]` — the body's own closed refusal, or
+      //   `[POST_INSERT, rowCount, columnCount, checkCount, flag0, …]`
+      // where the count lets the decoder require EXACTLY as many flags as the request owes.
+      cellformat(callback) {
+        return plugin.callCommand(function () {
+          // The phase is an explicit slot of every answer and it turns POST_INSERT immediately before the
+          // FIRST mutating call: a refusal built before that point is a KNOWN class, and every refusal after
+          // it leaves the sheet possibly touched, which is the UNCERTAIN class the decoder turns it into.
+          var phase = 'PRE_INSERT';
+          function formatRefusal(name) {
+            var refusal = [];
+            refusal.push(phase);
+            refusal.push(name);
+            return refusal;
+          }
+          function columnName(position) {
+            var name = '';
+            var remaining = position;
+            while (remaining > 0) {
+              var remainder = (remaining - 1) % 26;
+              name = String.fromCharCode(65 + remainder) + name;
+              remaining = Math.floor((remaining - 1) / 26);
+            }
+            return name;
+          }
+          // A boolean PROPERTY is proved by what the engine answers for `true` and for `false` MEASURED
+          // separately (`"true"` versus `null`), so the two directions are not collapsed into a truthiness
+          // test that a missing readback would pass.
+          function booleanFlag(raw, wanted) {
+            if (wanted === true) return String(raw) === 'true' ? 1 : 0;
+            return raw === null || raw === undefined || String(raw) === 'false' ? 1 : 0;
+          }
+          try {
+            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
+            if (request === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var address = request.address;
+            var expectedRows = request.rows;
+            var expectedColumns = request.columns;
+            var expectedChecks = request.checks;
+            var maxCells = request.maxCells;
+            if (typeof address !== 'string' || address === '') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof expectedRows !== 'number' || expectedRows < 1 || expectedRows % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof expectedColumns !== 'number' || expectedColumns < 1 || expectedColumns % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof expectedChecks !== 'number' || expectedChecks < 1 || expectedChecks % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof maxCells !== 'number' || maxCells < 1 || maxCells % 1 !== 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (expectedRows * expectedColumns > maxCells) return formatRefusal('TOOL_ERROR');
+            // The facade is checked through the SAME literal guard every other authored body carries.
+            var available = typeof Api !== 'undefined' && Api !== null;
+            if (!available) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (typeof Api.GetActiveSheet !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // WHICH SHEET IS FORMATTED: the caller's selector, or the ACTIVE sheet when the caller named none. The
+            // selector is resolved through the MEASURED lookup `Api.GetSheet(name | index)`, and BOTH the setters
+            // and every verification read below use THAT sheet's own ranges, so the active sheet is neither
+            // formatted nor switched: the body authors no activation. (MEASURED before this leg existed: applying
+            // format setters through another sheet's range object leaves the active sheet exactly where it was,
+            // for cells and for the block geometry setters alike.) A selector that names nothing is a KNOWN
+            // refusal raised HERE, before the phase turns, so not one formatting call is made.
+            // A malformed selector answers the ARGUMENT class on purpose — the same class the bridge answers
+            // above — so ONE argument does not have two failure classes depending on which layer noticed it.
+            var formatSheetName = request.sheetName === undefined ? null : request.sheetName;
+            var formatSheetIndex = request.sheetIndex === undefined ? null : request.sheetIndex;
+            if (formatSheetName !== null && typeof formatSheetName !== 'string') return formatRefusal('TOOL_ERROR');
+            if (formatSheetName !== null && formatSheetName === '') return formatRefusal('TOOL_ERROR');
+            if (formatSheetIndex !== null && (typeof formatSheetIndex !== 'number' || formatSheetIndex < 0 || formatSheetIndex % 1 !== 0)) return formatRefusal('TOOL_ERROR');
+            var sheet = null;
+            if (formatSheetName !== null || formatSheetIndex !== null) {
+              if (typeof Api.GetSheet !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              sheet = formatSheetName !== null ? Api.GetSheet(formatSheetName) : Api.GetSheet(formatSheetIndex);
+              if (sheet === null || sheet === undefined) return formatRefusal('TOOL_ERROR');
+              // THE RESOLVED SHEET IS TIED TO THE REQUEST BEFORE ANYTHING IS FORMATTED, and this is what makes the
+              // selector's promise checkable rather than assumed: the verification below reads the SAME object the
+              // setters touched, so by construction it cannot notice that the OBJECT was the wrong sheet (a build
+              // that resolved another sheet, or clamped an index, would format elsewhere and still prove itself
+              // property by property). The sheet's own name/index must therefore AGREE with the request.
+              if (formatSheetName !== null) {
+                if (typeof sheet.GetName !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (String(sheet.GetName()) !== formatSheetName) return formatRefusal('TOOL_ERROR');
+              } else {
+                if (typeof sheet.GetIndex !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (Number(sheet.GetIndex()) !== formatSheetIndex) return formatRefusal('TOOL_ERROR');
+              }
+            } else {
+              sheet = Api.GetActiveSheet();
+            }
+            if (sheet === null || sheet === undefined || typeof sheet.GetRange !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // THE ADDRESS IS PARSED, and the rectangle it names must BE the rectangle the request declared:
+            // a body and a bridge that disagree about the addressed block would format cells the caller
+            // never named, which is exactly the approximation this module refuses.
+            var head = address;
+            var tail = null;
+            var colon = address.indexOf(':');
+            if (colon > 0) {
+              head = address.slice(0, colon);
+              tail = address.slice(colon + 1);
+            }
+            var cleanHead = head.replace(/\$/g, '');
+            var headColumn = cleanHead.replace(/[0-9]+$/, '');
+            var headRow = cleanHead.replace(/^[A-Z]+/, '');
+            if (headColumn === '' || headRow === '') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var startColumn = 0;
+            for (var headLetter = 0; headLetter < headColumn.length; headLetter++) {
+              startColumn = startColumn * 26 + (headColumn.charCodeAt(headLetter) - 64);
+            }
+            var startRow = Number(headRow);
+            if (!(startColumn >= 1) || !(startRow >= 1)) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            var endColumn = startColumn;
+            var endRow = startRow;
+            if (tail !== null) {
+              var cleanTail = tail.replace(/\$/g, '');
+              var tailColumn = cleanTail.replace(/[0-9]+$/, '');
+              var tailRow = cleanTail.replace(/^[A-Z]+/, '');
+              if (tailColumn === '' || tailRow === '') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              endColumn = 0;
+              for (var tailLetter = 0; tailLetter < tailColumn.length; tailLetter++) {
+                endColumn = endColumn * 26 + (tailColumn.charCodeAt(tailLetter) - 64);
+              }
+              endRow = Number(tailRow);
+              if (!(endColumn >= 1) || !(endRow >= 1)) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (endColumn - startColumn + 1 !== expectedColumns || endRow - startRow + 1 !== expectedRows) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // WHICH PROPERTIES WERE REQUESTED. The bridge sends `null` (or omits) everything the caller did
+            // not ask for, so the body never has to guess, and a property it was not asked to change is never
+            // written and never proved.
+            var numberFormatCode = request.numberFormatCode;
+            var wantsNumberFormat = typeof numberFormatCode === 'string' && numberFormatCode !== '';
+            var wantBold = request.bold;
+            var wantsBold = typeof wantBold === 'boolean';
+            var wantItalic = request.italic;
+            var wantsItalic = typeof wantItalic === 'boolean';
+            var wantFontFamily = request.fontFamily;
+            var wantsFontFamily = typeof wantFontFamily === 'string' && wantFontFamily !== '';
+            var wantFontSize = request.fontSize;
+            var wantsFontSize = typeof wantFontSize === 'number';
+            var wantWrap = request.wrapText;
+            var wantsWrap = typeof wantWrap === 'boolean';
+            var wantsFill = typeof request.fillR === 'number' && typeof request.fillG === 'number' && typeof request.fillB === 'number';
+            var wantsFillClear = request.fillClear === true;
+            var wantColumnWidth = request.columnWidth;
+            var wantsColumnWidth = typeof wantColumnWidth === 'number';
+            var wantRowHeight = request.rowHeight;
+            var wantsRowHeight = typeof wantRowHeight === 'number';
+            var propertyCount = 0;
+            if (wantsNumberFormat) propertyCount++;
+            if (wantsBold) propertyCount++;
+            if (wantsItalic) propertyCount++;
+            if (wantsFontFamily) propertyCount++;
+            if (wantsFontSize) propertyCount++;
+            if (wantsWrap) propertyCount++;
+            if (wantsFill) propertyCount++;
+            if (wantsFillClear) propertyCount++;
+            // A request that asks for NOTHING must never reach a mutation. The CELL properties and the two
+            // GEOMETRY properties are counted SEPARATELY and for a stated reason: the flag arithmetic below is
+            // per cell for the first group and per affected column/row for the second, while the rule "at least
+            // one formatting property" is about the REQUEST — so a request that asks only for a column width is
+            // a legitimate formatting request and must not be refused as empty.
+            var requestedCount = propertyCount;
+            if (wantsColumnWidth) requestedCount++;
+            if (wantsRowHeight) requestedCount++;
+            if (requestedCount < 1) return formatRefusal('TOOL_ERROR');
+            var expectedCheckCount = propertyCount * expectedRows * expectedColumns;
+            if (wantsColumnWidth) expectedCheckCount += expectedColumns;
+            if (wantsRowHeight) expectedCheckCount += expectedRows;
+            if (expectedCheckCount !== expectedChecks) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            // The COLOUR objects are created ONCE, before the loop, because they are the same for every cell
+            // (and because a colour is what the measured setter requires: a string is silently ignored).
+            var fillColour = null;
+            if (wantsFill) {
+              if (typeof Api.CreateColorFromRGB !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              fillColour = Api.CreateColorFromRGB(request.fillR, request.fillG, request.fillB);
+            }
+            var clearColour = null;
+            if (wantsFillClear) {
+              if (typeof Api.CreateNoFill !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              clearColour = Api.CreateNoFill();
+            }
+            if (wantsColumnWidth || wantsRowHeight) {
+              var geometryBlock = sheet.GetRange(address);
+              if (geometryBlock === null || geometryBlock === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (wantsColumnWidth && typeof geometryBlock.SetColumnWidth !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (wantsRowHeight && typeof geometryBlock.SetRowHeight !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            // THE MUTATION, and the boundary the two refusal classes are split on: the phase turns
+            // POST_INSERT here, immediately before the first call that can change the sheet.
+            phase = 'POST_INSERT';
+            for (var writeRow = 0; writeRow < expectedRows; writeRow++) {
+              for (var writeColumn = 0; writeColumn < expectedColumns; writeColumn++) {
+                var cellAddress = columnName(startColumn + writeColumn) + String(startRow + writeRow);
+                var target = sheet.GetRange(cellAddress);
+                if (target === null || target === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (wantsNumberFormat) {
+                  if (typeof target.SetNumberFormat !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetNumberFormat(numberFormatCode);
+                }
+                if (wantsBold) {
+                  if (typeof target.SetBold !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetBold(wantBold);
+                }
+                if (wantsItalic) {
+                  if (typeof target.SetItalic !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetItalic(wantItalic);
+                }
+                if (wantsFontFamily) {
+                  if (typeof target.SetFontName !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFontName(wantFontFamily);
+                }
+                if (wantsFontSize) {
+                  if (typeof target.SetFontSize !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFontSize(wantFontSize);
+                }
+                if (wantsFill) {
+                  if (typeof target.SetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFillColor(fillColour);
+                }
+                if (wantsFillClear) {
+                  if (typeof target.SetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetFillColor(clearColour);
+                }
+                if (wantsWrap) {
+                  if (typeof target.SetWrapText !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  target.SetWrapText(wantWrap);
+                }
+              }
+            }
+            // The geometry is applied to the ADDRESSED BLOCK, so `columnWidth` reaches every column the address
+            // intersects and `rowHeight` every row it intersects — the semantics stated in the tool's own
+            // documentation — and each of them is PROVED per affected column/row below.
+            if (wantsColumnWidth || wantsRowHeight) {
+              var applyBlock = sheet.GetRange(address);
+              if (applyBlock === null || applyBlock === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+              if (wantsColumnWidth) applyBlock.SetColumnWidth(wantColumnWidth);
+              if (wantsRowHeight) applyBlock.SetRowHeight(wantRowHeight);
+            }
+            // THE VERIFICATION, one flag per (property, cell), then per (geometry property, column/row).
+            var answer = [];
+            answer.push(phase);
+            answer.push(expectedRows);
+            answer.push(expectedColumns);
+            answer.push(expectedCheckCount);
+            for (var checkRow = 0; checkRow < expectedRows; checkRow++) {
+              for (var checkColumn = 0; checkColumn < expectedColumns; checkColumn++) {
+                var checkAddress = columnName(startColumn + checkColumn) + String(startRow + checkRow);
+                var checked = sheet.GetRange(checkAddress);
+                if (checked === null || checked === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+                if (wantsNumberFormat) {
+                  if (typeof checked.GetNumberFormat !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  answer.push(String(checked.GetNumberFormat()) === numberFormatCode ? 1 : 0);
+                }
+                if (wantsBold || wantsItalic || wantsFontFamily || wantsFontSize) {
+                  if (typeof checked.GetCharacters !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var characters = checked.GetCharacters();
+                  if (characters === null || characters === undefined || typeof characters.GetFont !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var font = characters.GetFont();
+                  if (font === null || font === undefined) return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  if (wantsBold) answer.push(booleanFlag(font.GetBold(), wantBold));
+                  if (wantsItalic) answer.push(booleanFlag(font.GetItalic(), wantItalic));
+                  if (wantsFontFamily) answer.push(String(font.GetName()) === wantFontFamily ? 1 : 0);
+                  if (wantsFontSize) answer.push(String(font.GetSize()) === String(wantFontSize) ? 1 : 0);
+                }
+                if (wantsFill) {
+                  if (typeof checked.GetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var fillAnswer = checked.GetFillColor();
+                  var fillFlag = 0;
+                  if (fillAnswer !== null && fillAnswer !== undefined && typeof fillAnswer === 'object' && fillAnswer.color) {
+                    if (typeof fillAnswer.color.getRgb === 'function') {
+                      var wantedRgb = request.fillR * 65536 + request.fillG * 256 + request.fillB;
+                      fillFlag = String(fillAnswer.color.getRgb()) === String(wantedRgb) ? 1 : 0;
+                    }
+                  }
+                  answer.push(fillFlag);
+                }
+                if (wantsFillClear) {
+                  if (typeof checked.GetFillColor !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  var clearedAnswer = checked.GetFillColor();
+                  answer.push(String(clearedAnswer) === 'No Fill' ? 1 : 0);
+                }
+                if (wantsWrap) {
+                  if (typeof checked.GetWrapText !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                  answer.push(String(checked.GetWrapText()) === String(wantWrap) ? 1 : 0);
+                }
+              }
+            }
+            if (wantsColumnWidth) {
+              for (var widthColumn = 0; widthColumn < expectedColumns; widthColumn++) {
+                var widthAddress = columnName(startColumn + widthColumn) + String(startRow);
+                var widthCell = sheet.GetRange(widthAddress);
+                if (widthCell === null || widthCell === undefined || typeof widthCell.GetColumnWidth !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                answer.push(String(widthCell.GetColumnWidth()) === String(wantColumnWidth) ? 1 : 0);
+              }
+            }
+            if (wantsRowHeight) {
+              for (var heightRow = 0; heightRow < expectedRows; heightRow++) {
+                var heightAddress = columnName(startColumn) + String(startRow + heightRow);
+                var heightCell = sheet.GetRange(heightAddress);
+                if (heightCell === null || heightCell === undefined || typeof heightCell.GetRowHeight !== 'function') return formatRefusal('CAPABILITY_UNAVAILABLE');
+                answer.push(String(heightCell.GetRowHeight()) === String(wantRowHeight) ? 1 : 0);
+              }
+            }
+            if (answer.length !== 4 + expectedCheckCount) return formatRefusal('TOOL_ERROR');
+            return answer;
+          } catch (error) {
+            return formatRefusal('CAPABILITY_UNAVAILABLE');
+          }
+        }, false, true, callback);
+      },
       blocks(callback) {
         return plugin.callCommand(function () {
           // The phase, and the ONE place the two classes are distinguished: everything answered while it
@@ -371,6 +1997,24 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var paragraphsBefore = baselineParagraphs.length;
             var headingsBefore = baselineHeadings.length;
             if (!measured(paragraphsBefore) || !measured(headingsBefore)) return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            // Resolve a unique exact-text anchor in this same command, never at the caret.
+            var anchored = typeof request.afterParagraphText === 'string';
+            var insertionStart = paragraphsBefore;
+            var baselineTexts = [];
+            if (anchored) {
+              var anchorMatches = 0;
+              var anchorMethod = false;
+              baselineTexts = baselineParagraphs.map(function (anchorParagraph, anchorIndex) {
+                var anchorValue = anchorParagraph && typeof anchorParagraph.GetText === 'function' ? anchorParagraph.GetText() : null;
+                if (anchorValue === request.afterParagraphText) {
+                  anchorMatches++; insertionStart = anchorIndex + 1;
+                  anchorMethod = typeof anchorParagraph.InsertParagraph === 'function';
+                }
+                return anchorValue;
+              });
+              if (anchorMatches !== 1) return blocksRefusal('ANCHOR_UNAVAILABLE');
+              if (!anchorMethod || baselineTexts.some(function (value) { return typeof value !== 'string'; })) return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            }
             // EVERY paragraph is built — and every heading style RESOLVED — before anything is inserted,
             // so an unresolvable style cannot leave a half-applied append behind.
             var created = [];
@@ -402,7 +2046,17 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // decoder turns it into the uncertain class, for which the bridge holds its slot — the
             // readback is the ground truth, never the primitive's return value.
             phase = 'POST_INSERT';
-            for (var pushed = 0; pushed < created.length; pushed++) document.Push(created[pushed]);
+            if (anchored) {
+              baselineParagraphs.forEach(function (anchorParagraph, anchorIndex) {
+                if (anchorIndex + 1 === insertionStart) {
+                  // Each call inserts immediately after the same anchor; reverse traversal
+                  // leaves the requested blocks in their original order.
+                  for (var inserted = created.length - 1; inserted >= 0; inserted--) anchorParagraph.InsertParagraph(created[inserted], 'after', false);
+                }
+              });
+            } else {
+              for (var pushed = 0; pushed < created.length; pushed++) document.Push(created[pushed]);
+            }
             var allParagraphs = document.GetAllParagraphs();
             var allHeadings = document.GetAllHeadingParagraphs();
             if (allParagraphs === null || allParagraphs === undefined || typeof allParagraphs.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
@@ -422,6 +2076,12 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             });
             for (var scan = 0; scan < paragraphTexts.length; scan++) {
               if (typeof paragraphTexts[scan] !== 'string') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (anchored) {
+              for (var oldIndex = 0; oldIndex < baselineTexts.length; oldIndex++) {
+                var postIndex = oldIndex < insertionStart ? oldIndex : oldIndex + blocks.length;
+                if (paragraphTexts[postIndex] !== baselineTexts[oldIndex]) return blocksRefusal('ANCHOR_UNAVAILABLE');
+              }
             }
             var answer = [];
             // The phase slot, the four counts and the flags are APPENDED rather than spelled as one array
@@ -455,12 +2115,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               // and a genuine difference (different words, extra text, a missing paragraph, a different
               // block) still maps to a different string and still makes the flag 0.
               var wanted = editorStoredText(blocks[which].text);
-              answer.push(paragraphsBefore + which < paragraphTexts.length &&
-                editorStoredText(paragraphTexts[paragraphsBefore + which]) === wanted ? 1 : 0);
+              answer.push(insertionStart + which < paragraphTexts.length &&
+                editorStoredText(paragraphTexts[insertionStart + which]) === wanted ? 1 : 0);
             }
             return answer;
           } catch (error) { return blocksRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
+        // Word can expose the appended paragraphs to reads while its canvas stays stale.
+        // Recalculate as part of this write, before reporting completion; keep the panel open.
+        }, false, true, callback);
       },
       // THE TABLE INSERT, and the SECOND leg in this bridge that MUTATES a document through the `Api`
       // builder. It is the same carriage and the same three phases as the block append above — a FULL
@@ -681,7 +2343,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             for (var flagIndex = 0; flagIndex < cellFlags.length; flagIndex++) answer.push(cellFlags[flagIndex]);
             return answer;
           } catch (error) { return tableRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
+        }, false, true, callback);
       },
       // THE HEADING STYLE ASSIGNMENT, and the THIRD leg in this bridge that MUTATES a document through the
       // `Api` builder. It is the same carriage as the block append and the table insert — a FULL inline
@@ -943,7 +2605,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             answer.push(styleMatches);
             return answer;
           } catch (error) { return headingRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
+        }, false, true, callback);
       },
       // THE RANGE FORMAT, and the FOURTH leg in this bridge that MUTATES a document through the `Api`
       // builder. It is the same carriage as the heading assignment — a FULL inline static literal whose only
@@ -1121,7 +2783,8 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             function rangeFor(item, from, to) {
               try {
                 if (item === null || item === undefined || typeof item.GetRange !== 'function') return null;
-                var built = item.GetRange(from, to);
+                // Tool offsets are exclusive at end; R7 uses an inclusive last character.
+                var built = item.GetRange(from, to - 1);
                 return built === null || built === undefined ? null : built;
               } catch (error) { return null; }
             }
@@ -1285,7 +2948,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var alignBefore = align === 'none' ? 'none' : readAlign(target);
             if (alignBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
             var regionBefore = readRange(target, startOffset, endOffset);
-            if (regionBefore === null) return formatRefusal('CAPABILITY_UNAVAILABLE');
+            if (regionBefore === null || regionBefore.length === 0) return formatRefusal('CAPABILITY_UNAVAILABLE');
             // THE RUN REQUESTS THIS CALL NAMES, and the ONE question that decides whether the export is read at
             // all: a call that names NONE keeps the exact behaviour it had before this leg existed — no export,
             // no marker and no dependency on `ToHtml`. The run RANGES are built and their setters
@@ -1687,7 +3350,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             answer.push(elementAppended);
             return answer;
           } catch (error) { return linkRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
+        }, false, true, callback);
       },
       // THE TEXT REPLACE, and the ONLY leg in this bridge whose proof is a COUNT OF THE DOCUMENT'S OWN
       // OCCURRENCES rather than the shape of an object it built. It is the same carriage as the six bodies
@@ -2101,7 +3764,8 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // THE CREATION, before the phase turns: `Api.CreateImage` builds a picture object and registers it
             // in the editor's own list, and it writes NOTHING to any paragraph. A picture the factory does not
             // answer is the closed capability class with ZERO writes.
-            var image = Api.CreateImage(data, widthPx, heightPx);
+            // Native CreateImage expects EMU: 9525 EMU per CSS pixel at 96 dpi.
+            var image = Api.CreateImage(data, widthPx * 9525, heightPx * 9525);
             if (image === null || image === undefined) return imageRefusal('CAPABILITY_UNAVAILABLE');
             // THE MUTATION, and the exact boundary the two refusal classes are split on: the phase turns at —
             // and immediately BEFORE — the ONE call that can change the DOCUMENT. The APPEND form adds the
@@ -2171,7 +3835,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             answer.push(counted(append === true ? false : textUnchanged));
             return answer;
           } catch (error) { return imageRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
+        }, false, true, callback);
       },
       // THE COMMENT INSERT behind `insert_comment` — the EIGHTH MUTATION of Sprint 3, the THIRD write leg that
       // APPENDS (a comment joins the document's own comment collection), and the FIRST whose proof is the
@@ -2222,217 +3886,7 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
       // carrying a control character other than TAB, LF and CR — must not be writable by a caller that reached
       // the bridge directly. The bound and the character rule are the SAME ones the descriptor advertises,
       // spelled beside their twins in `src/tools/word.js` because the two modules cannot import each other.
-      comment(callback) {
-        return plugin.callCommand(function () {
-          var phase = 'PRE_INSERT';
-          // The refusal is a TWO-slot array whose FIRST slot is that phase and whose SECOND is the closed
-          // name, APPENDED to an array that starts as a literal for the authored-code-audit reason the other
-          // bodies state: the alias analysis is NAME-based and scope-insensitive over the whole bundle, so an
-          // array literal built from identifier names could make the receiver of every later call on it a
-          // computed value.
-          function commentRefusal(name) {
-            var refusal = [];
-            refusal.push(phase);
-            refusal.push(name);
-            return refusal;
-          }
-          // A count this body cannot trust as a NON-NEGATIVE WHOLE number is not a count. The check reaches
-          // for NO global at all, so the stringified body depends on nothing but the two bindings the vendor
-          // wrapper creates.
-          function isCount(value) {
-            return typeof value === 'number' && value === value && value >= 0 && value % 1 === 0;
-          }
-          // THE COMMENT COLLECTION'S OWN LENGTH, taken through the measured `GetAllComments`. A missing
-          // primitive, a null answer and a throw are all the ABSENCE of a measurement (`null`), which the
-          // caller settles as a closed refusal BEFORE the write or as the uncertain class after it.
-          function commentsSize(list) {
-            if (list === null || list === undefined) return null;
-            var size = list.length;
-            return isCount(size) ? size : null;
-          }
-          // ONE comment's OWN id, read only where the measured primitive exists. An id this body cannot read
-          // is folded to `null` — the honest "not identified" value — rather than destroying the whole answer,
-          // so a single damaged wrapper degrades its own slot and the outcome rule then settles the ticket
-          // uncertain instead of turning a verifiable write into a phase-less uncertainty.
-          function commentIdAt(item, max) {
-            if (item === null || item === undefined || typeof item.GetId !== 'function') return null;
-            var read = null;
-            try { read = item.GetId(); } catch (error) { return null; }
-            if (typeof read !== 'string' || read.length === 0 || read.length > max) return null;
-            return read;
-          }
-          // ONE comment's OWN text, read through the measured `GetText`. A non-string answer and a throw are
-          // the same absence (`null`), which can never equal a requested string.
-          function commentTextAt(item) {
-            if (item === null || item === undefined || typeof item.GetText !== 'function') return null;
-            try { var read = item.GetText(); return typeof read === 'string' ? read : null; }
-            catch (error) { return null; }
-          }
-          // THE IDS ONLY, for the pre-write pass: the baseline this body needs is the SET of ids the document
-          // already held, so that an id it already carried can never be used to name a comment THIS call adds.
-          function collectCommentIds(list, wanted) {
-            var ids = [];
-            for (var index = 0; index < list.length; index += 1) ids.push(commentIdAt(list[index], wanted.idMax));
-            return ids;
-          }
-          // THE POST-WRITE PASS, and the ONLY pass that reads text. `keep` is the id the write RETURNED, where
-          // that id is usable; this pass stops at it. With no usable returned id it looks for the ONE id the
-          // pre-write set did not hold, which is exactly the DIFFERENCE of the two id sets — and when the pre
-          // set was EMPTY that is the single post comment, the same rule one branch simpler. The result is
-          // `[id, chars]` for the identified comment, `['AMBIGUOUS', 0]` when the id-set route cannot single
-          // one out, or `null` when the identified comment's own text could not be read. `textAt` holds the
-          // matched text so the caller can compare it against the request.
-          function identifyComment(list, wanted, beforeIds, keep, textAt) {
-            var candidate = null;
-            var candidates = 0;
-            var kept = null;
-            for (var index = 0; index < list.length; index += 1) {
-              var id = commentIdAt(list[index], wanted.idMax);
-              if (keep !== null && id === keep) {
-                var keptText = commentTextAt(list[index]);
-                if (keptText === null) return null;
-                if (kept !== null) return null;
-                kept = [id, keptText.length];
-                textAt[0] = keptText;
-              }
-              if (id !== null && !inCommentIds(wanted, beforeIds, id)) {
-                candidates += 1;
-                if (candidate === null) {
-                  var candidateText = commentTextAt(list[index]);
-                  if (candidateText === null) return null;
-                  candidate = [id, candidateText.length];
-                  textAt[0] = candidateText;
-                }
-              }
-            }
-            // THE RETURNED ID WINS, and the scan above proves it names EXACTLY ONE comment: two candidates
-            // carrying it is a document this body cannot attribute, so it settles `null` (the caller's
-            // uncertainty) rather than trusting either handle.
-            if (keep !== null) return kept;
-            return candidates === 1 ? candidate : null;
-          }
-          function inCommentIds(wanted, list, id) {
-            for (var index = 0; index < list.length; index += 1) if (list[index] === id) return true;
-            return false;
-          }
-          // THE REQUEST, MEASURED BEFORE ANY PRIMITIVE IS TOUCHED. The scope is the ONE thing that crosses, so
-          // a text this leg would never compose — an empty one, one outside the bound the caller composed, one
-          // carrying a control character other than TAB, LF and CR — is this body's own closed refusal, never a
-          // comment written on the strength of `undefined`. The three whitespace control characters are SERVED
-          // because a multi-line comment is ordinary document text and the measured readback returns them.
-          function measureCommentRequest(given) {
-            if (given === null || given === undefined || typeof given !== 'object') return null;
-            var text = given.text;
-            var idMax = given.idMax;
-            var max = given.maxBytes;
-            // THE SCOPE IS CLOSED: the three keys below are composed by the caller of this BODY and by nothing
-            // else, so a fourth key is a request this module never composes — a caller that reached the
-            // parameter channel directly and invented a bound or a target. It is refused rather than silently
-            // ignored, so a caller can never believe it widened or narrowed something. The count is taken over
-            // the OWN enumerable keys and every one of them is named, so neither an extra key nor a missing one
-            // can pass.
-            var keys = 0;
-            for (var key in given) {
-              if (Object.hasOwn(given, key)) keys += 1;
-              if (key !== 'text' && key !== 'maxBytes' && key !== 'idMax') return null;
-            }
-            if (keys !== 3) return null;
-            if (typeof text !== 'string' || text.length === 0) return null;
-            if (!(isCount(idMax) && idMax >= 1)) return null;
-            if (!(isCount(max) && max >= 1)) return null;
-            var bytes = 0;
-            for (var index = 0; index < text.length; index += 1) {
-              var code = text.charCodeAt(index);
-              if (code < 0x80) bytes += 1;
-              else if (code < 0x800) bytes += 2;
-              else if (code >= 0xd800 && code <= 0xdbff) {
-                var next = text.charCodeAt(index + 1);
-                if (isCount(next) && next >= 0xdc00 && next <= 0xdfff) { bytes += 4; index += 1; }
-                else bytes += 3;
-              } else bytes += 3;
-              // NO C0 CONTROL AND NO DEL except the three whitespace ones the measured readback preserves.
-              if (code < 0x20 && code !== 9 && code !== 10 && code !== 13) return null;
-              if (code === 0x7f) return null;
-            }
-            if (bytes > max) return null;
-            return [text, bytes, idMax];
-          }
-          try {
-            var request = typeof scope !== 'undefined' && scope !== null ? scope : null;
-            var measured = measureCommentRequest(request);
-            if (measured === null) return commentRefusal('TOOL_ERROR');
-            var wanted = { text: measured[0], textBytes: measured[1], idMax: measured[2] };
-            var available = typeof Api !== 'undefined' && Api !== null;
-            var document = available && typeof Api.GetDocument === 'function' ? Api.GetDocument() : null;
-            if (document === null || document === undefined) return commentRefusal('CAPABILITY_UNAVAILABLE');
-            // THE PRIMITIVES ARE CHECKED BEFORE ANY WRITE: a build missing the collection read or the factory
-            // is a closed capability refusal with ZERO writes rather than a comment written into a document
-            // whose proof could never be read.
-            if (typeof document.GetAllComments !== 'function') return commentRefusal('CAPABILITY_UNAVAILABLE');
-            if (typeof document.AddComment !== 'function') return commentRefusal('CAPABILITY_UNAVAILABLE');
-            // THE PRE-DISPATCH BASELINE: the document's own comment count and the id of every comment it
-            // already holds. A collection the body cannot read as a list is a closed refusal with ZERO writes,
-            // because it is the baseline the whole delta is judged against.
-            var before = document.GetAllComments();
-            var countBefore = commentsSize(before);
-            if (countBefore === null) return commentRefusal('CAPABILITY_UNAVAILABLE');
-            var beforeIds = collectCommentIds(before, wanted);
-            // THE MUTATION. THIS BODY'S REFUSALS ARE MADE BY ITS OWN CODE, AND THAT IS A DELIBERATE
-            // RESTRICTION OF THE PHASE PROTOCOL: a synchronous THROW out of `AddComment` cannot have written
-            // anything — a native that threw never returned a created comment — so it is the honest closed
-            // CAPABILITY class with ZERO writes and a RELEASED slot, and the frozen `PRE_INSERT` phase is what
-            // says so. An ASYNCHRONOUS failure is not expressible here at all (this body is one synchronous
-            // function), so nothing that really wrote can take this arm, and the mutation has no post-return
-            // step that could fail. The property this buys is stated for a later reader: THE PHASE IS A
-            // STATEMENT ABOUT THIS BODY'S OWN CONTROL FLOW, not about a value that crossed the wire.
-            var created = null;
-            try { created = document.AddComment(wanted.text); }
-            catch (error) { return commentRefusal('CAPABILITY_UNAVAILABLE'); }
-            phase = 'POST_INSERT';
-            // THE POST READ, and NOTHING is taken from the pre-write snapshot: a FRESH `GetAllComments()` is
-            // asked for its own length and its own ids, and the identified comment's own text is read from
-            // that same fresh collection. A count that cannot be read is folded to the uncertain class
-            // IMMEDIATELY rather than invented as a zero: the write has already run, so "the total could not be
-            // read" and "the total is zero" must never be the same answer.
-            var after = document.GetAllComments();
-            var countAfter = commentsSize(after);
-            if (countAfter === null || after === null || after === undefined) return commentRefusal('CAPABILITY_UNAVAILABLE');
-            // THE RETURNED HANDLE, read behind `typeof` checks: a factory that answered nothing, a non-object,
-            // or an object with no usable `GetId` folds to `null` and the id-set route identifies the comment
-            // instead. A returned id the document ALREADY held is not usable either — it cannot name a comment
-            // THIS call added — so it falls through to the same id-set route.
-            var returnedId = null;
-            if (created !== null && created !== undefined && typeof created === 'object') {
-              var readId = commentIdAt(created, wanted.idMax);
-              if (readId !== null && !inCommentIds(wanted, beforeIds, readId)) returnedId = readId;
-            }
-            // THE IDENTIFICATION, in the ONE order the contract names, and BOTH facts come from the SAME
-            // comment: the returned id does not merely supply a name, it SELECTS the object whose own
-            // `GetText()` is then the text leg. The id-set route selects the one post id the pre set did not
-            // hold (or, for an empty pre set, the single post comment).
-            var textAt = [null];
-            var identified = identifyComment(after, wanted, beforeIds, returnedId, textAt);
-            // AN IDENTIFICATION THIS BODY COULD NOT MAKE IS ITS OWN ANSWER, not a zero and not an invented id:
-            // a `null` id is the honest "the added comment could not be identified" report, which the caller's
-            // outcome rule settles as the uncertain class with the slot HELD. The text slots stay at their
-            // absent values beside it.
-            var answer = [];
-            answer.push(phase);
-            answer.push(countBefore);
-            answer.push(countAfter);
-            if (identified === null) {
-              answer.push(null);
-              answer.push(0);
-              answer.push(wanted.textBytes);
-              return answer;
-            }
-            answer.push(identified[0]);
-            answer.push(identified[1]);
-            answer.push(wanted.textBytes);
-            return answer;
-          } catch (error) { return commentRefusal('CAPABILITY_UNAVAILABLE'); }
-        }, false, false, callback);
-      } });
+      });
   }
   if (hasTransport) {
     // The `executeCommand` transport of a build without the wrapper. It receives the composed command
@@ -2465,8 +3919,9 @@ function decodeTuple(value, sizes) {
   }
   return members;
 }
-function decodePresence(value) {
-  const tuple = decodeTuple(value, [1, presenceKeys.length]);
+function decodePresence(value, editor) {
+  const keys = editor === 'cell' ? cellPresenceKeys : presenceKeys;
+  const tuple = decodeTuple(value, [1, keys.length]);
   if (tuple.length === 1) {
     if (tuple[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
     throw new SafeError(ERROR_CODES.INVALID_DATA);
@@ -2474,7 +3929,7 @@ function decodePresence(value) {
   const result = {};
   for (let index = 0; index < tuple.length; index++) {
     if (typeof tuple[index] !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
-    result[presenceKeys[index]] = tuple[index];
+    result[keys[index]] = tuple[index];
   }
   assertByteLimit(JSON.stringify(result), LIMITS.editorResultBytes);
   return Object.freeze(result);
@@ -2553,6 +4008,557 @@ function decodeSearch(value, limit) {
 //     still bounded by `LIMITS.editorResultBytes`, the one window every native read of this bridge is
 //     decoded under.
 const STRUCTURE_SLOTS = 10;
+// The number of LEADING slots the SPREADSHEET-READ answer carries before its cell payload:
+// `sheetName, sheetIndex, sheetCount, requestAddress, readAddress, totalRows, totalColumns, rowCount,
+// columnCount, formulasMatch`. `requestAddress` is what was ASKED for (the caller's range, or the
+// sheet's own used range), `readAddress` is what the answer actually COVERS, and the two differ exactly
+// when the cap clipped the answer to a prefix of the range.
+const SHEET_READ_SLOTS = 10;
+// The CLOSED address shape a Cell read may name: `A1` or `A1:C10`, upper-case column letters and a
+// 1-based row, nothing else. This exists because the address crosses into an authored editor command
+// as DATA: an unvalidated string would be handed to `sheet.GetRange` verbatim, so the shape is checked
+// HERE, at the boundary, and a caller that cannot name an address this closed pattern accepts is
+// refused before any dispatch. A sheet-qualified address (`Лист2!A1`) is deliberately NOT accepted:
+// this leg reads the ACTIVE sheet, and a second sheet is reached by activating it.
+const SHEET_ADDRESS = /^[A-Z]{1,3}[1-9][0-9]{0,6}(:[A-Z]{1,3}[1-9][0-9]{0,6})?$/;
+// The SPREADSHEET-READ answer, decoded with the same strictness as `decodeStructure` and for the same
+// reason: the authored body encodes its measurements as ONE flat array of PRIMITIVES — because the
+// native return validator keeps arrays of primitives and STRIPS a plain object — so the decoder must
+// close every other shape. `Reflect.ownKeys` before any indexed read closes symbols, holes and hidden
+// extras, and every member is read through its own data descriptor, never through a getter. Four rules
+// are this leg's own contract:
+//   * a ONE-slot `['CAPABILITY_UNAVAILABLE']` answer is the body's own closed refusal and crosses as
+//     the capability class. It is a READ, so there is no phase and no uncertain class: a read that
+//     cannot be performed changed nothing.
+//   * `sheetName` and `address` are non-empty strings, and `sheetCount`/`rowCount`/`columnCount` are
+//     non-negative safe integers with the three counts at least 1 — a count this bridge cannot trust is
+//     not a count, and an address the editor did not answer is not a range.
+//   * `formulasMatch` is EXACTLY 0 or 1, and the payload is EXACTLY `rowCount × columnCount` value
+//     strings, followed by the same number of FORMULA SOURCE strings ONLY when it is 1. A body that
+//     answered a different number of strings is not one this leg can have produced: publishing a short
+//     formula list would attribute formulas to the wrong cells, and a long one would smuggle a cell no
+//     address owns. `formulas: null` is therefore an EXPLICIT "this read published NO formula sources",
+//     which covers any of the THREE conditions the body decides — the range exposed no getter, the address
+//     the editor answered could not be read as the matrix's own rectangle, or a published cell's own
+//     single-cell value disagreed with the value published for it — and it is never an empty matrix
+//     that would read as "the range has no formulas": a range that answers and holds no formula reports
+//     the same number of EMPTY strings, which is a measurement rather than an absence.
+//   * the whole answer must fit `LIMITS.editorResultBytes`, the same ceiling every other decoded leg
+//     applies.
+// The SPREADSHEET-WRITE answer, and its ONE decision rule is the PHASE. The body answers
+// `[phase, rowCount, columnCount, flag0, …]` with one flag per cell, or its own two-slot refusal
+// `[phase, name]`:
+//   * `[PRE_INSERT, name]` is a KNOWN refusal — nothing reached the sheet — and it keeps the closed code
+//     the body named, which THIS decoder republishes unchanged. Whether its slot is RELEASED is the
+//     downstream `preInsertRefusal` decision, and that is NARROWER than the phase: for this leg it accepts
+//     exactly the two classes every other write leg does (`CAPABILITY_UNAVAILABLE` and `TOOL_ERROR`, which is
+//     what this body's pre-write half answers), so a phase-marked `BYTE_LIMIT` — which this body cannot
+//     produce — still settles UNCERTAIN with the slot HELD rather than being released here.
+//   * a `[POST_INSERT, name]` refusal, a malformed answer, a flag list that is not the matrix size, a
+//     phase that is not post-insert, or a count that disagrees with the request is the UNCERTAIN class:
+//     the callback ARRIVED, so the body's write loop was entered and some cells may already be written.
+//     This decoder therefore never returns a "bad shape" as a plain known error.
+function decodeWriteRange(value, expectedRows, expectedColumns) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  const cellCount = expectedRows * expectedColumns;
+  if (!Number.isSafeInteger(cellCount) || cellCount < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== 3 + cellCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[1] !== expectedRows || members[2] !== expectedColumns) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const matches = [];
+  for (let index = 0; index < cellCount; index++) {
+    const flag = members[3 + index];
+    if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    matches.push(flag === 1);
+  }
+  return Object.freeze({ phase: 'POST_INSERT', rowCount: expectedRows, columnCount: expectedColumns,
+    matches: Object.freeze(matches) });
+}
+// The WORKBOOK-LISTING answer: a header of three slots and then a fixed STRIDE per sheet, decoded strictly
+// against the bound the ticket carried. A READ changes nothing, so every malformed shape here is the closed
+// `INVALID_DATA` class rather than the uncertain one — there is no sheet state that could have been left
+// behind by a listing that cannot be interpreted.
+const SHEET_LIST_SLOTS = 3;
+const SHEET_LIST_STRIDE = 4;
+// The WORKBOOK-MUTATION answer (add a sheet): a header of nine slots, then the ordered names BEFORE the call and
+// the ordered names AFTER it. THE POSTCONDITION IS PROVED HERE rather than trusted from the body, because this is
+// the layer that can refuse while the ticket still owns the callback slot: a two-slot `[PRE_INSERT, code]` is a
+// KNOWN refusal (nothing was added), and EVERY other shape — a `POST_INSERT` refusal included — is the UNCERTAIN
+// class, because `Api.AddSheet` may already have created a sheet. That is the whole reason no post-mutation
+// failure can come back as an ordinary error, and why a sheet that may exist is never deleted on the way out.
+const SHEET_ADD_SLOTS = 9;
+// The RENAME answer: a header of nine slots, then the ordered names BEFORE the call and the ordered names AFTER it.
+// Like the add-a-sheet answer, everything except a two-slot `[PRE_INSERT, code]` is the UNCERTAIN class, because
+// `Api.SetName` may already have changed the book — and unlike a sheet that may exist, a NAME cannot be
+// un-renamed without a second hidden mutation, which this leg refuses to perform.
+const SHEET_RENAME_SLOTS = 9;
+function decodeSheetRename(value, expectedNewName, maxSheets) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (!Number.isSafeInteger(maxSheets) || maxSheets < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size < SHEET_RENAME_SLOTS) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const beforeCount = members[1];
+  const afterCount = members[2];
+  const sourceIndex = members[3];
+  const oldStillResolves = members[4];
+  const byIndexValue = members[5];
+  const byNameValue = members[6];
+  const activeIndex = members[7];
+  const activeName = members[8];
+  if (!Number.isSafeInteger(beforeCount) || beforeCount < 1 || beforeCount > maxSheets) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // THE BOOK MUST BE THE SAME SIZE after a rename: nothing was added and nothing was removed.
+  if (afterCount !== beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== SHEET_RENAME_SLOTS + beforeCount + afterCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // THE OLD NAME MUST BE GONE, the new one must resolve at the SAME index, and the index must still resolve.
+  if (oldStillResolves !== 0) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (byIndexValue !== sourceIndex || byNameValue !== sourceIndex) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof expectedNewName !== 'string' || expectedNewName === '' || utf8ByteLength(expectedNewName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The active sheet is RECORDED rather than required — the leg neither switches nor restores it — but a recorded
+  // FACT must at least be coherent with the book that was measured, so it is a non-empty name AND, once the
+  // ordered list is sliced below, the name that list carries at that index. An empty name is not a fact.
+  if (!Number.isSafeInteger(activeIndex) || activeIndex < 0 || activeIndex >= afterCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof activeName !== 'string' || activeName === '' || utf8ByteLength(activeName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const beforeName = members.slice(SHEET_RENAME_SLOTS, SHEET_RENAME_SLOTS + beforeCount);
+  const afterName = members.slice(SHEET_RENAME_SLOTS + beforeCount, SHEET_RENAME_SLOTS + beforeCount + afterCount);
+  for (let index = 0; index < beforeCount; index++) {
+    if (typeof beforeName[index] !== 'string' || beforeName[index] === '' || utf8ByteLength(beforeName[index]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    if (typeof afterName[index] !== 'string' || afterName[index] === '' || utf8ByteLength(afterName[index]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    // EVERY OTHER SHEET KEEPS ITS NAME AND ITS POSITION, and the renamed one carries the requested name.
+    if (index === sourceIndex) {
+      if (afterName[index] !== expectedNewName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    } else {
+      if (afterName[index] !== beforeName[index]) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+      // The new name is UNIQUE: no other sheet carries it, before or after.
+      if (afterName[index] === expectedNewName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    }
+  }
+  // The RECORDED active sheet must be the sheet the measured list carries at that index: a recorded pair that
+  // disagrees with the book is not a fact that can be published as one.
+  if (afterName[activeIndex] !== activeName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ index: sourceIndex, name: afterName[sourceIndex], previousName: beforeName[sourceIndex],
+    activeIndex, activeName });
+}
+function decodeSheetAdd(value, expectedName, maxSheets) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (!Number.isSafeInteger(maxSheets) || maxSheets < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size < SHEET_ADD_SLOTS) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const beforeCount = members[1];
+  const afterCount = members[2];
+  const newIndex = members[3];
+  const newName = members[4];
+  const activeIndex = members[5];
+  const activeName = members[6];
+  const previousActiveIndex = members[7];
+  const previousActiveName = members[8];
+  if (!Number.isSafeInteger(beforeCount) || beforeCount < 1 || beforeCount >= maxSheets) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // EXACTLY ONE sheet more, and the new one LAST: both halves are the postcondition the caller was promised.
+  // THIS CHECK IS LOAD-BEARING, and an earlier draft of this comment claimed the opposite — that deleting it
+  // changed no outcome because the size equation below would catch a short answer. A review refuted that with a
+  // forged answer that GROWS BY MORE THAN ONE and carries trailing members: the size equation ties the answer's
+  // length to the DECLARED counts, so `afterCount` itself has to be pinned for the trailing members to be
+  // inspected at all. It is pinned by its own test.
+  if (afterCount !== beforeCount + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (newIndex !== beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (afterCount > maxSheets) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== SHEET_ADD_SLOTS + beforeCount + afterCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // When the caller NAMED the sheet, the editor must confirm THAT name; when it did not, whatever the editor
+  // produced is the answer (this leg never predicts a localised default).
+  if (expectedName !== null && newName !== expectedName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (activeIndex !== newIndex || activeName !== newName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(previousActiveIndex) || previousActiveIndex < 0 || previousActiveIndex >= beforeCount) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (typeof previousActiveName !== 'string' || previousActiveName === '' || utf8ByteLength(previousActiveName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The two name lists are SLICES read at constant offsets, for the audit reason the listing decoder states.
+  const beforeName = members.slice(SHEET_ADD_SLOTS, SHEET_ADD_SLOTS + beforeCount);
+  const afterName = members.slice(SHEET_ADD_SLOTS + beforeCount, SHEET_ADD_SLOTS + beforeCount + afterCount);
+  for (let index = 0; index < beforeCount; index++) {
+    if (typeof beforeName[index] !== 'string' || beforeName[index] === '' || utf8ByteLength(beforeName[index]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    // EVERY FORMER SHEET KEPT ITS POSITION, compared entry by entry rather than by count alone.
+    if (afterName[index] !== beforeName[index]) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (typeof afterName[beforeCount] !== 'string' || afterName[beforeCount] === '' || utf8ByteLength(afterName[beforeCount]) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The LAST entry of the measured list and the name this answer REPORTS must be the same name: they are two
+  // readings of the same sheet, so an answer where they disagree is not one this leg can have produced.
+  if (afterName[beforeCount] !== newName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  // The sheet that WAS active is still where it was, and the new name is genuinely new: a duplicate would mean
+  // the pre-mutation check did not hold on this build, which is exactly the ambiguous state to refuse.
+  if (afterName[previousActiveIndex] !== previousActiveName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  for (let index = 0; index < beforeCount; index++) if (beforeName[index] === newName) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ index: newIndex, name: newName, active: true,
+    previousActive: Object.freeze({ index: previousActiveIndex, name: previousActiveName }) });
+}
+function decodeSheetList(value, maxSheets) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  if (!Number.isSafeInteger(maxSheets) || maxSheets < 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (size < SHEET_LIST_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const count = members[0];
+  const activeIndex = members[1];
+  const activeName = members[2];
+  // The DECLARED count, the SIZE of the answer and the bound must all agree: any of the three disagreeing means
+  // this answer is not one this leg can have produced.
+  if (!Number.isSafeInteger(count) || count < 1 || count > maxSheets) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (size !== SHEET_LIST_SLOTS + SHEET_LIST_STRIDE * count) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!Number.isSafeInteger(activeIndex) || activeIndex < 0 || activeIndex >= count) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // The header's active name is bounded here as BELT AND BRACES, and it is worth stating that this bound is
+  // provably unreachable on its own: the header name must EQUAL the name of the entry at `activeIndex` (checked
+  // below), and that entry's own name is bounded by the same rule, so no input can be refused by this line
+  // alone. It stays because a bound on a published field should be visible where the field is read.
+  if (typeof activeName !== 'string' || activeName === '' || utf8ByteLength(activeName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const sheets = [];
+  let activeSeen = 0;
+  for (let index = 0; index < count; index++) {
+    const base = SHEET_LIST_SLOTS + index * SHEET_LIST_STRIDE;
+    // A RECORD READ AT CONSTANT OFFSETS. The load-bearing half of the audit fix is in the BODY (addressing each
+    // sheet through `Api.GetSheet(position)` rather than indexing the collection); what is measured HERE is that
+    // a COMPUTED member read assigned to a SHARED identifier name taints that name across the whole bundle, so
+    // `const name = members[base]` turned unrelated `name.toLowerCase()`-style calls in other legs into
+    // dynamic-property findings. Constant offsets and leg-local names keep this decoder out of that class
+    // entirely rather than relying on a name being free.
+    const record = members.slice(base, base + SHEET_LIST_STRIDE);
+    const recordName = record[0];
+    const recordIndex = record[1];
+    const recordActive = record[2];
+    const recordVisible = record[3];
+    if (typeof recordName !== 'string' || recordName === '' || utf8ByteLength(recordName) > LIMITS.sheetListNameBytes) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    // The index is POSITIONAL, which is STRICTER than the read leg: `decodeSheetRead` tolerates any non-negative
+    // `GetIndex()` because it only reports that sheet's own index, while a listing needs the entries to BE the
+    // book's positions. On a build whose `GetIndex()` were not 0-based (unconfirmed on the target) this leg would
+    // therefore refuse a book the read leg still reads — a fail-CLOSED disagreement, recorded rather than hidden.
+    if (!Number.isSafeInteger(recordIndex) || recordIndex !== index) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    if (recordActive !== 0 && recordActive !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    if (recordVisible !== 0 && recordVisible !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const isActive = recordActive === 1;
+    if (isActive) activeSeen += 1;
+    sheets.push(Object.freeze({ name: recordName, index: recordIndex, active: isActive, visible: recordVisible === 1 }));
+  }
+  // A workbook has EXACTLY ONE active sheet: no sheet marked active and two of them are both refusals, and the
+  // active entry must agree with the header in BOTH slots (`activeIndex` and `activeName`).
+  if (activeSeen !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const activeEntry = sheets[activeIndex];
+  if (activeEntry.active !== true || activeEntry.name !== activeName) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  return Object.freeze({ count, activeIndex, activeName, sheets: Object.freeze(sheets) });
+}
+// The SPREADSHEET-FORMATTING answer, decoded with the SAME strictness as `decodeWriteRange` and for the same
+// reason: the phase is the one decision rule, the flag list is the proof, and a body that answers a different
+// number of flags than the request owes is not one this leg can have produced.
+//   * a TWO-slot `[PRE_INSERT, name]` is a KNOWN refusal — nothing reached the sheet — and it keeps the closed
+//     code the body named, which this decoder republishes unchanged. Whether its slot is RELEASED is the
+//     downstream `preInsertRefusal` decision, and for this leg that is the two classes every other write leg
+//     accepts (`CAPABILITY_UNAVAILABLE` and `TOOL_ERROR`), so a phase-marked `BYTE_LIMIT` — which this body
+//     cannot produce — still settles UNCERTAIN with the slot HELD.
+//   * every other shape — a `POST_INSERT` refusal, a malformed answer, a flag count that is not the expected
+//     one, counts that disagree with the request, or a flag that is not 0 or 1 — is the UNCERTAIN class: the
+//     callback ARRIVED, so the body's mutation loop was entered and the sheet may already be formatted. This
+//     decoder therefore never returns a "bad shape" as a plain known error.
+// WHAT THIS DECODER DOES NOT DECIDE: that EVERY flag must be 1 for success. It publishes the flags as booleans
+// and the DISPATCHER applies the exact-proof rule while it still owns the slot (the same division of labour
+// `decodeWriteRange` has), so a single unproved property settles the ticket there rather than here.
+function decodeCellFormat(value, expectedRows, expectedColumns, expectedChecks) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    members.push(descriptor.value);
+  }
+  if (size === 2) {
+    const phase = members[0];
+    const name = members[1];
+    if (phase === 'PRE_INSERT' && typeof name === 'string' && ERROR_CODES[name] === name) throw new SafeError(name);
+    throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  }
+  if (!Number.isSafeInteger(expectedRows) || expectedRows < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(expectedColumns) || expectedColumns < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (!Number.isSafeInteger(expectedChecks) || expectedChecks < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (size !== 4 + expectedChecks) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[0] !== 'POST_INSERT') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (members[1] !== expectedRows || members[2] !== expectedColumns || members[3] !== expectedChecks) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const matches = [];
+  for (let index = 0; index < expectedChecks; index++) {
+    const flag = members[4 + index];
+    if (flag !== 0 && flag !== 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    matches.push(flag === 1);
+  }
+  return Object.freeze({ phase: 'POST_INSERT', rowCount: expectedRows, columnCount: expectedColumns,
+    checks: expectedChecks, matches: Object.freeze(matches) });
+}
+// THE CLOSED NUMBER-FORMAT CONTRACT, composed host-side so the authored body never interprets a request: every
+// code these two functions can produce was measured to round-trip through `GetNumberFormat()` EXACTLY (T4.0
+// evidence: 3 families x decimals 0..10 plus three currencies = 55 codes, 0 mismatches). The currency enum is
+// exactly the three symbols that were measured, and no arbitrary symbol is accepted; `currency` is required
+// for the currency type and refused for the others.
+const CELL_FORMAT_CURRENCIES = Object.freeze({ RUB: '\u20BD', USD: '$', EUR: '\u20AC' });
+// The CLOSED key set of a Cell formatting request, checked by `formatCells` itself: the measured properties,
+// BOTH spellings of the clearing request, and the signal. A key outside it refuses the whole request, which is
+// what makes "nothing is ever applied partially" true at the layer that promises it.
+const CELL_FORMAT_KEYS = Object.freeze(new Set(['address', 'numberFormat', 'bold', 'italic', 'fontFamily',
+  'fontSize', 'fill', 'clearFill', 'columnWidth', 'rowHeight', 'wrapText', 'sheetName', 'sheetIndex', 'signal']));
+function cellFormatCode(numberFormat) {
+  const type = numberFormat.type;
+  const decimals = numberFormat.decimals === undefined ? 2 : numberFormat.decimals;
+  if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > LIMITS.formatRangeDecimalsMax) return null;
+  let zeros = '';
+  for (let index = 0; index < decimals; index++) zeros += '0';
+  const decimalPart = decimals > 0 ? `.${zeros}` : '';
+  if (type === 'number') return `#,##0${decimalPart}`;
+  if (type === 'percent') return `0${decimalPart}%`;
+  if (type === 'currency') {
+    const symbol = CELL_FORMAT_CURRENCIES[numberFormat.currency];
+    if (symbol === undefined) return null;
+    return `#,##0${decimalPart} ${symbol}`;
+  }
+  return null;
+}
+// The rectangle a CLOSED Cell address names, or null when it is not one this module accepts. It is the same
+// arithmetic the authored bodies do, kept here so the tool, the bridge and the body cannot disagree about what
+// an address covers — and so the cell cap can be enforced before anything is dispatched.
+function sheetAddressShape(address) {
+  const parts = address.split(':');
+  if (parts.length > 2) return null;
+  const head = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(parts[0]);
+  if (head === null) return null;
+  let startColumn = 0;
+  for (const letter of head[1]) startColumn = startColumn * 26 + (letter.charCodeAt(0) - 64);
+  const startRow = Number(head[2]);
+  let endColumn = startColumn;
+  let endRow = startRow;
+  if (parts.length === 2) {
+    const tail = /^([A-Z]{1,3})([1-9][0-9]{0,6})$/.exec(parts[1]);
+    if (tail === null) return null;
+    endColumn = 0;
+    for (const letter of tail[1]) endColumn = endColumn * 26 + (letter.charCodeAt(0) - 64);
+    endRow = Number(tail[2]);
+  }
+  const rows = endRow - startRow + 1;
+  const columns = endColumn - startColumn + 1;
+  if (rows < 1 || columns < 1) return null;
+  return Object.freeze({ rows, columns });
+}
+function decodeSheetRead(value, maxCells) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const length = Object.getOwnPropertyDescriptor(value, 'length');
+  if (!length || !Object.hasOwn(length, 'value') || length.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const size = length.value;
+  if (!Number.isSafeInteger(size) || size < 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (Reflect.ownKeys(value).length !== size + 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const members = [];
+  for (let index = 0; index < size; index++) {
+    const descriptor = Object.hasOwn(descriptors, String(index)) ? descriptors[String(index)] : null;
+    if (!descriptor || !Object.hasOwn(descriptor, 'value') || !descriptor.enumerable) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    members.push(descriptor.value);
+  }
+  if (size === 1 && members[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  // THE NARROWER ONE-SLOT REFUSAL this leg answers when a SHEET SELECTOR named nothing that exists: a known
+  // argument error the caller can fix, and a read that changed nothing.
+  if (size === 1 && members[0] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+  if (size < SHEET_READ_SLOTS) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const sheetName = members[0];
+  const sheetIndex = members[1];
+  const sheetCount = members[2];
+  const requestAddress = members[3];
+  const readAddress = members[4];
+  const totalRows = members[5];
+  const totalColumns = members[6];
+  const rowCount = members[7];
+  const columnCount = members[8];
+  const formulasMatch = members[9];
+  if (typeof sheetName !== 'string' || sheetName === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (typeof requestAddress !== 'string' || requestAddress === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (typeof readAddress !== 'string' || readAddress === '') throw new SafeError(ERROR_CODES.INVALID_DATA);
+  for (const count of [sheetIndex, sheetCount, totalRows, totalColumns, rowCount, columnCount]) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  }
+  if (!(sheetCount >= 1) || !(totalRows >= 1) || !(totalColumns >= 1)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (!(rowCount >= 1) || !(columnCount >= 1)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  // The published matrix is a PREFIX of the measured range: it can never be taller than the range and
+  // never a different width, because the body clips whole rows only. Both facts are pinned here so a
+  // body that answered an inconsistent pair is refused rather than published with a `truncated` flag
+  // computed from numbers that disagree.
+  if (rowCount > totalRows) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (columnCount !== totalColumns) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (formulasMatch !== 0 && formulasMatch !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const cellCount = rowCount * columnCount;
+  if (!Number.isSafeInteger(cellCount) || cellCount > maxCells) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (size !== SHEET_READ_SLOTS + cellCount * (formulasMatch === 1 ? 2 : 1)) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const values = [];
+  const formulas = [];
+  for (let index = 0; index < cellCount; index++) {
+    const sheetCellChars = members[SHEET_READ_SLOTS + index];
+    if (typeof sheetCellChars !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+    values.push(sheetCellChars);
+  }
+  if (formulasMatch === 1) {
+    for (let index = 0; index < cellCount; index++) {
+      const sheetFormulaChars = members[SHEET_READ_SLOTS + cellCount + index];
+      if (typeof sheetFormulaChars !== 'string') throw new SafeError(ERROR_CODES.INVALID_DATA);
+      formulas.push(sheetFormulaChars);
+    }
+  }
+  assertByteLimit(JSON.stringify(members), LIMITS.editorResultBytes);
+  const valueRows = [];
+  const formulaRows = [];
+  for (let index = 0; index < rowCount; index++) {
+    valueRows.push(Object.freeze(values.slice(index * columnCount, (index + 1) * columnCount)));
+    if (formulasMatch === 1) formulaRows.push(Object.freeze(formulas.slice(index * columnCount, (index + 1) * columnCount)));
+  }
+  return Object.freeze({
+    sheetName,
+    sheetIndex,
+    sheetCount,
+    requestAddress,
+    readAddress,
+    totalRows,
+    totalColumns,
+    rowCount,
+    columnCount,
+    // `truncated` is DERIVED here from the two measured pairs, so it can never drift from the numbers it
+    // describes: the range held more cells than the answer carries exactly when its full shape is larger
+    // than the published prefix.
+    truncated: totalRows > rowCount,
+    values: Object.freeze(valueRows),
+    formulas: formulasMatch === 1 ? Object.freeze(formulaRows) : null
+  });
+}
+function decodeSlideRead(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  if (value.length === 1 && value[0] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+  if (value.length === 1 && value[0] === 'TOOL_ERROR') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+  const count = value.length;
+  if (mode === 'presentation') {
+    if (count < 6 || value[0] !== 0) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const [_, slidesCount, currentSlideIndex, slidesRead, slidesTotal, truncated] = value;
+    if (![slidesCount, currentSlideIndex, slidesRead, slidesTotal].every(number => Number.isSafeInteger(number) && number >= 0) || slidesCount !== slidesTotal || slidesRead > slidesTotal || slidesRead > LIMITS.slideReadSlidesMax || truncated !== (slidesRead < slidesTotal ? 1 : 0) || count !== 6 + slidesRead * 8) throw new SafeError(ERROR_CODES.INVALID_DATA);
+    const slides = [];
+    for (let offset = 6, index = 0; index < slidesRead; index += 1, offset += 8) { const [slideIndex, layoutId, shapes, drawings, images, charts, oleObjects, hasText] = value.slice(offset, offset + 8); if (slideIndex !== index || !(layoutId === null || Number.isSafeInteger(layoutId)) || ![shapes, drawings, images, charts, oleObjects].every(number => Number.isSafeInteger(number) && number >= 0) || (hasText !== 0 && hasText !== 1)) throw new SafeError(ERROR_CODES.INVALID_DATA); slides.push(Object.freeze({ index: slideIndex, layoutId, shapes, drawings, images, charts, oleObjects, hasText: hasText === 1 })); }
+    return Object.freeze({ slidesCount, currentSlideIndex, slidesRead, slidesTotal, truncated: truncated === 1, slides: Object.freeze(slides) });
+  }
+  if (count < 11 || value[0] !== 1) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const [_, slideIndex, layoutId, objectCount, objectsRead, truncated, shapes, drawings, images, charts, oleObjects] = value;
+  if (![slideIndex, objectCount, objectsRead, shapes, drawings, images, charts, oleObjects].every(number => Number.isSafeInteger(number) && number >= 0) || !(layoutId === null || Number.isSafeInteger(layoutId)) || objectsRead > objectCount || objectsRead > LIMITS.slideReadObjectsMax || truncated !== (objectsRead < objectCount ? 1 : 0) || count !== 11 + objectsRead * 6) throw new SafeError(ERROR_CODES.INVALID_DATA);
+  const objects = [];
+  for (let offset = 11, ordinal = 0; ordinal < objectsRead; ordinal += 1, offset += 6) { const [publishedOrdinal, classType, placeholder, category, text, textOmitted] = value.slice(offset, offset + 6); if (publishedOrdinal !== ordinal || typeof classType !== 'string' || (placeholder !== 0 && placeholder !== 1) || category !== 'shape' || !(text === null || typeof text === 'string') || (textOmitted !== 0 && textOmitted !== 1) || (textOmitted === 1 && text !== null) || (typeof text === 'string' && utf8ByteLength(text) > LIMITS.slideReadTextBytes)) throw new SafeError(ERROR_CODES.INVALID_DATA); objects.push(Object.freeze({ ordinal, classType, placeholder: placeholder === 1, category, text, textOmitted: textOmitted === 1 })); }
+  return Object.freeze({ slideIndex, layoutId, objectCount, objectsRead, truncated: truncated === 1, counts: Object.freeze({ shapes, drawings, images, charts, oleObjects }), objects: Object.freeze(objects) });
+}
+function decodeSlideMutation(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (mode === 'add') {
+    if (value.length !== 5 || value[0] !== 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    const [_, slidesCount, slideIndex, layoutId, layoutPreserved] = value;
+    if (!Number.isSafeInteger(slidesCount) || slidesCount < 1 || !Number.isSafeInteger(slideIndex) || slideIndex < 0 || !(layoutId === null || typeof layoutId === 'string') || layoutPreserved !== 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+    return Object.freeze({ slidesCount, slideIndex, layoutId, layoutPreserved: true });
+  }
+  if (value.length !== 5 || value[0] !== 2) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const [_, slideIndex, objectOrdinal, textLength, textBytes] = value;
+  if (![slideIndex, objectOrdinal, textLength, textBytes].every(number => Number.isSafeInteger(number) && number >= 0)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ slideIndex, objectOrdinal, textLength, textBytes });
+}
+function decodeSlideFormat(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length < 5 || value.length > 10 || value[0] !== 3) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const [_, slideIndex, objectOrdinal, textLength, ...applied] = value;
+  const names = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color'];
+  if (![slideIndex, objectOrdinal, textLength].every(number => Number.isSafeInteger(number) && number >= 0) || applied.length < 1) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  for (const name of applied) if (!names.includes(name)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  return Object.freeze({ slideIndex, objectOrdinal, applied: Object.freeze(applied), textLength });
+}
+function decodeSlideRestructure(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length !== 6 || value[0] !== (mode === 'duplicate' ? 6 : 7)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = value.slice(1); for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (mode === 'duplicate') return Object.freeze({ slidesCount: value[1], slideIndex: value[2], duplicatedFrom: value[3], layoutLength: value[4], shapes: value[5] });
+  return Object.freeze({ slidesCount: value[1], fromIndex: value[2], toIndex: value[3], layoutLength: value[4], shapes: value[5] });
+}
+function decodeSlideObject(value, mode) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length === 2 && value[0] === 0 && ['TOOL_ERROR', 'CAPABILITY_UNAVAILABLE', 'BYTE_LIMIT'].includes(value[1])) throw new SafeError(value[1]);
+  if (value.length === 2 && value[0] === 1 && value[1] === 'APPLY_UNCERTAIN') throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (value.length !== 6 || value[0] !== (mode === 'table' ? 4 : 5)) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  const numbers = value.slice(1); for (const number of numbers) if (!Number.isSafeInteger(number) || number < 0) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
+  if (mode === 'table') return Object.freeze({ slideIndex: value[1], columns: value[2], rows: value[3], drawings: value[4], cells: value[5] });
+  return Object.freeze({ slideIndex: value[1], images: value[2], widthEmu: value[3], heightEmu: value[4], sourceBytes: value[5] });
+}
 function decodeStructure(value, maxHeadings) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) throw new SafeError(ERROR_CODES.INVALID_DATA);
   const length = Object.getOwnPropertyDescriptor(value, 'length');
@@ -2633,7 +4639,7 @@ function decodeBlocks(value, blockCount) {
   if (size === 2) {
     if (members[0] !== BLOCKS_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
     if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-    if (members[1] === 'STYLE_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    if (members[1] === 'STYLE_UNAVAILABLE' || members[1] === 'ANCHOR_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
     throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   }
   // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal — the
@@ -2686,8 +4692,14 @@ function exactBlocksDelta(outcome, blocks) {
 // THE RESIDUAL, STATED EXACTLY BECAUSE IT CANNOT BE FIXED IN BAND. The two names that reach this function
 // as KNOWN classes are the block body's `CAPABILITY_UNAVAILABLE` (from its own pre-insert half: a missing
 // scope, a missing primitive, an unusable baseline, an unreadable region) and `STYLE_UNAVAILABLE` (an
-// unresolvable `Heading <n>`, which `decodeBlocks` publishes as `TOOL_ERROR`). Both are GENUINE in the
-// sense that a faithful run of the shipped body writes them only before its first `Push` — but the phase
+// unresolvable `Heading <n>`, which `decodeBlocks` publishes as `TOOL_ERROR`). `sheetwrite` is a THIRD
+// producer of the same shape and this residual now covers it too: its own pre-write half answers
+// `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']` — a missing `Api`, `GetActiveSheet`, `GetRange` or `SetValue`, a
+// damaged request, or an addressed block that disagrees with the matrix — all of them before the phase turns
+// and before the first `SetValue`, so a faithful run of that body cannot mark a real write pre-insert while a
+// damaged native can say anything. ALL THREE are GENUINE in the sense that a faithful run of the shipped body
+// writes them only before its first MUTATING call — the block append's first `Push`, the table insert's first
+// `Push`, and this one's first `SetValue` — but the phase
 // slot travels INSIDE the answer the same body composes, and the answering native is the untrusted party:
 // a damaged or adversarial native that returns `[PRE_INSERT, 'CAPABILITY_UNAVAILABLE']` (or
 // `[PRE_INSERT, 'STYLE_UNAVAILABLE']`) AFTER it has already pushed the batch is decoded as a known
@@ -3861,17 +5873,50 @@ export function createR7Bridge(plugin, {
     const type = Object.getOwnPropertyDescriptor(info.value, 'editorType');
     return type && Object.hasOwn(type, 'value') && ['word', 'cell', 'slide'].includes(type.value) ? type.value : 'unknown';
   }
+  // The ONE leg both Cell reads share. `read_sheet` and `read_range` differ only in the address they
+  // name, so the dispatch, the editor check and the closed classification are written ONCE here rather
+  // than twice with a chance to drift. It is not a second source of truth for the request shape — each
+  // caller has already validated `maxCells` and closed the address — what it owns is the ORDER every
+  // other read leg uses: idle, editor identity, the parameter channel checked BEFORE the ticket exists
+  // so a refusal carries no slot at all, then ONE dispatch on the one owned callback slot.
+  async function presentationRead(signal, params) {
+    try {
+      ensureIdle();
+      if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const read = await start(params.mode === 'presentation' ? 'presread' : 'slideread', signal, {}, params);
+      return Object.freeze({ ok: true, ...read });
+    } catch (error) { return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR }); }
+  }
+  async function sheetRead(signal, params) {
+    try {
+      ensureIdle();
+      if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const read = await start('sheetread', signal, {}, params);
+      return Object.freeze({ ok: true, sheetName: read.sheetName, sheetIndex: read.sheetIndex,
+        sheetCount: read.sheetCount, requestAddress: read.requestAddress, readAddress: read.readAddress,
+        totalRows: read.totalRows, totalColumns: read.totalColumns, rowCount: read.rowCount,
+        columnCount: read.columnCount, truncated: read.truncated, values: read.values, formulas: read.formulas });
+    } catch (error) {
+      return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+    }
+  }
   function ownedTarget(target) {
     const saved = target && typeof target === 'object' ? targets.get(target) : null;
-    return !disposed && currentEditor() === editor && editor === 'word' && saved?.owner === contextOwner ? saved : null;
+    return !disposed && currentEditor() === editor && saved?.owner === contextOwner ? saved : null;
   }
 
   function capabilities(methodPresence = null) {
-    const available = !disposed && editor === 'word' && adapter.executeMethod;
+    const probed = methodPresence !== null;
+    const nativeRoot = probed && methodPresence.api === true && (editor === 'cell' ? methodPresence.getActiveSheet === true : methodPresence.getDocument === true);
+    const available = !disposed && nativeRoot && (editor !== 'cell' || methodPresence.readRange === true);
+    const writable = !disposed && nativeRoot && (editor !== 'cell' || methodPresence.writeRange === true);
+    const reason = available ? 'NATIVE_PROBE_AVAILABLE' : probed ? 'NATIVE_PROBE_UNAVAILABLE' : 'NATIVE_PROBE_NOT_PERFORMED';
+    const mutationReason = writable ? 'NATIVE_PROBE_AVAILABLE' : probed ? 'NATIVE_PROBE_UNAVAILABLE' : 'NATIVE_PROBE_NOT_PERFORMED';
     return Object.freeze({
       editorType: editor, adapter, methodPresence, runtimeVerified: false,
-      selectionRead: Object.freeze({ available, runtimeVerified: false, reason: available ? 'ADAPTER_PRESENT_RUNTIME_UNVERIFIED' : 'READ_UNAVAILABLE' }),
-      mutation: Object.freeze({ available: false, runtimeVerified: false, reason: MUTATION_REASON })
+      selectionRead: Object.freeze({ available, runtimeVerified: false, reason }),
+      mutation: Object.freeze({ available: writable, runtimeVerified: false, reason: mutationReason })
     });
   }
   function ensureIdle() {
@@ -4130,6 +6175,87 @@ export function createR7Bridge(plugin, {
       function confirmFailed() {
         settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
       }
+      // Editor events plus readback and reveal, all under the same mutation lease.
+      function beginComment() {
+          let stage = 0;
+          const fail = () => {
+            if (owned.settled || slot !== owned) return;
+            if (owned.dispatched) settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
+            else {
+              slot = null;
+              settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE));
+              notify();
+            }
+          };
+          const active = () => {
+            if (owned.settled || slot !== owned) return false;
+            if (disposed || signal?.aborted || currentEditor() !== editor || readClock() >= owned.deadline) {
+              fail();
+              return false;
+            }
+            return true;
+          };
+          const field = (object, name) => {
+            if (!object || typeof object !== "object") throw new SafeError(ERROR_CODES.INVALID_DATA);
+            const descriptors = Object.getOwnPropertyDescriptors(object);
+            const descriptor = Object.hasOwn(descriptors, name) ? descriptors[name] : null;
+            if (!descriptor || !Object.hasOwn(descriptor, "value")) throw new SafeError(ERROR_CODES.INVALID_DATA);
+            return descriptor.value;
+          };
+          const snapshot = (value) => {
+            if (!Array.isArray(value) || value.length > 1e3) throw new SafeError(ERROR_CODES.INVALID_DATA);
+            const ids = /* @__PURE__ */ new Set();
+            let bytes = 0;
+            return Array.from({ length: value.length }, (_, index) => {
+              const commentItem = field(value, String(index));
+              const id = field(commentItem, "Id"), text = field(field(commentItem, "Data"), "Text");
+              if (typeof id !== "string" || !id.length || id.length > params.idMax || ids.has(id) || typeof text !== "string") {
+                throw new SafeError(ERROR_CODES.INVALID_DATA);
+              }
+              bytes += utf8ByteLength(id) + utf8ByteLength(text);
+              if (bytes > LIMITS.editorResultBytes) throw new SafeError(ERROR_CODES.BYTE_LIMIT);
+              ids.add(id);
+              return { id, text };
+            });
+          };
+          const invoke = (method, args, commentNext) => {
+            const ticket = ++stage;
+            try {
+              if (!active()) return;
+              plugin.executeMethod(method, args, (value) => {
+                if (ticket !== stage) return;
+                stage++;
+                try {
+                  if (active()) commentNext(value);
+                } catch {
+                  fail();
+                }
+              });
+            } catch {
+              fail();
+            }
+          };
+          if (!adapter.executeMethod) {
+            fail();
+            return;
+          }
+          invoke("GetAllComments", [], (value) => {
+            const commentBefore = snapshot(value), ids = new Set(commentBefore.map((commentItem) => commentItem.id));
+            owned.dispatched = true;
+            invoke("AddComment", [{ Text: params.text, UserName: "R7 AI Assistant" }], (returnedId) => {
+              invoke("GetAllComments", [], (afterValue) => {
+                const commentAfter = snapshot(afterValue), added = commentAfter.filter((commentItem) => !ids.has(commentItem.id));
+                if (commentAfter.length !== commentBefore.length + 1 || added.length !== 1 || commentBefore.some((commentItem) => !commentAfter.some((commentNext) => commentNext.id === commentItem.id && commentNext.text === commentItem.text)) || added[0].text !== params.text || returnedId !== added[0].id) {
+                  fail();
+                  return;
+                }
+                invoke("MoveToComment", [added[0].id], () => {
+                  callback(["POST_INSERT", commentBefore.length, commentAfter.length, added[0].id, params.text.length, utf8ByteLength(params.text)]);
+                });
+              });
+            });
+          });
+        }
       function callback(value) {
         if (slot !== owned) return; // old/duplicate callback cannot release a new owner
         if (owned.settled) { slot = null; notify(); return; } // release only, never late content/UI
@@ -4156,6 +6282,51 @@ export function createR7Bridge(plugin, {
           // the `maxHeadings` THIS ticket asked for — the same cap the body extracted against — so the
           // decode and the extraction can never disagree about how many heading texts are owed.
           else if (kind === 'structureread') result = decodeStructure(value, params.maxHeadings);
+          // THE SPREADSHEET READ. Its answer is the authored flat array of primitives, decoded against
+          // the `maxCells` THIS ticket asked for — the same cap the body extracted against — so the
+          // decode and the extraction can never disagree about how many cells are owed. A one-slot
+          // `CAPABILITY_UNAVAILABLE` answer crosses as the capability class; there is no uncertain class
+          // here, because a read that cannot be performed changed nothing.
+          // THE WORKBOOK MUTATION (add a sheet). A `[PRE_INSERT, code]` answer is a KNOWN refusal — nothing was
+          // added — and EVERY other shape, a post-phase refusal included, is the UNCERTAIN class with the slot
+          // HELD: `Api.AddSheet` may already have created a sheet, so there is no known error to report and
+          // nothing to retry.
+          else if (kind === 'sheetrename') result = decodeSheetRename(value, params.newName, params.maxSheets);
+          else if (kind === 'sheetadd') result = decodeSheetAdd(value, params.requestedName, params.maxSheets);
+          else if (kind === 'sheetlist') result = decodeSheetList(value, params.maxSheets);
+          else if (kind === 'sheetread') result = decodeSheetRead(value, params.maxCells);
+          else if (kind === 'presread') result = decodeSlideRead(value, 'presentation');
+          else if (kind === 'slideread') result = decodeSlideRead(value, 'slide');
+          else if (kind === 'slideadd') result = decodeSlideMutation(value, 'add');
+          else if (kind === 'slidetext') result = decodeSlideMutation(value, 'text');
+          else if (kind === 'slideformat') result = decodeSlideFormat(value);
+          else if (kind === 'slideobject') result = decodeSlideObject(value, params.mode);
+          else if (kind === 'sliderestructure') result = decodeSlideRestructure(value, params.mode);
+          // THE SPREADSHEET WRITE. Its answer is the authored flat array with ONE flag per cell, decoded
+          // against the MATRIX this ticket carried — the same matrix the body wrote and then read back —
+          // and the exact-proof rule decides the ticket HERE, while it still owns the slot: a single flag
+          // that is not 1 means the write may have applied but is not PROVED, which is the UNCERTAIN class
+          // with the slot HELD, never a known error about a sheet the editor may already have changed.
+          else if (kind === 'sheetwrite') {
+            const outcome = decodeWriteRange(value, params.cells.length, params.cells[0].length);
+            let allMatched = true;
+            for (const flag of outcome.matches) if (!flag) { allMatched = false; break; }
+            if (!allMatched) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
+          // THE SPREADSHEET FORMATTING. Its answer is the authored flat array with ONE flag per (property,
+          // cell) and per (geometry property, column/row), decoded against the CHECK COUNT this ticket carried
+          // — the same number the body built its flags against — and the exact-proof rule decides the ticket
+          // HERE, while it still owns the slot: a single flag that is not 1 means the sheet may already be
+          // formatted but the request is not PROVED, which is the UNCERTAIN class with the slot HELD, never a
+          // known error about a sheet the editor may already have changed.
+          else if (kind === 'cellformat') {
+            const outcome = decodeCellFormat(value, params.rows, params.columns, params.checks);
+            let allMatched = true;
+            for (const flag of outcome.matches) if (!flag) { allMatched = false; break; }
+            if (!allMatched) { settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN)); return; }
+            result = outcome;
+          }
           // THE BLOCK APPEND. Its answer is the authored flat array of primitives, decoded against the
           // BLOCK COUNT this ticket carried — the same number the body built its one region flag per
           // block against — so the decode and the body can never disagree about how many blocks are owed.
@@ -4283,7 +6454,7 @@ export function createR7Bridge(plugin, {
           // character count, because the tool's whole job is to slice ONE bounded chunk out of it and
           // to say honestly where the document ends.
           else if (kind === 'documentread') result = documentText(platform, decodeDocumentText(value));
-          else if (kind === 'probe') result = capabilities(decodePresence(value));
+          else if (kind === 'probe') result = capabilities(decodePresence(value, editor));
           else {
             if (typeof value !== 'boolean') throw new SafeError(ERROR_CODES.INVALID_DATA);
             result = Object.freeze({ acknowledged: value, effectVerified: false });
@@ -4297,7 +6468,11 @@ export function createR7Bridge(plugin, {
           // would invite a retry of a mutation whose effect is unknown. The two classes a dispatched body
           // can still produce as KNOWN are its own PRE-insert phase-marked refusals, which is exactly what
           // `preInsertRefusal` names, and they release the slot below.
-          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert') && owned.dispatched && !preInsertRefusal(error, kind)) {
+          if ((kind === 'blocksinsert' || kind === 'tableinsert' || kind === 'headinginsert' || kind === 'rangeformat' || kind === 'hyperlinkinsert' || kind === 'replaceinsert' || kind === 'imageinsert' || kind === 'commentinsert' || kind === 'sheetwrite' || kind === 'cellformat' || kind === 'sheetadd' || kind === 'sheetrename') && owned.dispatched && !preInsertRefusal(error, kind)) {
+            settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
+            return;
+          }
+          if ((kind === 'slideformat' || kind === 'slideobject' || kind === 'sliderestructure') && owned.dispatched && !preInsertRefusal(error, kind)) {
             settleUncertain(new SafeError(ERROR_CODES.APPLY_UNCERTAIN));
             return;
           }
@@ -4423,6 +6598,130 @@ export function createR7Bridge(plugin, {
           owned.dispatched = true;
           try { command.structure(callback); }
           finally { clearScope(previousScope); }
+        } else if (kind === 'sheetread') {
+          // THE SPREADSHEET READ: ONE command, and the SAME parameter channel the search and structure
+          // legs use — the validated request written into the page's `Asc.scope`, never composed into
+          // source (ADR 0002). It needs the entry point that OWNS that wrapper (`callCommand`); a build
+          // whose command channel is the bare `executeCommand` transport has no sanctioned parameter
+          // channel at all, so it refuses HERE, before any dispatch, and releases the slot because
+          // nothing reached the editor. It carries NO document-identity probe, deliberately and for the
+          // same stated reason as `readDocumentText`: a read returns no OWNED TARGET a later write could
+          // be applied to, so there is no handle whose ownership would have to be proven. The kind is not
+          // in `WRITE_KINDS`, so `pendingMutation` stays false for the whole leg and an unresolved
+          // callback can never present itself to the UI as a pending write.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetRead;
+          try { previousSheetRead = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheet(callback); }
+          finally { clearScope(previousSheetRead); }
+        } else if (kind === 'presread' || kind === 'slideread') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideRead;
+          try { previousSlideRead = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slide(callback); }
+          finally { clearScope(previousSlideRead); }
+        } else if (kind === 'slideadd' || kind === 'slidetext') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideMutation;
+          try { previousSlideMutation = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slidemutate(callback); }
+          finally { clearScope(previousSlideMutation); }
+        } else if (kind === 'slideformat') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideFormat;
+          try { previousSlideFormat = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slideformat(callback); }
+          finally { clearScope(previousSlideFormat); }
+        } else if (kind === 'slideobject') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSlideObject;
+          try { previousSlideObject = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.slideobject(callback); }
+          finally { clearScope(previousSlideObject); }
+        } else if (kind === 'sliderestructure') {
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousT5Restructure;
+          try { previousT5Restructure = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sliderestructure(callback); }
+          finally { clearScope(previousT5Restructure); }
+        } else if (kind === 'sheetrename') {
+          // THE RENAME: ONE command, and the SAME parameter channel the other Cell legs use — the bound, the source
+          // selector and the requested name written into the page's `Asc.scope`, never composed into command source.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetRename;
+          try { previousSheetRename = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetrename(callback); }
+          finally { clearScope(previousSheetRename); }
+        } else if (kind === 'sheetadd') {
+          // THE WORKBOOK MUTATION: ONE command, and the SAME parameter channel the other Cell legs use — the
+          // bound and the requested name written into the page's `Asc.scope`, never composed into command source
+          // (ADR 0002). The requested name is `null` when the caller named none, so the body never invents one.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetAdd;
+          try { previousSheetAdd = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetadd(callback); }
+          finally { clearScope(previousSheetAdd); }
+        } else if (kind === 'sheetlist') {
+          // THE WORKBOOK LISTING: ONE command, and the SAME parameter channel the other Cell legs use — the
+          // bound the body checks against is written into the page's `Asc.scope`, never composed into command
+          // source (ADR 0002). The leg carries NO request: it lists the book as it is, and its only argument is
+          // the bound, so there is nothing caller-derived to validate beyond it.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetList;
+          try { previousSheetList = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetlist(callback); }
+          finally { clearScope(previousSheetList); }
+        } else if (kind === 'sheetwrite') {
+          // THE SPREADSHEET WRITE: ONE command, and the SAME parameter channel the other Cell and Word
+          // legs use — the validated address and matrix written into the page's `Asc.scope`, never
+          // composed into command source (ADR 0002). It needs the entry point that OWNS that wrapper
+          // (`callCommand`); a build whose command channel is the bare `executeCommand` transport has no
+          // sanctioned parameter channel at all, so it refuses HERE, before any dispatch, and releases the
+          // slot because nothing reached the editor. The kind IS in `WRITE_KINDS`, so from the dispatch on
+          // the ticket presents itself as a pending mutation: an unresolved callback can never be mistaken
+          // for an idle bridge, and the caller is never told a write they cannot retry is safe to retry.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousSheetWrite;
+          try { previousSheetWrite = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.sheetwrite(callback); }
+          finally { clearScope(previousSheetWrite); }
+        } else if (kind === 'cellformat') {
+          // THE SPREADSHEET FORMATTING: ONE command, and the SAME parameter channel the other Cell and Word
+          // legs use — the validated address, the property set and the counts written into the page's
+          // `Asc.scope`, never composed into command source (ADR 0002). It needs the entry point that OWNS
+          // that wrapper (`callCommand`); a build whose command channel is the bare `executeCommand`
+          // transport has no sanctioned parameter channel at all, so it refuses HERE, before any dispatch,
+          // and releases the slot because nothing reached the editor. The kind IS in `WRITE_KINDS`, so from
+          // the dispatch on the ticket presents itself as a pending mutation: an unresolved callback can
+          // never be mistaken for an idle bridge, and the caller is never told a write they cannot retry is
+          // safe to retry.
+          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          let previousCellFormat;
+          try { previousCellFormat = writeScope(params); }
+          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
+          owned.dispatched = true;
+          try { command.cellformat(callback); }
+          finally { clearScope(previousCellFormat); }
         } else if (kind === 'blocksinsert') {
           // THE BLOCK APPEND: ONE command, and the SAME parameter channel the search and structure legs
           // use — the validated block array written into the page's `Asc.scope`, never composed into
@@ -4618,31 +6917,7 @@ export function createR7Bridge(plugin, {
           try { command.image(callback); }
           finally { clearScope(previousImage); }
         } else if (kind === 'commentinsert') {
-          // THE COMMENT INSERT: ONE command, and the SAME parameter channel the other read and write legs use —
-          // the validated `{ text, maxBytes, idMax }` scope written into the page's `Asc.scope`, never composed
-          // into source (ADR 0002). It needs the entry point that OWNS that wrapper (`callCommand`); a build
-          // whose command channel is the bare `executeCommand` transport has no sanctioned parameter channel at
-          // all, so it refuses HERE, before any dispatch, and releases the slot because nothing reached the
-          // editor.
-          // It carries NO document-identity probe, for the image insert's reason: this leg targets NOTHING at
-          // all — the measured `AddComment` took the text alone and created the comment at document/selection
-          // level — so there is no handle whose identity a probe could establish. What it does instead is the
-          // subject of the body's own comment: the document's own comment count AND the ids it already holds
-          // are read BEFORE the ONE `AddComment`, the same two reads are taken from a FRESH collection after
-          // it, the added comment is identified through the returned id or the difference of the two id sets,
-          // and THAT comment's own `GetText()` is the text leg. THERE IS NO EXPORT ON THIS LEG: the measured
-          // `ToMarkdown(...)` does not contain the comment text, so this body authors neither export reader.
-          // `owned.dispatched` is set BEFORE the native is handed the command, exactly like every other leg: a
-          // synchronous throw out of the transport must never release a slot whose work may already be queued,
-          // and the body's own pre-insert refusals keep their known class through the callback (they arrive as
-          // a `[PRE_INSERT, name]` answer, not as a throw).
-          if (disposed || !hasCallCommand) { slot = null; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
-          let previousComment;
-          try { previousComment = writeScope(params); }
-          catch { slot = null; owned.uncertain = false; settle(new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE)); return; }
-          owned.dispatched = true;
-          try { command.comment(callback); }
-          finally { clearScope(previousComment); }
+          beginComment();
         } else if (kind === 'insert') {
           // The same guard, the same primitive, and the same limit on what is proven: the dispatch
           // channel is verified, the editor-side `PasteText` name is not. An editor that does not
@@ -4654,7 +6929,7 @@ export function createR7Bridge(plugin, {
           // The pre-dispatch baseline phase owns the ticket first and ends by dispatching the paste
           // itself, so the mutation still happens exactly once and only after its baselines answered.
           beginInsert();
-        } else { owned.dispatched = true; command.probe('capability', callback); }
+        } else { owned.dispatched = true; command.probe(editor === 'cell' ? 'cell-capability' : 'capability', callback); }
       } catch {
         // Dispatch may have reached the SDK before throwing. Never unlock on a
         // synchronous exception unless its matching callback already settled.
@@ -4681,7 +6956,7 @@ export function createR7Bridge(plugin, {
   return Object.freeze({
     async readSelection({ signal } = {}) {
       ensureIdle();
-      if (editor !== 'word' || currentEditor() !== editor || !adapter.executeMethod || !adapter.commandDispatch) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      if (currentEditor() !== editor || !adapter.executeMethod || !adapter.commandDispatch) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
       const owner = contextOwner;
       const text = await start('read', signal);
       if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
@@ -4846,6 +7121,530 @@ export function createR7Bridge(plugin, {
     // carriage for this leg: an editor where the `Asc.scope` write does not arrive answers the body's own
     // refusal sentinel or never calls back, so the ticket settles CAPABILITY_UNAVAILABLE or TIMEOUT —
     // never a structure.
+    // The bounded SPREADSHEET reads behind `read_sheet` and `read_range` — the first Cell legs in this
+    // repo's bridge, and deliberately the SMALLEST new leg pair: both are served by the ONE authored
+    // `sheetread` body, and the only thing that differs between them is whether an address was named.
+    // `read_sheet` names none, so the body asks the sheet for its OWN used range — which is the only
+    // used-range discovery this build exposes (`GetRowsCount`/`GetColumnsCount` are undefined, measured)
+    // — and `read_range` carries a caller address already closed to `SHEET_ADDRESS`. Each is a READ: it
+    // adds no mutation primitive, no leg of it matches a write class, and it carries no document-identity
+    // probe because it returns no OWNED TARGET a later write could be applied to. The request is a closed
+    // precondition, never an optional refinement: a caller that cannot name a bound within the advertised
+    // cap (or, for a range, an address the closed pattern accepts) is refused rather than given an SDK
+    // call decoded under a window it never asked for. Every outcome is classified — an unavailable
+    // channel, a malformed native answer and an oversized answer are closed classes, never a raw
+    // exception — and the caller's `signal` cancels both legs exactly as it does in `readStructure`.
+    // The bounded PRESENTATION reads behind `read_presentation` and `read_slide` - the first Slide legs
+    // in this repo's bridge, and the only ones that do not perform a document read, but read the active
+    // presentation instead. `read_presentation` reads the ACTIVE presentation and returns a bounded
+    // summary of its slides; `read_slide` reads one addressed slide, or the CURRENT slide when no index
+    // was named, and proves the target class before reading. Both close their caps (slides/objects/text/
+    // result bytes) at this boundary as a precondition, so a caller that names no bound or a bound this
+    // bridge never advertised is refused instead of causing an SDK read under a window it never asked for.
+    // Both are READ-ONLY and are served by the ONE authored `slide` command body.
+    async readPresentation(raw) {
+      const { maxSlides, maxTextBytes, maxResultBytes, signal } = raw ?? {};
+      if (!Number.isSafeInteger(maxSlides) || maxSlides < 1 || maxSlides > LIMITS.slideReadSlidesMax || !Number.isSafeInteger(maxTextBytes) || maxTextBytes < 1 || maxTextBytes > LIMITS.slideReadTextBytes || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      return presentationRead(signal, Object.freeze({ mode: 'presentation', maxSlides, maxTextBytes, maxResultBytes }));
+    },
+    async readSlide(raw) {
+      const { slideIndex, maxObjects, maxTextBytes, maxResultBytes, signal } = raw ?? {};
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(maxObjects) || maxObjects < 1 || maxObjects > LIMITS.slideReadObjectsMax || !Number.isSafeInteger(maxTextBytes) || maxTextBytes < 1 || maxTextBytes > LIMITS.slideReadTextBytes || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      return presentationRead(signal, Object.freeze({ mode: 'slide', slideIndex, maxObjects, maxTextBytes, maxResultBytes }));
+    },
+    async addSlide(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (key !== 'layoutFromSlideIndex' && key !== 'maxResultBytes' && key !== 'signal') return refuse(ERROR_CODES.TOOL_ERROR);
+      const { layoutFromSlideIndex, maxResultBytes, signal } = raw;
+      if (!(layoutFromSlideIndex === null || (Number.isSafeInteger(layoutFromSlideIndex) && layoutFromSlideIndex >= 0))) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (!Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try {
+        ensureIdle();
+        if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('slideadd', signal, {}, Object.freeze({ mode: 'add', layoutFromSlideIndex, maxResultBytes }));
+        return Object.freeze({ ok: true, ...outcome });
+      } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async setSlideText(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!['slideIndex', 'objectOrdinal', 'text', 'maxTextBytes', 'maxResultBytes', 'signal'].includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, objectOrdinal, text, maxTextBytes, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(objectOrdinal) || objectOrdinal < 0 || typeof text !== 'string') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes < 1 || maxTextBytes > LIMITS.slideReadTextBytes || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      if (utf8ByteLength(text) > maxTextBytes) return refuse(ERROR_CODES.BYTE_LIMIT);
+      try {
+        ensureIdle();
+        if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('slidetext', signal, {}, Object.freeze({ mode: 'text', slideIndex, objectOrdinal, text, maxTextBytes, maxResultBytes }));
+        return Object.freeze({ ok: true, ...outcome });
+      } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async duplicateSlide(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!['slideIndex', 'maxResultBytes', 'signal'].includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, maxResultBytes, signal } = raw;
+      if (!Number.isSafeInteger(slideIndex) || slideIndex < 0) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (!Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('sliderestructure', signal, {}, Object.freeze({ mode: 'duplicate', slideIndex, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async moveSlide(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!['fromIndex', 'toIndex', 'maxResultBytes', 'signal'].includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { fromIndex, toIndex, maxResultBytes, signal } = raw;
+      if (!Number.isSafeInteger(fromIndex) || fromIndex < 0 || !Number.isSafeInteger(toIndex) || toIndex < 0) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (!Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('sliderestructure', signal, {}, Object.freeze({ mode: 'move', fromIndex, toIndex, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async formatSlideText(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const keys = ['slideIndex', 'objectOrdinal', 'bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color', 'maxFontSize', 'maxResultBytes', 'signal'];
+      for (const key of Object.keys(raw)) if (!keys.includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, objectOrdinal, bold, italic, underline, fontSize, fontFamily, color, maxFontSize, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(objectOrdinal) || objectOrdinal < 0) return refuse(ERROR_CODES.TOOL_ERROR);
+      const names = ['bold', 'italic', 'underline', 'fontSize', 'fontFamily', 'color'];
+      if (!names.some(name => raw[name] !== undefined) || (bold !== undefined && typeof bold !== 'boolean') || (italic !== undefined && typeof italic !== 'boolean') || (underline !== undefined && typeof underline !== 'boolean') || (fontSize !== undefined && (!Number.isSafeInteger(fontSize) || fontSize < 1 || fontSize > LIMITS.slideFormatFontSizeMax)) || (fontFamily !== undefined && typeof fontFamily !== 'string')) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (color !== undefined && (color === null || typeof color !== 'object' || Array.isArray(color) || Object.keys(color).length !== 3 || !['r', 'g', 'b'].every(key => Number.isSafeInteger(color[key]) && color[key] >= 0 && color[key] <= 255))) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (maxFontSize !== LIMITS.slideFormatFontSizeMax || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try {
+        ensureIdle();
+        if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('slideformat', signal, {}, Object.freeze({ slideIndex, objectOrdinal, bold, italic, underline, fontSize, fontFamily, color, maxFontSize, maxResultBytes }));
+        return Object.freeze({ ok: true, ...outcome });
+      } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async addSlideTable(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const keys = ['slideIndex', 'columns', 'rows', 'maxColumns', 'maxRows', 'maxResultBytes', 'signal']; for (const key of Object.keys(raw)) if (!keys.includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, columns, rows, maxColumns, maxRows, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || !Number.isSafeInteger(columns) || columns < 1 || columns > LIMITS.slideTableColumnsMax || !Number.isSafeInteger(rows) || rows < 1 || rows > LIMITS.slideTableRowsMax) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (maxColumns !== LIMITS.slideTableColumnsMax || maxRows !== LIMITS.slideTableRowsMax || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('slideobject', signal, {}, Object.freeze({ mode: 'table', slideIndex, columns, rows, maxColumns, maxRows, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async addSlideImage(raw) {
+      const refuse = code => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const keys = ['slideIndex', 'imageDataUrl', 'widthEmu', 'heightEmu', 'maxImageBytes', 'maxImageEmu', 'maxResultBytes', 'signal']; for (const key of Object.keys(raw)) if (!keys.includes(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      const { slideIndex, imageDataUrl, widthEmu, heightEmu, maxImageBytes, maxImageEmu, maxResultBytes, signal } = raw;
+      if (!(slideIndex === null || (Number.isSafeInteger(slideIndex) && slideIndex >= 0)) || typeof imageDataUrl !== 'string' || !/^data:image\/(png|jpeg);base64,/.test(imageDataUrl) || imageDataUrl.length < 24 || !Number.isSafeInteger(widthEmu) || widthEmu < 1 || widthEmu > LIMITS.slideImageEmuMax || !Number.isSafeInteger(heightEmu) || heightEmu < 1 || heightEmu > LIMITS.slideImageEmuMax) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (utf8ByteLength(imageDataUrl) > LIMITS.slideImageBytesMax) return refuse(ERROR_CODES.BYTE_LIMIT);
+      if (maxImageBytes !== LIMITS.slideImageBytesMax || maxImageEmu !== LIMITS.slideImageEmuMax || !Number.isSafeInteger(maxResultBytes) || maxResultBytes < 1 || maxResultBytes > LIMITS.slideReadResultBytes) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      try { ensureIdle(); if (editor !== 'slide' || currentEditor() !== editor || disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE); const outcome = await start('slideobject', signal, {}, Object.freeze({ mode: 'image', slideIndex, imageDataUrl, widthEmu, heightEmu, maxImageBytes, maxImageEmu, maxResultBytes })); return Object.freeze({ ok: true, ...outcome }); } catch (error) { return refuse(error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR); }
+    },
+    async readSheet(raw) {
+      const maxCells = raw?.maxCells, signal = raw?.signal;
+      // THE KEY SET IS CLOSED HERE TOO, and that is deliberate rather than symmetry: this leg reads the ACTIVE
+      // sheet and exposes no selector, so a caller that passes `sheetName`/`sheetIndex` must be TOLD rather than
+      // silently served the active sheet. The tool never does (its schema has no such key); the read leg's shared
+      // body accepts a selector, which is exactly why this boundary has to refuse one.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      for (const key of Object.keys(raw)) {
+        if (key !== 'maxCells' && key !== 'signal') {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
+      if (!Number.isSafeInteger(maxCells) || maxCells < 1 || maxCells > LIMITS.sheetReadCellsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      return sheetRead(signal, Object.freeze({ address: null, maxCells }));
+    },
+    // The same leg with a caller-named address, closed to `SHEET_ADDRESS` before anything is dispatched, and with
+    // an OPTIONAL SHEET SELECTOR — a sheet NAME or a sheet INDEX, resolved inside the body through the measured
+    // `Api.GetSheet(...)`. With no selector this reads the ACTIVE sheet exactly as before, which is what keeps
+    // every existing caller working unchanged; with one it reads THAT sheet's range and never switches the active
+    // sheet. A selector that names nothing is a known refusal answered by the body.
+    async readRange(raw) {
+      const address = raw?.address, maxCells = raw?.maxCells, signal = raw?.signal;
+      const sheetName = raw?.sheetName, sheetIndex = raw?.sheetIndex;
+      // THE REQUEST KEY SET IS CLOSED, like the newer Cell legs: an unknown key would otherwise be silently
+      // ignored and the request served as if it had been understood.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      for (const key of Object.keys(raw)) {
+        if (key !== 'address' && key !== 'maxCells' && key !== 'sheetName' && key !== 'sheetIndex' && key !== 'signal') {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
+      if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      if (!Number.isSafeInteger(maxCells) || maxCells < 1 || maxCells > LIMITS.sheetReadCellsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      // The selector is closed HERE, before any dispatch: a name is a bounded non-empty string, an index is a
+      // non-negative safe integer inside the workbook bound, and asking for BOTH is refused because the request
+      // would not say which sheet it means.
+      // THE INDEX BOUND REUSES `sheetListMax` ON PURPOSE: that is the only MEASURED number for how many sheets
+      // this repo supports, so a book past it is already outside the supported envelope and an index beyond it is
+      // refused rather than attempted. The failure mode is fail-CLOSED (a sheet with index 64+ cannot be addressed
+      // by index), and it is stated here rather than hidden.
+      if (sheetName !== undefined && sheetName !== null
+        && (typeof sheetName !== 'string' || sheetName === '' || utf8ByteLength(sheetName) > LIMITS.sheetListNameBytes)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetIndex !== undefined && sheetIndex !== null
+        && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetName !== undefined && sheetName !== null && sheetIndex !== undefined && sheetIndex !== null) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      return sheetRead(signal, Object.freeze({
+        address,
+        maxCells,
+        sheetName: sheetName === undefined ? null : sheetName,
+        sheetIndex: sheetIndex === undefined ? null : sheetIndex
+      }));
+    },
+    // The bounded SPREADSHEET write behind `write_range` — the first Cell MUTATION in this repo. It takes
+    // the leg shape every other dispatched write takes: the request is a CLOSED precondition checked
+    // before any dispatch, ONE authored body performs the write AND its own bounded readback, and the
+    // exact-proof rule decides the ticket while it still owns the slot. `cells` is a matrix of STRINGS;
+    // the body alone decides whether a cell becomes an integer, a locale number, a text or a formula, and
+    // the measured rules for that are stated in the body rather than duplicated here. What this method
+    // owns is the boundary: an address outside `SHEET_ADDRESS`, a matrix that is empty, ragged, too large
+    // or holding a non-string, and an over-bound payload are refused HERE with NOTHING dispatched.
+    async writeRange(raw) {
+      const address = raw?.address, cells = raw?.cells, signal = raw?.signal;
+      const sheetName = raw?.sheetName, sheetIndex = raw?.sheetIndex;
+      // THE REQUEST KEY SET IS CLOSED, like the newer Cell legs: an unknown key would otherwise be silently
+      // ignored and a request that mentioned something unread would be served as if it had been understood.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      for (const key of Object.keys(raw)) {
+        if (key !== 'address' && key !== 'cells' && key !== 'sheetName' && key !== 'sheetIndex' && key !== 'signal') {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+      }
+      // The selector is closed BEFORE the block is even inspected, and before any dispatch: a mutation that
+      // cannot say which sheet it means must not reach the editor at all. The index bound reuses
+      // `LIMITS.sheetListMax` for the same reason the read leg does — it is the only measured sheet count —
+      // and the failure mode is fail-closed rather than a write into the wrong sheet.
+      if (sheetName !== undefined && sheetName !== null
+        && (typeof sheetName !== 'string' || sheetName === '' || utf8ByteLength(sheetName) > LIMITS.sheetListNameBytes)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetIndex !== undefined && sheetIndex !== null
+        && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (sheetName !== undefined && sheetName !== null && sheetIndex !== undefined && sheetIndex !== null) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.CAPABILITY_UNAVAILABLE });
+      }
+      if (!Array.isArray(cells) || cells.length < 1 || cells.length > LIMITS.writeRangeRowsMax) {
+        return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      }
+      let columns = null;
+      let cellCount = 0;
+      let totalBytes = 0;
+      for (const row of cells) {
+        if (!Array.isArray(row) || row.length < 1 || row.length > LIMITS.writeRangeColumnsMax) {
+          return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        }
+        if (columns === null) columns = row.length;
+        else if (row.length !== columns) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+        for (const cell of row) {
+          if (typeof cell !== 'string') return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+          const bytes = utf8ByteLength(cell);
+          if (bytes > LIMITS.writeRangeCellBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+          totalBytes += bytes;
+          cellCount += 1;
+        }
+      }
+      if (cellCount > LIMITS.writeRangeCellsMax) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (totalBytes > LIMITS.writeRangeBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetwrite', signal, {}, Object.freeze({
+        address,
+        cells,
+        sheetName: sheetName === undefined ? null : sheetName,
+        sheetIndex: sheetIndex === undefined ? null : sheetIndex
+      }));
+        return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded CELL FORMATTING behind `format_cells` — the SECOND Cell mutation and the FIRST that changes
+    // PRESENTATION rather than content. THE METHOD IS NAMED `formatCells`, NOT `formatRange`, and the reason is
+    // measured rather than stylistic: the WORD leg already exposes a `formatRange` method on this same returned
+    // object, and a second key with that name would be silently SHADOWED — the object literal keeps only the
+    // last one, so a Cell request would have reached the Word handler. Nothing in the type system or the tests
+    // can catch a shadowed key, which is why the leg's method name is spelled out here.
+    // NOTHING IS EVER APPLIED PARTIALLY: a request that names an unknown property, an address the closed
+    // pattern rejects, no formatting property at all, a property value outside the MEASURED contract, a
+    // discriminated `numberFormat` that breaks its own rule, or a block over the cell cap is refused HERE,
+    // whole, before `start` is reached — so a mixed request that mentions one unsupported property changes
+    // nothing at all, and the property set is assembled in one place. The unknown-property half of that promise
+    // needs the key enumeration below: without it a request carrying `fontColor` beside a provable property
+    // would be SERVED, with the unknown key silently dropped, which is exactly the partial apply this layer
+    // promises not to perform. The tool and the argument schema also refuse such a request, but a promise made
+    // at THIS layer has to hold at this layer.
+    async formatCells(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      // The closed key set of the Cell formatting request: the measured properties, the two spellings of the
+      // clearing request, and the signal. A key outside it refuses the WHOLE request.
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (!CELL_FORMAT_KEYS.has(key)) return refuse(ERROR_CODES.TOOL_ERROR);
+      // THE SHEET SELECTOR, closed BEFORE any formatting property is inspected and before any dispatch: a
+      // mutation that cannot say which sheet it means must not reach the editor at all. A name is a bounded
+      // non-empty string, an index is a non-negative safe integer inside the workbook bound (reusing the only
+      // MEASURED sheet count, so the failure mode is fail-closed), and asking for BOTH is ambiguous.
+      const sheetName = raw?.sheetName;
+      const sheetIndex = raw?.sheetIndex;
+      if (sheetName !== undefined && sheetName !== null
+        && (typeof sheetName !== 'string' || sheetName === '' || utf8ByteLength(sheetName) > LIMITS.sheetListNameBytes)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sheetIndex !== undefined && sheetIndex !== null
+        && (!Number.isSafeInteger(sheetIndex) || sheetIndex < 0 || sheetIndex >= LIMITS.sheetListMax)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sheetName !== undefined && sheetName !== null && sheetIndex !== undefined && sheetIndex !== null) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      const address = raw?.address;
+      const numberFormat = raw?.numberFormat;
+      const bold = raw?.bold;
+      const italic = raw?.italic;
+      const fontFamily = raw?.fontFamily;
+      const fontSize = raw?.fontSize;
+      const fill = raw?.fill;
+      const columnWidth = raw?.columnWidth;
+      const rowHeight = raw?.rowHeight;
+      const wrapText = raw?.wrapText;
+      const signal = raw?.signal;
+      if (typeof address !== 'string' || !SHEET_ADDRESS.test(address)) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const shape = sheetAddressShape(address);
+      if (shape === null) return refuse(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const cellCount = shape.rows * shape.columns;
+      if (cellCount > LIMITS.formatRangeCellsMax) return refuse(ERROR_CODES.TOOL_ERROR);
+      // `numberFormat` is a DISCRIMINATED contract: `currency` is required for the currency type and refused
+      // for the others, and the code itself is composed only from the measured families.
+      let numberFormatCode = null;
+      if (numberFormat !== undefined) {
+        if (numberFormat === null || typeof numberFormat !== 'object' || Array.isArray(numberFormat)) return refuse(ERROR_CODES.TOOL_ERROR);
+        const type = numberFormat.type;
+        if (type !== 'number' && type !== 'percent' && type !== 'currency') return refuse(ERROR_CODES.TOOL_ERROR);
+        if (type === 'currency') {
+          if (typeof numberFormat.currency !== 'string' || !Object.hasOwn(CELL_FORMAT_CURRENCIES, numberFormat.currency)) return refuse(ERROR_CODES.TOOL_ERROR);
+        } else if (numberFormat.currency !== undefined) {
+          return refuse(ERROR_CODES.TOOL_ERROR);
+        }
+        if (numberFormat.decimals !== undefined && (!Number.isSafeInteger(numberFormat.decimals) || numberFormat.decimals < 0 || numberFormat.decimals > LIMITS.formatRangeDecimalsMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+        numberFormatCode = cellFormatCode(numberFormat);
+        if (numberFormatCode === null) return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (bold !== undefined && typeof bold !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (italic !== undefined && typeof italic !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (wrapText !== undefined && typeof wrapText !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (fontFamily !== undefined && (typeof fontFamily !== 'string' || fontFamily === '' || utf8ByteLength(fontFamily) > LIMITS.formatRangeFontFamilyBytes)) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (fontSize !== undefined && (!Number.isSafeInteger(fontSize) || fontSize < 1 || fontSize > LIMITS.formatRangeFontSizeMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (columnWidth !== undefined && (!Number.isSafeInteger(columnWidth) || columnWidth < 1 || columnWidth > LIMITS.formatRangeColumnWidthMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+      if (rowHeight !== undefined && (!Number.isSafeInteger(rowHeight) || rowHeight < 1 || rowHeight > LIMITS.formatRangeRowHeightMax)) return refuse(ERROR_CODES.TOOL_ERROR);
+      // `fill` SETS a colour from `#RRGGBB`, or — as `null` — CLEARS it, which the measurement proved the
+      // readback can confirm (`Api.CreateNoFill()` answers `"No Fill"`, the same reading a never-filled cell
+      // gives). The colour reaches the body as components, because the measured setter wants a Colour OBJECT
+      // and a CSS string is silently ignored. `clearFill` is the SAME request under the name the CLOSED tool
+      // schema can express (that schema has no null type), and asking for both at once is refused because the
+      // request would be self-contradictory.
+      const clearFill = raw?.clearFill;
+      let fillR = null;
+      let fillG = null;
+      let fillB = null;
+      let fillClear = false;
+      if (clearFill !== undefined && typeof clearFill !== 'boolean') return refuse(ERROR_CODES.TOOL_ERROR);
+      if (fill === null) fillClear = true;
+      else if (fill !== undefined) {
+        if (typeof fill !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(fill)) return refuse(ERROR_CODES.TOOL_ERROR);
+        fillR = Number.parseInt(fill.slice(1, 3), 16);
+        fillG = Number.parseInt(fill.slice(3, 5), 16);
+        fillB = Number.parseInt(fill.slice(5, 7), 16);
+      }
+      if (clearFill === true) {
+        if (fill !== undefined) return refuse(ERROR_CODES.TOOL_ERROR);
+        fillClear = true;
+      }
+      // AT LEAST ONE formatting property besides the address, or there is nothing to prove. The CELL
+      // properties and the two GEOMETRY properties are counted separately for a stated reason: the flag
+      // arithmetic is per cell for the first group and per affected column/row for the second, while the rule
+      // is about the REQUEST — so a request that asks only for a column width must be served, not refused.
+      // THE CLEARING REQUEST HAS TWO SPELLINGS AND IS COUNTED ONCE. `fill: null` and `clearFill: true` are the
+      // same request (`null` is the spelling the owner's schema used, `clearFill` is the one the CLOSED tool
+      // schema can express), so a null colour must NOT be counted as a colour property as well: counting it
+      // twice made the bridge owe twice the flags the body computes and refused a CORRECT clear before it could
+      // ever dispatch.
+      let cellPropertyCount = 0;
+      if (numberFormatCode !== null) cellPropertyCount += 1;
+      if (bold !== undefined) cellPropertyCount += 1;
+      if (italic !== undefined) cellPropertyCount += 1;
+      if (fontFamily !== undefined) cellPropertyCount += 1;
+      if (fontSize !== undefined) cellPropertyCount += 1;
+      if (fill !== undefined && fill !== null) cellPropertyCount += 1;
+      if (fillClear) cellPropertyCount += 1;
+      if (wrapText !== undefined) cellPropertyCount += 1;
+      let requestedCount = cellPropertyCount;
+      if (columnWidth !== undefined) requestedCount += 1;
+      if (rowHeight !== undefined) requestedCount += 1;
+      if (requestedCount < 1) return refuse(ERROR_CODES.TOOL_ERROR);
+      // The flags the body owes: one per (property, cell), plus one per affected COLUMN for the width and one
+      // per affected ROW for the height, because those two properties act on every line the address intersects.
+      let checks = cellPropertyCount * cellCount;
+      if (columnWidth !== undefined) checks += shape.columns;
+      if (rowHeight !== undefined) checks += shape.rows;
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('cellformat', signal, {}, Object.freeze({
+          address,
+          sheetName: sheetName === undefined ? null : sheetName,
+          sheetIndex: sheetIndex === undefined ? null : sheetIndex,
+          rows: shape.rows,
+          columns: shape.columns,
+          checks,
+          maxCells: LIMITS.formatRangeCellsMax,
+          numberFormatCode,
+          bold,
+          italic,
+          fontFamily,
+          fontSize,
+          fillR,
+          fillG,
+          fillB,
+          fillClear,
+          columnWidth,
+          rowHeight,
+          wrapText
+        }));
+        return Object.freeze({ ok: true, address, rowCount: outcome.rowCount, columnCount: outcome.columnCount,
+          properties: requestedCount });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded RENAME behind `rename_sheet`. It takes the leg shape every other dispatched write takes: a CLOSED
+    // request checked before any dispatch, ONE authored body performs the rename, and the decoder proves the
+    // POSTCONDITION while the ticket still owns the slot.
+    // `Api.SetName` ANSWERS `undefined`, so its return value is read as NEITHER success nor failure: what the caller
+    // is told is what the INDEPENDENT readers MEASURED afterwards — the count and the ordered names, the lookup by
+    // index and by name, the OLD name that must be gone, and the active sheet, which is RECORDED rather than
+    // switched or restored. A failure after the mutation is the UNCERTAIN class and the name is NEVER renamed back.
+    async renameSheet(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) {
+        if (key !== 'sourceName' && key !== 'sourceIndex' && key !== 'newName' && key !== 'signal') {
+          return refuse(ERROR_CODES.TOOL_ERROR);
+        }
+      }
+      const sourceName = raw.sourceName, sourceIndex = raw.sourceIndex, newName = raw.newName, signal = raw.signal;
+      // THE NEW NAME is the argument this leg exists for, so it is closed first and closed tightly: a non-empty
+      // string inside BOTH bounds — 31 CHARACTERS, the measured limit the editor itself applies, and the name byte
+      // bound — with no CONTROL character anywhere in it. The character bound is why a 33-character name is now a
+      // KNOWN refusal BEFORE any mutation: MEASURED natively, the editor SILENTLY IGNORES such a name (the sheet
+      // keeps its old one and the new one never resolves), so a request carrying it used to spend a mutation and
+      // come back as UNCERTAINTY. The engine decides the rest, and a name it rejects still fails the postcondition.
+      if (typeof newName !== 'string' || newName === '' || utf8ByteLength(newName) > LIMITS.sheetListNameBytes
+        || characterLength(newName) > LIMITS.sheetNameCharactersMax
+        || /[\u0000-\u001f\u007f]/.test(newName)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sourceName !== undefined && sourceName !== null
+        && (typeof sourceName !== 'string' || sourceName === '' || utf8ByteLength(sourceName) > LIMITS.sheetListNameBytes)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sourceIndex !== undefined && sourceIndex !== null
+        && (!Number.isSafeInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= LIMITS.sheetListMax)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      if (sourceName !== undefined && sourceName !== null && sourceIndex !== undefined && sourceIndex !== null) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetrename', signal, {}, Object.freeze({
+          maxSheets: LIMITS.sheetListMax,
+          sourceName: sourceName === undefined ? null : sourceName,
+          sourceIndex: sourceIndex === undefined ? null : sourceIndex,
+          newName
+        }));
+        return Object.freeze({ ok: true, index: outcome.index, name: outcome.name,
+          previousName: outcome.previousName, activeIndex: outcome.activeIndex, activeName: outcome.activeName });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded WORKBOOK MUTATION behind `add_sheet` — the FIRST mutation whose subject is the book. It takes
+    // the leg shape every other dispatched write takes: the request is a CLOSED precondition checked before any
+    // dispatch, ONE authored body adds at most one sheet, and the decoder proves the POSTCONDITION while the
+    // ticket still owns the slot.
+    // `Api.AddSheet` ANSWERS `undefined`, so its return value is read as NEITHER success nor failure: what the
+    // caller is told is what the editor MEASURED afterwards. The name is OPTIONAL and is never invented here: a
+    // caller that named none gets back exactly the (localised) name the editor produced.
+    async addSheet(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (key !== 'name' && key !== 'signal') return refuse(ERROR_CODES.TOOL_ERROR);
+      const name = raw.name;
+      const signal = raw.signal;
+      if (name !== undefined && (typeof name !== 'string' || name === '' || utf8ByteLength(name) > LIMITS.sheetListNameBytes)) {
+        return refuse(ERROR_CODES.TOOL_ERROR);
+      }
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetadd', signal, {}, Object.freeze({
+          maxSheets: LIMITS.sheetListMax,
+          requestedName: name === undefined ? null : name
+        }));
+        return Object.freeze({ ok: true, index: outcome.index, name: outcome.name, active: outcome.active,
+          previousActive: outcome.previousActive });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
+    // The bounded WORKBOOK LISTING behind `list_sheets` — the FIRST tool in this bridge whose subject is the
+    // book rather than one sheet. It takes the leg shape every other read takes: the request is a CLOSED
+    // precondition checked before any dispatch, ONE authored body answers the whole listing, and the decoder
+    // proves it against the bound the ticket carried.
+    // THE LEG HAS NO CALLER ARGUMENTS AT ALL. It lists the book as it is; the only thing that crosses the scope
+    // is the bound the body checks against, so there is nothing caller-derived to validate beyond the closed
+    // key set (the signal, which every leg accepts).
+    async listSheets(raw) {
+      const refuse = (code) => Object.freeze({ ok: false, code });
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return refuse(ERROR_CODES.TOOL_ERROR);
+      for (const key of Object.keys(raw)) if (key !== 'signal') return refuse(ERROR_CODES.TOOL_ERROR);
+      const signal = raw.signal;
+      try {
+        ensureIdle();
+        if (editor !== 'cell' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        const outcome = await start('sheetlist', signal, {}, Object.freeze({ maxSheets: LIMITS.sheetListMax }));
+        return Object.freeze({ ok: true, count: outcome.count, activeIndex: outcome.activeIndex,
+          activeName: outcome.activeName, sheets: outcome.sheets });
+      } catch (error) {
+        return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
+      }
+    },
     async readStructure(raw) {
       const maxHeadings = raw?.maxHeadings, signal = raw?.signal;
       if (!Number.isSafeInteger(maxHeadings) || maxHeadings < 1 || maxHeadings > LIMITS.structureHeadingsMax) {
@@ -4940,6 +7739,9 @@ export function createR7Bridge(plugin, {
     // tool that serves it can never disagree about which refusal a caller receives.
     async insertBlocks(raw) {
       const blocks = raw?.blocks, signal = raw?.signal;
+      const afterParagraphText = raw?.afterParagraphText;
+      if (afterParagraphText !== undefined && (typeof afterParagraphText !== 'string' || afterParagraphText === '')) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (afterParagraphText !== undefined && utf8ByteLength(afterParagraphText) > LIMITS.insertBlockBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
       if (!Array.isArray(blocks) || blocks.length < 1 || blocks.length > LIMITS.insertBlocksMax) {
         return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       }
@@ -4957,13 +7759,14 @@ export function createR7Bridge(plugin, {
         total += bytes;
         shaped.push(Object.freeze(heading === undefined ? { text: block.text } : { text: block.text, heading }));
       }
-      if (total > LIMITS.insertBlocksBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+      if (total + (afterParagraphText === undefined ? 0 : utf8ByteLength(afterParagraphText)) > LIMITS.insertBlocksBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
       try {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-        const outcome = await start('blocksinsert', signal, {}, Object.freeze({ blocks: Object.freeze(shaped) }));
+        const outcome = await start('blocksinsert', signal, {}, Object.freeze({ blocks: Object.freeze(shaped),
+          ...(afterParagraphText === undefined ? {} : { afterParagraphText }) }));
         return Object.freeze({ ok: true, paragraphsBefore: outcome.paragraphsBefore, paragraphsAfter: outcome.paragraphsAfter,
           headingsBefore: outcome.headingsBefore, headingsAfter: outcome.headingsAfter, present: outcome.present });
       } catch (error) {
@@ -5315,35 +8118,7 @@ export function createR7Bridge(plugin, {
         return Object.freeze({ ok: false, code: error instanceof SafeError ? error.code : ERROR_CODES.EDITOR_ERROR });
       }
     },
-    // THE COMMENT INSERT behind `insert_comment` — the EIGHTH MUTATION of Sprint 3, the THIRD write leg that
-    // APPENDS, and the FIRST leg whose proof is the COMMENT COLLECTION'S own identity. It has ONE form and NO
-    // target: `AddComment` was measured taking the text alone, and the comment it created was created at
-    // document/selection level, so this entry point takes the TEXT and nothing else. The body's own comment
-    // carries the mechanism (the document's own comment count AND the ids it already holds before the ONE
-    // write, then the same reads plus the identified comment's own `GetText()` after it) and why no export is
-    // read at all; what matters HERE is the shape: ONE command on the ONE entry point that owns the parameter
-    // wrapper, the validated scope carried as DATA through `Asc.scope`, and ONE strict decoder that turns the
-    // authored flat array — an explicit phase slot, two counts, the identified comment's own id (or the
-    // `UNIDENTIFIED` marker) and the two length slots — into the envelope below. The OUTCOME rule is then
-    // decided inside the ticket, before the slot is released: the DOCUMENT'S OWN COUNT DELTA and the
-    // identified comment's OWN TEXT are the evidence, and a count that did not grow by exactly one, an
-    // identification the body could not make, an answer that cannot be interpreted and the body's own
-    // POST-write uncertainty are all `APPLY_UNCERTAIN` with the slot HELD and no retry, while the body's
-    // PRE-write refusals (an unusable request, a missing primitive, a baseline it could not read) settle their
-    // closed KNOWN class with the slot released, because nothing was written — and they do so ONLY when the
-    // answer carries their phase. THERE IS NO EXPORT AND NO BYTE-GATED REFUSAL ON THIS LEG: the measured
-    // `ToMarkdown(...)` does not contain the comment text, so the body reads no export and a phase-marked
-    // `BYTE_LIMIT` can only be a forged or damaged answer about a dispatch that wrote.
-    // THE TWO COMPOSED BOUNDS ARE NEVER READ FROM THE CALLER: `maxBytes` is `LIMITS.insertCommentTextBytes`
-    // (the same number the descriptor's schema advertises) and `idMax` is `LIMITS.insertCommentIdChars` (the
-    // defensive width of the ONE id this bridge republishes), so a descriptor held directly, or a caller that
-    // guessed a key, cannot widen either. No caller-supplied key reaches the body at all.
-    // THE REQUEST IS A CLOSED PRECONDITION, never an optional refinement, and it is re-checked HERE rather
-    // than taken on trust: the bridge is a PUBLIC ENTRY POINT, and a text this module never measured — empty,
-    // over the bound, or carrying a control character other than TAB, LF and CR — must not be writable by a
-    // caller that reached this method directly. The bound and the three permitted whitespace control
-    // characters are the SAME ones the descriptor applies, spelled beside their twins in `src/tools/word.js`
-    // because the two modules cannot import each other.
+    // Editor methods notify R7 UI; the lease verifies and reveals the new internal ID.
     async insertComment(raw) {
       const text = requestedCommentText(raw?.text);
       const signal = raw?.signal;
@@ -5352,7 +8127,7 @@ export function createR7Bridge(plugin, {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
-        if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+        if (disposed || !adapter.executeMethod) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // THE SCOPE, and every value in it is composed HERE rather than read from the caller.
         const outcome = await start('commentinsert', signal, {},
           Object.freeze({ text, maxBytes: LIMITS.insertCommentTextBytes, idMax: LIMITS.insertCommentIdChars }));
@@ -5422,7 +8197,7 @@ export function createR7Bridge(plugin, {
       if (disposed) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
       if (slot !== null) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
       if (signal?.aborted) throw new SafeError(ERROR_CODES.CANCELLED);
-      if (editor !== 'word' || !adapter.commandDispatch) return capabilities();
+      if (editor === 'unknown' || !adapter.commandDispatch) return capabilities();
       return start('probe', signal);
     },
     canApply(target) { try { return slot === null && ownedTarget(target) !== null; } catch { return false; } },

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mountPanel, statusText, orchestrationText } from '../../src/ui/view.js';
+import { readFileSync } from 'node:fs';
+import { mountPanel, statusText, orchestrationText, progressStageText } from '../../src/ui/view.js';
 import { createController } from '../../src/ui/controller.js';
 import { SettingsStore } from '../../src/config/storage.js';
 import { SafeError } from '../../src/shared/errors.js';
@@ -9,6 +10,12 @@ import { dom } from '../fixtures/dom.js';
 const final = (message) => JSON.stringify({ type: 'final', message });
 const toolCalls = (...tools) => JSON.stringify({ type: 'tool_calls', calls: tools.map(([tool, args]) => ({ tool, arguments: args })) });
 const injected = (reply) => ({ content: typeof reply === 'string' ? reply : JSON.stringify(reply) });
+
+test('unverified agent completion has an attention label without claiming a save', () => {
+  assert.equal(statusText('AGENT_INCOMPLETE', true), 'Ошибка');
+  assert.match(statusText('AGENT_INCOMPLETE'), /не подтверждено/);
+  assert.doesNotMatch(statusText('AGENT_INCOMPLETE'), /сохранены/);
+});
 
 // The controller's transport receives (settings, messages, uuid, options); the Agent Runtime's own
 // raw envelope is a string in `content`. A bare string is passed through untouched and anything else
@@ -24,13 +31,109 @@ function fixture(response = final('<img src=x onerror=alert(1)> **not markdown**
   const bridge = { getState() { return { editorType: 'word', busy: false, uncertain: false }; }, invalidate() {}, canApply(value) { return value === target; },
     async readSelection() { return { text: '<script>inert</script>', editorType: 'word', eligible: true, target }; },
     async insertParagraph() { return { ok: true, data: { sent: true } }; }, ...options.bridge };
-  const controller = createController({ store: new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
+  const controller = createController({ store: options.store ?? new SettingsStore(null), crypto: { randomUUID() { return '00000000-0000-4000-8000-000000000001'; } },
     bridge, transport: options.transport ?? transport });
-  controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
+  if (options.configured !== false) controller.saveSettings({ endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic' });
   const panel = mountPanel(tree.root, controller);
   assert.ok(tree.id('prompt'), 'mounted composer');
   return { ...tree, controller, panel, replies, transport };
 }
+
+test('first launch shows a separate connection form and hides the composer', () => {
+  const f = fixture(undefined, { configured: false });
+  assert.equal(f.id('composer').hidden, true);
+  assert.equal(f.id('connection-setup').hidden, false);
+  assert.equal(f.id('settings-form').hidden, false);
+  assert.equal(f.id('apiKey').type, 'password');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('connection settings live in overflow; opening and cancelling preserve profile and draft', () => {
+  const f = fixture(); const original = f.controller.getState().settings;
+  f.id('prompt').value = 'keep my draft';
+  assert.equal(f.id('connection-summary'), undefined);
+  assert.equal(f.id('panel-menu').hidden, true);
+  assert.equal(f.id('status').textContent, 'Готово');
+  f.id('toggle-menu').dispatch('click');
+  assert.equal(f.id('panel-menu').hidden, false);
+  assert.equal(f.id('change-connection').textContent, 'Настройки подключения');
+  f.id('change-connection').dispatch('click');
+  assert.equal(f.id('panel-menu').hidden, true);
+  assert.equal(f.id('connection-setup').hidden, false);
+  assert.equal(f.document.activeElement, f.id('endpoint'));
+  f.id('cancel-connection').dispatch('click');
+  assert.equal(f.id('connection-setup').hidden, true);
+  assert.equal(f.id('prompt').value, 'keep my draft');
+  assert.deepEqual(f.controller.getState().settings, original);
+  assert.equal(f.id('apiKey').value, '');
+  f.id('toggle-menu').dispatch('click');
+  f.root.dispatch('keydown', {key: 'Escape'});
+  assert.equal(f.id('panel-menu').hidden, true);
+  assert.equal(f.document.activeElement, f.id('toggle-menu'));
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('connection error offers settings; recovery removes the error without saving settings', async () => {
+  let fail = true;
+  const f = fixture(undefined, {transport: async () => {
+    if (fail) throw new SafeError('HTTP_UNAUTHORIZED');
+    return injected(final('answer'));
+  }});
+  const original = f.controller.getState().settings;
+  assert.equal(f.id('connection-error').hidden, true);
+  await f.controller.analyze('question');
+  assert.equal(f.id('connection-error').hidden, false);
+  assert.match(f.id('connection-error-message').textContent, /ключ/);
+  assert.equal(f.id('status').textContent, 'Ошибка');
+  f.id('repair-connection').dispatch('click');
+  assert.equal(f.id('connection-setup').hidden, false);
+  f.id('cancel-connection').dispatch('click');
+  fail = false; await f.controller.analyze('again');
+  assert.equal(f.id('connection-error').hidden, true);
+  assert.equal(f.id('status').textContent, 'Готово');
+  assert.deepEqual(f.controller.getState().settings, original);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('a non-connection failure explains itself on the main screen without a settings action', async () => {
+  const f = fixture('not json');
+  await f.controller.analyze('question');
+  assert.equal(f.id('diagnostics').hidden, true);
+  assert.equal(f.id('connection-error').hidden, false);
+  assert.match(f.id('connection-error-message').textContent, /формат|JSON/i);
+  assert.equal(f.id('repair-connection').hidden, true);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('sending a message never saves a stale settings form over the active profile', async () => {
+  const f = fixture(final('answer'));
+  f.id('apiKey').value = 'stale-form-key';
+  f.id('prompt').value = 'question';
+  f.id('composer').dispatch('submit');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.replies[0][0].apiKey, 'synthetic');
+  assert.equal(f.controller.getState().settings.apiKey, 'synthetic');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('successful shared reset clears the dirty key draft and returns to onboarding', async () => {
+  let saved = null;
+  const store = new SettingsStore({getItem() {return null;}, removeItem() {}}, {records: {
+    async read() {return saved;}, async write(value, revision) {
+      if ((saved?.revision ?? null) !== revision) return false; saved = value; return true;
+    }
+  }});
+  const f = fixture(final('ok'), {store});
+  await f.controller.saveAndTestConnection({endpoint: 'https://example.invalid/v1/chat/completions', apiKey: 'synthetic'}, null);
+  f.id('change-connection').dispatch('click');
+  f.id('model').value = 'dirty'; f.id('model').dispatch('input');
+  f.id('reset').dispatch('click');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.id('apiKey').value, '');
+  assert.equal(f.id('composer').hidden, true);
+  assert.equal(f.id('reload-connection').hidden, true);
+  f.panel.dispose(); f.controller.dispose();
+});
 test('BYTE_LIMIT status caption covers input, selection and response without implying truncation', () => {
   assert.equal(statusText('BYTE_LIMIT'), 'Превышен лимит UTF-8 для ввода, выделения или ответа; текст не обрезается.');
 });
@@ -38,9 +141,142 @@ test('LIMIT status caption states the run ceiling without claiming the task comp
   assert.match(statusText('AGENT_LIMIT'), /предел/);
   assert.match(statusText('AGENT_LIMIT'), /неполный/);
 });
+test('marked content container holds every content block while composer remains outside it and last', () => {
+  const { root, all, id, panel, controller } = fixture();
+  const content = id('content'); const composer = id('composer');
+  // Computed scrolling is proven by the live geometry measurement, not this DOM harness.
+  assert.equal(root.children.includes(content), true);
+  assert.equal(root.children.includes(composer), true);
+  assert.equal(content.children.includes(composer), false);
+  assert.equal(content.getAttribute('data-scroll-container'), 'content');
+  assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
+  assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'content', 'composer']);
+  assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
+    ['connection-setup', 'history', 'progress-stage', 'preview', 'diagnostics', 'connection-error']);
+  for (const section of ['history', 'progress-stage', 'preview', 'diagnostics']) {
+    assert.equal(content.children.includes(id(section)), true, `${section} belongs to the content container`);
+  }
+  const diagnostics = id('diagnostics');
+  assert.equal(diagnostics.children.some(child => child.tagName === 'P' && child.className === 'notice'), true, 'lifecycle warning belongs to diagnostics');
+  assert.equal(diagnostics.children.some(child => child.tagName === 'SECTION' && child.getAttribute('aria-label') === 'Режим и контекст'), true, 'toolbar belongs to diagnostics');
+  assert.equal(id('connection-setup').children.includes(id('settings-form')), true, 'connection has its own screen');
+  assert.equal(root.children.at(-1), composer);
+  panel.dispose(); controller.dispose();
+});
+
+test('compact status announces each transition while progress stays visual and non-live', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const f = fixture(pending); const status = f.id('status'); const progress = f.id('progress-stage');
+  assert.equal(status.getAttribute('role'), 'status'); assert.equal(status.getAttribute('aria-live'), 'polite');
+  assert.equal(progress.getAttribute('role'), null); assert.equal(progress.getAttribute('aria-live'), 'off');
+  const seen = []; const unsubscribe = f.controller.subscribe(() => seen.push(status.textContent));
+  const running = f.controller.analyze('question'); await Promise.resolve();
+  assert.equal(progress.hidden, false); assert.ok(['подготовка запроса', 'запрос к модели'].includes(progress.textContent));
+  release(injected(final('answer'))); await running;
+  assert.deepEqual(seen.filter((value, index) => value !== seen[index - 1]), ['Готово', 'Анализирую', 'Готово']);
+  assert.equal(progress.textContent, ''); assert.equal(progress.hidden, true);
+  unsubscribe(); f.panel.dispose(); f.controller.dispose();
+});
+
+test('actual colour tokens meet text, boundary and layered focus contrast thresholds', () => {
+  const css = readFileSync(new URL('../../src/ui/styles.css', import.meta.url), 'utf8');
+  const token = name => css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1];
+  const luminance = hex => {
+    const channels = hex.slice(1).match(/.{2}/g).map(part => parseInt(part, 16) / 255)
+      .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const contrast = (a, b) => { const values = [luminance(a), luminance(b)].sort((x, y) => y - x); return (values[0] + 0.05) / (values[1] + 0.05); };
+  for (const [name, foreground, background, threshold] of [
+    ['body text/background', token('text'), token('background'), 4.5], ['muted/surface', token('muted'), token('surface'), 4.5],
+    ['button text/accent', '#ffffff', token('accent'), 4.5], ['line/surface', token('line'), token('surface'), 3],
+    ['focus/surface', token('focus'), token('surface'), 3], ['submit focus halo/accent', token('surface'), token('accent'), 3]
+  ]) assert.ok(contrast(foreground, background) >= threshold, `${name}: ${contrast(foreground, background).toFixed(2)} < ${threshold}`);
+});
+
+test('main panel keeps diagnostics collapsed and composer compact at rest', () => {
+  const { all, id, panel, controller } = fixture();
+  const diagnostics = id('diagnostics');
+  assert.ok(diagnostics);
+  assert.equal(diagnostics.tagName, 'SECTION');
+  assert.equal(diagnostics.hidden, true);
+  assert.equal(diagnostics.getAttribute('open'), null);
+  assert.equal(diagnostics.children.includes(id('editor')), true);
+  assert.match(id('editor').textContent, /Stage B/);
+  assert.equal(all().some(item => item.tagName === 'LABEL' && item.htmlFor === 'prompt'), false);
+  assert.equal(id('prompt').rows, 2);
+  assert.equal(id('input-budget').hidden, true);
+  assert.equal(id('stop').hidden, true);
+  panel.dispose(); controller.dispose();
+});
+
+test('byte counter appears only in the final quarter of the 8192-byte input budget', () => {
+  const { id, panel, controller } = fixture();
+  id('prompt').value = 'a'.repeat(6143); id('prompt').dispatch('input');
+  assert.equal(id('input-budget').hidden, true);
+  id('prompt').value += 'a'; id('prompt').dispatch('input');
+  assert.equal(id('input-budget').hidden, false);
+  assert.match(id('input-budget').textContent, /^6144 \/ 8192 байт UTF-8/);
+  panel.dispose(); controller.dispose();
+});
+
+test('compact status maps every detailed state to the honest closed visible set', () => {
+  // The owner fixed the compact set to five words (contract §7.7), so the classification IS the
+  // contract: ACTIVE names the stage, CLEAN ended with nothing needing attention, ATTENTION is a real
+  // failure or an incomplete/unproven outcome. A non-error terminal state must never be called an error.
+  const clean = ['READY', 'COMPLETE', 'CONTEXT_READY', 'CONNECTION_OK', 'SETTINGS_SAVED', 'SETTINGS_CHANGED', 'R7_PRESENCE_READY', 'PREVIEW_READY', 'PREVIEW_EXPIRED', 'PREVIEW_CANCELLED', 'CONTEXT_CHANGED', 'STOPPED', 'CANCELLED', 'APPLY_ACKNOWLEDGED', 'ORCH_COMPLETE'];
+  const attention = ['AGENT_LIMIT', 'ORCH_INCOMPLETE', 'ORCH_UNCERTAIN', 'ORCH_BLOCKED', 'APPLY_UNCERTAIN', 'R7_CHECK_UNAVAILABLE', 'CAPABILITY_UNAVAILABLE', 'SELECTION_CHANGED', 'EDITOR_BUSY', 'EDITOR_ERROR', 'INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_DATA', 'BYTE_LIMIT', 'SETTINGS_CONFLICT', 'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'INTERNAL_ERROR', 'PROTOCOL_ERROR', 'HTTP_UNAUTHORIZED', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR', 'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT'];
+  const active = { CHECKING_R7: 'Проверяю', CONNECTING: 'Проверяю', CHECKING_SELECTION: 'Проверяю', ORCH_VERIFYING: 'Проверяю', ANALYZING: 'Анализирую', ORCH_PLANNING: 'Анализирую', READING_CONTEXT: 'Выполняю', APPLYING: 'Выполняю', ORCH_EXECUTING: 'Выполняю', ORCH_CONTINUING: 'Выполняю' };
+  const classified = [...clean, ...attention, ...Object.keys(active)].sort();
+  // The key list is taken from the module's own status map (no helper): the assertion fails if a status is
+  // added without being classified, which is what keeps this mapping honest.
+  const allStatusCodes = ['AGENT_LIMIT', 'ANALYZING', 'APPLYING', 'APPLY_ACKNOWLEDGED', 'APPLY_UNCERTAIN', 'BYTE_LIMIT', 'CANCELLED', 'CAPABILITY_UNAVAILABLE', 'CHECKING_R7', 'CHECKING_SELECTION', 'COMPLETE', 'CONNECTING', 'CONNECTION_OK', 'CONTEXT_CHANGED', 'CONTEXT_READY', 'EDITOR_BUSY', 'EDITOR_ERROR', 'HTTP_ERROR', 'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_UNAUTHORIZED', 'INTERNAL_ERROR', 'INVALID_DATA', 'INVALID_ENDPOINT', 'INVALID_KEY', 'INVALID_SETTINGS', 'NETWORK_ERROR', 'OFFLINE', 'ORCH_BLOCKED', 'ORCH_COMPLETE', 'ORCH_CONTINUING', 'ORCH_EXECUTING', 'ORCH_INCOMPLETE', 'ORCH_PLANNING', 'ORCH_UNCERTAIN', 'ORCH_VERIFYING', 'PREVIEW_CANCELLED', 'PREVIEW_EXPIRED', 'PREVIEW_READY', 'PROTOCOL_ERROR', 'R7_CHECK_UNAVAILABLE', 'R7_PRESENCE_READY', 'READING_CONTEXT', 'READY', 'SELECTION_CHANGED', 'SETTINGS_CHANGED', 'SETTINGS_SAVED', 'STOPPED', 'SETTINGS_CONFLICT', 'STORAGE_CORRUPT', 'STORAGE_UNAVAILABLE', 'TIMEOUT'];
+  assert.deepEqual(classified, [...allStatusCodes].sort(), 'every status in the map is classified');
+  for (const code of clean) assert.equal(statusText(code, true), 'Готово', code);
+  for (const code of attention) assert.equal(statusText(code, true), 'Ошибка', code);
+  for (const [code, caption] of Object.entries(active)) assert.equal(statusText(code, true), caption, code);
+  assert.equal(statusText('FUTURE_TERMINAL', true), 'Готово', 'an unknown non-error status must not silently become an error');
+});
+
+test('user and assistant messages have distinct semantic roles and visual classes', async () => {
+  const f = fixture(final('answer')); await f.controller.analyze('question');
+  const [user, assistant] = f.id('history').children;
+  assert.equal(user.className, 'message message-user');
+  assert.equal(user.getAttribute('data-role'), 'user');
+  assert.equal(assistant.className, 'message message-assistant');
+  assert.equal(assistant.getAttribute('data-role'), 'assistant');
+  assert.notEqual(user.className, assistant.className);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('composer stays mounted and prompt-enabled across idle, active, error and preview states', async () => {
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const active = fixture(pending);
+  assert.equal(active.id('prompt').disabled, false); assert.ok(active.id('composer'));
+  const operation = active.controller.analyze('question'); await Promise.resolve();
+  assert.equal(active.controller.getState().active, true);
+  assert.equal(active.id('prompt').disabled, false); assert.ok(active.id('composer'));
+  assert.equal(active.id('stop').hidden, false);
+  release(injected(final('answer'))); await operation;
+  assert.equal(active.id('stop').hidden, true);
+  active.panel.dispose(); active.controller.dispose();
+
+  const error = fixture(async () => { throw new SafeError('NETWORK_ERROR'); }, { transport: async () => { throw new SafeError('NETWORK_ERROR'); } });
+  await error.controller.analyze('question');
+  assert.equal(error.controller.getState().status, 'NETWORK_ERROR');
+  assert.equal(error.id('prompt').disabled, false); assert.ok(error.id('composer'));
+  error.panel.dispose(); error.controller.dispose();
+
+  const preview = fixture(toolCalls(['replace_selection', { text: 'proposal' }]));
+  preview.controller.setMode('EDIT'); await preview.controller.analyze('edit');
+  assert.equal(preview.controller.getState().status, 'PREVIEW_READY');
+  assert.equal(preview.id('prompt').disabled, false); assert.ok(preview.id('composer'));
+  preview.panel.dispose(); preview.controller.dispose();
+});
+
 test('view supplies semantic labeled editable connection controls and masked key', () => {
   const { all, id, controller } = fixture();
-  for (const name of ['endpoint','model','apiKey','httpTimeoutSeconds','maxTokens','temperature','rememberKey']) {
+  for (const name of ['endpoint','model','apiKey','httpTimeoutSeconds','maxTokens','temperature']) {
     const control = id(name); assert.ok(control, name);
     assert.equal(control.disabled, false);
     assert.ok(all().some(node => node.tagName === 'LABEL' && node.htmlFor === name));
@@ -48,14 +284,14 @@ test('view supplies semantic labeled editable connection controls and masked key
   assert.equal(id('apiKey').type, 'password');
   assert.equal(id('temperature').step, 'any');
   assert.equal(id('status').getAttribute('aria-live'), 'polite');
-  assert.equal(id('plaintext-warning').hidden, false);
-  assert.equal(id('persistence-warning').hidden, false);
+  assert.ok(id('encryption-notice'));
+  assert.equal(id('persistence-warning').hidden, true);
   assert.equal(controller.getState().settings.rememberKey, false);
   assert.equal(id('apply').disabled, true);
 });
-test('model/document text remains literal DOM text, never HTML or markdown', async () => {
+test('model HTML and document text remain inert while assistant emphasis renders', async () => {
   const { id, controller, all } = fixture(); await controller.analyze('question');
-  assert.ok(id('history').textContent.includes('<img src=x onerror=alert(1)> **not markdown**'));
+  assert.ok(id('history').textContent.includes('<img src=x onerror=alert(1)> not markdown'));
   assert.ok(id('selected-text').textContent.includes('<script>inert</script>'));
   assert.equal(all().some(node => ['IMG','SCRIPT'].includes(node.tagName)), false);
   controller.dispose();
@@ -66,10 +302,74 @@ test('settings edits invalidate immediately without overwriting focused drafts o
   assert.equal(controller.getState().status, 'SETTINGS_CHANGED');
   controller.contextChanged();
   assert.equal(model.value, 'draft'); assert.equal(document.activeElement, model);
-  id('settings-form').dispatch('submit');
-  assert.equal(controller.getState().settings.model, 'draft');
+  assert.equal(controller.getState().settings.model, 'qwen', 'unsaved draft must not alter active profile');
   controller.dispose();
 });
+test('draft survives EDIT to ASK mode change exactly', () => {
+  const f = fixture(); f.controller.setMode('EDIT');
+  f.id('prompt').value = 'черновик EDIT→ASK — точно';
+  f.id('mode').value = 'ASK'; f.id('mode').dispatch('change');
+  assert.equal(f.controller.getState().mode, 'ASK');
+  assert.equal(f.id('prompt').value, 'черновик EDIT→ASK — точно');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('keyboard path covers visible controls in DOM order and activates named actions without a mouse', async () => {
+  const focusable = f => {
+    function walk(node) {
+      if (node.hidden) return [];
+      const own = ['BUTTON', 'TEXTAREA', 'SELECT', 'INPUT', 'SUMMARY'].includes(node.tagName) && !node.disabled ? [node] : [];
+      const children = node.tagName === 'DETAILS' && node.getAttribute('open') === null ? node.children.slice(0, 1) : node.children;
+      return [...own, ...children.flatMap(walk)];
+    }
+    return walk(f.root);
+  };
+  const activateButton = button => { button.focus(); button.dispatch('keydown', { key: 'Enter' }); button.dispatch('click'); };
+  // This fixture dispatches the events each control handles; real browser Tab traversal and native <summary>
+  // toggling are confirmed in T6, as explicitly split by the owner.
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  const active = fixture(pending); const running = active.controller.analyze('q'); await Promise.resolve();
+  const activeOrder = focusable(active).map(node => node.id || node.textContent);
+  activateButton(active.id('stop'));
+  assert.deepEqual(activeOrder,
+    ['new-chat', 'toggle-menu', 'prompt', 'stop']); release(injected(final('late'))); await running;
+  assert.equal(active.controller.getState().status, 'STOPPED'); active.panel.dispose(); active.controller.dispose();
+
+  let checked = 0;
+  const f = fixture(toolCalls(['replace_selection', { text: 'proposal' }]), { bridge: {
+    async probeCapabilities() { checked += 1; return { editorType: 'word', methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true },
+      selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' }, mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; },
+    async replaceSelection() { return { acknowledged: true }; }
+  } });
+  f.id('mode').value = 'EDIT'; f.id('mode').dispatch('change');
+  assert.equal(f.controller.getState().mode, 'EDIT');
+  f.id('prompt').value = 'edit'; f.id('composer').dispatch('submit'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.controller.getState().status, 'PREVIEW_READY', 'Send submits the message through the form');
+  assert.deepEqual(focusable(f).map(node => node.id || node.textContent),
+    ['new-chat', 'toggle-menu', 'apply', 'cancel-preview', 'prompt', 'send']);
+  activateButton(f.id('toggle-menu'));
+  assert.deepEqual(focusable(f).map(node => node.id || node.textContent).slice(0,4), ['new-chat', 'toggle-menu', 'change-connection', 'toggle-diagnostics']);
+  const toggle = f.id('toggle-diagnostics');
+  activateButton(toggle);
+  assert.equal(f.id('diagnostics').hidden, false);
+  assert.equal(f.document.activeElement, f.id('toggle-menu'));
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  activateButton(toggle);
+  assert.equal(f.id('diagnostics').hidden, true);
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  activateButton(toggle);
+  activateButton(f.id('check-r7')); await new Promise(resolve => setImmediate(resolve)); assert.equal(checked, 1);
+  f.controller.setMode('EDIT'); await f.controller.analyze('apply proposal');
+  assert.equal(f.id('apply').disabled, false);
+  activateButton(f.id('apply')); await new Promise(resolve => setImmediate(resolve));
+  assert.notEqual(f.controller.getState().status, 'PREVIEW_READY');
+  const cancelFixture = fixture(toolCalls(['replace_selection', { text: 'proposal' }]));
+  cancelFixture.controller.setMode('EDIT'); await cancelFixture.controller.analyze('edit again');
+  activateButton(cancelFixture.id('cancel-preview')); assert.equal(cancelFixture.controller.getState().preview, null);
+  cancelFixture.panel.dispose(); cancelFixture.controller.dispose();
+  f.panel.dispose(); f.controller.dispose();
+});
+
 test('keyboard submit reaches controller and preview cancellation restores composer focus', async () => {
   const { id, controller, document } = fixture(toolCalls(['replace_selection', { text: 'proposal' }]));
   id('mode').value = 'EDIT'; id('mode').dispatch('change');
@@ -95,13 +395,92 @@ test('repeated keyboard submit cannot invalidate and supersede the active operat
 });
 test('view uses same complete edited settings for connection action and displays safe errors', async () => {
   const { id, controller } = fixture();
-  id('endpoint').value = 'http://invalid'; id('endpoint').dispatch('input'); id('test-connection').dispatch('click');
+  id('endpoint').value = 'http://invalid'; id('endpoint').dispatch('input'); id('settings-form').dispatch('submit');
   await Promise.resolve(); assert.equal(controller.getState().status, 'INVALID_ENDPOINT');
   assert.equal(id('status').textContent.includes('http://invalid'), false);
   controller.dispose();
 });
 
 // --- Task 9: live step status and the actions summary ------------------------------------------
+
+test('progress stages derive the five closed human phrases from published state', () => {
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: null }), 'подготовка запроса');
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 0, toolCalls: 0 } }), 'запрос к модели');
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 3, toolCalls: 2 } }), 'выполнение шага 3');
+  assert.equal(progressStageText({ active: true, status: 'ORCH_EXECUTING', orchestration: { status: 'ORCH_EXECUTING', plan: { sections: ['A', 'B', 'C', 'D'] } }, agent: { status: 'RUNNING', steps: 22, toolCalls: 21 } }), 'выполнение шага 22');
+  assert.equal(progressStageText({ active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 4, toolCalls: 0 } }), 'сборка результата');
+  assert.equal(progressStageText({ active: true, status: 'ORCH_VERIFYING', orchestration: { status: 'ORCH_VERIFYING' }, agent: { status: 'FINAL', steps: 4, toolCalls: 2 } }), 'проверка результата');
+});
+
+test('progress stage is editor-agnostic for Word, Cell and Slide', () => {
+  for (const editorType of ['word', 'cell', 'slide']) {
+    assert.equal(progressStageText({ active: true, editorType, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 2, toolCalls: 1 } }), 'выполнение шага 2', editorType);
+  }
+});
+
+test('every terminal outcome removes the progress stage and keeps compact terminal status', () => {
+  const terminal = {
+    COMPLETE: 'Готово', STOPPED: 'Готово', CANCELLED: 'Готово', TIMEOUT: 'Ошибка', AGENT_LIMIT: 'Ошибка',
+    APPLY_UNCERTAIN: 'Ошибка', ORCH_INCOMPLETE: 'Ошибка', ORCH_UNCERTAIN: 'Ошибка', ORCH_BLOCKED: 'Ошибка',
+    INTERNAL_ERROR: 'Ошибка', PROTOCOL_ERROR: 'Ошибка', HTTP_UNAUTHORIZED: 'Ошибка', HTTP_FORBIDDEN: 'Ошибка',
+    HTTP_RATE_LIMIT: 'Ошибка', HTTP_SERVER_ERROR: 'Ошибка', HTTP_ERROR: 'Ошибка', NETWORK_ERROR: 'Ошибка', OFFLINE: 'Ошибка',
+    INVALID_SETTINGS: 'Ошибка', INVALID_ENDPOINT: 'Ошибка', INVALID_KEY: 'Ошибка', INVALID_DATA: 'Ошибка', BYTE_LIMIT: 'Ошибка',
+    STORAGE_UNAVAILABLE: 'Ошибка', STORAGE_CORRUPT: 'Ошибка', CAPABILITY_UNAVAILABLE: 'Ошибка', EDITOR_BUSY: 'Ошибка', EDITOR_ERROR: 'Ошибка'
+  };
+  for (const [status, compact] of Object.entries(terminal)) {
+    assert.equal(progressStageText({ active: false, status, agent: { status: 'FINAL', steps: 7, toolCalls: 4 } }), '', status);
+    assert.equal(statusText(status, true), compact, status);
+  }
+});
+
+test('every terminal publication makes the progress element inert with or without a preserved active orchestration record', () => {
+  const tree = dom(); let publish;
+  const state = { active: true, status: 'ANALYZING', editorType: 'word', agent: null, mode: 'ASK', includeContext: false,
+    context: { kind: 'UNKNOWN', text: '', bytes: 0 }, chat: { history: [] }, settings: {}, writeLocked: false,
+    canApply: false, preview: null, orchestration: null, capabilityCount: null };
+  const controller = { subscribe(listener) { publish = listener; listener(state); return () => {}; }, getState() { return state; },
+    saveSettings() { return false; }, setMode() {}, setIncludeContext() {}, stop() {}, newChat() {}, checkR7() {}, refreshContext() {},
+    settingsChanged() {}, testConnection() {}, reset() {}, analyze() {}, apply() {}, cancelPreview() {} };
+  const panel = mountPanel(tree.root, controller);
+  const progress = tree.id('progress-stage');
+  const compact = tree.id('status');
+  assert.equal(progress.hidden, false); assert.equal(progress.textContent, 'подготовка запроса');
+  const terminal = {
+    COMPLETE: ['Готово', 'FINAL'], STOPPED: ['Готово', 'CANCELLED'], CANCELLED: ['Готово', 'CANCELLED'], TIMEOUT: ['Ошибка', 'CANCELLED'],
+    HTTP_ERROR: ['Ошибка', 'ERROR'], NETWORK_ERROR: ['Ошибка', 'ERROR'], OFFLINE: ['Ошибка', 'ERROR'], PROTOCOL_ERROR: ['Ошибка', 'PROTOCOL_ERROR'],
+    CAPABILITY_UNAVAILABLE: ['Ошибка', 'ERROR'], EDITOR_ERROR: ['Ошибка', 'ERROR'], AGENT_LIMIT: ['Ошибка', 'LIMIT'],
+    ORCH_INCOMPLETE: ['Ошибка', 'FINAL'], ORCH_UNCERTAIN: ['Ошибка', 'UNCERTAIN'], ORCH_BLOCKED: ['Ошибка', 'ERROR'], ORCH_COMPLETE: ['Готово', 'FINAL']
+  };
+  const preserved = { status: 'ORCH_VERIFYING', pass: 1, maxPasses: 12, targetChars: 18000,
+    plan: { sections: ['A', 'B', 'C'], targetChars: 18000, required: { tables: false, lists: false, conclusions: false } },
+    missing: [], missingTools: [] };
+  for (const [status, [expectedCompact, agentStatus]] of Object.entries(terminal)) {
+    for (const orchestration of [preserved, null]) {
+      publish({ ...state, active: false, status, orchestration, agent: { status: agentStatus, steps: 7, toolCalls: 4 } });
+      const label = `${status}/${orchestration === null ? 'null' : 'preserved'}`;
+      assert.equal(progress.textContent, '', label);
+      assert.equal(progress.hidden, true, label);
+      assert.equal(progress.getAttribute('aria-busy'), 'false', label);
+      assert.equal(compact.textContent, expectedCompact, label);
+    }
+  }
+  panel.dispose();
+});
+
+test('stage text is authored human language, never a raw status or internal event', () => {
+  const states = [
+    { active: true, status: 'ANALYZING', agent: null },
+    { active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 0, toolCalls: 0 } },
+    { active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 1, toolCalls: 1 } },
+    { active: true, status: 'ANALYZING', agent: { status: 'RUNNING', steps: 2, toolCalls: 0 } },
+    { active: true, status: 'ORCH_VERIFYING', orchestration: { status: 'ORCH_VERIFYING' }, agent: { status: 'FINAL', steps: 2, toolCalls: 1 } }
+  ];
+  for (const state of states) {
+    const text = progressStageText(state);
+    assert.match(text, /^[а-яё0-9 ]+$/u);
+    assert.equal(/ANALYZING|ORCH_|RUNNING|tool|event/i.test(text), false, text);
+  }
+});
 
 test('the live step status and the actions summary are rendered as text, never as raw JSON', async () => {
   const f = fixture([
@@ -124,12 +503,13 @@ test('the live step status and the actions summary are rendered as text, never a
   const running = snapshots.filter(entry => entry.state.agent?.status === 'RUNNING' && entry.state.agent.steps > 0);
   assert.ok(running.length >= 1);
   // The live counter reached the DOM during the run: the last running emit was rendered as `шаг 1`.
-  assert.equal(liveStatus, 'Анализ… · шаг 1');
-  assert.equal(snapshots.at(-1).status, 'Ответ получен');
+  assert.equal(liveStatus, 'Анализирую');
+  assert.equal(snapshots.at(-1).status, 'Готово');
   assert.equal(snapshots.at(-1).actions, 'insert_paragraph: ok');
   assert.match(running.at(-1).state.status, /ANALYZING/);
   assert.equal(snapshots.at(-1).actions, 'insert_paragraph: ok');
-  assert.match(f.id('status').textContent, /Ответ получен/);
+  assert.equal(f.id('status').textContent, 'Готово');
+  assert.match(f.id('status-details').textContent, /Ответ получен/);
   assert.match(f.id('actions').textContent, /insert_paragraph: ok/);
   // The raw model JSON, its arguments and the document text never appear in the rendered panel.
   const rendered = f.root.textContent;
@@ -137,10 +517,12 @@ test('the live step status and the actions summary are rendered as text, never a
     assert.equal(rendered.includes(forbidden), false, forbidden);
   }
   assert.equal(f.id('actions').textContent.includes('insert_paragraph'), true);
-  assert.equal(f.id('status').getAttribute('role'), 'status');
+  // Deliberately replaces the old per-region live assertions: the compact status must remain the
+  // panel's single live status region, so any future live region fails this whole-panel invariant.
+  const liveStatuses = f.all().filter(node => node.getAttribute('role') === 'status' || ['polite', 'assertive'].includes(node.getAttribute('aria-live')));
+  assert.deepEqual(liveStatuses.map(node => node.id), ['status', 'connection-status']);
   assert.equal(f.id('status').getAttribute('aria-live'), 'polite');
   assert.equal(f.id('status').getAttribute('aria-atomic'), 'true');
-  assert.equal(f.id('actions').getAttribute('aria-live'), 'polite');
   f.panel.dispose(); f.controller.dispose();
 });
 
@@ -165,21 +547,17 @@ test('a successful action line renders the outcome without a code', async () => 
   f.panel.dispose(); f.controller.dispose();
 });
 
-test('markup in a model final message stays verbatim text and never becomes an element', async () => {
-  const markup = '<img src=x onerror=alert(1)> **not markdown**';
-  const f = fixture(final(markup));
-  await f.controller.analyze('вопрос');
-  const history = f.id('history');
-  const reply = history.children[1];
-  // (a) the model's text is present VERBATIM: not parsed, escaped, stripped or shortened.
-  assert.equal(reply.children[1].textContent, markup);
-  assert.ok(history.textContent.includes(markup));
-  // (b) the history is built only from the authored element types — no element was created from the
-  // content, because the renderer sets textContent and never markup.
-  assert.deepEqual(history.children.map(child => child.tagName), ['ARTICLE', 'ARTICLE']);
-  assert.deepEqual(history.children[0].children.map(child => child.tagName), ['H2', 'PRE']);
-  assert.deepEqual(reply.children.map(child => child.tagName), ['H2', 'PRE']);
+test('assistant Markdown renders semantics with raw HTML inert and compact roles', async () => {
+  const f = fixture(final('<img src=x onerror=alert(1)> **bold**'));
+  await f.controller.analyze('**literal user**');
+  const [user, reply] = f.id('history').children;
+  assert.equal(user.children[1].textContent, '**literal user**');
+  assert.equal(reply.children[1].textContent, '<img src=x onerror=alert(1)> bold');
+  assert.deepEqual(reply.children.map(child => child.tagName), ['SPAN', 'DIV']);
+  assert.equal(reply.children[0].textContent, 'Ассистент');
+  assert.equal(f.all().filter(node => node.tagName === 'H1').length, 1);
   assert.equal(f.all().some(node => ['IMG', 'SCRIPT'].includes(node.tagName)), false);
+  assert.equal(f.all().find(node => node.tagName === 'STRONG').textContent, 'bold');
   f.panel.dispose(); f.controller.dispose();
 });
 
@@ -251,5 +629,139 @@ test('the ordinary single run shows no orchestration report', async () => {
   await f.controller.analyze('вопрос');
   assert.equal(f.id('orchestration').hidden, true);
   assert.equal(f.id('orchestration').textContent, '');
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('every capability, readiness and context element stays inside collapsed diagnostics', () => {
+  const f = fixture();
+  const diagnostics = f.id('diagnostics');
+  for (const technical of ['editor', 'status-details', 'r7-capabilities', 'capability-state', 'capability-pointer', 'context', 'selected-text']) {
+    const item = f.id(technical);
+    assert.ok(item, technical);
+    const contains = (parent, target) => parent.children.includes(target) || parent.children.some(child => contains(child, target));
+    assert.equal(contains(diagnostics, item), true, `${technical} belongs to diagnostics`);
+    assert.equal(f.root.children.includes(item), false, `${technical} is not a top-level element of #panel`);
+  }
+  assert.equal(diagnostics.getAttribute('open'), null);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('each closed capability state renders the complete contract in diagnostics', async () => {
+  const ready = fixture(final('ok'), { bridge: { async probeCapabilities() { return { editorType: 'word', adapter: { commandDispatch: true }, methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true } }; } } });
+  await ready.controller.checkR7();
+  assert.equal(ready.id('capability-state').textContent, 'Редактор: Word. Доступно: шесть из шести — проверены шесть API-примитивов документа. Что сделать: можно отправлять запрос.');
+
+  const partial = fixture(final('ok'), { bridge: { async probeCapabilities() { return { editorType: 'word', adapter: { commandDispatch: true }, methodPresence: { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: false } }; } } });
+  await partial.controller.checkR7();
+  assert.equal(partial.id('capability-state').textContent, 'Редактор: Word. Доступно: три из шести — проверены шесть API-примитивов документа. Недоступно: три возможности, потому что проверка редактора их не подтвердила. Что сделать: откройте диагностику редактора и повторите проверку после восстановления адаптера.');
+
+  const unavailableEditor = fixture(final('ok'), { bridge: { getState() { return { editorType: 'unknown', busy: false, uncertain: false }; } } });
+  await unavailableEditor.controller.checkR7();
+  assert.equal(unavailableEditor.id('capability-state').textContent, 'Доступно: запросы после подключения поддерживаемого редактора. Этот редактор не поддерживается. Что сделать: откройте документ, таблицу или презентацию, откройте панель через меню „Плагины“ и повторите проверку.');
+
+  const unavailableCapability = fixture(final('ok'), { bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true }, selectionRead: { available: false }, mutation: { available: true } }; }
+  } });
+  await unavailableCapability.controller.checkR7();
+  assert.equal(unavailableCapability.id('include-context').disabled, true);
+  assert.equal(unavailableCapability.id('include-context').getAttribute('aria-describedby'), 'capability-state');
+  assert.equal(unavailableCapability.id('capability-state').textContent, 'Проверено: чтение выделения и изменение через адаптер. Доступно: одна из двух возможностей — изменение через адаптер. Недоступно: одна возможность, потому что проверка редактора её не подтвердила. Что сделать: оставьте передачу выделения выключенной и отправьте запрос без неё либо восстановите адаптер и повторите проверку.');
+
+  let release; const capabilityPending = new Promise(resolve => { release = resolve; });
+  const checking = fixture(final('ok'), { bridge: { async probeCapabilities() { return capabilityPending; } } });
+  const operation = checking.controller.checkR7();
+  assert.equal(checking.id('check-r7').disabled, true);
+  assert.equal(checking.id('capability-state').textContent, 'Проверяю возможности редактора… Доступность ещё не определена, потому что проверка не завершена. Что сделать: дождитесь завершения проверки и повторите действие.');
+  release({ editorType: 'word', methodPresence: { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true } });
+  await operation;
+
+  const writePending = fixture(final('ok'), { bridge: { getState() { return { editorType: 'word', busy: false, uncertain: false, writePending: true }; } } });
+  assert.equal(writePending.id('capability-state').textContent, 'Изменение подготовлено и ждёт подтверждения. Отправка и повторное изменение недоступны, потому что редактор ещё не подтвердил предыдущую запись. Что сделать: подтвердите изменение в редакторе или дождитесь завершения операции.');
+
+  for (const f of [ready, partial, unavailableEditor, unavailableCapability, checking, writePending]) { f.panel.dispose(); f.controller.dispose(); }
+});
+
+test('Cell defaults selection context off before any model request and links its disabled control to diagnostics', async () => {
+  const cell = fixture(final('ok'), { bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true }, selectionRead: { available: true }, mutation: { available: true } }; }
+  } });
+  assert.equal(cell.controller.getState().includeContext, false);
+  await cell.controller.checkR7();
+  assert.equal(cell.id('include-context').checked, false);
+  assert.equal(cell.id('include-context').disabled, true);
+  assert.equal(cell.id('include-context').getAttribute('aria-describedby'), 'capability-state');
+  assert.equal(cell.id('capability-state').textContent, 'Редактор: Cell. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.');
+  assert.equal(cell.replies.length, 0);
+  cell.panel.dispose(); cell.controller.dispose();
+});
+
+test('the readiness summary names the denominator of the EDITOR it describes', async () => {
+  // MEASURED on the target: a spreadsheet readiness printed "Наличие API: 0 / 6", a Word-shaped denominator for a
+  // count that is two booleans. The sentence after the count differs too, because for a spreadsheet the check is
+  // about the adapter, not about Word selection, formatting and undo.
+  const cellBridge = {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, invalidate() {},
+    async probeCapabilities() {
+      return { editorType: 'cell', adapter: { executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' },
+        methodPresence: { api: false, getDocument: false, getDocumentId: false, replaceTextSmart: false, getRangeBySelect: false, isTrackRevisions: false },
+        selectionRead: { available: false, runtimeVerified: false, reason: 'NATIVE_PROBE_UNAVAILABLE' },
+        mutation: { available: false, runtimeVerified: false, reason: 'NATIVE_PROBE_UNAVAILABLE' } };
+    }
+  };
+  const cell = fixture(final('ok'), { bridge: cellBridge });
+  await cell.controller.checkR7();
+  const cellSummary = cell.id('r7-capabilities').textContent;
+  assert.equal(cell.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(cellSummary, '', 'zero observed capabilities fail closed instead of publishing readiness');
+
+  const word = fixture(final('ok'), { bridge: {
+    async probeCapabilities() {
+      return { editorType: 'word', adapter: { executeMethod: true, commandDispatch: false, commandMethod: null },
+        methodPresence: { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: false } };
+    }
+  } });
+  await word.controller.checkR7();
+  const wordSummary = word.id('r7-capabilities').textContent;
+  assert.match(wordSummary, /3 \/ 6/, 'a document keeps its six primitives: ' + wordSummary);
+  cell.panel.dispose(); cell.controller.dispose(); word.panel.dispose(); word.controller.dispose();
+});
+
+ test('draft grows to the cap and shrinks without replacing focused prompt', () => {
+  const f = fixture(); const prompt = f.id('prompt'); prompt.focus();
+  prompt.scrollHeight = 140; prompt.value = 'long draft'; prompt.dispatch('input');
+  assert.equal(prompt.style.height, '72px'); assert.equal(f.document.activeElement, prompt);
+  prompt.scrollHeight = 36; prompt.value = ''; prompt.dispatch('input');
+  assert.equal(prompt.style.height, '38px'); assert.equal(f.id('prompt'), prompt);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+ test('status updates preserve readers of earlier messages and follow the current tail', () => {
+  const f = fixture(); const content = f.id('content');
+  content.scrollHeight = 1000; content.clientHeight = 300; content.scrollTop = 100;
+  f.controller.contextChanged(); assert.equal(content.scrollTop, 100);
+  content.scrollTop = 700; f.controller.contextChanged(); assert.equal(content.scrollTop, 1000);
+  f.id('toggle-diagnostics').dispatch('click'); content.scrollTop = 100;
+  f.controller.contextChanged(); assert.equal(content.scrollTop, 100);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('explicit send returns a scrolled-up conversation to the new response', async () => {
+  const f = fixture(final('answer')); const content = f.id('content');
+  content.scrollHeight = 1000; content.clientHeight = 300; content.scrollTop = 100;
+  f.id('prompt').value = 'new question'; f.id('composer').dispatch('submit');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(content.scrollTop, 1000);
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('adding replies preserves earlier Markdown link nodes and focus', async () => {
+  const f = fixture(final('[reference](https://example.invalid/)'));
+  await f.controller.analyze('first');
+  const link = f.all().find(node => node.tagName === 'A'); link.focus();
+  await f.controller.analyze('second');
+  assert.equal(f.all().find(node => node.tagName === 'A'), link);
+  assert.equal(f.document.activeElement, link);
   f.panel.dispose(); f.controller.dispose();
 });

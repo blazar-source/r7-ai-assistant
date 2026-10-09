@@ -5,6 +5,9 @@ import { createRegistry } from '../../src/tools/registry.js';
 import { ERROR_CODES, SafeError } from '../../src/shared/errors.js';
 import { AGENT_CEILINGS } from '../../src/shared/limits.js';
 import { utf8ByteLength } from '../../src/shared/bytes.js';
+import { createWordTools } from '../../src/tools/word.js';
+import { createCellTools } from '../../src/tools/cell.js';
+import { createSlideTools } from '../../src/tools/slide.js';
 
 const base = { kind: 'read', editors: ['word'], policy: 'auto', requires: [],
   description: 'Тестовый дескриптор рантайма.',
@@ -21,6 +24,24 @@ const registry = createRegistry([
 ]);
 const editor = { editor: 'word', capabilities: ['document.read', 'document.write'], mode: 'EDIT' };
 const baseArgs = { registry, ...editor, settings: {}, uuid: '11111111-1111-4111-8111-111111111111', request: 'сделай' };
+
+for (const [kind, factory] of [['word', createWordTools], ['cell', createCellTools], ['slide', createSlideTools]]) {
+  test(`${kind} model receives the enforced argument schemas without losing the user request`, async () => {
+    const actual = createRegistry(factory({})); let wire;
+    const result = await runAgent({ ...baseArgs, registry: actual, editor: kind, transport: async messages => {
+      wire = messages; return { content: '{"type":"final","message":"ok"}' };
+    } });
+    assert.equal(result.status, 'FINAL');
+    assert.equal(wire[1].content, 'сделай');
+    const published = actual.modelCatalogue(actual.catalogue({ ...editor, editor: kind }));
+    for (const tool of published) assert.ok(wire[0].content.includes(JSON.stringify(tool.schema)), `${tool.name}: model needs argument names and bounds`);
+    if (kind === 'word') {
+      assert.match(wire[0].content, /"heading":\{"type":"integer","minimum":1,/);
+      assert.equal(wire[0].content.includes('replace_selection'), false);
+    }
+    assert.ok(utf8ByteLength(JSON.stringify(wire)) < 32768, 'leave half the context for the task and tool results');
+  });
+}
 
 function respond(sequence) {
   let index = 0;
@@ -743,4 +764,29 @@ test('a forged error object is TOOL_ERROR and never publishes its forged code', 
     assert.ok(!JSON.stringify(result.actions).includes('FORGED_SECRET_CODE'), `${label}: the forged code must never reach the action log`);
     assert.ok(!JSON.stringify(result.actions).includes('FORGED-SECRET-TEXT'), `${label}: the forged text must never reach the action log`);
   }
+});
+
+// --- Exit gate, Defect 3: a limit the model cannot see is a limit it can only violate ----------------
+// MEASURED on the product's TARGET model family: Qwen proposed 10 and then 15 calls in ONE tool_calls envelope
+// against `actionsPerStep = 8`. That is a PROTOCOL_ERROR, and a protocol error spends the run's only repair, so the
+// run ended having executed NOTHING. The ceiling is now stated in the same text the model reads, interpolated from
+// the SAME constant the envelope validator enforces, so the two can never drift apart.
+
+test('the model-facing system text states the EFFECTIVE per-step call ceiling and how to split larger work', async () => {
+  let systemText = null;
+  const result = await runAgent({ ...baseArgs, transport: async (messages) => {
+    if (systemText === null) systemText = messages[0].content;
+    return { content: '{"type":"final","message":"ok"}' };
+  } });
+  assert.equal(result.status, 'FINAL');
+  assert.equal(typeof systemText, 'string', 'the first message really is the rendered system text');
+  const ceiling = String(AGENT_CEILINGS.actionsPerStep);
+  // The SAME number the validator enforces, stated FOR the envelope it applies to — not a second, independent "8".
+  assert.match(systemText, /tool_calls/, 'the protocol sentence names the envelope');
+  assert.ok(systemText.includes(`не более ${ceiling} вызовов`),
+    `the rendered system text must state the EFFECTIVE ceiling (${ceiling}) for a tool_calls envelope`);
+  assert.equal(systemText.split(`не более ${ceiling} вызовов`).length - 1, 1, 'stated exactly once');
+  // And the instruction that makes the ceiling actionable rather than merely known.
+  assert.match(systemText, /разбей их на несколько шагов/,
+    'the model must be told to split larger work across steps, not just given a number');
 });

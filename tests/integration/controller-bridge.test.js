@@ -48,7 +48,7 @@ function probeFixture(editorType = 'word', hasCommand = true) {
 test('UI capability action reaches native owned bridge without credentials, HTTP or chat/context changes', async () => {
   const f = probeFixture(); f.checkAction();
   const before = f.controller.getState(); const model = f.id('model');
-  model.focus(); model.value = 'unsaved draft';
+  model.focus(); model.value = 'unsaved draft'; model.dispatch('input');
   f.id('check-r7').dispatch('click');
   assert.equal(f.controller.getState().active, true);
   assert.equal(f.id('check-r7').disabled, true); assert.equal(f.id('send').disabled, true);
@@ -69,12 +69,43 @@ test('UI capability action reaches native owned bridge without credentials, HTTP
   f.panel.dispose(); f.controller.dispose();
 });
 
-for (const editor of ['cell', 'slide', 'unknown', null]) test(`UI probe reports unsupported ${editor} locally without SDK guesses`, async () => {
+for (const editor of ['unknown', null]) test(`UI probe reports unsupported ${editor} locally without SDK guesses`, async () => {
   const f = probeFixture(editor); f.checkAction();
   assert.equal(await f.controller.checkR7(), false);
   assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
   assert.equal(f.controller.getState().capabilityCount, null); assert.equal(f.callbacks.length, 0);
-  assert.match(f.id('status').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
+  assert.equal(f.id('status').textContent, 'Ошибка');
+  assert.match(f.id('status-details').textContent, /недоступна/); assert.equal(f.controller.getState().runtimeVerified, false);
+  f.panel.dispose(); f.controller.dispose();
+});
+for (const [editor, label] of [['slide', 'PRESENTATION'], ['cell', 'SPREADSHEET']]) {
+  test(`UI probe reports a ${label} ready only after its native check answers`, async () => {
+    const f = probeFixture(editor); f.checkAction();
+    const operation = f.controller.checkR7();
+    assert.equal(f.callbacks.length, 1, `${editor} dispatches one real native probe`);
+    assert.equal(f.controller.getState().active, true);
+    f.callbacks[0](editor === 'cell' ? [true, true, true, true] : presence);
+    assert.equal(await operation, true);
+    assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+    assert.equal(f.controller.getState().capabilityCount, 2, 'availability comes from the observed Api/document pair');
+    assert.equal(f.controller.getState().runtimeVerified, false, 'presence is not runtime mutation proof');
+    assert.equal(f.counters().reads, 0, 'the probe never reads selection');
+    assert.equal(f.counters().httpCalls, 0);
+    f.panel.dispose(); f.controller.dispose();
+  });
+}
+
+test('an unanswered PRESENTATION native probe fails closed on its bounded callback deadline', async () => {
+  const f = probeFixture('slide'); f.checkAction();
+  const operation = f.controller.checkR7();
+  assert.equal(f.callbacks.length, 1, 'the native probe was dispatched');
+  f.advance(5000);
+  assert.equal(await operation, false);
+  assert.equal(f.controller.getState().status, 'TIMEOUT');
+  assert.equal(f.controller.getState().active, false);
+  assert.equal(f.controller.getState().capabilityCount, null);
+  assert.equal(f.controller.getState().mutationReason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
+  assert.equal(f.counters().httpCalls, 0);
   f.panel.dispose(); f.controller.dispose();
 });
 test('Word without callCommand reports unsupported rather than treating adapter metadata as runtime proof', async () => {
@@ -263,7 +294,8 @@ test('an insert whose native PasteText callback never arrives stops the run as u
   assert.equal(state.status, 'APPLY_UNCERTAIN');
   assert.notEqual(state.status, 'COMPLETE');
   assert.equal(state.agent.status, 'UNCERTAIN');
-  assert.match(tree.id('status').textContent, /Исход команды неизвестен/);
+  assert.equal(tree.id('status').textContent, 'Ошибка');
+  assert.match(tree.id('status-details').textContent, /Исход команды неизвестен/);
   // (b) no second mutation was dispatched, and the loop spent no further step producing refusals.
   assert.equal(calls, 1, 'the run stops on the uncertain action; the second envelope is never requested');
   assert.equal(inserts.length, 1, 'a second native mutation is never dispatched');

@@ -56,7 +56,7 @@ function vendorAllows(value, depth = 0) {
 
 // Regression catches the actual emitted plain-object wire being stripped before
 // the bridge callback, not merely a changed command snapshot.
-test('actual probe survives native-compatible return filter end-to-end without granting mutation', async () => {
+test('actual probe survives native-compatible return filter and derives availability from observation', async () => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'Api');
   const forbidden = () => assert.fail('no identity/selection/write invocation');
   const api = { GetDocument: () => ({ GetRangeBySelect: forbidden }), ReplaceTextSmart: forbidden };
@@ -71,7 +71,7 @@ test('actual probe survives native-compatible return filter end-to-end without g
   const bridge = createR7Bridge(plugin, { editorType: 'word' });
   const result = await bridge.probeCapabilities();
   assert.deepEqual(result.methodPresence, { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: false });
-  assert.equal(result.runtimeVerified, false); assert.equal(result.mutation.available, false);
+  assert.equal(result.runtimeVerified, false); assert.equal(result.mutation.available, true);
   await assert.rejects(bridge.applySelection({ target: null, replacement: 'x' }), { code: 'SELECTION_CHANGED' });
   api.GetDocument = () => { throw Error('private document/name/key/url'); };
   await assert.rejects(bridge.probeCapabilities(), { code: 'CAPABILITY_UNAVAILABLE' });

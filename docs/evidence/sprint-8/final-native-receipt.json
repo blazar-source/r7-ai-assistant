@@ -1,0 +1,2399 @@
+{
+  "productCommit": "fda714d2cf8eedcc2331ff5529513c1b74c6a0db",
+  "native-word": [
+    {
+      "kind": "word",
+      "name": "loaded-hashes",
+      "data": [
+        [
+          "panel.js",
+          "786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "before",
+      "data": [
+        2,
+        "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи."
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "idle-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "capabilities",
+      "data": {
+        "status": "Проверка наличия API завершена. Документ не изменён.",
+        "capability": "Редактор: Word. Доступно: шесть из шести — проверены шесть API-примитивов документа. Что сделать: можно отправлять запрос.",
+        "editor": "Stage B · редактор: word · runtimeVerified: false"
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "insert_blocks",
+            "arguments": {
+              "blocks": [
+                {
+                  "text": "SPRINT9_WORD_NATIVE_FDA714D"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "insert_blocks",
+            "ok": true,
+            "data": {
+              "inserted": 1,
+              "headings": 0,
+              "paragraphsBefore": 2,
+              "paragraphsAfter": 3,
+              "bytes": 27
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 40,
+          "w": 241,
+          "h": 16,
+          "bottom": 56,
+          "right": 253
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "find_text",
+            "arguments": {
+              "text": "SPRINT9_WORD_NATIVE_FDA714D"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "batch",
+            "ok": false,
+            "code": "TOOL_ERROR",
+            "message": "one action per batch for a confirm tool; unknown tool name or invalid arguments"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "read_document_text",
+            "arguments": {}
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_document_text",
+            "ok": true,
+            "data": {
+              "text": "\nПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_FDA714D\n\n\n",
+              "offset": 0,
+              "totalChars": 88,
+              "truncated": false,
+              "nextOffset": null
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "after",
+      "data": [
+        3,
+        "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_FDA714D"
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "terminal",
+      "data": true
+    },
+    {
+      "kind": "word",
+      "name": "final-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 426,
+          "w": 259,
+          "h": 73,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 432,
+          "w": 209,
+          "h": 38,
+          "bottom": 470,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 432,
+          "w": 34,
+          "h": 34,
+          "bottom": 466,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 404,
+          "w": 226,
+          "h": 16,
+          "bottom": 420,
+          "right": 238
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 394,
+          "bottom": 426,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": [
+          "content"
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-active-state",
+      "data": {
+        "status": "Анализирую",
+        "stage": "запрос к модели",
+        "detail": "Анализ…",
+        "active": true,
+        "actions": ""
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-markdown",
+      "data": {
+        "messages": 22,
+        "paragraphs": 35,
+        "lists": 9,
+        "emphasis": 9,
+        "links": 9,
+        "inlineCode": 9,
+        "fences": 9
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-top",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": [
+          "content"
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-bottom",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": [
+          "content"
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-diagnostics",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": [
+          "content"
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "long-document-after",
+      "data": [
+        3,
+        "ПИЛОТНЫЙ ДОКУМЕНТ\nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_FDA714D"
+      ]
+    }
+  ],
+  "native-cell": [
+    {
+      "kind": "cell",
+      "name": "loaded-hashes",
+      "data": [
+        [
+          "panel.js",
+          "786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "kind": "cell",
+      "name": "before",
+      "data": [
+        "P&L",
+        ""
+      ]
+    },
+    {
+      "kind": "cell",
+      "name": "idle-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "cell",
+      "name": "capabilities",
+      "data": {
+        "status": "Проверка наличия API завершена. Документ не изменён.",
+        "capability": "Редактор: Cell. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.",
+        "editor": "Stage B · редактор: cell · runtimeVerified: false"
+      }
+    },
+    {
+      "kind": "cell",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "write_range",
+            "arguments": {
+              "address": "A1",
+              "cells": [
+                [
+                  "SPRINT9_CELL_NATIVE_FDA714D"
+                ]
+              ]
+            }
+          },
+          {
+            "tool": "read_range",
+            "arguments": {
+              "address": "A1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "cell",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "write_range",
+            "ok": true,
+            "data": {
+              "address": "A1",
+              "rowCount": 1,
+              "columnCount": 1,
+              "cells": 1,
+              "bytes": 27
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "cell",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_range",
+            "ok": true,
+            "data": {
+              "sheetName": "P&L",
+              "sheetIndex": 2,
+              "sheetCount": 3,
+              "requestAddress": "A1",
+              "readAddress": "A1",
+              "totalRows": 1,
+              "totalColumns": 1,
+              "rowCount": 1,
+              "columnCount": 1,
+              "truncated": false,
+              "values": [
+                [
+                  "SPRINT9_CELL_NATIVE_FDA714D"
+                ]
+              ],
+              "formulas": [
+                [
+                  ""
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "cell",
+      "name": "active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 40,
+          "w": 241,
+          "h": 16,
+          "bottom": 56,
+          "right": 253
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "cell",
+      "name": "after",
+      "data": [
+        "P&L",
+        "SPRINT9_CELL_NATIVE_FDA714D"
+      ]
+    },
+    {
+      "kind": "cell",
+      "name": "terminal",
+      "data": true
+    },
+    {
+      "kind": "cell",
+      "name": "final-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    }
+  ],
+  "native-slide": [
+    {
+      "kind": "slide",
+      "name": "loaded-hashes",
+      "data": [
+        [
+          "panel.js",
+          "786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "kind": "slide",
+      "name": "before",
+      "data": [
+        5,
+        "\n",
+        "\n",
+        "\n",
+        "WHOLE_OBJECT_TEXT\n",
+        "SPRINT1 unchanged Slide fixture\n"
+      ]
+    },
+    {
+      "kind": "slide",
+      "name": "idle-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "capabilities",
+      "data": {
+        "status": "Проверка наличия API завершена. Документ не изменён.",
+        "capability": "Редактор: Slide. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.",
+        "editor": "Stage B · редактор: slide · runtimeVerified: false"
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "read_presentation",
+            "arguments": {}
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_presentation",
+            "ok": true,
+            "data": {
+              "slidesCount": 5,
+              "currentSlideIndex": 0,
+              "slides": [
+                {
+                  "index": 0,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 3,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": false
+                },
+                {
+                  "index": 1,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 3,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": false
+                },
+                {
+                  "index": 2,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": false
+                },
+                {
+                  "index": 3,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 3,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": true
+                },
+                {
+                  "index": 4,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": true
+                }
+              ],
+              "slidesRead": 5,
+              "slidesTotal": 5,
+              "truncated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 40,
+          "w": 241,
+          "h": 16,
+          "bottom": 56,
+          "right": 253
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "add_slide",
+            "arguments": {
+              "layoutFromSlideIndex": 0
+            }
+          },
+          {
+            "tool": "read_slide",
+            "arguments": {
+              "slideIndex": 5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "add_slide",
+            "ok": true,
+            "data": {
+              "slidesCount": 6,
+              "slideIndex": 1,
+              "layoutId": "306",
+              "layoutPreserved": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_slide",
+            "ok": true,
+            "data": {
+              "slideIndex": 5,
+              "layoutId": null,
+              "objectCount": 2,
+              "objectsRead": 2,
+              "counts": {
+                "shapes": 2,
+                "drawings": 2,
+                "images": 0,
+                "charts": 0,
+                "oleObjects": 0
+              },
+              "objects": [
+                {
+                  "ordinal": 0,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "SPRINT1 unchanged Slide fixture",
+                  "textOmitted": false
+                },
+                {
+                  "ordinal": 1,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "",
+                  "textOmitted": false
+                }
+              ],
+              "truncated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "read_slide",
+            "arguments": {
+              "slideIndex": 1
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_slide",
+            "ok": true,
+            "data": {
+              "slideIndex": 1,
+              "layoutId": null,
+              "objectCount": 2,
+              "objectsRead": 2,
+              "counts": {
+                "shapes": 2,
+                "drawings": 2,
+                "images": 0,
+                "charts": 0,
+                "oleObjects": 0
+              },
+              "objects": [
+                {
+                  "ordinal": 0,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "",
+                  "textOmitted": false
+                },
+                {
+                  "ordinal": 1,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "",
+                  "textOmitted": false
+                }
+              ],
+              "truncated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "set_slide_text",
+            "arguments": {
+              "slideIndex": 1,
+              "objectOrdinal": 0,
+              "text": "SPRINT9_SLIDE_NATIVE_FDA714D"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "set_slide_text",
+            "ok": true,
+            "data": {
+              "slideIndex": 1,
+              "objectOrdinal": 0,
+              "textLength": 28,
+              "textBytes": 28
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_slide",
+            "ok": true,
+            "data": {
+              "slideIndex": 1,
+              "layoutId": null,
+              "objectCount": 2,
+              "objectsRead": 2,
+              "counts": {
+                "shapes": 2,
+                "drawings": 2,
+                "images": 0,
+                "charts": 0,
+                "oleObjects": 0
+              },
+              "objects": [
+                {
+                  "ordinal": 0,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "SPRINT9_SLIDE_NATIVE_FDA714D",
+                  "textOmitted": false
+                },
+                {
+                  "ordinal": 1,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "",
+                  "textOmitted": false
+                }
+              ],
+              "truncated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "after",
+      "data": [
+        6,
+        "\n",
+        "SPRINT9_SLIDE_NATIVE_FDA714D\n",
+        "\n",
+        "\n",
+        "WHOLE_OBJECT_TEXT\n",
+        "SPRINT1 unchanged Slide fixture\n"
+      ]
+    },
+    {
+      "kind": "slide",
+      "name": "terminal",
+      "data": true
+    },
+    {
+      "kind": "slide",
+      "name": "final-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    }
+  ],
+  "guided-slide": [
+    {
+      "kind": "slide",
+      "name": "loaded-hashes",
+      "data": [
+        [
+          "panel.js",
+          "786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "kind": "slide",
+      "name": "before",
+      "data": [
+        6,
+        "\n",
+        "SPRINT9_SLIDE_NATIVE_FDA714D\n",
+        "\n",
+        "\n",
+        "WHOLE_OBJECT_TEXT\n",
+        "SPRINT1 unchanged Slide fixture\n"
+      ]
+    },
+    {
+      "kind": "slide",
+      "name": "idle-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "capabilities",
+      "data": {
+        "status": "Проверка наличия API завершена. Документ не изменён.",
+        "capability": "Редактор: Slide. Доступно: две из двух — проверены чтение выделения и изменение через адаптер. Что сделать: можно отправлять запрос.",
+        "editor": "Stage B · редактор: slide · runtimeVerified: false"
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_calls",
+        "calls": [
+          {
+            "tool": "move_slide",
+            "arguments": {
+              "fromIndex": 1,
+              "toIndex": 5
+            }
+          },
+          {
+            "tool": "read_presentation",
+            "arguments": {}
+          },
+          {
+            "tool": "read_slide",
+            "arguments": {
+              "slideIndex": 5
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "move_slide",
+            "ok": true,
+            "data": {
+              "slidesCount": 6,
+              "fromIndex": 1,
+              "toIndex": 5,
+              "layoutLength": 11200,
+              "shapes": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_presentation",
+            "ok": true,
+            "data": {
+              "slidesCount": 6,
+              "currentSlideIndex": 1,
+              "slides": [
+                {
+                  "index": 0,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 3,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": false
+                },
+                {
+                  "index": 1,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 3,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": false
+                },
+                {
+                  "index": 2,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": false
+                },
+                {
+                  "index": 3,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 3,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": true
+                },
+                {
+                  "index": 4,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": true
+                },
+                {
+                  "index": 5,
+                  "layoutId": null,
+                  "shapes": 2,
+                  "drawings": 2,
+                  "images": 0,
+                  "charts": 0,
+                  "oleObjects": 0,
+                  "hasText": true
+                }
+              ],
+              "slidesRead": 6,
+              "slidesTotal": 6,
+              "truncated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "tool-envelope",
+      "data": {
+        "type": "tool_results",
+        "results": [
+          {
+            "tool": "read_slide",
+            "ok": true,
+            "data": {
+              "slideIndex": 5,
+              "layoutId": null,
+              "objectCount": 2,
+              "objectsRead": 2,
+              "counts": {
+                "shapes": 2,
+                "drawings": 2,
+                "images": 0,
+                "charts": 0,
+                "oleObjects": 0
+              },
+              "objects": [
+                {
+                  "ordinal": 0,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "SPRINT9_SLIDE_NATIVE_FDA714D",
+                  "textOmitted": false
+                },
+                {
+                  "ordinal": 1,
+                  "classType": "shape",
+                  "placeholder": true,
+                  "category": "shape",
+                  "text": "",
+                  "textOmitted": false
+                }
+              ],
+              "truncated": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 363,
+          "w": 241,
+          "h": 16,
+          "bottom": 379,
+          "right": 253
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "slide",
+      "name": "after",
+      "data": [
+        6,
+        "\n",
+        "\n",
+        "\n",
+        "WHOLE_OBJECT_TEXT\n",
+        "SPRINT1 unchanged Slide fixture\n",
+        "SPRINT9_SLIDE_NATIVE_FDA714D\n"
+      ]
+    },
+    {
+      "kind": "slide",
+      "name": "terminal",
+      "data": true
+    },
+    {
+      "kind": "slide",
+      "name": "final-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": [
+          "content"
+        ]
+      }
+    }
+  ],
+  "ui-extra-word": [
+    {
+      "name": "hashes",
+      "data": [
+        [
+          "panel.js",
+          "786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "name": "native-ui",
+      "data": {
+        "messages": 22,
+        "last": "АссистентПрочитал документ. Маркер подтверждён: SPRINT9_WORD_NATIVE_FDA714D. Документ не изменялся.",
+        "htmlExecuted": false,
+        "images": 0,
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "message": {
+          "font": "12.5px",
+          "line": "17px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px",
+          "radius": "0px",
+          "color": "rgb(23, 38, 56)",
+          "background": "rgba(0, 0, 0, 0)"
+        },
+        "status": {
+          "font": "11px",
+          "line": "16px",
+          "padding": "0px",
+          "margin": "0px",
+          "border": "0px",
+          "radius": "0px",
+          "color": "rgb(70, 87, 107)",
+          "background": "rgba(0, 0, 0, 0)"
+        },
+        "code": {
+          "font": "11.5px",
+          "line": "16px",
+          "padding": "0px 2px",
+          "margin": "0px",
+          "border": "0px",
+          "radius": "2px",
+          "color": "rgb(23, 38, 56)",
+          "background": "rgb(237, 244, 255)"
+        },
+        "history": {
+          "font": "12.5px",
+          "line": "17px",
+          "padding": "4px 6px 6px",
+          "margin": "0px",
+          "border": "0px",
+          "radius": "0px",
+          "color": "rgb(23, 38, 56)",
+          "background": "rgba(0, 0, 0, 0)"
+        },
+        "user": {
+          "font": "12.5px",
+          "line": "17px",
+          "padding": "4px 6px 5px",
+          "margin": "0px 0px 0px 12px",
+          "border": "0px 0px 0px 2px",
+          "radius": "0px",
+          "color": "rgb(23, 38, 56)",
+          "background": "rgb(237, 244, 255)"
+        },
+        "assistant": {
+          "font": "12.5px",
+          "line": "17px",
+          "padding": "4px 0px 5px 6px",
+          "margin": "3px 0px 0px",
+          "border": "0px 0px 0px 2px",
+          "radius": "0px",
+          "color": "rgb(23, 38, 56)",
+          "background": "rgba(0, 0, 0, 0)"
+        },
+        "roles": [
+          "user",
+          "assistant"
+        ],
+        "headingSizes": [],
+        "title": 1,
+        "diagnostics": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "codeOverflow": [
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          },
+          {
+            "w": 224,
+            "sw": 224,
+            "h": 24,
+            "sh": 24,
+            "x": "auto",
+            "y": "auto"
+          }
+        ],
+        "vertical": [
+          "content"
+        ],
+        "composer": [
+          0,
+          449,
+          259,
+          50
+        ],
+        "send": [
+          219,
+          455,
+          34,
+          34
+        ],
+        "draft": [
+          6,
+          455,
+          209,
+          38
+        ]
+      }
+    },
+    {
+      "name": "tabs",
+      "data": [
+        {
+          "id": "new-chat",
+          "tag": "BUTTON",
+          "label": "Новый чат",
+          "outline": "2px solid"
+        },
+        {
+          "id": "toggle-diagnostics",
+          "tag": "BUTTON",
+          "label": "Диагностика",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "",
+          "tag": "A",
+          "label": "ссылка",
+          "outline": "2px solid"
+        },
+        {
+          "id": "prompt",
+          "tag": "TEXTAREA",
+          "label": "Запрос",
+          "outline": "2px solid"
+        },
+        {
+          "id": "send",
+          "tag": "BUTTON",
+          "label": "Отправить",
+          "outline": "2px solid"
+        }
+      ]
+    },
+    {
+      "name": "budget",
+      "data": {
+        "hidden": false,
+        "budget": [
+          6,
+          403,
+          247,
+          14
+        ],
+        "prompt": [
+          6,
+          421,
+          209,
+          72
+        ],
+        "send": [
+          219,
+          421,
+          34,
+          34
+        ],
+        "composer": [
+          0,
+          397,
+          259,
+          102
+        ],
+        "doc": [
+          259,
+          499
+        ]
+      }
+    }
+  ],
+  "native-render-word": [
+    {
+      "kind": "word",
+      "name": "loaded-hashes",
+      "data": [
+        [
+          "panel.js",
+          "786372b69d155d80c29a6d1756012547532f502098b5b1c0fdc89f61cc89693e"
+        ],
+        [
+          "styles.css",
+          "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde"
+        ]
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "before",
+      "data": [
+        3,
+        "ПИЛОТНЫЙ ДОКУМЕНТ \nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_FDA714D"
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "idle-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 449,
+          "w": 259,
+          "h": 50,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 455,
+          "w": 209,
+          "h": 38,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 455,
+          "w": 34,
+          "h": 34,
+          "bottom": 489,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 417,
+          "bottom": 449,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "capabilities",
+      "data": {
+        "status": "Проверка наличия API завершена. Документ не изменён.",
+        "capability": "Редактор: Word. Доступно: шесть из шести — проверены шесть API-примитивов документа. Что сделать: можно отправлять запрос.",
+        "editor": "Stage B · редактор: word · runtimeVerified: false"
+      }
+    },
+    {
+      "kind": "word",
+      "name": "active-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 12,
+          "y": 40,
+          "w": 241,
+          "h": 16,
+          "bottom": 56,
+          "right": 253
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": []
+      }
+    },
+    {
+      "kind": "word",
+      "name": "after",
+      "data": [
+        3,
+        "ПИЛОТНЫЙ ДОКУМЕНТ \nЧерновой документ для пилотной задачи.\nSPRINT9_WORD_NATIVE_FDA714D"
+      ]
+    },
+    {
+      "kind": "word",
+      "name": "terminal",
+      "data": true
+    },
+    {
+      "kind": "word",
+      "name": "final-geometry",
+      "data": {
+        "frame": [
+          259,
+          499
+        ],
+        "doc": [
+          259,
+          259,
+          499,
+          499
+        ],
+        "composer": {
+          "x": 0,
+          "y": 415,
+          "w": 259,
+          "h": 84,
+          "bottom": 499,
+          "right": 259
+        },
+        "prompt": {
+          "x": 6,
+          "y": 421,
+          "w": 209,
+          "h": 72,
+          "bottom": 493,
+          "right": 215
+        },
+        "send": {
+          "x": 219,
+          "y": 421,
+          "w": 34,
+          "h": 34,
+          "bottom": 455,
+          "right": 253
+        },
+        "stage": {
+          "x": 0,
+          "y": 0,
+          "w": 0,
+          "h": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "content": {
+          "x": 0,
+          "y": 32,
+          "w": 259,
+          "h": 383,
+          "bottom": 415,
+          "right": 259
+        },
+        "header": 32,
+        "overflow": [
+          "content"
+        ]
+      }
+    },
+    {
+      "kind": "word",
+      "name": "htmlcode",
+      "data": {
+        "text": "Ассистент<img src=x onerror=\"window.nativeHtmlExecuted=true\">CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_CODE_",
+        "htmlExecuted": false,
+        "images": 0,
+        "pres": [
+          {
+            "w": 224,
+            "sw": 3158,
+            "h": 24,
+            "sh": 24
+          }
+        ],
+        "vertical": [
+          "content"
+        ]
+      }
+    }
+  ]
+}

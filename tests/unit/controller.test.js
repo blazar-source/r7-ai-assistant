@@ -45,6 +45,24 @@ function setup(options = {}) {
   return { controller, replies, transport, applied, bridge, storage, clock, scheduled, advance(ms, fire = true) { time += ms; if (fire) for (const [token, t] of [...scheduled]) if (t.at <= time) { scheduled.delete(token); t.fn(); } } };
 }
 
+test('unverified Slide completion is not published as success or appended to chat', async () => {
+  const f = setup({ response: [toolCalls(['add_slide', {}]), final('unverified'), final('still unverified')], bridge: {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'slide', adapter: { commandDispatch: true, executeMethod: true },
+      selectionRead: { available: true }, mutation: { available: true } }; },
+    async addSlide() { return { ok: true, slidesCount: 6, slideIndex: 1, layoutId: '306', layoutPreserved: true }; }
+  } });
+  await f.controller.checkR7();
+  f.controller.setMode('EDIT');
+  await f.controller.analyze('Добавь слайд в конец');
+  const state = f.controller.getState();
+  assert.equal(state.status, 'AGENT_INCOMPLETE');
+  assert.equal(state.agent.status, 'INCOMPLETE');
+  assert.equal(state.agent.toolCalls, 1);
+  assert.equal(state.chat.history.length, 0);
+  assert.equal(state.active, false);
+});
+
 test('R7 check with no bridge reports local unsupported without HTTP or credentials', async () => {
   const f = setup({ dependencies: { bridge: null } }); f.controller.reset();
   assert.equal(typeof f.controller.checkR7, 'function', 'controller read-only capability action');
@@ -60,6 +78,41 @@ test('R7 check timer acquisition failure cannot reach SDK or strand active owner
   assert.equal(typeof f.controller.checkR7, 'function', 'controller read-only capability action');
   assert.equal(await f.controller.checkR7(), false); assert.equal(probes, 0);
   assert.equal(f.controller.getState().status, 'INTERNAL_ERROR'); assert.equal(f.controller.getState().active, false);
+});
+
+for (const [editorType, tool, bridgeMethod, result] of [
+  ['slide', 'read_presentation', 'readPresentation', { ok: true, slidesCount: 0, currentSlideIndex: 0, slidesRead: 0, slidesTotal: 0, truncated: false, slides: [] }],
+  ['cell', 'list_sheets', 'listSheets', { ok: true, count: 1, activeIndex: 0, activeName: 'Лист1', sheets: [{ name: 'Лист1', index: 0, active: true, hidden: false }] }]
+]) test(`${editorType} request proceeds when its native probe reports availability`, async () => {
+  let reads = 0;
+  const f = setup({ response: [toolCalls([tool, {}]), final()], bridge: {
+    getState() { return { editorType, busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType, adapter: { commandDispatch: true, executeMethod: true },
+      methodPresence: namedPresence, selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' },
+      mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; },
+    async [bridgeMethod]() { reads++; return result; }
+  } });
+  assert.equal(await f.controller.checkR7(), true);
+  f.controller.setIncludeContext(false);
+  assert.equal(await f.controller.analyze(`${editorType} read`), true);
+  assert.equal(reads, 1);
+  assert.deepEqual(f.controller.getState().agent.actions.map(action => [action.tool, action.outcome]), [[tool, 'ok']]);
+});
+
+const namedPresence = { api: true, getDocument: true, getDocumentId: true, replaceTextSmart: true, getRangeBySelect: true, isTrackRevisions: true };
+
+test('a failed probe refuses the request with the real probe reason, never the owned-preview reason', async () => {
+  const bridge = { getState() { return { editorType: 'slide', busy: false, uncertain: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'slide', adapter: { commandDispatch: false, executeMethod: true }, methodPresence: null,
+      selectionRead: { available: false, reason: 'NATIVE_PROBE_NOT_PERFORMED' }, mutation: { available: false, reason: 'NATIVE_PROBE_NOT_PERFORMED' } }; } };
+  const f = setup({ dependencies: { bridge } });
+  assert.equal(await f.controller.checkR7(), false);
+  const state = f.controller.getState();
+  assert.equal(state.status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(state.mutationReason, 'NATIVE_PROBE_NOT_PERFORMED');
+  assert.notEqual(state.mutationReason, 'EXPLICIT_OWNED_PREVIEW_REQUIRED');
+  assert.equal(await f.controller.analyze('add a slide'), false);
+  assert.equal(f.replies.length, 0);
 });
 
 test('ASK uses fresh bounded selection as untrusted user context and appends a complete pair', async () => {
@@ -217,12 +270,20 @@ test('transport receives original operation deadline after time spent reading co
     'the runtime guardrail deadline, not the panel TIMEOUT, is the binding limit of a long run');
   assert.ok(Object.isFrozen(replies[0][0]) && Object.isFrozen(replies[0][1]));
 });
-test('unknown/unavailable/empty/exact context is explicit; no cell/slide speculative read', async () => {
-  const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; }, readSelection() { throw Error('must not call'); } } });
-  assert.equal(c.getState().context.kind, 'UNKNOWN'); await c.refreshContext();
-  assert.equal(c.getState().context.kind, 'UNAVAILABLE');
-  assert.equal(await c.analyze('q'), false);
-  c.setIncludeContext(false); assert.equal(await c.analyze('q'), true);
+test('unknown/empty/exact context is explicit and cell context remains opt-in', async () => {
+  let cellReads = 0;
+  const { controller: c } = setup({ bridge: { getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async readSelection() { cellReads++; return { text: 'ячейка', editorType: 'cell', eligible: true, target: Object.freeze({}) }; },
+    async probeCapabilities() { return { editorType: 'cell', adapter: { commandDispatch: true, executeMethod: true }, methodPresence: namedPresence,
+      selectionRead: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' }, mutation: { available: true, reason: 'NATIVE_PROBE_AVAILABLE' } }; } } });
+  assert.equal(c.getState().context.kind, 'UNKNOWN');
+  assert.equal(c.getState().includeContext, false, 'a cell editor defaults to no selection context');
+  assert.equal(await c.refreshContext(), true, 'an explicit refresh uses the editor-agnostic owned capture');
+  assert.equal(c.getState().context.kind, 'EXACT');
+  assert.equal(cellReads, 1);
+  assert.equal(await c.checkR7(), true, 'the native probe authorises the declared capabilities');
+  assert.equal(await c.analyze('q'), true, 'the default run proceeds without another selection capture');
+  assert.equal(cellReads, 1);
   const empty = setup({ bridge: { async readSelection() { return { text: '', editorType: 'word', eligible: false, target: null }; } } }).controller;
   await empty.refreshContext(); assert.equal(empty.getState().context.kind, 'EMPTY');
 });
@@ -749,4 +810,196 @@ test('the ordinary single-run path is unchanged: only a long-generation EDIT req
   assert.equal(await preview.controller.analyze('исправь орфографию'), true);
   assert.equal(preview.controller.getState().status, 'PREVIEW_READY');
   assert.equal(preview.controller.getState().orchestration, null);
+});
+
+// --- Exit gate: the read-only capability probe must be EDITOR-AWARE --------------------------------
+// MEASURED: on a healthy workbook the panel answered `R7_CHECK_UNAVAILABLE`, because the probe required the Word
+// editor and then decoded a Word-only six-boolean payload. A Cell bridge has no Word method to probe at all — it
+// reports its capabilities LOCALLY, with `methodPresence` null by construction — and the exit-gate run reads and
+// mutates sheets through exactly that adapter. The Word path is untouched: these tests pin BOTH sides.
+
+for (const editorType of ['cell', 'slide']) test(`first ${editorType} request probes readiness without a diagnostics action`, async () => {
+  let probes = 0;
+  const f = setup({ bridge: {
+    getState() { return { editorType, busy: false, uncertain: false }; },
+    async probeCapabilities() {
+      probes++;
+      return { editorType, adapter: { commandDispatch: true }, selectionRead: { available: true }, mutation: { available: true } };
+    }
+  } });
+  f.controller.setIncludeContext(false);
+  assert.equal(await f.controller.analyze('Прочитай документ'), true);
+  assert.equal(f.controller.getState().status, 'COMPLETE');
+  assert.equal(probes, 1);
+  assert.equal(f.replies.length, 1);
+  f.controller.dispose();
+});
+
+test('automatic probe cannot dispatch after Stop or grant a different editor capability', async () => {
+  let release;
+  const f = setup({ bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    probeCapabilities() { return new Promise(resolve => { release = resolve; }); }
+  } });
+  f.controller.setIncludeContext(false);
+  const running = f.controller.analyze('Прочитай таблицу');
+  f.controller.stop();
+  release({ editorType: 'cell', adapter: { commandDispatch: true }, selectionRead: { available: true } });
+  assert.equal(await running, false); assert.equal(f.replies.length, 0);
+  assert.equal(f.controller.getState().status, 'STOPPED'); f.controller.dispose();
+  const mismatch = setup({ bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'word', adapter: { commandDispatch: true }, mutation: { available: true } }; }
+  } });
+  mismatch.controller.setIncludeContext(false);
+  assert.equal(await mismatch.controller.analyze('Измени таблицу'), false);
+  assert.equal(mismatch.replies.length, 0);
+  assert.equal(mismatch.controller.getState().status, 'CAPABILITY_UNAVAILABLE'); mismatch.controller.dispose();
+});
+
+test('a CELL bridge with no observed capability is fail-closed instead of claiming readiness', async () => {
+  const readings = [];
+  const cellBridge = {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    invalidate() {},
+    async probeCapabilities() {
+      readings.push('probed');
+      return Object.freeze({
+        editorType: 'cell',
+        // THE REAL SHAPE, from the bridge's own measured report: the adapter is an OBJECT naming the primitives,
+        // not a string. The first version of this test used a string, so the branch under test refused a perfectly
+        // usable spreadsheet — a rig that did not match the bridge is what hid the defect.
+        adapter: Object.freeze({ executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' }),
+        methodPresence: null,
+        runtimeVerified: false,
+        selectionRead: Object.freeze({ available: false, runtimeVerified: false, reason: 'NO_SELECTION_IN_CELL' }),
+        mutation: Object.freeze({ available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' })
+      });
+    }
+  };
+  const f = setup({ dependencies: { bridge: cellBridge } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), false, 'an adapter alone is not observed capability evidence');
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+  assert.equal(f.controller.getState().capabilityCount, null, 'no capability count is published without an observed success');
+  assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
+});
+
+test('a SLIDE bridge reports presence for a healthy presentation', async () => {
+  const readings = [];
+  const slideBridge = {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    invalidate() {},
+    async probeCapabilities() {
+      readings.push('probed');
+      return Object.freeze({
+        editorType: 'slide',
+        adapter: Object.freeze({ executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' }),
+        methodPresence: null,
+        runtimeVerified: false,
+        selectionRead: Object.freeze({ available: true, runtimeVerified: false, reason: null }),
+        mutation: Object.freeze({ available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' })
+      });
+    }
+  };
+  const f = setup({ dependencies: { bridge: slideBridge } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), true, 'a presentation with a usable adapter is READY, not unavailable');
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().capabilityCount, 1, 'count only the true reported availability flags');
+  assert.deepEqual(readings, ['probed'], 'and the bridge really was asked');
+});
+
+test('a SLIDE bridge with executeMethod alone reports presentation presence', async () => {
+  const readings = [];
+  const slideBridge = {
+    getState() { return { editorType: 'slide', busy: false, uncertain: false }; },
+    invalidate() {},
+    async probeCapabilities() {
+      readings.push('probed');
+      return Object.freeze({
+        editorType: 'slide',
+        adapter: Object.freeze({ executeMethod: true, commandDispatch: false, commandMethod: null }),
+        methodPresence: null,
+        runtimeVerified: false,
+        selectionRead: Object.freeze({ available: true, runtimeVerified: false, reason: null }),
+        mutation: Object.freeze({ available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' })
+      });
+    }
+  };
+  const f = setup({ dependencies: { bridge: slideBridge } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), true);
+  assert.equal(f.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(f.controller.getState().capabilityCount, 1);
+  assert.deepEqual(readings, ['probed']);
+});
+
+for (const [name, editorType, adapter] of [
+  ['mismatched editor type', 'word', { executeMethod: false, commandDispatch: true, commandMethod: 'callCommand' }],
+  ['NO usable adapter primitive', 'slide', { executeMethod: false, commandDispatch: false, commandMethod: null }]
+]) {
+  test(`a SLIDE bridge with ${name} is refused`, async () => {
+    const readings = [];
+    const unavailable = { getState() { return { editorType: 'slide', busy: false }; }, invalidate() {},
+      async probeCapabilities() { readings.push('probed'); return { editorType, methodPresence: null,
+        adapter: Object.freeze(adapter),
+        selectionRead: { available: true, runtimeVerified: false, reason: null },
+        mutation: { available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } }; } };
+    const f = setup({ dependencies: { bridge: unavailable } });
+    f.controller.reset();
+    assert.equal(await f.controller.checkR7(), false);
+    assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+    assert.equal(f.controller.getState().capabilityCount, null);
+    assert.deepEqual(readings, ['probed']);
+  });
+}
+
+for (const flag of ['selectionRead', 'mutation']) {
+  test(`a SLIDE bridge with non-boolean ${flag} availability reports invalid data`, async () => {
+    const malformed = { getState() { return { editorType: 'slide', busy: false }; }, invalidate() {},
+      async probeCapabilities() { return { editorType: 'slide', methodPresence: null,
+        adapter: Object.freeze({ executeMethod: true, commandDispatch: false, commandMethod: null }),
+        selectionRead: { available: flag === 'selectionRead' ? 'true' : true, runtimeVerified: false, reason: null },
+        mutation: { available: flag === 'mutation' ? 0 : false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } }; } };
+    const f = setup({ dependencies: { bridge: malformed } });
+    f.controller.reset();
+    assert.equal(await f.controller.checkR7(), false);
+    assert.equal(f.controller.getState().status, 'INVALID_DATA');
+    assert.equal(f.controller.getState().capabilityCount, null);
+  });
+}
+
+test('a CELL bridge with NO usable adapter primitive is refused', async () => {
+  // Readiness is that ONE of the named primitives is available: an object naming two unavailable ones is not an
+  // adapter, and the panel must say so rather than offer a run that cannot dispatch anything.
+  const unusable = { getState() { return { editorType: 'cell', busy: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'cell', methodPresence: null,
+      adapter: Object.freeze({ executeMethod: false, commandDispatch: false, commandMethod: null }),
+      selectionRead: { available: false, runtimeVerified: false, reason: 'READ_UNAVAILABLE' },
+      mutation: { available: false, runtimeVerified: false, reason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED' } }; } };
+  const f = setup({ dependencies: { bridge: unusable } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), false);
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+});
+
+test('a CELL bridge that reports a misleading payload is refused, and the WORD decode is unchanged', async () => {
+  // A cell bridge claiming the WORD shape must not be believed: the payload has to describe the editor it came from.
+  const liar = { getState() { return { editorType: 'cell', busy: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'word', adapter: 'executeMethod', methodPresence: { api: true } }; } };
+  const f = setup({ dependencies: { bridge: liar } });
+  f.controller.reset();
+  assert.equal(await f.controller.checkR7(), false);
+  assert.equal(f.controller.getState().status, 'R7_CHECK_UNAVAILABLE');
+
+  // And a WORD bridge keeps its exact previous behaviour: six booleans, counted.
+  const wordBridge = { getState() { return { editorType: 'word', busy: false }; }, invalidate() {},
+    async probeCapabilities() { return { editorType: 'word', adapter: 'executeMethod',
+      methodPresence: { api: true, getDocument: true, getDocumentId: false, replaceTextSmart: true, getRangeBySelect: false, isTrackRevisions: false } }; } };
+  const w = setup({ dependencies: { bridge: wordBridge } });
+  w.controller.reset();
+  assert.equal(await w.controller.checkR7(), true);
+  assert.equal(w.controller.getState().status, 'R7_PRESENCE_READY');
+  assert.equal(w.controller.getState().capabilityCount, 3, 'the Word count is the six-boolean sum, as before');
 });

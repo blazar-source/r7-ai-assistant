@@ -402,24 +402,26 @@ function resultOf(phase, fields) {
     missing: Object.freeze([]), missingTools: Object.freeze([]), uncertainty: null, planCalledTools: false, ...fields });
 }
 
-// The long-generation trigger. Deliberately NARROW: it fires only on a request that names a volume,
-// several parts or an explicit count, so an ordinary question or edit keeps the existing single-run
-// path unchanged. The patterns are Russian (the product's own language) and case-insensitive.
-const LONG_MARKERS = Object.freeze([
-  /страниц/i, /страницы/i, /страницу/i,
-  /глав(?:а|ы|у|е|ой|)/i,
-  /раздел(?:ы|ов|а|е|)/i,
-  /\b\d{3,}\s*(?:знак|символ|char)/i,
-  /нескольк(?:о|их)\s+(?:таблиц|разделов|глав|списков)/i,
-  /структурированн/i
-]);
+// This orchestration has an 18,000-character floor. Only explicit large-document
+// creation belongs here; sections, tables and edits alone must not impose that floor.
+const LONG_CREATION = /(?:^|\s)(?:создай|создайте|подготовь|подготовьте|напиши|напишите|составь|составьте|сделай|сделайте)\s/i;
+const LONG_VOLUME = /(?:^|\s)(\d+)\s*(страниц|знак|символ|char)/gi;
+// Do not mistake a source document's size for the requested output. Ambiguous
+// requests keep the ordinary agent path instead of acquiring a mandatory floor.
+const SHORT_OR_SOURCE = /кратк|коротк|резюме|исходн|(?:по|из)\s+документ|документа\s+на\s/i;
 export function isLongGenerationRequest(request) {
   if (typeof request !== 'string') return false;
   const text = request.trim();
   // A short request cannot carry a long-generation instruction; the byte bound is the controller's own
   // user-input bound, applied here so the trigger is decided by the same number the request is held to.
   if (text === '' || text.length > 1200) return false;
-  return LONG_MARKERS.some(pattern => pattern.test(text));
+  if (!LONG_CREATION.test(text) || SHORT_OR_SOURCE.test(text)) return false;
+  if (/(?:^|\s)десять\s+страниц/i.test(text)) return true;
+  for (const match of text.matchAll(LONG_VOLUME)) {
+    const characters = Number(match[1]) * (/страниц/i.test(match[2]) ? ORCHESTRATION_PAGE_CHARS : 1);
+    if (characters >= ORCHESTRATION_TARGET_CHARS) return true;
+  }
+  return false;
 }
 
 // The structure read's own heading texts plus the bounded body probe decide the list and conclusion

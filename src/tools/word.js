@@ -1262,7 +1262,7 @@ export function createWordTools(bridge) {
       // PILOT-CRITICAL GUIDANCE. Measured: the model chose this tool for whole-document authoring and
       // called it eight times; every call landed inside the paragraph holding the caret (the title) and
       // the document's paragraph count never moved. The caret semantics must therefore be unmistakable.
-      description: 'Вставляет текст В ПОЗИЦИЮ КУРСОРА (или выделения), а НЕ в конец документа.',
+      description: 'Вставляет у КУРСОРА. position:end добавляет перевод строки, НЕ выбирает конец/раздел. Для адресной правки — replace_text; для конца — insert_blocks.',
       // The schema advertises the per-action argument ceiling on `text`; the handler applies that same
       // ceiling to the payload the bridge actually dispatches, so the advertised and the enforced bound
       // are one value on both sides. The handler's note below states the `end` consequence: the appended
@@ -1408,12 +1408,13 @@ export function createWordTools(bridge) {
       name: 'insert_blocks', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
       // PILOT-CRITICAL GUIDANCE, and the tool the pilot never called: this is the ONLY mutation that
       // appends at the END of the document, and `heading: n` on a block is what makes it a heading.
-      description: 'Добавляет блоки В КОНЕЦ документа; поле heading: n делает блок заголовком уровня n. Это инструмент для глав и абзацев.',
+      description: 'Блоки в конец; afterParagraphText — после единственного абзаца с этим точным текстом. heading — заголовок. Списки: «1. »/«• » в text.',
       schema: { type: 'object', additionalProperties: false, required: ['blocks'],
         properties: { blocks: { type: 'array', maxItems: LIMITS.insertBlocksMax,
           items: { type: 'object', additionalProperties: false, required: ['text'],
             properties: { text: { type: 'string', minBytes: 1, maxBytes: LIMITS.insertBlockBytes },
-              heading: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } } } } },
+              heading: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } } },
+          afterParagraphText: { type: 'string', minBytes: 1, maxBytes: LIMITS.insertBlockBytes } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async (args, ctx) => {
         if (missingBridgeMethod(bridge, 'insertBlocks')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
@@ -1423,6 +1424,10 @@ export function createWordTools(bridge) {
         // SHAPE family is the module's argument class and the BYTE family is its byte class, the same two
         // the bridge reports for the same two families.
         const blocks = args?.blocks;
+        const afterParagraphText = args?.afterParagraphText;
+        if (afterParagraphText !== undefined && (typeof afterParagraphText !== 'string' || afterParagraphText === '')) return known();
+        const anchorBytes = afterParagraphText === undefined ? 0 : utf8ByteLength(afterParagraphText);
+        if (anchorBytes > LIMITS.insertBlockBytes) return known(ERROR_CODES.BYTE_LIMIT);
         if (!Array.isArray(blocks) || blocks.length < 1 || blocks.length > LIMITS.insertBlocksMax) return known();
         const forwarded = [];
         let bytes = 0;
@@ -1443,8 +1448,9 @@ export function createWordTools(bridge) {
         // this bound can only refuse a call the runtime would have refused anyway. The caller's signal
         // crosses with the blocks so a Stop cancels before dispatch and marks a dispatched append
         // uncertain.
-        if (bytes > LIMITS.insertBlocksBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        if (bytes + anchorBytes > LIMITS.insertBlocksBytes) return known(ERROR_CODES.BYTE_LIMIT);
         const request = { blocks: Object.freeze(forwarded),
+          ...(afterParagraphText === undefined ? {} : { afterParagraphText }),
           ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
         let result;
         try { result = await bridge.insertBlocks(request); }
@@ -2046,7 +2052,7 @@ export function createWordTools(bridge) {
     // refusal with the slot released.
     defineTool({
       name: 'format_range', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
-      description: 'Включает оформление диапазона абзаца: align, bold, italic, underline, strikeout. Выключить свойство нельзя.',
+      description: 'Оформляет [start, end) абзаца: end не включён. align, bold, italic, underline, strikeout. Только включает свойства.',
       schema: { type: 'object', additionalProperties: false, required: ['paragraph', 'start', 'end', 'format'],
         properties: {
           paragraph: { type: 'integer', minimum: 0, maximum: LIMITS.formatRangeIndexMax },

@@ -1,0 +1,339 @@
+{
+  "productCommit": "ab06fef4e42840dbb0f02893b853dfad2e646442",
+  "identity": {
+    "provenance": "ab06fef4e42840dbb0f02893b853dfad2e646442",
+    "filesMatched": [
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "config.json",
+      "index.html",
+      "panel.js",
+      "provenance.json",
+      "resources/icon.png",
+      "resources/icon@2x.png",
+      "styles.css"
+    ],
+    "checksums": [
+      "886785b5a5085a776a26a06c1cadcc7ac88aeadbffc264eba048285e07c0c35d  dist/plugin/r7-ai-assistant.zip",
+      "5f6bdcce3243fe27af88ae0c516a688431ddcaea32d5f89b51758a74438d5b6a  dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "016f38dedcfac9b7347714dd832862936fc839b326cb5e5e37d91e418c5c9a69  dist/r7-ai-assistant.spdx.json",
+      "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9  dist/plugin/panel.js",
+      "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  dist/plugin/styles.css"
+    ]
+  },
+  "identityRepeat": {
+    "provenance": "ab06fef4e42840dbb0f02893b853dfad2e646442",
+    "filesMatched": [
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
+      "config.json",
+      "index.html",
+      "panel.js",
+      "provenance.json",
+      "resources/icon.png",
+      "resources/icon@2x.png",
+      "styles.css"
+    ],
+    "checksums": [
+      "886785b5a5085a776a26a06c1cadcc7ac88aeadbffc264eba048285e07c0c35d  dist/plugin/r7-ai-assistant.zip",
+      "5f6bdcce3243fe27af88ae0c516a688431ddcaea32d5f89b51758a74438d5b6a  dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "016f38dedcfac9b7347714dd832862936fc839b326cb5e5e37d91e418c5c9a69  dist/r7-ai-assistant.spdx.json",
+      "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9  dist/plugin/panel.js",
+      "34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  dist/plugin/styles.css"
+    ]
+  },
+  "buildLogs": {
+    "reproducible.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc reproducible\n> node scripts/verify-reproducible-build.mjs\n\n{\n  \"sourceCommit\": \"ab06fef4e42840dbb0f02893b853dfad2e646442\",\n  \"node\": \"v24.21.0\",\n  \"builds\": [\n    {\n      \"number\": 1,\n      \"archiveSha256\": \"886785b5a5085a776a26a06c1cadcc7ac88aeadbffc264eba048285e07c0c35d\",\n      \"provenanceSha256\": \"9fa3a3f295a5c7ef770ebd717ab77be5dce1bde253db1c0aa39e6d56a7b97637\"\n    },\n    {\n      \"number\": 2,\n      \"archiveSha256\": \"886785b5a5085a776a26a06c1cadcc7ac88aeadbffc264eba048285e07c0c35d\",\n      \"provenanceSha256\": \"9fa3a3f295a5c7ef770ebd717ab77be5dce1bde253db1c0aa39e6d56a7b97637\"\n    }\n  ]\n}\n",
+    "deb-build.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc build:deb\n> node scripts/build-deb.mjs\n\nDEB build: 11 regular files; SHA-256 5f6bdcce3243fe27af88ae0c516a688431ddcaea32d5f89b51758a74438d5b6a\nD:\\Astra_coding\\r7-ai-assistant\\.worktrees\\stage-b\\dist\\deb\\r7-ai-assistant_0.9.0-pilot-rc_amd64.deb\n",
+    "deb-repeat.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc build:deb\n> node scripts/build-deb.mjs\n\nDEB build: 11 regular files; SHA-256 5f6bdcce3243fe27af88ae0c516a688431ddcaea32d5f89b51758a74438d5b6a\nD:\\Astra_coding\\r7-ai-assistant\\.worktrees\\stage-b\\dist\\deb\\r7-ai-assistant_0.9.0-pilot-rc_amd64.deb\n",
+    "sbom.txt": "\n> r7-ai-assistant@0.9.0-pilot-rc sbom\n> node scripts/generate-sbom.mjs\n\nSPDX 2.3 SBOM: D:\\Astra_coding\\r7-ai-assistant\\.worktrees\\stage-b\\dist\\r7-ai-assistant.spdx.json; SHA-256 016f38dedcfac9b7347714dd832862936fc839b326cb5e5e37d91e418c5c9a69\n"
+  },
+  "artifactSizes": {
+    "dist/plugin/r7-ai-assistant.zip": 907498,
+    "dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb": 925888,
+    "dist/r7-ai-assistant.spdx.json": 7291
+  },
+  "install": [
+    {
+      "command": "cp -a '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/plugin-before",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant.zip",
+      "exit": 0,
+      "out": "886785b5a5085a776a26a06c1cadcc7ac88aeadbffc264eba048285e07c0c35d  /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant.zip\n",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "exit": 0,
+      "out": "5f6bdcce3243fe27af88ae0c516a688431ddcaea32d5f89b51758a74438d5b6a  /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb\n",
+      "err": ""
+    },
+    {
+      "command": "sudo -S -p '' dpkg -i /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "exit": 0,
+      "out": "(Чтение базы данных … на данный момент установлено 221896 файлов и каталогов.)\nПодготовка к распаковке …/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb …\nРаспаковывается r7-ai-assistant (0.9.0-pilot-rc) на замену (0.9.0-pilot-rc) …\nНастраивается пакет r7-ai-assistant (0.9.0-pilot-rc) …\nОбрабатываются триггеры для xserver-xorg-core (2:21.1.7-1ubuntu4.astra.se64) …\n",
+      "err": "update exec ids due to /usr/bin changed\n"
+    },
+    {
+      "command": "/usr/bin/r7-ai-assistant-preflight",
+      "exit": 0,
+      "out": "SUPPORTED exact target: Astra 1.7.9 build 1.7.9.41 / r7-office\t2026.1.2-1942~astra-signed\tamd64 / 2026.1.2.1942\n",
+      "err": ""
+    },
+    {
+      "command": "cp -a /usr/share/r7-ai-assistant/plugin/. '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "sha256sum '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js' '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css'",
+      "exit": 0,
+      "out": "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js\n34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css\n",
+      "err": ""
+    },
+    {
+      "command": "pgrep -a DesktopEditors",
+      "exit": 0,
+      "out": "119782 /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info /home/r7dev/r7-verification/stage-b/gate/deck-open.pptx\n",
+      "err": ""
+    }
+  ],
+  "lifecycle": [
+    {
+      "command": "mkdir /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "cp -a '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/activated-before",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "find '/home/r7dev/.local/share/r7-office/editors/data/cache/Local Storage/leveldb' -type f -exec sha256sum {} + | sort | sha256sum",
+      "exit": 0,
+      "out": "908601d9ca77e0349bf9c15cb1d45b66c9ba555340872cff6039880420add9ad  -\n",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js",
+      "exit": 0,
+      "out": "6aa574e212733b12c513622331f52a55adb24450e6990a89dbe45ba35fa6a23a  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js\n",
+      "err": ""
+    },
+    {
+      "phase": "before",
+      "settings": "908601d9ca77e0349bf9c15cb1d45b66c9ba555340872cff6039880420add9ad  -\n",
+      "vendor": "6aa574e212733b12c513622331f52a55adb24450e6990a89dbe45ba35fa6a23a  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js\n"
+    },
+    {
+      "command": "sudo -S -p '' dpkg -i /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "exit": 0,
+      "out": "(Чтение базы данных … на данный момент установлено 221896 файлов и каталогов.)\nПодготовка к распаковке …/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb …\nРаспаковывается r7-ai-assistant (0.9.0-pilot-rc) на замену (0.9.0-pilot-rc) …\nНастраивается пакет r7-ai-assistant (0.9.0-pilot-rc) …\nОбрабатываются триггеры для xserver-xorg-core (2:21.1.7-1ubuntu4.astra.se64) …\n",
+      "err": "update exec ids due to /usr/bin changed\n"
+    },
+    {
+      "command": "find '/home/r7dev/.local/share/r7-office/editors/data/cache/Local Storage/leveldb' -type f -exec sha256sum {} + | sort | sha256sum",
+      "exit": 0,
+      "out": "908601d9ca77e0349bf9c15cb1d45b66c9ba555340872cff6039880420add9ad  -\n",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js",
+      "exit": 0,
+      "out": "6aa574e212733b12c513622331f52a55adb24450e6990a89dbe45ba35fa6a23a  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js\n",
+      "err": ""
+    },
+    {
+      "phase": "reinstalled",
+      "settings": "908601d9ca77e0349bf9c15cb1d45b66c9ba555340872cff6039880420add9ad  -\n",
+      "vendor": "6aa574e212733b12c513622331f52a55adb24450e6990a89dbe45ba35fa6a23a  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js\n"
+    },
+    {
+      "command": "/usr/bin/r7-ai-assistant-preflight",
+      "exit": 0,
+      "out": "SUPPORTED exact target: Astra 1.7.9 build 1.7.9.41 / r7-office\t2026.1.2-1942~astra-signed\tamd64 / 2026.1.2.1942\n",
+      "err": ""
+    },
+    {
+      "command": "printf unsupported > /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/unsupported-astra",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "R7_AI_ASTRA_VERSION_FILE=/home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/unsupported-astra /usr/bin/r7-ai-assistant-preflight",
+      "exit": 42,
+      "out": "",
+      "err": "REFUSED unsupported target: Astra version 'unsupported' (expected '1.7.9')\n"
+    },
+    {
+      "command": "sudo -S -p '' dpkg -r r7-ai-assistant",
+      "exit": 0,
+      "out": "(Чтение базы данных … на данный момент установлено 221896 файлов и каталогов.)\nУдаляется r7-ai-assistant (0.9.0-pilot-rc) …\nОбрабатываются триггеры для xserver-xorg-core (2:21.1.7-1ubuntu4.astra.se64) …\n",
+      "err": "update exec ids due to /usr/bin changed\n"
+    },
+    {
+      "command": "test ! -e /usr/share/r7-ai-assistant && test ! -e /usr/share/doc/r7-ai-assistant && test ! -e /usr/bin/r7-ai-assistant-preflight",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "find '/home/r7dev/.local/share/r7-office/editors/data/cache/Local Storage/leveldb' -type f -exec sha256sum {} + | sort | sha256sum",
+      "exit": 0,
+      "out": "908601d9ca77e0349bf9c15cb1d45b66c9ba555340872cff6039880420add9ad  -\n",
+      "err": ""
+    },
+    {
+      "command": "sha256sum /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js",
+      "exit": 0,
+      "out": "6aa574e212733b12c513622331f52a55adb24450e6990a89dbe45ba35fa6a23a  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js\n",
+      "err": ""
+    },
+    {
+      "phase": "uninstalled",
+      "settings": "908601d9ca77e0349bf9c15cb1d45b66c9ba555340872cff6039880420add9ad  -\n",
+      "vendor": "6aa574e212733b12c513622331f52a55adb24450e6990a89dbe45ba35fa6a23a  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/v1/plugins.js\n"
+    },
+    {
+      "command": "mv '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/deactivated-deb",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "test ! -e '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "sudo -S -p '' dpkg -i /home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb",
+      "exit": 0,
+      "out": "Выбор ранее не выбранного пакета r7-ai-assistant.\n(Чтение базы данных … на данный момент установлен 221881 файл и каталог.)\nПодготовка к распаковке …/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb …\nРаспаковывается r7-ai-assistant (0.9.0-pilot-rc) …\nНастраивается пакет r7-ai-assistant (0.9.0-pilot-rc) …\nОбрабатываются триггеры для xserver-xorg-core (2:21.1.7-1ubuntu4.astra.se64) …\n",
+      "err": "update exec ids due to /usr/bin changed\n"
+    },
+    {
+      "command": "/usr/bin/r7-ai-assistant-preflight",
+      "exit": 0,
+      "out": "SUPPORTED exact target: Astra 1.7.9 build 1.7.9.41 / r7-office\t2026.1.2-1942~astra-signed\tamd64 / 2026.1.2.1942\n",
+      "err": ""
+    },
+    {
+      "command": "mkdir '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "cp -a /usr/share/r7-ai-assistant/plugin/. '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "diff -qr '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/activated-before",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "python3 -c 'import zipfile,pathlib; z=zipfile.ZipFile('\"'\"'/home/r7dev/r7-verification/sprint10-20261009T020631/r7-ai-assistant.zip'\"'\"'); names=z.namelist(); assert all(not n.startswith('\"'\"'/'\"'\"') and '\"'\"'..'\"'\"' not in pathlib.PurePosixPath(n).parts for n in names); z.extractall('\"'\"'/home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/zip'\"'\"'); print(names)'",
+      "exit": 0,
+      "out": "['LICENSE', 'THIRD_PARTY_NOTICES.md', 'config.json', 'index.html', 'panel.js', 'provenance.json', 'resources/icon.png', 'resources/icon@2x.png', 'styles.css']\n",
+      "err": ""
+    },
+    {
+      "command": "mv '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/restored-deb",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "mkdir '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "cp -a /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/zip/. '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/'",
+      "exit": 0,
+      "out": "",
+      "err": ""
+    },
+    {
+      "command": "sha256sum '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js' '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css' '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/provenance.json'",
+      "exit": 0,
+      "out": "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js\n34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css\n9fa3a3f295a5c7ef770ebd717ab77be5dce1bde253db1c0aa39e6d56a7b97637  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/provenance.json\n",
+      "err": ""
+    },
+    {
+      "command": "pgrep -a DesktopEditors",
+      "exit": 0,
+      "out": "119782 /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info /home/r7dev/r7-verification/stage-b/gate/deck-open.pptx\n",
+      "err": ""
+    }
+  ],
+  "zipFreshLoad": {
+    "out": "[[\"panel.js\",\"03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9\"],[\"styles.css\",\"34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde\"],[\"provenance.json\",\"9fa3a3f295a5c7ef770ebd717ab77be5dce1bde253db1c0aa39e6d56a7b97637\"]]\n{\"path\":\"/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/%7B7C91D48E-5F12-4B36-8A90-2DFA8467C013%7D/index.html\",\"form\":true,\"status\":\"Готово\"}\n",
+    "err": "",
+    "exit": 0
+  },
+  "restored": [
+    {
+      "command": "mv '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/deactivated-zip",
+      "out": "",
+      "err": "",
+      "exit": 0
+    },
+    {
+      "command": "test ! -e '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'",
+      "out": "",
+      "err": "",
+      "exit": 0
+    },
+    {
+      "command": "mv /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/restored-deb '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'",
+      "out": "",
+      "err": "",
+      "exit": 0
+    },
+    {
+      "command": "diff -qr '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}' /home/r7dev/r7-verification/sprint10-20261009T020631/lifecycle-1791500978295756100/activated-before",
+      "out": "",
+      "err": "",
+      "exit": 0
+    },
+    {
+      "command": "sha256sum '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js' '/home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css'",
+      "out": "03162abe0b3f10eea55fac0dda6d3af3f5ab47a26790758dd9fcef91ae042aa9  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/panel.js\n34b9b9085d44152b9f7af582dc8505a4a46f36edc32fabefa4c8c063512cedde  /home/r7dev/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/styles.css\n",
+      "err": "",
+      "exit": 0
+    },
+    {
+      "command": "dpkg-query -W -f='${Status} ${Version} ${Architecture}\\n' r7-ai-assistant",
+      "out": "install ok installed 0.9.0-pilot-rc amd64\n",
+      "err": "",
+      "exit": 0
+    },
+    {
+      "command": "pgrep -a DesktopEditors",
+      "out": "119782 /opt/r7-office/desktopeditors/DesktopEditors --ascdesktop-support-debug-info /home/r7dev/r7-verification/stage-b/gate/deck-open.pptx\n",
+      "err": "",
+      "exit": 0
+    }
+  ],
+  "assertions": {
+    "settingsAndVendorUnchanged": true,
+    "exactlyOneUnsupportedRefusal42": true,
+    "restorationCommandsPassed": true
+  }
+}

@@ -10,6 +10,26 @@ export const LIMITS = Object.freeze({
   modelContentBytes: 65536,
   jsonBytes: 65536,
   editorResultBytes: 65536,
+  // Sprint 5 (T2) — the Slide READ caps. They live HERE, not in the bridge bodies, so one number bounds the host's
+  // check and the body's loop alike; a body only READS what it is handed in the scope.
+  //
+  // MEASURED BASIS (T1; Astra SE 1.7.9.41 + R7 2026.1.2.1942, identical on Windows R7 2026.3.1): `presentation.ToJSON()`
+  // answered 205 339 characters on a ONE-slide deck and `slide.ToJSON()` 34 481, so neither JSON may be the model's
+  // contract; a slide carries a handful of objects (2 on the test deck, inherited from its layout); per-object text is
+  // read through `content.GetElement(i).GetText()`, and an object whose text exceeds `slideReadTextBytes` is reported
+  // WITHOUT text (`textOmitted`) rather than cut in half; `slideReadResultBytes` sits deliberately BELOW the general
+  // `editorResultBytes` window above, because a slide read is a scoped summary and the model must never receive a blob.
+  slideReadSlidesMax: 60,
+  slideReadObjectsMax: 40,
+  slideReadTextBytes: 2048,
+  slideReadResultBytes: 32768,
+  // Sprint 5 (T4a) SANITY bound, not a measured engine limit: accepted font sizes are whole points 1..96.
+  slideFormatFontSizeMax: 96,
+  // Sprint 5 (T4b) SANITY bounds, not measured engine limits: bounded table dimensions and image payload/size.
+  slideTableColumnsMax: 8,
+  slideTableRowsMax: 20,
+  slideImageBytesMax: 65536,
+  slideImageEmuMax: 45720000,
   // The whole-document HTML export the insert confirmation counts occurrences in (`GetFileHTML`).
   // It is deliberately larger than `editorResultBytes`, because it bounds a DOCUMENT read rather than
   // a scoped one: the 64 KiB window that bounds a selection or paragraph read would refuse the export
@@ -312,6 +332,79 @@ export const LIMITS = Object.freeze({
   insertTableColumnsMax: 16,
   insertTableCellBytes: 1024,
   insertTableBytes: 8192,
+  // The bounded SPREADSHEET reads (`read_sheet`, `read_range`) — the first CELL legs in this repo. Every
+  // bound below is measured, not chosen: they are the caps the authored body extracts against and the
+  // same caps the decoder requires, so extraction and decode can never disagree.
+  //   * `sheetReadCellsMax` bounds how many CELLS one read may return. A reported cell carries BOTH its
+  //     value and its formula, so it costs two strings, and the payload is bounded separately by
+  //     `sheetReadBytes`. 400 cells is a daily-work table (a 20 x 20 block, or the 10 x 5 plan-fact and
+  //     P&L shapes this product targets) and is deliberately far below a whole-sheet read: the owner's
+  //     good-enough scope is ordinary daily spreadsheets, not tens of sheets or huge ranges.
+  //   * `sheetReadCellBytes` bounds ONE cell's text in UTF-8 bytes. A written cell is not a paragraph:
+  //     512 bytes is half of `insertTableCellBytes` and still an order of magnitude above any daily
+  //     figure, label or formula this product authors.
+  sheetReadCellsMax: 400,
+  sheetReadCellBytes: 512,
+  // The bounded SPREADSHEET write (`write_range`). It is the first Cell MUTATION, so its bounds are the
+  // ones the authored body writes against and the decoder proves against:
+  //   * `writeRangeRowsMax`/`writeRangeColumnsMax` bound the block one call may write. They are the
+  //     INSERT TABLE bounds of this same file (64 x 16), not new numbers: a written block of cells and a
+  //     written table of cells are the same daily-work scale, and an alias would be invisible at runtime
+  //     and silently wrong the moment the two diverge, so each scope names its own entry.
+  //   * `writeRangeCellBytes` bounds ONE cell's text. It is a QUARTER of `insertTableCellBytes` (1024) and
+  //     HALF of `sheetReadCellBytes` (512) — a quarter of a kilobyte — because a written cell is a value
+  //     or a formula, never a document paragraph, and a formula over a daily sheet fits several times over.
+  //   * `writeRangeBytes` bounds the whole payload — the sum of every cell's bytes. It deliberately
+  //     equals `insertTableBytes`: the two are the same kind of bound and the same pilot scale.
+  // `writeRangeCellsMax` is the total cell count and equals `sheetReadCellsMax`, so a block this product
+  // can WRITE is always a block it can READ BACK to prove, which is the readback this mutation owes.
+  writeRangeRowsMax: 64,
+  writeRangeColumnsMax: 16,
+  writeRangeCellBytes: 256,
+  writeRangeBytes: 8192,
+  writeRangeCellsMax: 400,
+  // The bounded CELL FORMATTING (`format_range`) — the SECOND Cell mutation, and the FIRST one that changes
+  // PRESENTATION rather than content. Every bound below is MEASURED (T4.0, see
+  // `docs/evidence/sprint-4/t4.0-format-range-evidence.md`), because the authored formatter must never ask
+  // the engine for a value outside the range it reads back EXACTLY: a silently clamped value would fail the
+  // proof on a CORRECT request and settle it uncertain.
+  //   * `formatRangeCellsMax` equals `sheetReadCellsMax`/`writeRangeCellsMax`. The 1..400-cell calibration
+  //     measured a whole cycle (mutation plus per-property, per-cell verification) at 0.2 ms for one cell and
+  //     7–9 ms for 400, with the worst confirmed channel — the per-cell font readback — costing about 2 ms at
+  //     400 cells, so the cap is affordable rather than merely conventional. It is WINDOWS-calibrated and must
+  //     be re-verified on the target build before Sprint 4 PASS.
+  //   * `formatRangeDecimalsMax` is the largest decimal count whose number-format CODE round-trips exactly
+  //     (`0.0000000000` measured equal); 0..10 were all exact.
+  //   * `formatRangeFontSizeMax` and `formatRangeColumnWidthMax` are the largest values measured to read back
+  //     exactly (1000 each; the engine also accepted a fractional column width, which the closed schema
+  //     deliberately refuses because it has no `number` type).
+  //   * `formatRangeRowHeightMax` is DELIBERATELY below what the engine accepts: a request for 500 was measured
+  //     to be clamped to 409.5, so the bound stops at the largest value proven exact.
+  //   * `formatRangeFontFamilyBytes` bounds ONE family name. The engine returns any name VERBATIM (including a
+  //     name it does not have), so this is a schema guard rather than a measured engine limit.
+  formatRangeCellsMax: 400,
+  formatRangeDecimalsMax: 10,
+  formatRangeFontSizeMax: 1000,
+  formatRangeColumnWidthMax: 1000,
+  formatRangeRowHeightMax: 400,
+  formatRangeFontFamilyBytes: 64,
+  // The bounded WORKBOOK LISTING (`list_sheets`) — the first WORKBOOK-level read, and the first tool in this
+  // module whose subject is the book rather than one sheet.
+  //   * `sheetListMax` bounds how many SHEETS one listing may carry. A daily workbook has a handful, and 64 is
+  //     the same scale as this module's other block caps (`insertTableRowsMax`/`writeRangeRowsMax`); the bound
+  //     exists so the listing cannot grow with the book without limit. A workbook ABOVE it is a KNOWN refusal,
+  //     never a silently truncated list — a listing that omitted sheets would misrepresent the book.
+  //   * `sheetListNameBytes` bounds ONE sheet name. Excel caps a sheet name at 31 CHARACTERS; in this product's
+  //     own locale that is at most 62 UTF-8 bytes, so 128 is four times the worst case and cannot refuse a name
+  //     the editor would have accepted.
+  //   * `sheetNameCharactersMax` is that 31-character limit as an ENFORCED bound, because a byte bound alone is
+  //     not the limit the editor applies. MEASURED natively: a 33-character NAME was SILENTLY REJECTED by
+  //     `SetName` — the sheet kept its old name and the new one did not resolve — so a request carrying one used to
+  //     spend a mutation and come back as uncertainty. It is now a KNOWN refusal BEFORE any mutation, which is why
+  //     the bound is characters and not bytes: 31 Cyrillic characters are 62 bytes and must still be accepted.
+  sheetListMax: 64,
+  sheetListNameBytes: 128,
+  sheetNameCharactersMax: 31,
   // The bounded HEADING STYLE ASSIGNMENT (`set_heading`) — the SEVENTH Sprint 3 Word tool, the THIRD
   // MUTATION, and the FIRST one that changes an EXISTING paragraph IN PLACE rather than appending a new
   // element. It adds exactly ONE static per-call bound, and it is not a read or a payload bound, because

@@ -1,0 +1,11 @@
+# Shared encrypted connection — owner-approved pilot
+
+The owner approved a separate first-launch screen containing endpoint, model and API key, with **Сохранить и проверить**. All three editors, including panels already running the new version, share one local profile. Sending a chat message must never overwrite settings. The regular interface contains **Подключение настроено** and an edit button. The pilot administrator may configure this remotely. The owner then explicitly requested encryption of locally stored credentials.
+
+Implementation uses the existing embedded browser runtime, without a daemon or native helper. One IndexedDB record contains an AES-256-GCM encrypted profile and a randomly generated, non-exportable CryptoKey; every save generates a new key and 96-bit nonce. Authentication includes a fixed version/domain label. This is not an OS key vault and does not resist control of the full browser profile or the running origin. No hardcoded wrapping key, plaintext persistence fallback or credential in artifacts is permitted.
+
+Connection testing uses the candidate settings in an ASK-only temporary session. Only a successful connection check commits the profile. Revision compare-and-set rejects stale forms. Panels refresh on focus, every two seconds while idle and before requests; in-flight work keeps its owned settings. Explicit old plaintext opt-in migrates after encrypted commit, then removes legacy records. Reset commits a tombstone and clears the form; it does not promise secure erasure of historical disk pages or backups.
+
+Validation covers encryption and authenticated corruption refusal, key export refusal, failed migration/storage, stale saves, reset recovery, connection failures, shared controllers and the normal send path. Native validation uses the same browser APIs in Word, Cell and Slide. A full R7 process restart remains a separate acceptance item while the owner's unsaved documents are open; new Store instances and reopened panels are narrower evidence.
+
+Independent review found and verified corrections for three P2 issues: recovery CAS after damaged ciphertext; visible storage failure on an otherwise configured panel; stale key in a dirty form after reset. No remaining blocking finding in the bounded delta review. Existing Word/Cell/Slide editing primitives are unchanged.

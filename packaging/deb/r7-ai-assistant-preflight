@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+DECLARATION=${R7_AI_COMPATIBILITY:-/usr/share/r7-ai-assistant/compatibility.json}
+DPKG_QUERY=${R7_AI_DPKG_QUERY:-dpkg-query}
+DESKTOP_EDITORS=${R7_AI_DESKTOP_EDITORS:-/opt/r7-office/desktopeditors/DesktopEditors}
+ASTRA_VERSION_FILE=${R7_AI_ASTRA_VERSION_FILE:-/etc/astra_version}
+ASTRA_BUILD_VERSION_FILE=${R7_AI_ASTRA_BUILD_VERSION_FILE:-/etc/astra/build_version}
+ACTIVATE=${R7_AI_ACTIVATE:-}
+
+refuse() {
+  printf '%s\n' "REFUSED unsupported target: $*" >&2
+  exit 42
+}
+
+[ -r "$DECLARATION" ] || refuse "compatibility declaration missing"
+PYTHON=${R7_AI_PYTHON:-python3}
+command -v "$PYTHON" >/dev/null 2>&1 || refuse "python3 unavailable for declaration parsing"
+expected=$("$PYTHON" - "$DECLARATION" <<'PY'
+import json, sys
+try:
+    compatibility = json.load(open(sys.argv[1], encoding='utf-8'))['compatibility']
+    astra = compatibility['astra']
+    r7 = compatibility['r7']
+    if astra['architecture'] != r7['architecture']:
+        raise ValueError('conflicting architectures')
+    values = [astra['version'], astra['buildVersion'], astra['architecture'], r7['package'], r7['packageVersion'], r7['productVersion']]
+except Exception:
+    raise SystemExit(42)
+if any(not isinstance(value, str) or not value or '\t' in value or '\n' in value for value in values):
+    raise SystemExit(42)
+print('\t'.join(values))
+PY
+) || refuse "compatibility declaration invalid"
+IFS="	" read -r expected_astra_version expected_astra_build expected_arch expected_package expected_version expected_product <<EOF
+$expected
+EOF
+[ -r "$ASTRA_VERSION_FILE" ] || refuse "Astra version file missing or unreadable: $ASTRA_VERSION_FILE"
+[ -r "$ASTRA_BUILD_VERSION_FILE" ] || refuse "Astra build file missing or unreadable: $ASTRA_BUILD_VERSION_FILE"
+actual_astra_version=$(sed -n '1{s/[[:space:]]*$//;p;}' "$ASTRA_VERSION_FILE") || refuse "Astra version unreadable: $ASTRA_VERSION_FILE"
+actual_astra_build=$(sed -n '1{s/[[:space:]]*$//;p;}' "$ASTRA_BUILD_VERSION_FILE") || refuse "Astra build unreadable: $ASTRA_BUILD_VERSION_FILE"
+[ "$actual_astra_version" = "$expected_astra_version" ] || refuse "Astra version '${actual_astra_version:-missing}' (expected '$expected_astra_version')"
+[ "$actual_astra_build" = "$expected_astra_build" ] || refuse "Astra build '${actual_astra_build:-missing}' (expected '$expected_astra_build')"
+actual=$($DPKG_QUERY -W -f='${Package}\t${Version}\t${Architecture}\n' "$expected_package" 2>/dev/null) || refuse "required R7 package missing"
+actual_tuple=$(printf '%s\t%s\t%s' "$expected_package" "$expected_version" "$expected_arch")
+[ "$actual" = "$actual_tuple" ] || refuse "package tuple '$actual'"
+[ -x "$DESKTOP_EDITORS" ] || refuse "DesktopEditors missing"
+product=$($DESKTOP_EDITORS --version 2>&1 | sed -n 's/^.*ver\. \([0-9][0-9.]*\).*$/\1/p' | head -n 1)
+[ -n "$product" ] || refuse "product version unparseable: DesktopEditors --version produced no parseable version on stdout or stderr"
+[ "$product" = "$expected_product" ] || refuse "product version '$product' (expected '$expected_product')"
+printf '%s\n' "SUPPORTED exact target: Astra $actual_astra_version build $actual_astra_build / $actual / $product"
+if [ -n "$ACTIVATE" ]; then
+  [ -x "$ACTIVATE" ] || refuse "activation command unavailable"
+  exec "$ACTIVATE"
+fi

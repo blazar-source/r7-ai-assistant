@@ -1,0 +1,20 @@
+{
+  "compatibility": {
+    "astra": {
+      "architecture": "amd64",
+      "buildVersion": "1.7.9.41",
+      "edition": "Astra Linux SE",
+      "version": "1.7.9"
+    },
+    "enforcement": "shipped-preflight",
+    "r7": {
+      "architecture": "amd64",
+      "build": "1942",
+      "package": "r7-office",
+      "packageForm": "deb",
+      "packageVersion": "2026.1.2-1942~astra-signed",
+      "productVersion": "2026.1.2.1942"
+    },
+    "unsupportedBehavior": "preflight-refuses-before-activation"
+  }
+}

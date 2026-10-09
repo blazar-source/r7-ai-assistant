@@ -1,0 +1,10 @@
+# Native defects measured on compact commit c7f1a83
+
+2026-10-09; exact Astra tuple from the handoff. Loaded panel and CSS matched the frozen c7f1a83 hashes before each journey. The protected PID 119782 and original deck stayed alive; every mutation used new disposable copies. All SSH authentication followed host-key pin verification.
+
+- **Word:** 2 → 3 paragraphs, exact new marker `SPRINT9_WORD_NATIVE_C7F1A83` in independently read document. `insert_blocks` and `read_document_text` both succeeded.
+- **Cell:** A1 remained empty; capability probe refused before transport. A read-only native measurement showed `Api.GetDocument` is a function but throws in Cell, while `GetActiveSheet`, `GetRange`, `GetValue` and `SetValue` are available. Fixed the probe to use the Cell range root, with separate read/write presence flags and strict four-boolean decoding. Neither presence test mutates. Word/Slide probes, ownership and Apply safety are unchanged. Regression exercises both callCommand and executeCommand against the measured throwing Word getter.
+- **Slide:** 5 → 6 slides and marker present, but this is **FAIL**, not acceptance: the new slide was inserted after the current slide while the model wrote to the old final slide shifted to index 5. No move_slide occurred. Independent review checked Sprint 5 native evidence: add_slide inserts after current; layoutFromSlideIndex only chooses a layout. No proof of a false bridge index exists. Clarified the existing bounded tool description: use returned slideIndex, move to slidesCount−1 for append, then write using the new index. Retest must preserve every old slide text and place the marker on the new last slide.
+- **Markdown:** native marker display exposed intraword underscores being treated as emphasis. Identifier regression failed first; underscore delimiters now require word boundaries.
+
+Raw disposable-document evidence: `.local/sprint9/native-word.jsonl`, `native-cell.jsonl`, `native-slide.jsonl`. The c7f1a83 set is superseded for final acceptance by the next pinned build; no RC declared. Tool-guidance effectiveness requires the real-model rerun, not merely a unit test of its wording.

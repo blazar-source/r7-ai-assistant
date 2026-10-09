@@ -1,0 +1,6 @@
+{"check":"native AES-GCM IndexedDB save","ok":true,"revision":"4f552f31-8675-42e3-bcd6-fcfdab96c43d"}
+{"check":"native shared read","editor":"word","ok":true,"keyMatches":true}
+{"check":"native shared read","editor":"slide","ok":true,"keyMatches":true}
+{"check":"native shared read","editor":"cell","ok":true,"keyMatches":true}
+{"check":"native stored representation","algorithm":"AES-GCM","bits":256,"extractable":false,"exportRefused":true,"plaintextAbsent":true}
+{"check":"fresh instance and DB connection","ok":true,"keyMatches":true}

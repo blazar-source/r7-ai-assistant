@@ -8,6 +8,9 @@ import { requestCompletion } from '../ai/transport.js';
 import { runAgent } from '../agent/runtime.js';
 import { createRegistry } from '../tools/registry.js';
 import { createWordTools } from '../tools/word.js';
+import { createCellTools } from '../tools/cell.js';
+import { createSlideTools } from '../tools/slide.js';
+import { OWNED_PREVIEW_REASON } from '../plugin/bridge.js';
 import { createOrchestrator, createDocumentReader, isLongGenerationRequest, ORCHESTRATION_TARGET_CHARS,
   ORCHESTRATION_MAX_EXECUTE_PASSES, ORCHESTRATION_MAX_HEADINGS } from './orchestrator.js';
 
@@ -18,14 +21,12 @@ const noContext = () => Object.freeze({ kind: 'UNKNOWN', text: '', bytes: 0, own
 // status. Anything that is not a closed class falls back to the internal-error class.
 function closedCode(value) { return typeof value === 'string' && ERROR_CODES[value] === value ? value : ERROR_CODES.INTERNAL_ERROR; }
 function safeCode(error) { return error instanceof SafeError ? closedCode(error.code) : ERROR_CODES.INTERNAL_ERROR; }
-// The catalogue is filtered by capability keys, and the only capability this controller can honestly
-// state without guessing about the installed SDK is what §6/§9 make structural: a Word editor the
-// controller already reads and (under its own owned-target proof) applies to. Every action is still
-// refused at dispatch by the bridge's own owned-target check, which is the authority.
-const CAPABILITIES = Object.freeze(['document.read', 'document.write']);
+// The catalogue is filtered by capability keys derived from the observed native probe. The explicit
+// Preview/Apply path additionally requires the bridge's private owned target for the current editor;
+// every action is still refused at dispatch by that owned-target check, which is the authority.
 // The Agent Runtime's terminal vocabulary mapped onto the controller's existing status codes (§8).
 const RUN_STATUS = Object.freeze({ FINAL: 'COMPLETE', PREVIEW_READY: 'PREVIEW_READY', UNCERTAIN: 'APPLY_UNCERTAIN',
-  LIMIT: 'AGENT_LIMIT', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
+  LIMIT: 'AGENT_LIMIT', INCOMPLETE: 'AGENT_INCOMPLETE', CANCELLED: 'CANCELLED', PROTOCOL_ERROR: 'PROTOCOL_ERROR' });
 const CONNECTION_REQUEST = 'Проверка соединения. Ответь JSON final.';
 // The HOST-side bound the panel brackets one multi-step agent run with. It is NOT the single-shot
 // 150 s operation timeout: a pilot task of a ten-page document needs dozens of tool calls and minutes
@@ -74,9 +75,13 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   timers = { schedule(callback, ms) { return setTimeout(function () { callback(); }, ms); }, clear(id) { clearTimeout(id); } }
 } = {}) {
   let stored = store.load();
+  let syncing = null;
+  let configuring = false;
   let chat = createChatSession(crypto);
   let mode = 'ASK';
-  let includeContext = true;
+  // Cell context remains opt-in because its default authoring path works without a selection capture.
+  // When enabled explicitly, all three supported editors use the same owned-preview capture and Apply proof.
+  let includeContext = bridge?.getState().editorType !== 'cell';
   let context = noContext();
   let status = 'READY';
   let generation = 0;
@@ -86,6 +91,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   let previewOwner = null;
   let previewTimer = null;
   let capabilityCount = null;
+  let probedCapabilities = null;
   let agent = null;
   // The last PLAN -> EXECUTE -> VERIFY -> CONTINUE summary the panel published, or null while no
   // orchestration is in flight. It is a closed, content-free record built from measurements and closed
@@ -104,7 +110,12 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   function registryOrNull() {
     if (!registryBuilt) {
       registryBuilt = true;
-      try { registry = createRegistry(createWordTools(bridge)); } catch { registry = null; }
+      // The registry is the ONE closed catalogue of every tool this build ships, and the editor each
+      // descriptor names is what decides whether the model is offered it: `createRegistry` filters by
+      // `editors`, so a Word descriptor is never offered in a spreadsheet and a Cell descriptor is never
+      // offered in a document. The agent path below (`runAgent` with `editor: owned.editorType`) was
+      // already editor-agnostic and needed no change.
+      try { registry = createRegistry([...createWordTools(bridge), ...createCellTools(bridge), ...createSlideTools(bridge)]); } catch { registry = null; }
     }
     return registry;
   }
@@ -130,9 +141,9 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   }
   function snapshot() {
     return Object.freeze({ status, active: active !== null, mode, includeContext, context, chat,
-      settings: stored.settings, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
+      settings: stored.settings, settingsRevision: stored.revision ?? null, settingsBusy: configuring, keyPersistenceWarning: stored.keyPersistenceWarning, storageError: stored.storageError,
       preview, capabilityCount, agent, orchestration, canApply: canApply(), writeLocked: writeLocked(), generation, editorType: bridge?.getState().editorType ?? 'unknown',
-      mutationReason: 'EXPLICIT_OWNED_PREVIEW_REQUIRED', runtimeVerified: false, lifecycleEventsVerified: false });
+      mutationReason: probedCapabilities?.mutation?.reason ?? OWNED_PREVIEW_REASON, runtimeVerified: false, lifecycleEventsVerified: false });
   }
   function emit() { if (disposed) return; const state = snapshot(); for (const listener of listeners) listener(state); }
   // Late real callback settlement may unlock controls, never publish late content,
@@ -162,7 +173,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     }
     return true;
   }
-  function begin(kind, orchestrated = false) {
+  function begin(kind, orchestrated = false, connectionSettings) {
     if (disposed || active || writeLocked()) return null;
     dropPreview();
     // A new run takes the panel over, so the previous orchestration report is cleared: a stale summary
@@ -170,7 +181,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     // the continuation of the report in flight, so it keeps it and republishes it per phase.
     if (!orchestrated) { orchestration = null; lastAssistantMessage = null; }
     const deadline = now() + AGENT_RUN_HOST_DEADLINE_MS; // BEFORE any context/SDK work
-    const owned = { kind, generation: ++generation, settings: validateRequestSettings(stored.settings),
+    const owned = { kind, generation: ++generation, settings: validateRequestSettings(connectionSettings ?? stored.settings),
       mode: kind === 'connection' ? 'ASK' : mode, includeContext, uuid: kind === 'connection' ? createConnectionSession(crypto).uuid : chat.uuid,
       editorType: bridge?.getState().editorType ?? 'unknown', deadline, abort: new AbortController(), timer: null };
     active = owned;
@@ -196,7 +207,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
   async function read(owned) {
     const platform = bridge?.getState();
     if (platform?.busy) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
-    if (platform?.editorType !== 'word') {
+    if (!['word', 'cell', 'slide'].includes(platform?.editorType)) {
       context = Object.freeze({ kind: 'UNAVAILABLE', text: '', bytes: 0, ownershipVerified: false });
       throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
     }
@@ -258,7 +269,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     let owned = null;
     try {
       if (kind === 'analysis') assertByteLimit(user, LIMITS.userInputBytes);
-      owned = begin(kind, extra.orchestrated === true);
+      owned = begin(kind, extra.orchestrated === true, extra.connectionSettings);
       let capturedRun = null;
       if (kind === 'analysis' && owned.includeContext) capturedRun = await read(owned);
       if (!valid(owned)) return false;
@@ -292,7 +303,22 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       owned.agent = { status: 'RUNNING', steps: 0, toolCalls: 0, actions: [] };
       if (owns(owned)) agent = owned.agent;
       emit();
-      const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities: CAPABILITIES,
+      // A fresh Cell/Slide panel must not require the user to discover the
+      // diagnostics button. Probe within this run's existing ownership/deadline.
+      if (kind === 'analysis' && probedCapabilities === null &&
+          (owned.editorType === 'cell' || owned.editorType === 'slide') && typeof bridge?.probeCapabilities === 'function') {
+        const observed = await bridge.probeCapabilities({ signal: owned.abort.signal });
+        if (!valid(owned)) return false;
+        if (observed?.editorType === owned.editorType &&
+            (observed.adapter?.commandDispatch === true || observed.adapter?.executeMethod === true)) probedCapabilities = observed;
+      }
+      const capabilities = owned.editorType === 'word' && probedCapabilities === null
+        ? ['document.read', 'document.write']
+        : [];
+      if (probedCapabilities?.selectionRead?.available === true) capabilities.push('document.read');
+      if (probedCapabilities?.mutation?.available === true) capabilities.push('document.write');
+      if (kind === 'analysis' && capabilities.length === 0) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
+      const done = await runAgent({ registry: registryOrNull(), editor: owned.editorType, capabilities,
         mode: owned.mode, settings, uuid, request: kind === 'connection' ? CONNECTION_REQUEST : user,
         profile,
         // The panel's agent runs carry the named pilot guardrails IN THE REQUEST: the runtime validates
@@ -413,17 +439,62 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     if (!active && !writeLocked()) status = record.status;
     emit();
   }
+  function syncSettings() {
+    if (disposed || active || writeLocked() || configuring || store.shared !== true) return Promise.resolve(false);
+    if (syncing) return syncing;
+    syncing = store.refresh().then(function (next) {
+      if (disposed || active || writeLocked()) return false;
+      const changed = next.revision !== stored.revision || next.settings !== stored.settings;
+      stored = next;
+      if (changed) invalidate('SETTINGS_CHANGED');
+      if (next.storageError) status = next.storageError;
+      return !next.storageError;
+    }).catch(function () { if (!disposed) status = 'STORAGE_UNAVAILABLE'; return false; }).finally(function () { syncing = null; emit(); });
+    emit();
+    return syncing;
+  }
   return Object.freeze({
+    syncSettings,
+    async saveAndTestConnection(raw, expectedRevision) {
+      if (disposed || active || writeLocked() || configuring) return false;
+      if (syncing) await syncing;
+      if (disposed || active || writeLocked() || configuring) return false;
+      configuring = true; emit();
+      try {
+        const candidate = validateRequestSettings(raw);
+        await run('connection', undefined, { connectionSettings: candidate });
+        if (disposed || status !== 'CONNECTION_OK') return false;
+        stored = await store.saveProfile(candidate, expectedRevision);
+        if (disposed) return false;
+        if (stored.storageError) { status = stored.storageError; return false; }
+        return true;
+      } catch (error) { if (!disposed) status = safeCode(error); return false; }
+      finally { configuring = false; emit(); }
+    },
+    async resetConnection() {
+      if (disposed || active || writeLocked() || configuring) return false;
+      if (syncing) await syncing;
+      if (disposed || active || writeLocked() || configuring) return false;
+      configuring = true; invalidate(); emit();
+      try { stored = await store.resetProfile(stored.revision ?? null); status = stored.storageError ?? 'READY'; return !stored.storageError; }
+      finally { configuring = false; emit(); }
+    },
     getState: snapshot,
     subscribe(listener) { listeners.add(listener); listener(snapshot()); return function () { listeners.delete(listener); }; },
     analyze(user) {
+      if (configuring || disposed) return Promise.resolve(false);
+      if (store.shared === true) return syncSettings().then(function () {
+        if (disposed || configuring || stored.storageError) return false;
+        if (mode === 'EDIT' && isLongGenerationRequest(user)) return runOrchestration(user);
+        return run('analysis', user);
+      });
       // THE LONG-GENERATION ENTRY: a request that names a volume, several parts or an explicit count is
       // planned, executed in parts, measured and continued. Every other request keeps the existing
       // single-run path exactly as it was, so an ordinary question or edit is unchanged.
       if (mode === 'EDIT' && isLongGenerationRequest(user)) return runOrchestration(user);
       return run('analysis', user);
     },
-    testConnection() { return run('connection'); },
+    testConnection() { if (configuring) return Promise.resolve(false); return store.shared === true ? syncSettings().then(function () { return stored.storageError ? false : run('connection'); }) : run('connection'); },
     async checkR7() {
       if (disposed || active || writeLocked()) return false;
       let owned = null;
@@ -437,11 +508,58 @@ export function createController({ bridge, store = new SettingsStore(), transpor
         emit();
         const platform = bridge?.getState();
         if (platform?.busy) throw new SafeError(ERROR_CODES.EDITOR_BUSY);
-        if (platform?.editorType !== 'word' || typeof bridge?.probeCapabilities !== 'function') {
+        if (platform?.editorType !== 'word' && platform?.editorType !== 'cell' && platform?.editorType !== 'slide') {
+          finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+        }
+        if (typeof bridge?.probeCapabilities !== 'function') {
           finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
         }
         const capabilities = await bridge.probeCapabilities({ signal: owned.abort.signal });
         if (!valid(owned)) return false;
+        probedCapabilities = capabilities;
+        // THE SPREADSHEET PATH. A Cell bridge has no Word method to probe, so it reports its capabilities LOCALLY
+        // and `methodPresence` is null by construction — readiness is what the bridge says about ITSELF. The Word
+        // decode below used to run for every editor, so a HEALTHY workbook was answered with
+        // `R7_CHECK_UNAVAILABLE`; the exit-gate run reads and mutates sheets through exactly this adapter, which is
+        // why this fix is editor-AWARE rather than a relaxed Word check.
+        if (platform?.editorType === 'cell') {
+          // The adapter the bridge reports is an OBJECT naming the primitives it can use
+          // (`{ executeMethod, commandDispatch, commandMethod }`), not a string: readiness is that ONE of them is
+          // available. An earlier version of this branch required a string and therefore refused a perfectly usable
+          // spreadsheet — the shape is taken from the bridge's own measured report, and the test below uses it too.
+          const adapter = capabilities?.adapter;
+          const adapterUsable = adapter !== null && typeof adapter === 'object'
+            && (adapter.commandDispatch === true || adapter.executeMethod === true);
+          if (capabilities?.editorType !== 'cell' || adapterUsable !== true) {
+            finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+          }
+          const cellAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
+          if (cellAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
+          const cellCount = cellAvailability.filter(value => value === true).length;
+          if (cellCount === 0) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
+          return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = cellCount; });
+        }
+        // THE PRESENTATION PATH. The exit gate found this branch MISSING: a slide editor fell through to the Word
+        // decode below, whose `methodPresence` schema no presentation reports, so a perfectly usable deck answered
+        // `R7_CHECK_UNAVAILABLE` and the panel showed the editor as unavailable. The bridge publishes the slide
+        // capability report LOCALLY for this editor, exactly as it does for a spreadsheet, so readiness is judged
+        // the same way: the adapter must name a usable command entry point and the two availability flags must be
+        // real booleans. `mutation.available` is false by design here — a presentation mutation is authorised by the
+        // panel's own owned preview, whose reason the report carries — so it counts as unavailable rather than
+        // making the whole editor unusable.
+        if (platform?.editorType === 'slide') {
+          const slideAdapter = capabilities?.adapter;
+          const slideAdapterUsable = slideAdapter !== null && typeof slideAdapter === 'object'
+            && (slideAdapter.commandDispatch === true || slideAdapter.executeMethod === true);
+          if (capabilities?.editorType !== 'slide' || slideAdapterUsable !== true) {
+            finish(owned, 'R7_CHECK_UNAVAILABLE'); return false;
+          }
+          const slideAvailability = [capabilities?.selectionRead?.available, capabilities?.mutation?.available];
+          if (slideAvailability.some(value => typeof value !== 'boolean')) throw new SafeError(ERROR_CODES.INVALID_DATA);
+          const slideCount = slideAvailability.filter(value => value === true).length;
+          if (slideCount === 0) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
+          return finish(owned, 'R7_PRESENCE_READY', function () { capabilityCount = slideCount; });
+        }
         const flags = capabilities?.methodPresence;
         if (!flags) { finish(owned, 'R7_CHECK_UNAVAILABLE'); return false; }
         // The owned bridge decodes a closed six-boolean schema. Retain only a
@@ -468,7 +586,7 @@ export function createController({ bridge, store = new SettingsStore(), transpor
     },
     settingsChanged() { if (disposed || writeLocked()) return; invalidate('SETTINGS_CHANGED'); emit(); },
     saveSettings(raw) {
-      if (disposed || writeLocked()) return false;
+      if (disposed || writeLocked() || configuring || syncing) return false;
       invalidate('SETTINGS_CHANGED');
       try { const settings = validateSettings(raw); stored = store.save(settings); status = 'SETTINGS_SAVED'; emit(); return true; }
       catch (error) { status = safeCode(error); emit(); return false; }

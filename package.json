@@ -8,7 +8,10 @@
   "scripts": {
     "test": "node --test",
     "audit": "node scripts/static-audit.mjs",
-    "build": "node scripts/build-plugin.mjs"
+    "build": "node scripts/build-plugin.mjs",
+    "build:deb": "node scripts/build-deb.mjs",
+    "reproducible": "node scripts/verify-reproducible-build.mjs",
+    "sbom": "node scripts/generate-sbom.mjs"
   },
   "devDependencies": {
     "acorn": "8.15.0",
