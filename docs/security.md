@@ -1,5 +1,7 @@
 # Security and threat model
 
+**Latest rendering/UX delta:** all21 mutation tools have bounded native immediate-display coverage on `fe372cd`; the owner-approved worksheet notification exception below is active. UX-only `aff7b10` is installed from build `81d6783`; native UX acceptance awaits VM access. See [rendering evidence](evidence/immediate-render/verification.md) and [UX status](evidence/connection-menu/verification.md). RC remains suspended. Shared AES-GCM profile storage supersedes the historical plaintext-opt-in paragraph below; see [connection evidence and limits](evidence/connection-profile/verification.md).
+
 **Current status / Текущий статус, 2026-10-09: RC acceptance suspended — NOT PASS.** The Word append/display defect is corrected and natively verified on candidate 68b164f: both paragraphs appear immediately, before diagnostic readback. The updated candidate is installed; the prior user document remains open. Full new-set RC acceptance has not been re-established. This supersedes earlier RC acceptance claims below. See [Word display blocker](evidence/sprint-8/word-display-blocker.md).
 
 ## Trust boundaries
