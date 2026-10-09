@@ -36,9 +36,16 @@ test('candidate Slide final is reviewed, repairs placement, then verifies struct
   assert.match(sent[3].at(-1).content,/исходного запроса/);
   assert.ok(!sent[3].some(x=>x.content.includes('premature')),'candidate prose does not evict tool evidence');
 });
-test('reads before the review cannot justify an immediate repeated final',async()=>{
-  const f=fixture();const {result}=await run(f,[calls('add_slide'),calls('read_presentation','read_slide'),final('premature'),final('still premature')]);
-  assert.equal(result.status,'INCOMPLETE');assert.equal(result.message,null);assert.equal(result.toolCalls,3);
+test('fresh reads before the candidate final remain valid during mandatory completion review',async()=>{
+  const f=fixture();const {result,sent}=await run(f,[calls('add_slide'),calls('move_slide'),calls('read_presentation','read_slide'),final('candidate'),final('verified')]);
+  assert.equal(result.status,'FINAL');assert.equal(result.message,'verified');assert.equal(result.toolCalls,4);
+  assert.equal(sent.length,5,'the candidate still triggers a separate semantic review');
+  assert.match(sent[4].at(-1).content,/исходного запроса/);
+  assert.deepEqual(f.deck,['old0','old1','old2','old3','old4','new']);
+});
+test('reads made before the last mutation cannot justify completion even before review',async()=>{
+  const f=fixture();const {result}=await run(f,[calls('add_slide'),calls('read_presentation','read_slide'),calls('move_slide'),final('candidate'),final('stale')]);
+  assert.equal(result.status,'INCOMPLETE');assert.equal(result.message,null);
 });
 test('a corrective mutation invalidates review readbacks until both are refreshed',async()=>{
   const f=fixture();const {result}=await run(f,[calls('add_slide'),final('candidate'),calls('read_presentation','read_slide'),calls('move_slide'),final('stale')]);

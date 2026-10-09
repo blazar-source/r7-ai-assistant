@@ -645,7 +645,7 @@ export function createCellTools(bridge) {
       // spreadsheet run exactly one formatting tool and none of the Cell reads. Renaming the CELL leg avoids
       // both without changing the shared registry, which this task must not touch.
       name: 'format_cells', kind: 'mutate', editors: ['cell'], policy: 'auto', requires: ['document.write'],
-      description: 'Форматирует блок: address — адрес; ключи bold, italic, numberFormat, fill, clearFill, fontFamily, fontSize, wrapText, columnWidth, rowHeight. sheet — имя, sheetIndex — индекс; без них активный.',
+      description: 'Форматирует address. columnWidth — ширина в символах, НЕ пикселях (обычно 12–30); rowHeight/fontSize — пункты. sheet/sheetIndex — лист; иначе активный.',
       schema: { type: 'object', additionalProperties: false, required: ['address'],
         properties: {
           address: { type: 'string', maxBytes: 24 },

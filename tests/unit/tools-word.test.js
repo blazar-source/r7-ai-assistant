@@ -120,7 +120,7 @@ test('read_context is withheld from every catalogue until a public document read
 // tool is FOR. These three carry the pilot's weight and are pinned VERBATIM, because they are the
 // deliverable itself rather than an implementation detail.
 const PILOT_GUIDANCE = Object.freeze({
-  insert_blocks: 'Добавляет блоки В КОНЕЦ. heading: n — заголовок; обычный абзац — без heading. Список: номер или «• » в text каждого пункта.',
+  insert_blocks: 'Блоки в конец; afterParagraphText — после единственного абзаца с этим точным текстом. heading — заголовок. Списки: «1. »/«• » в text.',
   insert_paragraph: 'Вставляет у КУРСОРА. position:end добавляет перевод строки, НЕ выбирает конец/раздел. Для адресной правки — replace_text; для конца — insert_blocks.',
   set_heading: 'Превращает СУЩЕСТВУЮЩИЙ абзац (по индексу paragraph) в заголовок уровня level. Текст не вставляет.'
 });
@@ -3992,6 +3992,19 @@ function appended(before, headingsBefore, count, headingCount, overrides = {}) {
 }
 const TWO_BLOCKS = Object.freeze([{ text: 'Глава', heading: 1 }, { text: 'Текст' }]);
 
+test('insert_blocks forwards a bounded exact anchor and refuses invalid anchors before dispatch', async () => {
+  const bridge = blocksBridge(appended(3, 0, 1, 0)); const tool = insertBlocksTool(bridge);
+  const args = { blocks: [{ text: 'New' }], afterParagraphText: 'Контроль качества' };
+  validateArguments(tool.schema, args);
+  assert.equal((await tool.execute(args, { editor: 'word' })).ok, true);
+  assert.equal(bridge.seen[0].afterParagraphText, 'Контроль качества');
+  for (const value of ['', null, 42, 'я'.repeat(2049)]) {
+    const result = await tool.execute({ blocks: [{ text: 'New' }], afterParagraphText: value }, { editor: 'word' });
+    assert.equal(result.ok, false);
+  }
+  assert.equal(bridge.seen.length, 1);
+});
+
 test('insert_blocks advertises the closed bounded schema and the four bounds it names', () => {
   const tool = insertBlocksTool(blocksBridge(appended(10, 3, 1, 0)));
   assert.equal(tool.name, 'insert_blocks');
@@ -4003,7 +4016,7 @@ test('insert_blocks advertises the closed bounded schema and the four bounds it 
   assert.equal(schema.type, 'object');
   assert.equal(schema.additionalProperties, false);
   assert.deepEqual(schema.required, ['blocks']);
-  assert.deepEqual(Object.keys(schema.properties), ['blocks']);
+  assert.deepEqual(Object.keys(schema.properties), ['blocks', 'afterParagraphText']);
   const blocks = schema.properties.blocks;
   assert.equal(blocks.type, 'array');
   assert.equal(blocks.maxItems, LIMITS.insertBlocksMax);

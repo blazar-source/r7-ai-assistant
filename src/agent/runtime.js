@@ -12,7 +12,7 @@ const BATCH_REFUSAL = 'one action per batch for a confirm tool; unknown tool nam
 const SLIDE_STRUCTURAL_TOOLS = Object.freeze(['add_slide', 'move_slide', 'duplicate_slide']);
 const SLIDE_DEPENDENCY_RULE = 'Структурное действие add_slide, move_slide или duplicate_slide должно быть единственным вызовом в пакете. Оно сдвигает индексы других слайдов. После него перечитай структуру и нужные слайды, определи актуальные индексы следующего действия; не переноси несколько слайдов по индексам из состояния до первого переноса.';
 const UNSERIALIZABLE_REFUSAL = 'the tool result could not be serialized';
-const SLIDE_COMPLETION_REVIEW = 'Перед завершением сверь ВСЕ требования исходного запроса с результатом, а не только успех отдельных инструментов. Сейчас заново прочитай read_presentation (количество и порядок) и read_slide для изменённых слайдов (текст). Проверь требуемую позицию, точный текст и сохранность прежних слайдов. add_slide вставляет после текущего: если требовался конец и новый слайд не последний, выполни move_slide с fromIndex и toIndex, затем повтори оба чтения по актуальным индексам. Не создавай уже созданные слайды повторно. Используй только известные результаты, не угадывай индексы зависимых действий заранее. Верни final лишь после этой проверки; явно сообщи о невыполненных требованиях, если исправить их нельзя.';
+const SLIDE_COMPLETION_REVIEW = 'Перед завершением сверь ВСЕ требования исходного запроса с результатом, а не только успех отдельных инструментов. Используй результаты read_presentation (количество и порядок) и read_slide для изменённых слайдов (текст), полученные после последнего изменения; если таких чтений нет, выполни их сейчас. Проверь требуемую позицию, точный текст и сохранность прежних слайдов. add_slide вставляет после текущего: если требовался конец и новый слайд не последний, выполни move_slide с fromIndex и toIndex, затем повтори оба чтения по актуальным индексам. Не создавай уже созданные слайды повторно. Используй только известные результаты, не угадывай индексы зависимых действий заранее. Верни final лишь после этой проверки; явно сообщи о невыполненных требованиях, если исправить их нельзя.';
 // §12.1/§8.3: the tool-result mapping runs OUTSIDE the per-action guard, so a result that cannot be
 // serialized must not escape to the outer catch and end the task. It becomes that batch's known tool
 // error instead: one LITERAL, bounded message, never derived from the failure, the document or the
@@ -253,7 +253,7 @@ export async function runAgent(options) {
         if (outcome === 'uncertain') return finish('UNCERTAIN');
         if (reviewSlideCompletion && outcome === 'ok') {
           if (entry.descriptor.kind === 'mutate') mutationRevision += 1;
-          else if (reviewingCompletion) completionReads.push({ name: entry.descriptor.name, revision: mutationRevision });
+          else completionReads.push({ name: entry.descriptor.name, revision: mutationRevision });
         }
         results.push({ tool: entry.descriptor.name, result });
       }

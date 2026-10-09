@@ -1980,6 +1980,24 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var paragraphsBefore = baselineParagraphs.length;
             var headingsBefore = baselineHeadings.length;
             if (!measured(paragraphsBefore) || !measured(headingsBefore)) return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            // Resolve a unique exact-text anchor in this same command, never at the caret.
+            var anchored = typeof request.afterParagraphText === 'string';
+            var insertionStart = paragraphsBefore;
+            var baselineTexts = [];
+            if (anchored) {
+              var anchorMatches = 0;
+              var anchorMethod = false;
+              baselineTexts = baselineParagraphs.map(function (anchorParagraph, anchorIndex) {
+                var anchorValue = anchorParagraph && typeof anchorParagraph.GetText === 'function' ? anchorParagraph.GetText() : null;
+                if (anchorValue === request.afterParagraphText) {
+                  anchorMatches++; insertionStart = anchorIndex + 1;
+                  anchorMethod = typeof anchorParagraph.InsertParagraph === 'function';
+                }
+                return anchorValue;
+              });
+              if (anchorMatches !== 1) return blocksRefusal('ANCHOR_UNAVAILABLE');
+              if (!anchorMethod || baselineTexts.some(function (value) { return typeof value !== 'string'; })) return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            }
             // EVERY paragraph is built — and every heading style RESOLVED — before anything is inserted,
             // so an unresolvable style cannot leave a half-applied append behind.
             var created = [];
@@ -2011,7 +2029,17 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             // decoder turns it into the uncertain class, for which the bridge holds its slot — the
             // readback is the ground truth, never the primitive's return value.
             phase = 'POST_INSERT';
-            for (var pushed = 0; pushed < created.length; pushed++) document.Push(created[pushed]);
+            if (anchored) {
+              baselineParagraphs.forEach(function (anchorParagraph, anchorIndex) {
+                if (anchorIndex + 1 === insertionStart) {
+                  // Each call inserts immediately after the same anchor; reverse traversal
+                  // leaves the requested blocks in their original order.
+                  for (var inserted = created.length - 1; inserted >= 0; inserted--) anchorParagraph.InsertParagraph(created[inserted], 'after', false);
+                }
+              });
+            } else {
+              for (var pushed = 0; pushed < created.length; pushed++) document.Push(created[pushed]);
+            }
             var allParagraphs = document.GetAllParagraphs();
             var allHeadings = document.GetAllHeadingParagraphs();
             if (allParagraphs === null || allParagraphs === undefined || typeof allParagraphs.length !== 'number') return blocksRefusal('CAPABILITY_UNAVAILABLE');
@@ -2031,6 +2059,12 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             });
             for (var scan = 0; scan < paragraphTexts.length; scan++) {
               if (typeof paragraphTexts[scan] !== 'string') return blocksRefusal('CAPABILITY_UNAVAILABLE');
+            }
+            if (anchored) {
+              for (var oldIndex = 0; oldIndex < baselineTexts.length; oldIndex++) {
+                var postIndex = oldIndex < insertionStart ? oldIndex : oldIndex + blocks.length;
+                if (paragraphTexts[postIndex] !== baselineTexts[oldIndex]) return blocksRefusal('ANCHOR_UNAVAILABLE');
+              }
             }
             var answer = [];
             // The phase slot, the four counts and the flags are APPENDED rather than spelled as one array
@@ -2064,8 +2098,8 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
               // and a genuine difference (different words, extra text, a missing paragraph, a different
               // block) still maps to a different string and still makes the flag 0.
               var wanted = editorStoredText(blocks[which].text);
-              answer.push(paragraphsBefore + which < paragraphTexts.length &&
-                editorStoredText(paragraphTexts[paragraphsBefore + which]) === wanted ? 1 : 0);
+              answer.push(insertionStart + which < paragraphTexts.length &&
+                editorStoredText(paragraphTexts[insertionStart + which]) === wanted ? 1 : 0);
             }
             return answer;
           } catch (error) { return blocksRefusal('CAPABILITY_UNAVAILABLE'); }
@@ -4588,7 +4622,7 @@ function decodeBlocks(value, blockCount) {
   if (size === 2) {
     if (members[0] !== BLOCKS_PHASE_PRE) throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
     if (members[1] === 'CAPABILITY_UNAVAILABLE') throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-    if (members[1] === 'STYLE_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
+    if (members[1] === 'STYLE_UNAVAILABLE' || members[1] === 'ANCHOR_UNAVAILABLE') throw new SafeError(ERROR_CODES.TOOL_ERROR);
     throw new SafeError(ERROR_CODES.APPLY_UNCERTAIN);
   }
   // A one-slot answer carries no phase at all, so it can never be confirmed as a pre-insert refusal — the
@@ -7688,6 +7722,9 @@ export function createR7Bridge(plugin, {
     // tool that serves it can never disagree about which refusal a caller receives.
     async insertBlocks(raw) {
       const blocks = raw?.blocks, signal = raw?.signal;
+      const afterParagraphText = raw?.afterParagraphText;
+      if (afterParagraphText !== undefined && (typeof afterParagraphText !== 'string' || afterParagraphText === '')) return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
+      if (afterParagraphText !== undefined && utf8ByteLength(afterParagraphText) > LIMITS.insertBlockBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
       if (!Array.isArray(blocks) || blocks.length < 1 || blocks.length > LIMITS.insertBlocksMax) {
         return Object.freeze({ ok: false, code: ERROR_CODES.TOOL_ERROR });
       }
@@ -7705,13 +7742,14 @@ export function createR7Bridge(plugin, {
         total += bytes;
         shaped.push(Object.freeze(heading === undefined ? { text: block.text } : { text: block.text, heading }));
       }
-      if (total > LIMITS.insertBlocksBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
+      if (total + (afterParagraphText === undefined ? 0 : utf8ByteLength(afterParagraphText)) > LIMITS.insertBlocksBytes) return Object.freeze({ ok: false, code: ERROR_CODES.BYTE_LIMIT });
       try {
         ensureIdle();
         if (editor !== 'word' || currentEditor() !== editor) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
         // The parameter channel, checked BEFORE the ticket exists so the refusal carries no slot at all.
         if (disposed || !hasCallCommand) throw new SafeError(ERROR_CODES.CAPABILITY_UNAVAILABLE);
-        const outcome = await start('blocksinsert', signal, {}, Object.freeze({ blocks: Object.freeze(shaped) }));
+        const outcome = await start('blocksinsert', signal, {}, Object.freeze({ blocks: Object.freeze(shaped),
+          ...(afterParagraphText === undefined ? {} : { afterParagraphText }) }));
         return Object.freeze({ ok: true, paragraphsBefore: outcome.paragraphsBefore, paragraphsAfter: outcome.paragraphsAfter,
           headingsBefore: outcome.headingsBefore, headingsAfter: outcome.headingsAfter, present: outcome.present });
       } catch (error) {

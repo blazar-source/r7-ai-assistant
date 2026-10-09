@@ -1408,12 +1408,13 @@ export function createWordTools(bridge) {
       name: 'insert_blocks', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
       // PILOT-CRITICAL GUIDANCE, and the tool the pilot never called: this is the ONLY mutation that
       // appends at the END of the document, and `heading: n` on a block is what makes it a heading.
-      description: 'Добавляет блоки В КОНЕЦ. heading: n — заголовок; обычный абзац — без heading. Список: номер или «• » в text каждого пункта.',
+      description: 'Блоки в конец; afterParagraphText — после единственного абзаца с этим точным текстом. heading — заголовок. Списки: «1. »/«• » в text.',
       schema: { type: 'object', additionalProperties: false, required: ['blocks'],
         properties: { blocks: { type: 'array', maxItems: LIMITS.insertBlocksMax,
           items: { type: 'object', additionalProperties: false, required: ['text'],
             properties: { text: { type: 'string', minBytes: 1, maxBytes: LIMITS.insertBlockBytes },
-              heading: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } } } } },
+              heading: { type: 'integer', minimum: 1, maximum: LIMITS.insertHeadingMax } } } },
+          afterParagraphText: { type: 'string', minBytes: 1, maxBytes: LIMITS.insertBlockBytes } } },
       precondition: (args, ctx) => wrongEditor(ctx, ERROR_CODES.CAPABILITY_UNAVAILABLE),
       execute: async (args, ctx) => {
         if (missingBridgeMethod(bridge, 'insertBlocks')) return known(ERROR_CODES.CAPABILITY_UNAVAILABLE);
@@ -1423,6 +1424,10 @@ export function createWordTools(bridge) {
         // SHAPE family is the module's argument class and the BYTE family is its byte class, the same two
         // the bridge reports for the same two families.
         const blocks = args?.blocks;
+        const afterParagraphText = args?.afterParagraphText;
+        if (afterParagraphText !== undefined && (typeof afterParagraphText !== 'string' || afterParagraphText === '')) return known();
+        const anchorBytes = afterParagraphText === undefined ? 0 : utf8ByteLength(afterParagraphText);
+        if (anchorBytes > LIMITS.insertBlockBytes) return known(ERROR_CODES.BYTE_LIMIT);
         if (!Array.isArray(blocks) || blocks.length < 1 || blocks.length > LIMITS.insertBlocksMax) return known();
         const forwarded = [];
         let bytes = 0;
@@ -1443,8 +1448,9 @@ export function createWordTools(bridge) {
         // this bound can only refuse a call the runtime would have refused anyway. The caller's signal
         // crosses with the blocks so a Stop cancels before dispatch and marks a dispatched append
         // uncertain.
-        if (bytes > LIMITS.insertBlocksBytes) return known(ERROR_CODES.BYTE_LIMIT);
+        if (bytes + anchorBytes > LIMITS.insertBlocksBytes) return known(ERROR_CODES.BYTE_LIMIT);
         const request = { blocks: Object.freeze(forwarded),
+          ...(afterParagraphText === undefined ? {} : { afterParagraphText }),
           ...(ctx?.signal === undefined ? {} : { signal: ctx.signal }) };
         let result;
         try { result = await bridge.insertBlocks(request); }
