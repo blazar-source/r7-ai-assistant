@@ -32,10 +32,12 @@ function content(text = 'Hello', initial = {}, options = {}) {
 }
 function shape(value, noContent = false) { return noContent ? {} : { GetContent() { return value; } }; }
 function slide(index, objects, classType = 'slide') { return { GetClassType() { return classType; }, GetSlideIndex() { return index; }, GetAllShapes() { return objects; } }; }
-function rig({ targetContent = content(), slides, currentIndex = 0, nativeEnvelope, directScope, noNotification = false, notificationThrows = false } = {}) {
+function rig({ targetContent = content(), slides, currentIndex = 0, nativeEnvelope, directScope, noNotification = false, notificationThrows = false, noHistory = false } = {}) {
   const namespace = { scope: directScope === undefined ? {} : directScope }; let dispatches = 0;
   const deck = slides ?? [slide(0, [shape(targetContent)])];
   const presentation = { GetCurSlideIndex() { return currentIndex; }, GetCurrentSlide() { return deck[currentIndex]; }, GetSlideByIndex(index) { return deck[index] ?? null; } };
+  const historyPoints = [];
+  if (!noHistory) presentation.CreateNewHistoryPoint = () => historyPoints.push(targetContent.calls.slice());
   const notifications = [];
   const Api = { GetPresentation() { return presentation; } };
   if (!noNotification) Api.UpdateInterfaceState = function () {
@@ -43,7 +45,7 @@ function rig({ targetContent = content(), slides, currentIndex = 0, nativeEnvelo
     if (notificationThrows) throw new Error('native notification failed');
   };
   const plugin = { info: { editorType: 'slide' }, callCommand(body, _close, _recalc, callback) { dispatches++; callback(nativeEnvelope ?? new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(Api, directScope === undefined ? namespace.scope : directScope)); } };
-  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches, targetContent, notifications };
+  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches, targetContent, notifications, historyPoints };
 }
 const request = overrides => ({ slideIndex: null, objectOrdinal: 0, bold: true, maxFontSize: LIMITS.slideFormatFontSizeMax, maxResultBytes: LIMITS.slideReadResultBytes, ...overrides });
 
@@ -221,4 +223,13 @@ test('throwing later setter stays uncertain with no second write attempt', async
   assert.deepEqual(targetContent.calls, ['bold']);
   assert.equal((await target.bridge.formatSlideText(request())).ok, false);
   assert.deepEqual(targetContent.calls, ['bold']);
+});
+
+test('format starts native history before any setter and refuses when history is unavailable', async () => {
+  const target = rig();
+  assert.equal((await target.bridge.formatSlideText(request())).ok, true);
+  assert.deepEqual(target.historyPoints, [[]]);
+  const absent = rig({ noHistory: true });
+  assert.deepEqual(await absent.bridge.formatSlideText(request()), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+  assert.deepEqual(absent.targetContent.calls, []);
 });

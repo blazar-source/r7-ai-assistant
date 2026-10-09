@@ -10,6 +10,7 @@ function rig(options = {}) {
   const namespace = { scope: {} };
   let dispatches = 0;
   let mutations = 0;
+  const historyPoints = [];
   const notifications = [];
   let deliver;
   let current = 0;
@@ -46,13 +47,14 @@ function rig(options = {}) {
     };
   }
   const presentation = { GetSlidesCount() { return deck.length; }, GetCurSlideIndex() { return current; }, GetCurrentSlide() { return wrapper(deck[current]); }, GetSlideByIndex(index) { return deck[index] ? wrapper(deck[index]) : null; } };
+  if (!options.noHistory) presentation.CreateNewHistoryPoint = () => historyPoints.push(mutations);
   const Api = { GetPresentation() { return presentation; } };
   if (!options.noNotification) Api.UpdateInterfaceState = function () {
     notifications.push(deck.map(value => value.texts[0]));
     if (options.notificationThrows) throw new Error('native notification failed');
   };
   const plugin = { info: { editorType: 'slide' }, callCommand(body, _close, _recalc, callback) { dispatches++; const value = new Function('Api', 'scope', 'return (' + Function.prototype.toString.call(body) + ')();')(Api, namespace.scope); if (options.defer) deliver = () => callback(value); else callback(value); } };
-  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches, mutations: () => mutations, notifications, deliver: () => deliver() };
+  return { bridge: createR7Bridge(plugin, { editorType: 'slide', ascNamespace: namespace, clock: { now() { return 0; } }, timers: { schedule() { return {}; }, clear() {} } }), dispatches: () => dispatches, mutations: () => mutations, historyPoints, notifications, deliver: () => deliver() };
 }
 const request = values => ({ maxResultBytes: LIMITS.slideReadResultBytes, ...values });
 
@@ -118,3 +120,14 @@ test('known move refusal does not notify the interface and releases the bridge',
   assert.deepEqual(await target.bridge.moveSlide(request({ fromIndex: 1, toIndex: 2 })), { ok: false, code: 'TOOL_ERROR' });
   assert.equal(target.mutations(), 2);
 });
+
+for (const [method, args] of [['moveSlide', { fromIndex: 1, toIndex: 2 }], ['duplicateSlide', { slideIndex: 1 }]]) {
+  test(`${method} starts native history before mutation and requires that capability`, async () => {
+    const target = rig();
+    assert.equal((await target.bridge[method](request(args))).ok, true);
+    assert.deepEqual(target.historyPoints, [0]);
+    const absent = rig({ noHistory: true });
+    assert.deepEqual(await absent.bridge[method](request(args)), { ok: false, code: 'CAPABILITY_UNAVAILABLE' });
+    assert.equal(absent.mutations(), 0);
+  });
+}

@@ -821,13 +821,14 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             if (!t4FormatElement) return t4FormatRefusal(0, 'TOOL_ERROR');
             // R7 2026.1 Slide finalization omits native history/interface refresh.
             // Narrow compatibility notification; never force dirty state or Save.
-            if (typeof Api.UpdateInterfaceState !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (typeof Api.UpdateInterfaceState !== 'function' || typeof t4FormatPresentation.CreateNewHistoryPoint !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t4FormatRequest.bold !== undefined && typeof t4FormatElement.SetBold !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t4FormatRequest.italic !== undefined && typeof t4FormatElement.SetItalic !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t4FormatRequest.underline !== undefined && typeof t4FormatElement.SetUnderline !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t4FormatRequest.fontSize !== undefined && typeof t4FormatElement.SetFontSize !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t4FormatRequest.fontFamily !== undefined && typeof t4FormatElement.SetFontFamily !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
             if (t4FormatRequest.color !== undefined && typeof t4FormatElement.SetColor !== 'function') return t4FormatRefusal(0, 'CAPABILITY_UNAVAILABLE');
+            t4FormatPresentation.CreateNewHistoryPoint();
             if (t4FormatRequest.bold !== undefined) { t4FormatElement.SetBold(t4FormatRequest.bold); }
             if (t4FormatRequest.italic !== undefined) { t4FormatElement.SetItalic(t4FormatRequest.italic); }
             if (t4FormatRequest.underline !== undefined) { t4FormatElement.SetUnderline(t4FormatRequest.underline); }
@@ -895,8 +896,11 @@ function createCommandDispatch(plugin, hasCommand, hasTransport) {
             var t5Source = t5Presentation.GetSlideByIndex(t5From); if (!t5Source || typeof t5Source.GetClassType !== 'function' || t5Source.GetClassType() !== 'slide' || typeof t5Source.GetSlideIndex !== 'function' || t5Source.GetSlideIndex() !== t5From) return t5Refusal(0, 'TOOL_ERROR');
             var t5Before = t5Snapshot(t5Presentation, t5BeforeCount); if (t5Before === null) return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5SourceFingerprint = t5At(t5Before, t5From); var t5SourceParsed = JSON.parse(t5SourceFingerprint);
             // Same bounded Slide compatibility notification as slideformat.
-            if (typeof Api.UpdateInterfaceState !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
-            if (t5Request.mode === 'duplicate') { if (typeof t5Source.Duplicate !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); t5Source.Duplicate(); } else { if (typeof t5Source.MoveTo !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE'); var t5Moved = t5Source.MoveTo(t5To); if (t5Moved === false) return t5Refusal(0, 'TOOL_ERROR'); if (t5Moved !== true) return t5Refusal(1, 'APPLY_UNCERTAIN'); }
+            if (typeof Api.UpdateInterfaceState !== 'function' || typeof t5Presentation.CreateNewHistoryPoint !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t5Request.mode === 'duplicate' && typeof t5Source.Duplicate !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            if (t5Request.mode === 'move' && typeof t5Source.MoveTo !== 'function') return t5Refusal(0, 'CAPABILITY_UNAVAILABLE');
+            t5Presentation.CreateNewHistoryPoint();
+            if (t5Request.mode === 'duplicate') { t5Source.Duplicate(); } else { var t5Moved = t5Source.MoveTo(t5To); if (t5Moved === false) return t5Refusal(0, 'TOOL_ERROR'); if (t5Moved !== true) return t5Refusal(1, 'APPLY_UNCERTAIN'); }
             Api.UpdateInterfaceState();
             var t5AfterCount = t5Presentation.GetSlidesCount(); var t5ExpectedCount = t5Request.mode === 'duplicate' ? t5BeforeCount + 1 : t5BeforeCount; if (t5AfterCount !== t5ExpectedCount) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5After = t5Snapshot(t5Presentation, t5AfterCount); if (t5After === null) return t5Refusal(1, 'APPLY_UNCERTAIN');
             if (t5Request.mode === 'duplicate') { var t5Copy = JSON.parse(t5At(t5After, t5BeforeCount)); if (t5Copy.layoutLength !== t5SourceParsed.layoutLength || t5Copy.layoutHead !== t5SourceParsed.layoutHead || t5Copy.shapes !== t5SourceParsed.shapes || JSON.stringify(t5Copy.texts) !== JSON.stringify(t5SourceParsed.texts)) return t5Refusal(1, 'APPLY_UNCERTAIN'); for (var t5D = 0; t5D < t5BeforeCount; t5D += 1) if (t5At(t5Before, t5D) !== t5At(t5After, t5D)) return t5Refusal(1, 'APPLY_UNCERTAIN'); var t5DuplicateAnswer = [6, t5AfterCount, t5BeforeCount, t5From, t5Copy.layoutLength, t5Copy.shapes]; return t5DuplicateAnswer; }
