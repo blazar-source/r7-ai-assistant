@@ -1,9 +1,6 @@
 # R7 AI Assistant plugin package
 
-The package metadata declares `0.9.0-pilot-rc`: the release candidate is prepared,
-not published. Final RC ZIP hashes and target lifecycle acceptance do not exist until
-Sprint 8 builds from the pinned release commit and records those exact bytes. Host
-implementation or packaging alone is not runtime proof; see the [release contract](<../../docs/superpowers/plans/2026-10-08-sprint-8-release-contract.md>) and [known limitations](<../../CHANGELOG.md#known-limitations>).
+The package metadata declares `0.9.0-pilot-rc.1`, a license/packaging update with the same assistant runtime as the accepted original RC. Final ZIP/DEB hashes, source commit, targeted verification and carried native acceptance are recorded in the corresponding private GitHub Pre-release assets. See the [deployment guide](../../docs/deployment.md), [license](../../LICENSE) and [known limitations](../../CHANGELOG.md#known-limitations).
 
 ## Build and verify (development host only)
 
@@ -17,7 +14,7 @@ npm run build
 Node 24.21.0 was used for host verification. Acorn 8.15.0 and esbuild 0.25.10
 are exact dev-only dependencies, with the platform build binary pinned by the
 lockfile. Neither tool is a user runtime dependency. No CDN or runtime downloads.
-The package version is `0.9.0-pilot-rc`; the release candidate is prepared, not published, and this stage does not build or ship final artifacts.
+The package version is `0.9.0-pilot-rc.1`; the release assets identify the final source commit and hashes.
 
 [Builder](<../../scripts/build-plugin.mjs>) writes only below ignored `dist/`.
 `dist/plugin/r7-ai-assistant.zip` and `dist/plugin/r7-ai-assistant.plugin` are the
