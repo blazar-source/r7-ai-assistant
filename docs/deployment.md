@@ -1,168 +1,139 @@
-# Deployment
+# Установка и эксплуатация
 
-## Status and release artifacts
+Инструкция администратору для **v0.9.0-pilot-rc.1**. Репозиторий и выпуск приватные: скачать комплект может участник с доступом; сотруднику его передаёт администратор. Личное использование и отдельно разрешённый банковский пилот регулируются [LICENSE](../LICENSE).
 
-Version `0.9.0-pilot-rc.1` is a controlled pilot candidate. The owner explicitly accepted the confirmed Slide ASK/Redo history defect as a pilot limitation on 2026-10-09. Publication is authorized only after successful native UAT and final-byte tests, security review and package verification. See [current acceptance](evidence/release-uat/verification.md); older Sprint 8 inventories identify historical candidates only.
+## Проверенная среда
 
-- Plugin ZIP: `dist/plugin/r7-ai-assistant.zip`.
-- Data-only Astra DEB: `dist/deb/r7-ai-assistant_0.9.0-pilot-rc.1_amd64.deb`.
-- SPDX 2.3 SBOM: `dist/r7-ai-assistant.spdx.json`.
-- Checksums: `dist/SHA256SUMS`; the published manifest uses the three artifact basenames so `sha256sum -c SHA256SUMS` works in a single download directory.
-- Final source commit, toolchain, tests, exact archive hashes and acceptance: `release-manifest.json` and `final-review.md` attached to the private GitHub Pre-release. Tracked `tested-candidate.json` identifies the earlier native-tested payload, not the later provenance-bearing release ZIP.
+| Компонент | Требуемое значение |
+|---|---|
+| Astra Linux SE | 1.7.9, build 1.7.9.41 |
+| Архитектура | amd64 |
+| Пакет Р7 | `r7-office 2026.1.2-1942~astra-signed` |
+| Приложение Р7 | `2026.1.2.1942` |
 
-The private GitHub release must remain a Pre-release until the bank environment and ZPS are accepted. The package installs static files only: no daemon, listener, Node runtime, MCP server, TCP/WebSocket bridge, key, user endpoint or network service. Assets are bundled locally with no CDN; end users need no development toolchain.
+[Декларация совместимости](../packaging/compatibility.json). Другие сочетания пока не подтверждены; preflight отказывает при несовпадении или невозможности проверки. Не обходите отказ и не отключайте ЗПС или другие механизмы защиты.
 
-## Licensing
+## 1. Получить и проверить комплект
 
-The rights holder is **Бугров Геннадий Дмитрович**. Personal noncommercial use is free. Bank-internal pilot use is separately permitted for a bank supplied or confirmed by the rights holder for that pilot; ongoing commercial use is not granted. See [LICENSE](../LICENSE) and the [licensing guide](licensing.md). The original `0.9.0-pilot-rc` package is unchanged; use the `.1` package for the updated license.
+Из [выпуска](https://github.com/blazar-source/r7-ai-assistant/releases/tag/v0.9.0-pilot-rc.1) скачайте в один каталог:
 
-## Supported target
+- `r7-ai-assistant.zip`;
+- `r7-ai-assistant_0.9.0-pilot-rc.1_amd64.deb`;
+- `r7-ai-assistant.spdx.json` — SBOM;
+- `SHA256SUMS`.
 
-The complete supported tuple is:
+Также сохраните `release-manifest.json` и `final-review.md`: они связывают сборку с коммитом и проверками. В каталоге загрузки выполните:
 
-- Astra Linux SE `1.7.9`, build `1.7.9.41`, `amd64`;
-- R7 deb package `r7-office 2026.1.2-1942~astra-signed`, `amd64`;
-- R7 executable version `2026.1.2.1942`.
+```sh
+sha256sum -c SHA256SUMS
+```
 
-The product-owned declaration is [`../packaging/compatibility.json`](../packaging/compatibility.json). The shipped preflight reads `/etc/astra_version`, `/etc/astra/build_version`, the installed R7 package identity/version/architecture and `DesktopEditors --version`, then fails closed if any value is missing, unreadable, malformed, conflicting or different. All other tuples, including R7 `2026.3.1`, are **NOT VERIFIED** and refused until their own complete lifecycle is measured. See the [compatibility matrix](compatibility-matrix.md).
+Все три файла должны получить `OK`. При несовпадении остановите установку. SHA256SUMS подтверждает совпадение файлов; доверенный доступ к самому выпуску также необходим.
 
-## Administrator install and per-user activation
+## 2. Установить DEB
 
-For authorized testing, install the supplied, checksum-verified DEB from its containing directory:
+Из того же каталога:
 
 ```sh
 sudo dpkg -i ./r7-ai-assistant_0.9.0-pilot-rc.1_amd64.deb
 ```
 
-`dpkg -i` installs an inert payload under `/usr/share/r7-ai-assistant/`, the product-owned file manifest under `/usr/share/doc/r7-ai-assistant/`, and `/usr/bin/r7-ai-assistant-preflight`. It does not activate the plugin in a user profile.
+Продолжайте только после успешной установки. Пакет содержит статические файлы в `/usr/share/r7-ai-assistant/`, манифест в `/usr/share/doc/r7-ai-assistant/` и команду `/usr/bin/r7-ai-assistant-preflight`. Он не активирует плагин для пользователей и не устанавливает службы. Node.js, npm и инструменты разработки для работы не нужны.
 
-As the desktop user who will run R7, execute the shipped compatibility preflight and only on exit `0` copy the payload to the measured per-user location:
+## 3. Активировать для сотрудника
+
+Выполняйте в сессии **того пользователя ОС, который будет работать с Р7**, без `sudo`. Закройте все панели ассистента в Word, Cell и Slide, предварительно завершив задания и сохранив документы. Проверка должна завершиться кодом 0; иначе копирование запрещено.
 
 ```sh
 /usr/bin/r7-ai-assistant-preflight || exit 42
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
-install -d -m 0755 "$TARGET"
-cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"
+BACKUP="$(mktemp -d "$HOME/r7-assistant-backup.XXXXXX")" || exit 1
+if [ -d "$TARGET" ]; then mv "$TARGET" "$BACKUP/plugin" || exit 1; fi
+install -d -m 0755 "$TARGET" || exit 1
+cp -a /usr/share/r7-ai-assistant/plugin/. "$TARGET/" || exit 1
 ```
 
-Do not copy after a non-zero result; unsupported targets refuse before activation with exit code `42`. Restart R7 after activation when required for plugin discovery.
+Старый каталог переносится в резервную копию, чтобы новая активация не сохраняла лишние файлы прежней версии. Сохраните каталог резервной копии до проверки. При ошибке копирования не открывайте панель: переместите частичный новый каталог в отдельный резервный каталог и верните прежний `plugin` из `$BACKUP` на место `$TARGET`. Не копируйте плагин в каталоги производителя под `/opt/r7-office/` или старый путь `editors/data/sdkjs-plugins/`. Системная активация для всех пользователей не подтверждена.
 
-The supported destination is exactly:
+Откройте Р7 → **Плагины → R7 AI Assistant**. Если плагин не обнаружен, сохраните документы и перезапустите Р7. Не закрывайте процесс принудительно с несохранённой работой.
 
-`$HOME/.local/share/r7-office/editors/sdkjs-plugins/{7C91D48E-5F12-4B36-8A90-2DFA8467C013}/`
+## 4. Настроить подключение и проверить
 
-The system-wide product plugin path is **NOT VERIFIED** and must not be used. Do not copy into vendor directories below `/opt/r7-office/desktopeditors/editors/sdkjs-plugins/`, and do not use stale development directories below `$HOME/.local/share/r7-office/editors/data/sdkjs-plugins/`. Never disable or weaken ZPS to make installation or loading succeed.
+В сессии сотрудника укажите HTTPS endpoint `/v1/chat/completions`, точное имя модели и API-ключ, затем нажмите **«Сохранить и проверить»**. Убедитесь, что открылся чат со статусом **«Готово»**. Профиль общий для Word/Cell/Slide этого пользователя.
 
-## End-user configuration and operation
+На вымышленных данных выполните [три коротких сценария](examples.md). Проверьте видимый результат и данные, сохраните файлы и повторно откройте. Отдельно проверьте повторное открытие панелей и сохранение подключения после перезапуска Р7. Кнопка проверки подключения не доказывает приёмку всех задач.
 
-Open **R7 AI Assistant** in Word, Cell or Slide. Use the first-launch connection screen, or **⋯ → Настройки подключения**, to configure:
+Для банковского развёртывания требуется своя проверка TLS/CORS/AUTH, точной модели Qwen, ЗПС и правил передачи данных. [Смена ключа и параметры подключения](admin-connection.md) · [Пользовательская инструкция](user-guide.md).
 
-- a full HTTPS endpoint ending exactly in `/v1/chat/completions`;
-- the provider's exact model identifier (the product does not silently substitute another model);
-- the API key;
-- optional HTTP timeout (`5–120` seconds), `max_tokens` (`64–8192`) and temperature (`0–2`).
+<a id="user-settings-and-data"></a>
+## Где находятся настройки и данные
 
-On first launch, use the separate connection screen and press **«Сохранить и проверить»**. A successful check saves one encrypted connection profile shared by Word, Cell and Slide. Already open panels running this version synchronize while idle within two seconds, on focus, and before requests. Sending a message never saves the settings form. Use **⋯ → Настройки подключения** to change the profile; stale forms cannot overwrite a newer save. The pilot administrator may configure or rotate credentials remotely in the employee's desktop session; see the [administrator procedure](admin-connection.md). The pilot does not restrict this button to an administrator role.
+Общий профиль: IndexedDB `r7-ai-assistant:connection:v2` в браузерном профиле Р7. API-ключ защищён AES-256-GCM; неэкспортируемый CryptoKey хранится там же. Доступ к целому профилю или работающему origin может позволить расшифрование. Это не OS key vault.
 
-Choose ASK for analysis or EDIT for a change request, choose document context only when the panel reports it available, enter a prompt and press **«Отправить»** or `Ctrl+Enter`. **«Стоп»** ends a pending operation. Confirm-policy edits appear as Preview and require explicit **«Применить»**; saving and Undo remain explicit R7 user actions. **«Сбросить настройки»** targets only the product settings namespace.
+Каталог `$HOME/.local/share/r7-office/editors/data/` содержит пользовательские данные Р7 и не принадлежит пакету. Его нельзя удалять при обслуживании плагина. Старые настройки localStorage могут находиться в `data/cache/Local Storage/leveldb/`; миграция удаляет логические старые записи после успешного зашифрованного сохранения, но не стирает резервные копии и остатки на диске.
 
-## User settings and data
+Чат хранится в памяти. В журнал не должны попадать ключи, заголовки, запросы и содержимое документов. Передача сообщений и прочитанных данных настроенному AI-серверу необходима для работы. [Модель угроз](security.md).
 
-R7 stores the plugin's browser localStorage in its user CEF LevelDB at:
+## Обновление
 
-`$HOME/.local/share/r7-office/editors/data/cache/Local Storage/leveldb/`
+1. Сверьте совместимость и контрольные суммы нового комплекта. Прочитайте его ограничения.
+2. Завершите задания, сохраните документы и закройте все панели ассистента в Word, Cell и Slide.
+3. Установите новый проверенный DEB через `sudo dpkg -i <путь-к-пакету>`.
+4. Повторите preflight и активацию из шага 3 с новой резервной копией.
+5. Откройте панель и проверьте подключение и тестовое задание.
 
-The connection profile is stored in IndexedDB `r7-ai-assistant:connection:v2`, encrypted using AES-256-GCM with a fresh random key and nonce per save. The non-exportable CryptoKey is stored in the same browser profile. This prevents plaintext settings disclosure, but is **not an OS key vault**: access to the complete user profile or the running plugin origin can permit decryption. No hardcoded encryption key or plaintext fallback is used. On upgrade an explicitly remembered v1 profile is migrated only after encrypted commit; the legacy `r7-ai-assistant:v1:settings` and `r7-ai-assistant:v1:apiKey` records are then removed. Old copies in backups or previously allocated disk space are not securely erased. Reset commits a tombstone so an old panel cannot resurrect a v1 profile. The entire profile root `$HOME/.local/share/r7-office/editors/data/` is user/vendor data and is not package-owned.
+Установка DEB сама не обновляет активированную пользовательскую копию. Настройки менять или сбрасывать для обновления не требуется. Произвольные будущие сборки не считаются проверенными заранее.
 
-Final `ab06fef` DEB reinstall and uninstall preserved the complete LevelDB file-hash manifest and vendor SDK hash. Sprint 7 additionally measured an upgrade to the explicitly unshipped `0.9.0-pilot-dev.1` fixture. These are bounded measurements, not proof for arbitrary future upgrade bytes. Clearing the product namespace is the user's explicit **«Сбросить настройки»** action.
+## ZIP и ручная активация
 
-## Manual ZIP activation on the measured target
+Основной путь пилота — DEB. ZIP предназначен для измеренной ручной активации в том же пользовательском каталоге; импорт через менеджер плагинов Р7 не подтверждён. ZIP не содержит preflight: он должен быть установлен через DEB.
 
-The final ZIP has a measured manual per-user lifecycle. This route uses the compatibility preflight supplied by the installed DEB; the ZIP alone does not carry that preflight. It does not establish vendor plugin-manager import. Close the product panel while replacing its files; keep documents open and preserve unsaved work.
-
-After verifying the ZIP checksum against the pinned inventory, use a fresh staging directory and retain the previous plugin copy:
+Закройте все панели ассистента, проверьте архив и preflight, распакуйте в отдельный каталог и сохраните предыдущую копию:
 
 ```sh
-ZIP='/path/to/verified/r7-ai-assistant.zip'
-STAGING="$(mktemp -d)"
-python3 -m zipfile -e "$ZIP" "$STAGING/plugin"
 /usr/bin/r7-ai-assistant-preflight || exit 42
+STAGING="$(mktemp -d)" || exit 1
+python3 -m zipfile -e ./r7-ai-assistant.zip "$STAGING/plugin" || exit 1
 GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
 TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
-if [ -d "$TARGET" ]; then cp -a "$TARGET" "$STAGING/previous-plugin"; fi
-install -d -m 0755 "$TARGET"
-cp -a "$STAGING/plugin/." "$TARGET/"
+if [ -d "$TARGET" ]; then mv "$TARGET" "$STAGING/previous-plugin" || exit 1; fi
+install -d -m 0755 "$TARGET" || exit 1
+cp -a "$STAGING/plugin/." "$TARGET/" || exit 1
 ```
 
-Reopen the panel. The native test verified its actual loaded JS, stylesheet and ZIP provenance hashes, then deactivated that exact GUID directory and restored the prior DEB copy. Deactivation affects only that product directory; settings and vendor SDK remain outside it. Preserve the staging backup until the replacement is verified.
+Откройте панель и проверьте результат. Сохраняйте предыдущую копию до завершения проверки. Если активация не удалась, не открывайте панель: переместите частичную новую копию в отдельный резервный каталог и верните `$STAGING/previous-plugin` на место `$TARGET`. Python требуется только для этого способа распаковки, а не для исполнения плагина.
 
-## Upgrade
+## Удаление
 
-Every real future upgrade must be independently built, preflighted and measured. Set `PACKAGE` to the actual supplied package path, install it, rerun preflight and refresh the per-user copy:
-
-```sh
-PACKAGE='/path/to/measured/r7-ai-assistant_<new-version>_amd64.deb'
-sudo dpkg -i "$PACKAGE"
-/usr/bin/r7-ai-assistant-preflight || exit 42
-GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
-TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
-install -d -m 0755 "$TARGET"
-cp -a "/usr/share/r7-ai-assistant/plugin/." "$TARGET/"
-```
-
-Do not activate an upgrade if preflight refuses it. The Sprint 7 `.1` fixture is unshipped and must never be used as an operator package or generalized to future bytes. The DEB has no maintainer scripts and does not edit the R7 profile or vendor installation files.
-
-## Uninstall and deactivate
-
-Remove the package-owned system payload, then as the desktop user remove only this product's per-user activated copy:
+Закройте панель ассистента. Администратор удаляет пакет:
 
 ```sh
 sudo dpkg -r r7-ai-assistant
-GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
-rm -rf -- "$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
 ```
 
-The first command removes the package's `/usr/share/r7-ai-assistant/`, `/usr/share/doc/r7-ai-assistant/`, and `/usr/bin/r7-ai-assistant-preflight` entries through dpkg. Because the DEB has no maintainer scripts, it cannot remove a user's activated copy; the explicit second step is the measured deactivation procedure.
+Затем сотрудник деактивирует только каталог этого плагина. Для обратимости вместо удаления переместите его в новый резервный каталог:
 
-Uninstall and deactivation do **not** remove R7 localStorage settings, a remembered opt-in key, caches, documents, recovery data, the vendor-owned `v1/` SDK directory, other plugins, or stale development copies under `editors/data/sdkjs-plugins/`. Do not delete those paths opportunistically.
+```sh
+GUID='{7C91D48E-5F12-4B36-8A90-2DFA8467C013}'
+TARGET="$HOME/.local/share/r7-office/editors/sdkjs-plugins/$GUID"
+BACKUP="$(mktemp -d "$HOME/r7-assistant-disabled.XXXXXX")" || exit 1
+if [ -d "$TARGET" ]; then mv "$TARGET" "$BACKUP/plugin" || exit 1; fi
+```
 
-## Known limitations
+Документы, другие плагины и настройки Р7 сохраняются. Если требуется удалить подключение, сначала используйте **«Сбросить настройки»** в панели. Это логическое удаление, не гарантированное стирание DB/WAL или резервных копий.
 
-The consolidated release list is also reproduced in the [RC changelog](../CHANGELOG.md#known-limitations).
+<a id="known-limitations"></a>
+## Известные ограничения
 
-- **Slide Undo/Redo (accepted pilot limitation):** Asking the assistant to read a presentation after Undo can discard the Redo branch, even in ASK mode. Reads can also add empty Undo steps. Restarting the assistant or R7 does not recover discarded Redo; the change must be performed again manually. Frequency in ordinary use has not been measured. Owner explicitly accepted this limitation on 2026-10-09; it is not a fixed or passing history workflow.
+- **Slide Undo/Redo:** чтение после Undo может сбросить Redo и добавить пустые шаги истории. Владелец принял этот неисправленный дефект только для пилота. Частота не измерена; перезапуск не восстанавливает потерянный повтор.
+- **Банковская среда:** TLS/CORS/AUTH/Qwen и ЗПС не подтверждены; нельзя ослаблять защиту ради установки.
+- **Совместимость:** другие сочетания Astra/Р7/архитектуры, системный путь активации и импорт через менеджер плагинов не подтверждены.
+- **Качество задач:** ограничения модели и SDK допускают частичный результат. Проверяйте текст, формулы, суммы и порядок слайдов; завершённые изменения остаются, даже если последующая проверка не завершилась.
+- **Оформление:** каталог не покрывает все объекты Р7; произвольная сохранность сложных объектов и оформления не обещана. Видимость A1 исправлена и проверена, но это не доказательство корректности любых формул.
+- **Диалог и управление:** история в памяти, контекст ограничен; нет ролей администратора и централизованной выдачи профилей. Полная пиксельная последовательность всех кратковременных стадий UI не подтверждена.
+- **Сборка:** воспроизводимость измерена на зафиксированном toolchain и платформе сборки; это не обещание одинаковых байтов на любой ОС.
 
-- **ZPS:** ZPS state and product operation with ZPS enabled are **NOT VERIFIED**; never disable or weaken ZPS to obtain acceptance evidence.
-- **Unsupported tuples:** Every Astra/R7/architecture tuple except the exact supported tuple above is **NOT VERIFIED** and refused by preflight.
-- **System-wide path:** A system-wide product plugin path is not claimed or verified and must not be used; only the per-user brace-GUID path above is supported.
-- **Slide completion:** Earlier append/order cases passed on `ab06fef`; current compound-task acceptance is recorded separately. Completion review requires fresh structure/text reads and separates structural calls, but remains model-assisted: it does not deterministically prove all natural-language requirements or eliminate stale indices across turns. Check actual order/text for consequential work; completed changes remain in the document if review cannot finish.
-- **Plugin ZIP:** Manual per-user activation/load/deactivation is measured for the final ZIP with the DEB-installed preflight; vendor plugin-manager import and other installation routes remain **NOT VERIFIED**.
-- **Future upgrades:** Arbitrary future upgrade bytes are **NOT VERIFIED**; the synthetic `.1` fixture is not an operator path.
-- **Platform scope:** Final Astra Word/Cell/Slide screenshots, focus and compact geometry are recorded. Windows Cell and other platform combinations remain **NOT VERIFIED**.
-- **UX-B5 pixels:** A real working-stage screenshot and native progress/terminal observations are recorded; the complete transient five-state pixel sequence remains **NOT VERIFIED**.
-- **Model compliance:** Two raw-HTML/code requests were rejected with the bounded invalid-JSON error; a fresh explicit-envelope probe passed. Model output and whole-task compliance are not guaranteed. The final narrow journeys do not reverify Save/reopen, native Undo or arbitrary rich-object preservation.
-- **Cell display:** The A1 repaint discrepancy is corrected by recalculation after `write_range`. Final native A1 text is visible and the full value appears in the formula bar. This narrow check does not establish arbitrary formula/recalculation behavior.
-- **Qwen calibration:** Real Qwen calibration did not establish reliable completion within the measured envelope, and Bank Qwen acceptance remains **NOT RUN**; no availability or performance guarantee is made.
-- **TIMEOUT/HTTP_ERROR:** Controlled and provider failures terminate with bounded `TIMEOUT` or `HTTP_ERROR` rather than false success, but exact bank TLS/CORS/AUTH behavior remains **NOT RUN**.
+## Доказательства и версии
 
-Additionally, reproducibility is bounded to the same pinned source commit, Node/esbuild versions, operating system and CPU platform, and ignored `dist/` output is identified durably only by the tracked Sprint 8 inventory/checksums. The test-only upgrade fixture is excluded from the release artifact set.
-
-## Evidence index
-
-- [Historical ab06fef verification and hashes](evidence/sprint-8/final-verification-ab06fef.md)
-- [Final native compact-panel evidence](evidence/sprint-9/native-compact-final.md)
-- [Independent final T5 security review](evidence/sprint-8/t5-review-ab06fef.md)
-- [Historical independent T8 exit review](evidence/sprint-8/t8-review-ab06fef.md)
-- [Sprint 8 release contract](superpowers/plans/2026-10-08-sprint-8-release-contract.md)
-- [Sprint 8 defect triage](evidence/sprint-8/t2-release-defect-triage.md)
-- [Sprint 7 packaging contract](superpowers/plans/2026-10-08-sprint-7-packaging-contract.md)
-- [Sprint 7 reproducible-build evidence](evidence/sprint-7/t4-reproducible-build.md)
-- [Sprint 7 DEB install-mechanism evidence](evidence/sprint-7/t5-deb-install-mechanism.md)
-- [Sprint 7 lifecycle evidence](evidence/sprint-7/t6-lifecycle-astra.md)
-- [Sprint 7 compatibility, refusal and ZPS evidence](evidence/sprint-7/t7-astra-compatibility-zps.md)
-- [Compatibility matrix](compatibility-matrix.md)
-- [Sprint 7 final artifact inventory](evidence/sprint-7/final-artifact-inventory.md)
-- [Sprint 7 final artifact reconciliation](evidence/sprint-7/final-artifact-reconciliation.md)
-
-Future target acceptance must preserve unsaved work, use a separate safe Astra state, and never bypass preflight or protection mechanisms.
+Для исходного rc — [пользовательская приёмка](evidence/release-uat/verification.md). Для `.1` — [лицензионное обновление](evidence/licensing-update/verification.md) и манифест/ревью в выпуске. Полный набор 1447 тестов и UAT переносится на неизменный runtime; `.1` имеет 23 адресные проверки упаковки и отдельную проверку обновления Astra. Исторические отчёты спринтов относятся к своим ревизиям. Эта документационная правка не заменяет опубликованные архивы.

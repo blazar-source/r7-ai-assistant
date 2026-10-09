@@ -1,38 +1,45 @@
-# AI protocol
+# Протокол AI-сервера
 
-## strict-bank
+Технический контракт пилотной версии. Пользователь вводит обычное задание; JSON ниже формирует модель, а не сотрудник.
 
-POST to configured HTTPS endpoint ending in `/v1/chat/completions`; settings must define unambiguous full completion URL. Headers: Authorization Bearer session key, Content-Type application/json, X-Session-ID random UUID stable per chat and rotated for new chat. Test connection uses a newly generated temporary UUID isolated from the current chat/session and does not append to its conversation.
+## HTTP
 
-Request fields only: `model`, `messages`, `max_tokens`, `temperature`. Default bank model setting `qwen`. No **native** OpenAI tool fields (`tools`, `tool_choice`, `tool_calls`), no streaming, no `response_format`/structured-output API. Our own tool protocol is carried as ordinary JSON text inside `message.content`; read only `choices[].message.content` and require text. See the [Sprint 2 design](<superpowers/specs/2026-10-04-sprint-2-agent-runtime-design.md>). OpenRouter is a development transport, not a production dependency.
+Плагин отправляет POST на настроенный полный HTTPS URL, заканчивающийся на `/v1/chat/completions`. Заголовки: `Authorization: Bearer …`, `Content-Type: application/json`, `X-Session-ID`. Идентификатор сессии стабилен в чате и меняется для нового чата; проверка подключения использует отдельную временную сессию.
 
-## Model targets
+Тело содержит `model`, `messages`, `max_tokens`, `temperature`. Используется текст `choices[].message.content`; потоковая передача и нативные поля OpenAI `tools`, `tool_choice`, `tool_calls` не используются. Название модели берётся из настроек без автоматической подмены. Само наличие совместимого HTTP API не гарантирует соблюдение моделью протокола действий.
 
-Explicit external development targets supplied by the user:
+## Ответ модели в агентском режиме
 
-- Main strict-bank acceptance: `qwen/qwen3.8-27b:free`.
-- Additional compatibility: `qwen/qwen3.8-max-0902`.
-
-The bank targets the Qwen 3.8 family, most likely Qwen3.8-27B; its exact checkpoint/served identifier is not yet confirmed. Do not hardcode a checkpoint or OpenRouter hostname into agent logic. Model is a user setting. Do not silently substitute another model if a configured ID is unavailable; classify/report the failure. Both exact external IDs were found in the public [OpenRouter model catalog](https://openrouter.ai/api/v1/models); this verifies catalog presence only. Authenticated successful calls and strict-bank acceptance are not yet verified.
-
-After bank access, run the same acceptance suite against its served checkpoint, calibrating the system prompt/JSON protocol only where evidence shows a need. No Hub changes required.
-
-## Model text protocol
-
-One JSON object per response:
+Ровно один JSON-объект, либо один полный блок с ограждением `json`. Пример чтения структуры Word:
 
 ```json
-{"type":"tool","tool":"r7_replace_selection","arguments":{"text":"replacement"}}
+{"type":"tool_calls","calls":[{"tool":"read_structure","arguments":{}}]}
 ```
+
+Пример завершения:
 
 ```json
-{"type":"final","message":"Готово"}
+{"type":"final","message":"Структура прочитана. В документе есть заголовки и таблица."}
 ```
 
-Schemas use closed properties. Parse entire object, optionally strip one complete outer JSON fence; do not extract arbitrary substrings, execute JS or accept unknown fields/tools. Enforce input size before parsing. One controlled repair request for malformed JSON; second failure terminates. Ordinary text is invalid protocol, not an executable fallback.
+Каждый вызов содержит только `tool` и `arguments`. Имена и аргументы должны соответствовать [каталогу](tools.md). Весь пакет проверяется до выполнения; неизвестные инструменты, лишние поля и несоответствующие типы отклоняются. Обычный текст вне конверта не служит запасным исполняемым форматом. Разрешена одна попытка исправления ошибочного протокола.
 
-B is a one-shot compatibility slice: malformed JSON is a safe error and repair is deliberately not claimed. D must implement the single controlled repair and multi-step loop specified above. This scope distinction does not relax strict-bank request fields or mutation policy.
+Результаты возвращаются модели как обычные сообщения роли `user` с JSON `type: tool_results`, а не как нативные function/tool-сообщения. Это данные о выполнении, не дополнительные инструкции или права.
 
-Tool results are bounded JSON sent in compatible conversation messages, not native function messages. System rules/catalog are trusted; document context and tool-derived content are explicitly untrusted data. Model instructions cannot override ASK, consent, limits or schemas.
+## Отдельный протокол замены выделения
 
-Limits required for steps, argument bytes, result bytes, context budget, request/operation time and repair count. Values selected and regression-tested before runtime implementation. Stop cancels network and prevents future mutations; completed editor mutations are not falsely reported as rolled back.
+В `src/ai/protocol.js` также сохранён отдельный путь предпросмотра замены выделения. Он принимает `{"type":"tool","tool":"r7_replace_selection","arguments":{"text":"Новый текст"}}` в EDIT. Это транспортное имя этого пути, а не имя инструмента агентского каталога (`replace_selection`). Его нельзя смешивать с конвертом `tool_calls` общего агента. Применение требует подтверждения пользователя и повторной проверки выделения.
+
+## Ограничения и политика
+
+Пределы определяются в [limits.js](../src/shared/limits.js): до 8 вызовов в одном ответе, 8192 байт аргументов вызова, 16384 байт сериализованного результата инструмента и 65536 байт активного контекста. Все размеры — UTF-8. Общие лимиты шагов/вызовов/времени задаёт конфигурация запуска; настройки панели отличаются от базового профиля runtime.
+
+ASK не предоставляет инструменты записи. Модели не предлагаются `deny` и отдельные `confirm`-операции; подтверждаемая замена выделения обслуживается UI-путём. Для длинного Word-документа может использоваться сокращённый профиль `bulk`. Каталог не предоставляет shell, произвольный JavaScript или доступ к произвольным файлам.
+
+При «Стоп» дальнейшие действия прекращаются; уже выполненные изменения не объявляются отменёнными. Неопределённый результат записи не разрешает автоматически повторить запись.
+
+## Проверка подключения организации
+
+Администратор должен проверить TLS, CORS, авторизацию, поддержку заголовков и соблюдение моделью JSON-протокола на тестовых документах. Успешная кнопка «Сохранить и проверить» не заменяет приёмку составных задач. Банковский контур и его точная модель Qwen пока не подтверждены; список доступных моделей поставщика не является доказательством совместимости.
+
+Источники контракта: [HTTP](../src/ai/protocol.js), [конверты и результаты](../src/agent/protocol.js), [реестр](../src/tools/registry.js). [Безопасность](security.md).
