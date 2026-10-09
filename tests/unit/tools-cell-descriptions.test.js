@@ -1,11 +1,6 @@
-// The model reads EXACTLY ONE field per tool — the description (`name (kind, policy): description`) — because the
-// schema is validation-only and never rendered. So a required argument the description never names is an argument
-// the model can only GUESS, and the end-to-end P&L run proved what guessing costs: `write_range` was called with
-// `values` instead of `cells` and the same call was repeated ~117 times until the step budget ran out.
-//
-// This file makes that a build-time property rather than a lesson: every required argument of every Cell tool must
-// appear, verbatim, in that tool's description — and the formatting tool must name its keys too, because they are
-// exactly what a model has to be told in order to ask for a number format, bold text or a column width.
+// Descriptions supplement the enforced schemas now included in the model request
+// (agent-runtime.test.js verifies the actual wire). Keep required names and units
+// discoverable; optional property names and bounds come from the complete schema.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCellTools } from '../../src/tools/cell.js';
@@ -39,14 +34,10 @@ test('serialisation arguments are named wherever the model has to supply them', 
   assert.match(byName.get('add_sheet').description, /name/);
 });
 
-test('format_cells names EVERY formatting key, because a model cannot infer them from a schema it never sees', () => {
+test('format_cells describes editor units that its numeric schema cannot express', () => {
   const formatCells = tools.find((tool) => tool.name === 'format_cells');
-  const keys = Object.keys(formatCells.schema.properties).filter((key) => key !== 'sheet' && key !== 'sheetIndex');
-  assert.ok(keys.length >= 10, `the formatting surface is wide (${keys.length} keys)`);
-  for (const key of keys) {
-    assert.ok(formatCells.description.includes(key),
-      `format_cells never names its "${key}" key, so the model cannot ask for it`);
-  }
+  assert.match(formatCells.description, /columnWidth.*символах.*НЕ пикселях/);
+  assert.match(formatCells.description, /rowHeight\/fontSize.*пункты/);
 });
 
 test('the selector of every sheet-aware tool is named, and every description stays inside its ceiling', () => {

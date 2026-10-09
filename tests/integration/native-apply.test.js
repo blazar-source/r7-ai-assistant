@@ -122,7 +122,7 @@ for (const receipt of [true, false, undefined, { text: 'private' }]) test(`settl
 test('after dispatch conflicting controller/UI controls are disabled; timeout stays locked until real late callback without state resurrection', async () => {
   const f = nativeRig(); const { operation } = await dispatchWrite(f); const write = f.writes()[0]; const before = f.controller.getState();
   assert.equal(before.writeLocked, true); assert.equal(before.status, 'APPLYING');
-  for (const id of ['stop', 'new-chat', 'reset', 'save-settings', 'test-connection', 'mode', 'include-context', 'endpoint', 'send', 'cancel-preview']) assert.equal(f.id(id).disabled, true, id);
+  for (const id of ['stop', 'new-chat', 'reset', 'save-settings', 'change-connection', 'mode', 'include-context', 'endpoint', 'send', 'cancel-preview']) assert.equal(f.id(id).disabled, true, id);
   for (const action of [() => f.controller.stop(), () => f.controller.newChat(), () => f.controller.reset(), () => f.controller.settingsChanged(), () => f.controller.saveSettings({}), () => f.controller.setMode('ASK'), () => f.controller.setIncludeContext(false)]) action();
   assert.equal(f.controller.getState().generation, before.generation); assert.equal(f.controller.getState().chat, before.chat);
   f.advance(5000); assert.equal(await operation, false); assert.equal(f.controller.getState().status, 'APPLY_UNCERTAIN');

@@ -421,10 +421,10 @@ test('the SELECTOR alone is not a formatting property, and the T4 rule still hol
 });
 
 test('the formatting DESCRIPTION names the sheet arguments the model reads', async () => {
-  // The description is the only MODEL-FACING field: the schema is validation-only and never rendered, so a
-  // selector it does not name is undiscoverable. This asserts CONTENT, not merely that a description exists.
+  // Both selectors are also in the model-visible schema; the description explains the default.
   const tool = toolWith(bridgeWith({}));
-  assert.match(tool.description, /sheet\s*—/, 'names the sheet argument');
-  assert.match(tool.description, /sheetIndex\s*—/, 'names the index argument');
+  assert.match(tool.description, /\bsheet\b/, 'names the sheet argument');
+  assert.match(tool.description, /\bsheetIndex\b/, 'names the index argument');
+  assert.match(tool.description, /иначе активный/, 'explains the default sheet');
   assert.ok(utf8ByteLength(tool.description) <= 256, 'and stays inside the model-facing byte bound');
 });
