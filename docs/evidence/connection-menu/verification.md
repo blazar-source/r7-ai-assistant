@@ -1,5 +1,7 @@
 # Connection menu UX — 2026-10-09
 
+**Current update:** native UX passes on installed source `096edbd`, panel `c227d1bb...`: 259x499, menu/settings, working state, 22 messages, controlled401/recovery and unchanged shared profile/document. See [current receipts](../release-uat/ux-native.jsonl) and [UAT status](../release-uat/verification.md). Release is blocked by Slide persistence, not VM access. The following records describe the earlier candidate and access incident.
+
 Implementation `aff7b10`; reproducible build source `81d6783`. [Exact hashes](candidate.json). The installed panel file SHA-256 is `17c0e83eca9babeac90c7423d770728f56654f30de5a58d782ccc82cd510acab`. **Native UX acceptance is pending; RC is not declared.**
 
 The normal screen has only its compact status, chat and composer. The former connection summary and Change link are removed. The existing overflow control opens a small menu containing **Настройки подключения** and **Диагностика**. Initial onboarding remains separate. A connection failure shows its explanation and settings action at the transcript tail; a new failure is brought into view once. Escape returns focus to the menu toggle; choosing Diagnostics also leaves focus visible. Opening/cancelling settings preserves the draft and profile.

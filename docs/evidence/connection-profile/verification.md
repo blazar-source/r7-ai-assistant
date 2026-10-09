@@ -1,5 +1,7 @@
 # Shared encrypted connection — 2026-10-09
 
+**Continuation:** after the owner rebooted Astra and R7 was reopened, all three editors recovered the existing shared profile without credential entry. Current source `096edbd` additionally passes [native damaged-record recovery](../release-uat/profile-recovery.jsonl) in a separate synthetic database. A deliberate full-process restart smoke of the final release remains pending; see [current acceptance](../release-uat/verification.md). The unsaved-process restriction described below belongs to the earlier session.
+
 Source `a857d5b43be1b80d8c8eee9c7c5a2b546ae9f549`; branch `stage-b`; no publication. This supersedes the old memory-only/plaintext-opt-in connection UX. It does not declare RC acceptance.
 
 ## Measured checks
