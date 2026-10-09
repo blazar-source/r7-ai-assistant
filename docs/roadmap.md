@@ -1,6 +1,6 @@
 # Состояние продукта и направления развития
 
-Актуальный выпуск — [v0.9.0-pilot-rc.1](https://github.com/blazar-source/r7-ai-assistant/releases/tag/v0.9.0-pilot-rc.1), приватный Pre-release. Эта страница описывает состояние продукта, а не выдаёт разрешения на разработку.
+Актуальный выпуск — [v0.9.0-pilot-rc.1](https://github.com/blazar-source/r7-ai-assistant/releases/tag/v0.9.0-pilot-rc.1), публичный Pre-release. Эта страница описывает состояние продукта, а не выдаёт разрешения на разработку.
 
 ## Реализовано в пилоте
 
