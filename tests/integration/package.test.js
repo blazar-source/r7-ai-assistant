@@ -563,9 +563,9 @@ test('HTML/CSS only local authored assets plus exact separate installed SDK with
   assert.equal(markup.includes('unsafe-inline'), false);
   const css = entries.find(e => e.name === 'styles.css').data.toString('utf8');
   assert.ok(css.includes(':focus-visible')); assert.ok(css.includes('outline:'));
-  // The approved compact header expands only its icon hit areas by 3px. No panel,
-  // transcript or composer is taken out of flow and no remote CSS resource is loaded.
-  const flowCss = css.replace(/\.header-control::before\s*\{[^}]*\}/g, '');
+  // Only header icon hit areas and the owner-approved overflow menu overlay may
+  // leave normal flow. Transcript/composer stay in flow; no remote CSS assets.
+  const flowCss = css.replace(/(?:\.header-control::before|#panel-menu)\s*\{[^}]*\}/g, '');
   assert.equal(/@import|url\(|position:\s*(fixed|absolute|sticky)/i.test(flowCss), false);
   for (const [name, size] of [['resources/icon.png', 32], ['resources/icon@2x.png', 64]]) {
     const png = entries.find(e => e.name === name).data;

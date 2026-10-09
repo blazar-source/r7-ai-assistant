@@ -65,6 +65,9 @@ const compactAttention = Object.freeze([
 const compactStatuses = Object.freeze(Object.assign(Object.create(null), compactActive,
   Object.fromEntries(compactClean.map((code) => [code, 'Готово'])),
   Object.fromEntries(compactAttention.map((code) => [code, 'Ошибка']))));
+const connectionErrors = new Set(['INVALID_SETTINGS', 'INVALID_ENDPOINT', 'INVALID_KEY',
+  'SETTINGS_CONFLICT', 'STORAGE_UNAVAILABLE', 'STORAGE_CORRUPT', 'HTTP_UNAUTHORIZED',
+  'HTTP_FORBIDDEN', 'HTTP_RATE_LIMIT', 'HTTP_SERVER_ERROR', 'HTTP_ERROR', 'NETWORK_ERROR', 'OFFLINE', 'TIMEOUT']);
 export function statusText(code, compact = false) {
   if (compact) return compactStatuses[code] ?? 'Готово';
   return statuses[code] ?? statuses.INTERNAL_ERROR;
@@ -166,19 +169,35 @@ export function mountPanel(root, controller) {
   fresh.className = 'header-control'; fresh.setAttribute('aria-label', 'Новый чат'); fresh.title = 'Новый чат';
   const diagnostics = node('section', '', 'diagnostics'); diagnostics.hidden = true;
   diagnostics.setAttribute('aria-label', 'Диагностика');
-  const diagnosticsToggle = button('⋯', 'toggle-diagnostics', function () {
+  const menu = node('div', '', 'panel-menu'); menu.hidden = true; menu.setAttribute('aria-label', 'Меню');
+  const menuToggle = button('⋯', 'toggle-menu', function () {
+    menu.hidden = !menu.hidden; menuToggle.setAttribute('aria-expanded', String(!menu.hidden));
+    if (!menu.hidden) (changeConnection.disabled ? diagnosticsToggle : changeConnection).focus();
+  });
+  menuToggle.className = 'header-control'; menuToggle.title = 'Меню'; menuToggle.setAttribute('aria-label', 'Меню');
+  menuToggle.setAttribute('aria-controls', 'panel-menu'); menuToggle.setAttribute('aria-expanded', 'false');
+  function closeMenu() { menu.hidden = true; menuToggle.setAttribute('aria-expanded', 'false'); }
+  on(root, 'keydown', function (event) {
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); closeMenu(); menuToggle.focus(); }
+  });
+  on(root, 'click', function (event) {
+    if (!menu.hidden && !event.target.closest?.('#panel-menu, #toggle-menu')) closeMenu();
+  });
+  const diagnosticsToggle = button('Диагностика', 'toggle-diagnostics', function () {
+    closeMenu();
+    menuToggle.focus();
     diagnostics.hidden = !diagnostics.hidden;
     diagnosticsToggle.setAttribute('aria-expanded', String(!diagnostics.hidden));
     if (!diagnostics.hidden) content.scrollTop = content.scrollHeight;
   });
-  diagnosticsToggle.className = 'header-control'; diagnosticsToggle.title = 'Диагностика';
+  diagnosticsToggle.title = 'Диагностика';
   diagnosticsToggle.setAttribute('aria-label', 'Диагностика');
   diagnosticsToggle.setAttribute('aria-controls', 'diagnostics'); diagnosticsToggle.setAttribute('aria-expanded', 'false');
   const badge = node('p', 'Stage B · только предложение', 'editor'); badge.className = 'muted';
   const detailedStatus = node('p', '', 'status-details'); detailedStatus.setAttribute('aria-live', 'off'); detailedStatus.className = 'muted';
   diagnostics.append(node('h2', 'Диагностика'), badge, detailedStatus);
   const status = node('p', '', 'status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
-  header.append(title, status, fresh, diagnosticsToggle);
+  header.append(title, status, fresh, menuToggle, menu);
   const progressStage = node('p', '', 'progress-stage'); progressStage.setAttribute('aria-live', 'off'); progressStage.setAttribute('aria-busy', 'false'); progressStage.hidden = true;
   const lifecycleWarning = node('p', 'Обычный текст Word; активное отслеживание изменений не поддерживается. Перед Применить проверяются текущий редактор, контекст и точное непустое выделение. Проверка и запись не атомарны.'); lifecycleWarning.className = 'notice';
   const toolbar = node('section'); toolbar.setAttribute('aria-label', 'Режим и контекст');
@@ -235,12 +254,19 @@ export function mountPanel(root, controller) {
   let editingConnection = false;
   let dirtyConnection = false;
   let formRevision = null;
-  const connection = node('section', '', 'connection-summary');
-  const connectionLabel = node('span', 'Подключение настроено');
-  const changeConnection = button('Изменить', 'change-connection', function () {
-    editingConnection = true; dirtyConnection = false; renderConnection(controller.getState()); controls.endpoint.focus();
-  });
-  connection.append(connectionLabel, changeConnection);
+  function openConnection() {
+    const current = controller.getState();
+    if (current.active || current.settingsBusy || current.writeLocked) return;
+    closeMenu(); editingConnection = true; dirtyConnection = false;
+    renderConnection(current); content.scrollTop = 0; controls.endpoint.focus();
+  }
+  const changeConnection = button('Настройки подключения', 'change-connection', openConnection);
+  menu.append(changeConnection, diagnosticsToggle);
+  const connectionError = node('section', '', 'connection-error'); connectionError.hidden = true;
+  connectionError.setAttribute('role', 'alert');
+  const connectionErrorMessage = node('p', '', 'connection-error-message');
+  const repairConnection = button('Настройки подключения', 'repair-connection', openConnection);
+  connectionError.append(connectionErrorMessage, repairConnection);
   const settings = node('section', '', 'connection-setup'); settings.append(node('h2', 'Подключение ассистента'));
   settings.append(node('p', 'Настройте один раз для Word, Cell и Slide. Данные сохраняются локально для этого пользователя.'));
   const form = node('form', '', 'settings-form');
@@ -280,10 +306,13 @@ export function mountPanel(root, controller) {
   function renderConnection(state) {
     const configured = Boolean(state.settings.endpoint && state.settings.apiKey);
     const open = editingConnection || !configured;
-    connectionLabel.textContent = state.storageError ? statusText(state.storageError) : 'Подключение настроено';
-    connection.hidden = open; settings.hidden = !open; composer.hidden = open; history.hidden = open;
-    if (open) diagnostics.hidden = true;
+    settings.hidden = !open; composer.hidden = open; history.hidden = open;
+    if (open) { diagnostics.hidden = true; diagnosticsToggle.setAttribute('aria-expanded', 'false'); }
+    const failure = state.storageError || (connectionErrors.has(state.status) ? state.status : null);
+    connectionError.hidden = open || !failure;
+    connectionErrorMessage.textContent = failure ? statusText(failure) : '';
     changeConnection.disabled = state.active || state.settingsBusy || state.writeLocked;
+    repairConnection.disabled = changeConnection.disabled;
     cancelConnection.hidden = !configured; cancelConnection.disabled = state.settingsBusy;
     const conflict = dirtyConnection && formRevision !== (state.settingsRevision ?? null);
     reloadConnection.hidden = !conflict && state.status !== 'SETTINGS_CONFLICT';
@@ -306,16 +335,18 @@ export function mountPanel(root, controller) {
   on(prompt, 'keydown', function (event) { if (event.key === 'Enter' && event.ctrlKey && !event.isComposing) { event.preventDefault(); submit(); } });
   form.append(encryption, persistence, storage, connectionStatus, reloadConnection, save, cancelConnection, reset); settings.append(form);
   diagnostics.append(lifecycleWarning, toolbar, orchestration, journal);
-  content.append(connection, settings, history, progressStage, preview, diagnostics);
+  content.append(settings, history, progressStage, preview, diagnostics, connectionError);
   root.replaceChildren(header, content, composer);
   let lastHistory = null;
   let lastAgentActions = null;
+  let lastConnectionFailure = null;
   const unsubscribe = controller.subscribe(function (state) {
     // Measure before Stop/progress alter the available height. Preserve an intentional
     // scroll into older messages, but keep a reader at the tail with the working stage.
     const followTail = diagnostics.hidden && content.scrollHeight - content.scrollTop - content.clientHeight < 32;
     const record = state.agent ?? null;
-    status.textContent = statusText(state.status, true);
+    status.textContent = statusText(state.storageError || state.status, true);
+    status.setAttribute('data-attention', String(status.textContent === 'Ошибка'));
     const stage = progressStageText(state);
     progressStage.textContent = stage;
     progressStage.hidden = stage === '';
@@ -390,8 +421,11 @@ export function mountPanel(root, controller) {
     orchestration.hidden = report === '';
     persistence.hidden = !state.keyPersistenceWarning;
     storage.textContent = state.storageError ? statusText(state.storageError) : '';
+    const connectionFailure = state.storageError || (connectionErrors.has(state.status) ? state.status : null);
+    const newConnectionFailure = connectionFailure && connectionFailure !== lastConnectionFailure;
+    lastConnectionFailure = connectionFailure;
     renderConnection(state);
-    if (followTail) content.scrollTop = content.scrollHeight;
+    if (followTail || newConnectionFailure && !connectionError.hidden) content.scrollTop = content.scrollHeight;
   });
   const win = doc.defaultView;
   let syncTimer = null;

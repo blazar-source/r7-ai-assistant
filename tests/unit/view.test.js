@@ -48,6 +48,53 @@ test('first launch shows a separate connection form and hides the composer', () 
   f.panel.dispose(); f.controller.dispose();
 });
 
+test('connection settings live in overflow; opening and cancelling preserve profile and draft', () => {
+  const f = fixture(); const original = f.controller.getState().settings;
+  f.id('prompt').value = 'keep my draft';
+  assert.equal(f.id('connection-summary'), undefined);
+  assert.equal(f.id('panel-menu').hidden, true);
+  assert.equal(f.id('status').textContent, 'Готово');
+  f.id('toggle-menu').dispatch('click');
+  assert.equal(f.id('panel-menu').hidden, false);
+  assert.equal(f.id('change-connection').textContent, 'Настройки подключения');
+  f.id('change-connection').dispatch('click');
+  assert.equal(f.id('panel-menu').hidden, true);
+  assert.equal(f.id('connection-setup').hidden, false);
+  assert.equal(f.document.activeElement, f.id('endpoint'));
+  f.id('cancel-connection').dispatch('click');
+  assert.equal(f.id('connection-setup').hidden, true);
+  assert.equal(f.id('prompt').value, 'keep my draft');
+  assert.deepEqual(f.controller.getState().settings, original);
+  assert.equal(f.id('apiKey').value, '');
+  f.id('toggle-menu').dispatch('click');
+  f.root.dispatch('keydown', {key: 'Escape'});
+  assert.equal(f.id('panel-menu').hidden, true);
+  assert.equal(f.document.activeElement, f.id('toggle-menu'));
+  f.panel.dispose(); f.controller.dispose();
+});
+
+test('connection error offers settings; recovery removes the error without saving settings', async () => {
+  let fail = true;
+  const f = fixture(undefined, {transport: async () => {
+    if (fail) throw new SafeError('HTTP_UNAUTHORIZED');
+    return injected(final('answer'));
+  }});
+  const original = f.controller.getState().settings;
+  assert.equal(f.id('connection-error').hidden, true);
+  await f.controller.analyze('question');
+  assert.equal(f.id('connection-error').hidden, false);
+  assert.match(f.id('connection-error-message').textContent, /ключ/);
+  assert.equal(f.id('status').textContent, 'Ошибка');
+  f.id('repair-connection').dispatch('click');
+  assert.equal(f.id('connection-setup').hidden, false);
+  f.id('cancel-connection').dispatch('click');
+  fail = false; await f.controller.analyze('again');
+  assert.equal(f.id('connection-error').hidden, true);
+  assert.equal(f.id('status').textContent, 'Готово');
+  assert.deepEqual(f.controller.getState().settings, original);
+  f.panel.dispose(); f.controller.dispose();
+});
+
 test('sending a message never saves a stale settings form over the active profile', async () => {
   const f = fixture(final('answer'));
   f.id('apiKey').value = 'stale-form-key';
@@ -95,7 +142,7 @@ test('marked content container holds every content block while composer remains 
   assert.deepEqual(all().filter(node => node.getAttribute('data-scroll-container') !== null), [content]);
   assert.deepEqual(root.children.map(child => child.id || child.tagName.toLowerCase()), ['header', 'content', 'composer']);
   assert.deepEqual(content.children.map(child => child.id || child.tagName.toLowerCase()),
-    ['connection-summary', 'connection-setup', 'history', 'progress-stage', 'preview', 'diagnostics']);
+    ['connection-setup', 'history', 'progress-stage', 'preview', 'diagnostics', 'connection-error']);
   for (const section of ['history', 'progress-stage', 'preview', 'diagnostics']) {
     assert.equal(content.children.includes(id(section)), true, `${section} belongs to the content container`);
   }
@@ -275,7 +322,7 @@ test('keyboard path covers visible controls in DOM order and activates named act
   const activeOrder = focusable(active).map(node => node.id || node.textContent);
   activateButton(active.id('stop'));
   assert.deepEqual(activeOrder,
-    ['new-chat', 'toggle-diagnostics', 'prompt', 'stop']); release(injected(final('late'))); await running;
+    ['new-chat', 'toggle-menu', 'prompt', 'stop']); release(injected(final('late'))); await running;
   assert.equal(active.controller.getState().status, 'STOPPED'); active.panel.dispose(); active.controller.dispose();
 
   let checked = 0;
@@ -289,10 +336,13 @@ test('keyboard path covers visible controls in DOM order and activates named act
   f.id('prompt').value = 'edit'; f.id('composer').dispatch('submit'); await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.controller.getState().status, 'PREVIEW_READY', 'Send submits the message through the form');
   assert.deepEqual(focusable(f).map(node => node.id || node.textContent),
-    ['new-chat', 'toggle-diagnostics', 'change-connection', 'apply', 'cancel-preview', 'prompt', 'send']);
+    ['new-chat', 'toggle-menu', 'apply', 'cancel-preview', 'prompt', 'send']);
+  activateButton(f.id('toggle-menu'));
+  assert.deepEqual(focusable(f).map(node => node.id || node.textContent).slice(0,4), ['new-chat', 'toggle-menu', 'change-connection', 'toggle-diagnostics']);
   const toggle = f.id('toggle-diagnostics');
   activateButton(toggle);
   assert.equal(f.id('diagnostics').hidden, false);
+  assert.equal(f.document.activeElement, f.id('toggle-menu'));
   assert.equal(toggle.getAttribute('aria-expanded'), 'true');
   activateButton(toggle);
   assert.equal(f.id('diagnostics').hidden, true);
