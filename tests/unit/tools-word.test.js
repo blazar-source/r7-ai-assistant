@@ -120,8 +120,8 @@ test('read_context is withheld from every catalogue until a public document read
 // tool is FOR. These three carry the pilot's weight and are pinned VERBATIM, because they are the
 // deliverable itself rather than an implementation detail.
 const PILOT_GUIDANCE = Object.freeze({
-  insert_blocks: 'Добавляет блоки В КОНЕЦ документа; поле heading: n делает блок заголовком уровня n. Это инструмент для глав и абзацев.',
-  insert_paragraph: 'Вставляет текст В ПОЗИЦИЮ КУРСОРА (или выделения), а НЕ в конец документа.',
+  insert_blocks: 'Добавляет блоки В КОНЕЦ. heading: n — заголовок; обычный абзац — без heading. Список: номер или «• » в text каждого пункта.',
+  insert_paragraph: 'Вставляет у КУРСОРА. position:end добавляет перевод строки, НЕ выбирает конец/раздел. Для адресной правки — replace_text; для конца — insert_blocks.',
   set_heading: 'Превращает СУЩЕСТВУЮЩИЙ абзац (по индексу paragraph) в заголовок уровня level. Текст не вставляет.'
 });
 

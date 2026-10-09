@@ -303,6 +303,15 @@ export function createController({ bridge, store = new SettingsStore(), transpor
       owned.agent = { status: 'RUNNING', steps: 0, toolCalls: 0, actions: [] };
       if (owns(owned)) agent = owned.agent;
       emit();
+      // A fresh Cell/Slide panel must not require the user to discover the
+      // diagnostics button. Probe within this run's existing ownership/deadline.
+      if (kind === 'analysis' && probedCapabilities === null &&
+          (owned.editorType === 'cell' || owned.editorType === 'slide') && typeof bridge?.probeCapabilities === 'function') {
+        const observed = await bridge.probeCapabilities({ signal: owned.abort.signal });
+        if (!valid(owned)) return false;
+        if (observed?.editorType === owned.editorType &&
+            (observed.adapter?.commandDispatch === true || observed.adapter?.executeMethod === true)) probedCapabilities = observed;
+      }
       const capabilities = owned.editorType === 'word' && probedCapabilities === null
         ? ['document.read', 'document.write']
         : [];

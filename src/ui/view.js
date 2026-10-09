@@ -307,11 +307,12 @@ export function mountPanel(root, controller) {
     const open = editingConnection || !configured;
     settings.hidden = !open; composer.hidden = open; history.hidden = open;
     if (open) { diagnostics.hidden = true; diagnosticsToggle.setAttribute('aria-expanded', 'false'); }
-    const failure = state.storageError || (connectionErrors.has(state.status) ? state.status : null);
+    const failure = state.storageError || (compactAttention.includes(state.status) ? state.status : null);
     connectionError.hidden = open || !failure;
     connectionErrorMessage.textContent = failure ? statusText(failure) : '';
     changeConnection.disabled = state.active || state.settingsBusy || state.writeLocked;
     repairConnection.disabled = changeConnection.disabled;
+    repairConnection.hidden = !connectionErrors.has(failure);
     cancelConnection.hidden = !configured; cancelConnection.disabled = state.settingsBusy;
     const conflict = dirtyConnection && formRevision !== (state.settingsRevision ?? null);
     reloadConnection.hidden = !conflict && state.status !== 'SETTINGS_CONFLICT';
@@ -423,7 +424,7 @@ export function mountPanel(root, controller) {
     orchestration.hidden = report === '';
     persistence.hidden = !state.keyPersistenceWarning;
     storage.textContent = state.storageError ? statusText(state.storageError) : '';
-    const connectionFailure = state.storageError || (connectionErrors.has(state.status) ? state.status : null);
+    const connectionFailure = state.storageError || (compactAttention.includes(state.status) ? state.status : null);
     const newConnectionFailure = connectionFailure && connectionFailure !== lastConnectionFailure;
     lastConnectionFailure = connectionFailure;
     renderConnection(state);

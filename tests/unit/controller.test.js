@@ -818,6 +818,45 @@ test('the ordinary single-run path is unchanged: only a long-generation EDIT req
 // reports its capabilities LOCALLY, with `methodPresence` null by construction — and the exit-gate run reads and
 // mutates sheets through exactly that adapter. The Word path is untouched: these tests pin BOTH sides.
 
+for (const editorType of ['cell', 'slide']) test(`first ${editorType} request probes readiness without a diagnostics action`, async () => {
+  let probes = 0;
+  const f = setup({ bridge: {
+    getState() { return { editorType, busy: false, uncertain: false }; },
+    async probeCapabilities() {
+      probes++;
+      return { editorType, adapter: { commandDispatch: true }, selectionRead: { available: true }, mutation: { available: true } };
+    }
+  } });
+  f.controller.setIncludeContext(false);
+  assert.equal(await f.controller.analyze('Прочитай документ'), true);
+  assert.equal(f.controller.getState().status, 'COMPLETE');
+  assert.equal(probes, 1);
+  assert.equal(f.replies.length, 1);
+  f.controller.dispose();
+});
+
+test('automatic probe cannot dispatch after Stop or grant a different editor capability', async () => {
+  let release;
+  const f = setup({ bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    probeCapabilities() { return new Promise(resolve => { release = resolve; }); }
+  } });
+  f.controller.setIncludeContext(false);
+  const running = f.controller.analyze('Прочитай таблицу');
+  f.controller.stop();
+  release({ editorType: 'cell', adapter: { commandDispatch: true }, selectionRead: { available: true } });
+  assert.equal(await running, false); assert.equal(f.replies.length, 0);
+  assert.equal(f.controller.getState().status, 'STOPPED'); f.controller.dispose();
+  const mismatch = setup({ bridge: {
+    getState() { return { editorType: 'cell', busy: false, uncertain: false }; },
+    async probeCapabilities() { return { editorType: 'word', adapter: { commandDispatch: true }, mutation: { available: true } }; }
+  } });
+  mismatch.controller.setIncludeContext(false);
+  assert.equal(await mismatch.controller.analyze('Измени таблицу'), false);
+  assert.equal(mismatch.replies.length, 0);
+  assert.equal(mismatch.controller.getState().status, 'CAPABILITY_UNAVAILABLE'); mismatch.controller.dispose();
+});
+
 test('a CELL bridge with no observed capability is fail-closed instead of claiming readiness', async () => {
   const readings = [];
   const cellBridge = {

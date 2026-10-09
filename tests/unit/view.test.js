@@ -95,6 +95,16 @@ test('connection error offers settings; recovery removes the error without savin
   f.panel.dispose(); f.controller.dispose();
 });
 
+test('a non-connection failure explains itself on the main screen without a settings action', async () => {
+  const f = fixture('not json');
+  await f.controller.analyze('question');
+  assert.equal(f.id('diagnostics').hidden, true);
+  assert.equal(f.id('connection-error').hidden, false);
+  assert.match(f.id('connection-error-message').textContent, /формат|JSON/i);
+  assert.equal(f.id('repair-connection').hidden, true);
+  f.panel.dispose(); f.controller.dispose();
+});
+
 test('sending a message never saves a stale settings form over the active profile', async () => {
   const f = fixture(final('answer'));
   f.id('apiKey').value = 'stale-form-key';

@@ -1262,7 +1262,7 @@ export function createWordTools(bridge) {
       // PILOT-CRITICAL GUIDANCE. Measured: the model chose this tool for whole-document authoring and
       // called it eight times; every call landed inside the paragraph holding the caret (the title) and
       // the document's paragraph count never moved. The caret semantics must therefore be unmistakable.
-      description: 'Вставляет текст В ПОЗИЦИЮ КУРСОРА (или выделения), а НЕ в конец документа.',
+      description: 'Вставляет у КУРСОРА. position:end добавляет перевод строки, НЕ выбирает конец/раздел. Для адресной правки — replace_text; для конца — insert_blocks.',
       // The schema advertises the per-action argument ceiling on `text`; the handler applies that same
       // ceiling to the payload the bridge actually dispatches, so the advertised and the enforced bound
       // are one value on both sides. The handler's note below states the `end` consequence: the appended
@@ -1408,7 +1408,7 @@ export function createWordTools(bridge) {
       name: 'insert_blocks', kind: 'mutate', editors: ['word'], policy: 'auto', requires: ['document.write'],
       // PILOT-CRITICAL GUIDANCE, and the tool the pilot never called: this is the ONLY mutation that
       // appends at the END of the document, and `heading: n` on a block is what makes it a heading.
-      description: 'Добавляет блоки В КОНЕЦ документа; поле heading: n делает блок заголовком уровня n. Это инструмент для глав и абзацев.',
+      description: 'Добавляет блоки В КОНЕЦ. heading: n — заголовок; обычный абзац — без heading. Список: номер или «• » в text каждого пункта.',
       schema: { type: 'object', additionalProperties: false, required: ['blocks'],
         properties: { blocks: { type: 'array', maxItems: LIMITS.insertBlocksMax,
           items: { type: 'object', additionalProperties: false, required: ['text'],
