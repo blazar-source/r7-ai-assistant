@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "fe372cd454a87db1abffc4baaffae0127be9ff30",
+  "nativeBase": "/home/r7dev/r7-verification/visual4-20261009T040017",
+  "loadedPanelSha256": "0df3ca5baea0e19f718c710c3645ee5e1a4327daea9ad2ec5b117dc1f02cf1d0",
+  "cases": 24,
+  "mutatingTools": 21,
+  "artifacts": {
+    "dist/plugin/panel.js": "0df3ca5baea0e19f718c710c3645ee5e1a4327daea9ad2ec5b117dc1f02cf1d0",
+    "dist/plugin/styles.css": "d2b2b44cb10cf6cefa2f3795e3ec5a0f39edfd975e51480c385f577f9a31f015",
+    "dist/plugin/r7-ai-assistant.zip": "4ee149f152276a3f9ded8e1fc04f29947ceef95b7e7c78058147a9e34d035c94",
+    "dist/plugin/provenance.json": "3a6625214632d4fe0e6dafda3699c43b47727a999df5ac91ab6436b19c67203c",
+    "dist/deb/r7-ai-assistant_0.9.0-pilot-rc_amd64.deb": "4fb1640d38c3c3166c6a1a53a386f565b82f1461c703d26867b0c395edfa3ea0",
+    "dist/r7-ai-assistant.spdx.json": "4d864a051f8089b5b79ce79a1931c913122cf1092b3c27072c17de3a6534ad38"
+  }
+}

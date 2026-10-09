@@ -1,0 +1,35 @@
+✔ dual build produces byte-identical ZIP STORE/.plugin exact root allowlist with canonical manifest (856.5454ms)
+✔ SBOM is deterministic and verified against the packaged bytes and zero runtime dependency graph (371.5561ms)
+✔ generated authored browser bundle passes audit with literal synchronous static command and no dev runtime (546.8324ms)
+✔ HTML/CSS only local authored assets plus exact separate installed SDK with documented CSP and visible focus (359.4478ms)
+✔ packaged CSP permits SDK own-config bootstrap without blanket local-file or HTTP access (267.6274ms)
+✔ build hard-fails when the pinned esbuild version does not match (0.7058ms)
+✔ build refuses output outside ignored dist tree and never accepts an arbitrary copy inventory (0.2815ms)
+✔ RED anchor: a rename of a NAMED sheet is proved and the book is otherwise untouched (7.0537ms)
+✔ a rename BY INDEX renames the sheet at that index, whatever its name is (0.946ms)
+✔ a rename with NO selector renames the ACTIVE sheet, and the fact is RECORDED, not fixed up (0.4906ms)
+✔ a TAKEN name refuses BEFORE any mutation (1.2442ms)
+✔ a MISSING source sheet refuses BEFORE any mutation (0.7456ms)
+✔ an unproved postcondition after the mutation is UNCERTAIN, the slot stays HELD, and NOTHING is renamed back (2.1738ms)
+✔ the closed request class refuses BEFORE any dispatch (1.1545ms)
+✔ a sheet whose rename primitive is MISSING refuses as a capability, before the mutation (1.0149ms)
+✔ source INDEX 0 renames the FIRST sheet even when a DIFFERENT sheet is active (0.8128ms)
+✔ the resolved sheet is TIED to the request before anything is renamed (1.291ms)
+✔ a count that GREW, an INDEX that moved, or the other names swapping are all refused (2.199ms)
+✔ a FORGED or malformed answer is UNCERTAIN, never a known error (2.6568ms)
+✔ the bridge bounds the NEW NAME itself, not only the tool (0.3365ms)
+✔ a name above the MEASURED 31-CHARACTER limit is refused BEFORE the mutation, never as uncertainty (0.4432ms)
+✔ a native that THROWS during the rename is UNCERTAIN with the slot HELD, and is never retried (0.3815ms)
+✔ a build whose lookup disagrees with its ordered collection can never turn into a SUCCESS (0.3232ms)
+✔ a book wider than the supported bound is refused before the mutation (0.3962ms)
+✔ a facade missing the COLLECTION or the LOOKUP refuses as a capability, before the mutation (0.4686ms)
+✔ renaming refreshes sheet labels without activating another worksheet (0.2789ms)
+✔ missing sheet notification refuses before rename; notification failure after rename is uncertain (0.5442ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2567.8917
