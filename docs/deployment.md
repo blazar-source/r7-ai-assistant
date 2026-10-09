@@ -53,14 +53,14 @@ The system-wide product plugin path is **NOT VERIFIED** and must not be used. Do
 
 ## End-user configuration and operation
 
-Open **R7 AI Assistant** in Word, Cell or Slide, open **«Диагностика»** using the header `⋯`, expand **«Настройки соединения»**, then configure:
+Open **R7 AI Assistant** in Word, Cell or Slide. Use the first-launch connection screen, or **«Изменить»** beside **«Подключение настроено»**, to configure:
 
 - a full HTTPS endpoint ending exactly in `/v1/chat/completions`;
 - the provider's exact model identifier (the product does not silently substitute another model);
 - the API key;
 - optional HTTP timeout (`5–120` seconds), `max_tokens` (`64–8192`) and temperature (`0–2`).
 
-On first launch, use the separate connection screen and press **«Сохранить и проверить»**. A successful check saves one encrypted connection profile shared by Word, Cell and Slide. Already open panels running this version synchronize within two seconds, on focus, and before requests. Sending a message never saves the settings form. Use **«Изменить»** to change the profile; stale forms cannot overwrite a newer save. The pilot administrator may perform this one-time setup remotely.
+On first launch, use the separate connection screen and press **«Сохранить и проверить»**. A successful check saves one encrypted connection profile shared by Word, Cell and Slide. Already open panels running this version synchronize while idle within two seconds, on focus, and before requests. Sending a message never saves the settings form. Use **«Изменить»** to change the profile; stale forms cannot overwrite a newer save. The pilot administrator may configure or rotate credentials remotely in the employee's desktop session; see the [administrator procedure](admin-connection.md). The pilot does not restrict this button to an administrator role.
 
 Choose ASK for analysis or EDIT for a change request, choose document context only when the panel reports it available, enter a prompt and press **«Отправить»** or `Ctrl+Enter`. **«Стоп»** ends a pending operation. Confirm-policy edits appear as Preview and require explicit **«Применить»**; saving and Undo remain explicit R7 user actions. **«Сбросить настройки»** targets only the product settings namespace.
 

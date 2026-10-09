@@ -62,3 +62,22 @@ test('shared storage failure blocks requests and publishes a visible error', asy
   assert.equal(f.sent.length, 1);
   c.dispose();
 });
+
+test('administrator can rotate a saved key, endpoint and model for all open editors', async () => {
+  const f = fixture();
+  const word = f.make('word'); const cell = f.make('cell'); const slide = f.make('slide');
+  await word.saveAndTestConnection(profile, null);
+  for (const panel of [cell, slide]) await panel.syncSettings();
+  const changed = {endpoint: 'https://new-provider.invalid/v1/chat/completions', model: 'new-model', apiKey: 'synthetic-rotated-key'};
+  assert.equal(await cell.saveAndTestConnection(changed, cell.getState().settingsRevision), true);
+  const restarted = f.make('word');
+  for (const panel of [word, cell, slide, restarted]) {
+    await panel.syncSettings();
+    assert.equal(await panel.testConnection(), true);
+    const sent = f.sent.at(-1);
+    assert.equal(sent.apiKey, changed.apiKey);
+    assert.equal(sent.endpoint, changed.endpoint);
+    assert.equal(sent.model, changed.model);
+    panel.dispose();
+  }
+});
