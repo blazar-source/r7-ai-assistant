@@ -41,12 +41,29 @@ test('fresh reads before the candidate final remain valid during mandatory compl
   assert.equal(result.status,'FINAL');assert.equal(result.message,'verified');assert.equal(result.toolCalls,4);
   assert.equal(sent.length,5,'the candidate still triggers a separate semantic review');
   assert.match(sent[4].at(-1).content,/исходного запроса/);
+  assert.doesNotMatch(sent[4].at(-1).content,/Обязательный следующий вызов:/);
   assert.deepEqual(f.deck,['old0','old1','old2','old3','old4','new']);
 });
 test('reads made before the last mutation cannot justify completion even before review',async()=>{
-  const f=fixture();const {result}=await run(f,[calls('add_slide'),calls('read_presentation','read_slide'),calls('move_slide'),final('candidate'),final('stale')]);
+  const f=fixture();const {result,sent}=await run(f,[calls('add_slide'),calls('read_presentation','read_slide'),calls('move_slide'),calls('read_slide'),final('candidate'),final('stale')]);
   assert.equal(result.status,'INCOMPLETE');assert.equal(result.message,null);
+  assert.match(sent[5].at(-1).content,/Обязательный следующий вызов: read_presentation/);
+  assert.doesNotMatch(sent[5].at(-1).content,/Обязательный следующий вызов: read_presentation, read_slide/);
 });
+test('targeted completion reminder refreshes a missing structure read without repeating mutations',async()=>{
+  const f=fixture();const {result}=await run(f,[calls('add_slide'),calls('move_slide'),calls('read_slide'),final('candidate'),calls('read_presentation'),final('verified')]);
+  assert.equal(result.status,'FINAL');assert.equal(result.message,'verified');
+  assert.equal(f.executed.filter(x=>x==='move_slide').length,1);
+});
+for (const [reads, missing] of [[[], 'read_presentation, read_slide'], [['read_presentation'], 'read_slide']]) {
+  test(`completion reminder names precisely ${missing}`, async()=>{
+    const f=fixture();const sequence=[calls('add_slide'), ...(reads.length ? [calls(...reads)] : []), final('candidate'), final('unproved')];
+    const {result,sent}=await run(f,sequence);
+    assert.equal(result.status,'INCOMPLETE');
+    assert.ok(sent.at(-1).at(-1).content.endsWith('Сначала выполни указанные чтения; повторный final без них будет отклонён.'));
+    assert.ok(sent.at(-1).at(-1).content.includes('Обязательный следующий вызов: '+missing+'.'));
+  });
+}
 test('a corrective mutation invalidates review readbacks until both are refreshed',async()=>{
   const f=fixture();const {result}=await run(f,[calls('add_slide'),final('candidate'),calls('read_presentation','read_slide'),calls('move_slide'),final('stale')]);
   assert.equal(result.status,'INCOMPLETE');assert.equal(result.toolCalls,4);

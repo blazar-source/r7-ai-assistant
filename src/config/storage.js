@@ -1,7 +1,7 @@
 import { DEFAULT_SETTINGS, validateSettings, validateRequestSettings } from './settings.js';
 import { ERROR_CODES, SafeError } from '../shared/errors.js';
 import { assertByteLimit } from '../shared/bytes.js';
-import { createProfileRecords } from './profile-records.js';
+import { createProfileRecords, profileRevision } from './profile-records.js';
 
 export const STORAGE_NAMESPACE = 'r7-ai-assistant:v1:';
 const settingsKey = STORAGE_NAMESPACE + 'settings';
@@ -47,7 +47,7 @@ export class SettingsStore {
     catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
     if (record) {
       try {
-        if (typeof record.revision !== 'string' || record.revision.length > 100) throw new Error('record');
+        if (profileRevision(record) === null) throw new Error('record');
         if (record.revision !== this.#revision || this.#settings === DEFAULT_SETTINGS) {
           let settings = DEFAULT_SETTINGS;
           if (record.reset !== true) {
@@ -59,7 +59,7 @@ export class SettingsStore {
           }
           this.#settings = settings; this.#revision = record.revision;
         }
-      } catch { this.#settings = DEFAULT_SETTINGS; this.#revision = typeof record.revision === 'string' ? record.revision : null; return this.#state(ERROR_CODES.STORAGE_CORRUPT); }
+      } catch { this.#settings = DEFAULT_SETTINGS; this.#revision = profileRevision(record); return this.#state(ERROR_CODES.STORAGE_CORRUPT); }
       try { this.#cleanLegacy(); } catch { return this.#state(ERROR_CODES.STORAGE_UNAVAILABLE); }
       return this.#state();
     }

@@ -179,7 +179,11 @@ export async function runAgent(options) {
           if (!reviewingCompletion) {
             reviewingCompletion = true;
             // Do not append candidate prose: it can evict the evidence needed for review.
-            context.append({ role: 'user', content: SLIDE_COMPLETION_REVIEW + '\n' + SLIDE_DEPENDENCY_RULE });
+            const missingReads = [];
+            if (structureRevision !== mutationRevision) missingReads.push('read_presentation');
+            if (textRevision !== mutationRevision) missingReads.push('read_slide');
+            const requiredRead = missingReads.length ? '\nОбязательный следующий вызов: ' + missingReads.join(', ') + '. Для этих инструментов нет успешного контрольного чтения после последнего изменения, включая форматирование. Сначала выполни указанные чтения; повторный final без них будет отклонён.' : '';
+            context.append({ role: 'user', content: SLIDE_COMPLETION_REVIEW + '\n' + SLIDE_DEPENDENCY_RULE + requiredRead });
             continue;
           }
           if (structureRevision !== mutationRevision || textRevision !== mutationRevision) return finish('INCOMPLETE');

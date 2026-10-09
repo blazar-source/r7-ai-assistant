@@ -1,6 +1,10 @@
 // One IndexedDB transaction commits the encrypted profile and its non-exportable
 // CryptoKey together. Compare-and-set prevents an already open settings form from
 // replacing a newer profile. Crypto work happens BEFORE the transaction begins.
+export function profileRevision(record) {
+  return typeof record?.revision === 'string' && record.revision.length > 0 && record.revision.length <= 100 ? record.revision : null;
+}
+
 export function createProfileRecords(indexedDB = globalThis.indexedDB, name = 'r7-ai-assistant:connection:v2') {
   function transact(value, expectedRevision) {
     return new Promise(function (resolve, reject) {
@@ -28,7 +32,9 @@ export function createProfileRecords(indexedDB = globalThis.indexedDB, name = 'r
           read.onsuccess = function () {
             if (value === undefined) result = read.result ?? null;
             else {
-              result = (read.result?.revision ?? null) === expectedRevision;
+              // A damaged revision has no usable version, just like an absent
+              // record. A concurrent valid save still has a non-null revision.
+              result = profileRevision(read.result) === expectedRevision;
               if (result) { try { store.put(value, 'current'); } catch { transaction.abort(); } }
             }
           };
